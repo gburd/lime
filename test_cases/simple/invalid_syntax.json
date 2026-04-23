@@ -1,0 +1,5 @@
+{
+    "name": "invalid_syntax",
+    "sql": "SELECTT FROM;",
+    "should_fail": true
+}
