@@ -453,6 +453,24 @@ struct plink {
   struct plink *next;      /* The next propagate link */
 };
 
+/* Module composition metadata structures */
+struct module_dependency {
+  char *name;                  /* Module name */
+  char *version_constraint;    /* Version constraint (NULL if none) */
+  struct module_dependency *next;
+};
+
+struct exported_symbol {
+  char *name;                  /* Symbol name */
+  struct exported_symbol *next;
+};
+
+struct imported_symbol {
+  char *name;                  /* Symbol name */
+  char *from_module;           /* Module it's imported from */
+  struct imported_symbol *next;
+};
+
 /* The state vector for the entire parser generator is recorded as
 ** follows.  (LEMON uses no global variables and makes little use of
 ** static variables.  Fields in the following structure can be thought
@@ -513,6 +531,13 @@ struct lime {
   int *aAction;            /* yy_action[] values */
   int *aLookahead;         /* yy_lookahead[] values */
   int nLookahead;          /* Total size of yy_lookahead including padding */
+  /* Module composition metadata (NULL for monolithic grammars) */
+  char *module_name;       /* Module name */
+  char *module_version;    /* Module version (semantic) */
+  char *module_description; /* Optional description */
+  struct module_dependency *dependencies; /* Linked list of dependencies */
+  struct exported_symbol *exports;        /* Linked list of exported symbols */
+  struct imported_symbol *imports;        /* Linked list of imported symbols */
 };
 
 #define MemoryCheck(X) if((X)==0){ \
@@ -2355,7 +2380,13 @@ enum e_state {
   WAITING_FOR_WILDCARD_ID,
   WAITING_FOR_CLASS_ID,
   WAITING_FOR_CLASS_TOKEN,
-  WAITING_FOR_TOKEN_NAME
+  WAITING_FOR_TOKEN_NAME,
+  WAITING_FOR_MODULE_REQUIRE,
+  WAITING_FOR_MODULE_REQUIRE_VERSION,
+  WAITING_FOR_MODULE_EXPORT,
+  WAITING_FOR_MODULE_IMPORT,
+  WAITING_FOR_MODULE_IMPORT_FROM,
+  WAITING_FOR_MODULE_IMPORT_END
 };
 struct pstate {
   char *filename;       /* Name of the input file */
@@ -2380,6 +2411,7 @@ struct pstate {
   int preccounter;           /* Assign this precedence to decl arguments */
   struct rule *firstrule;    /* Pointer to first rule in the grammar */
   struct rule *lastrule;     /* Pointer to the most recently parsed rule */
+  struct module_dependency *current_dependency; /* Current dependency being parsed */
 };
 
 /* Parse a single token */
@@ -2691,6 +2723,21 @@ static void parseonetoken(struct pstate *psp)
           psp->state = WAITING_FOR_WILDCARD_ID;
         }else if( strcmp(x,"token_class")==0 ){
           psp->state = WAITING_FOR_CLASS_ID;
+        }else if( strcmp(x,"module_name")==0 ){
+          psp->declargslot = &(psp->gp->module_name);
+          psp->insertLineMacro = 0;
+        }else if( strcmp(x,"module_version")==0 ){
+          psp->declargslot = &(psp->gp->module_version);
+          psp->insertLineMacro = 0;
+        }else if( strcmp(x,"module_description")==0 ){
+          psp->declargslot = &(psp->gp->module_description);
+          psp->insertLineMacro = 0;
+        }else if( strcmp(x,"require")==0 ){
+          psp->state = WAITING_FOR_MODULE_REQUIRE;
+        }else if( strcmp(x,"export")==0 ){
+          psp->state = WAITING_FOR_MODULE_EXPORT;
+        }else if( strcmp(x,"import")==0 ){
+          psp->state = WAITING_FOR_MODULE_IMPORT;
         }else{
           ErrorMsg(psp->filename,psp->tokenlineno,
             "Unknown declaration keyword: \"%%%s\".",x);
@@ -2911,6 +2958,94 @@ static void parseonetoken(struct pstate *psp)
       }else{
         ErrorMsg(psp->filename, psp->tokenlineno,
           "%%token_class argument \"%s\" should be a token", x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }
+      break;
+    case WAITING_FOR_MODULE_REQUIRE:
+      if( x[0]=='.' ){
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else{
+        /* Parse: module_name [version_constraint] */
+        /* The first token is the module name */
+        struct module_dependency *dep;
+        dep = (struct module_dependency*)lime_malloc(sizeof(*dep));
+        dep->name = (char*)Strsafe(x);
+        dep->version_constraint = 0;
+        dep->next = psp->gp->dependencies;
+        psp->gp->dependencies = dep;
+        /* Store this dependency so we can add version constraint if present */
+        psp->current_dependency = dep;
+        psp->state = WAITING_FOR_MODULE_REQUIRE_VERSION;
+      }
+      break;
+    case WAITING_FOR_MODULE_REQUIRE_VERSION:
+      if( x[0]=='.' ){
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+        psp->current_dependency = 0;
+      }else if( x[0]=='%' ){
+        /* New directive starting, end the require directive */
+        psp->state = WAITING_FOR_DECL_KEYWORD;
+        psp->current_dependency = 0;
+      }else if( psp->current_dependency && !psp->current_dependency->version_constraint ){
+        /* This is the version constraint */
+        psp->current_dependency->version_constraint = (char*)Strsafe(x);
+      }else{
+        /* Unexpected token after version constraint */
+        ErrorMsg(psp->filename, psp->tokenlineno,
+          "Unexpected token in %%require: %s", x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }
+      break;
+    case WAITING_FOR_MODULE_EXPORT:
+      if( x[0]=='.' ){
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else{
+        /* Add this symbol to the exports list */
+        struct exported_symbol *exp;
+        exp = (struct exported_symbol*)lime_malloc(sizeof(*exp));
+        exp->name = (char*)Strsafe(x);
+        exp->next = psp->gp->exports;
+        psp->gp->exports = exp;
+      }
+      break;
+    case WAITING_FOR_MODULE_IMPORT:
+      if( x[0]=='.' ){
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else if( strcmp(x,"from")==0 ){
+        /* Next token is the module name */
+        psp->state = WAITING_FOR_MODULE_IMPORT_FROM;
+      }else{
+        /* Add this symbol to the imports list (module name will be added later) */
+        struct imported_symbol *imp;
+        imp = (struct imported_symbol*)lime_malloc(sizeof(*imp));
+        imp->name = (char*)Strsafe(x);
+        imp->from_module = 0; /* Will be set when we see 'from' */
+        imp->next = psp->gp->imports;
+        psp->gp->imports = imp;
+      }
+      break;
+    case WAITING_FOR_MODULE_IMPORT_FROM:
+      if( x[0]=='.' ){
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else{
+        /* This is the module name - set it for all imports that don't have one */
+        struct imported_symbol *imp;
+        for(imp = psp->gp->imports; imp; imp = imp->next){
+          if( imp->from_module==0 ){
+            imp->from_module = (char*)Strsafe(x);
+          }
+        }
+        psp->state = WAITING_FOR_MODULE_IMPORT_END;
+      }
+      break;
+    case WAITING_FOR_MODULE_IMPORT_END:
+      if( x[0]=='.' ){
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else{
+        ErrorMsg(psp->filename, psp->tokenlineno,
+          "Unexpected token after %%import from clause: %s", x);
         psp->errorcnt++;
         psp->state = RESYNC_AFTER_DECL_ERROR;
       }
@@ -3245,6 +3380,13 @@ void Parse(struct lime *gp)
   lime_free(filebuf);                    /* Release the buffer after parsing */
   gp->rule = ps.firstrule;
   gp->errorcnt = ps.errorcnt;
+
+  /* Validate module metadata */
+  if( gp->module_name && !gp->module_version ){
+    ErrorMsg(ps.filename, 1,
+      "%%module_name requires %%module_version");
+    gp->errorcnt++;
+  }
 }
 /*************************** From the file "plink.c" *********************/
 /*
