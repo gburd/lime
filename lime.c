@@ -1767,6 +1767,254 @@ static int defineCmp(const void *pA, const void *pB){
   return strcmp(zA,zB);
 }
 
+/*
+** Lint a grammar file - validate directives and check for common errors.
+** Returns the number of errors found (0 if no errors).
+*/
+static int lint_grammar(struct lime *lem){
+  int errors = 0;
+  int warnings = 0;
+  struct symbol *sp;
+  struct rule *rp;
+  int i;
+
+  printf("Linting %s...\n", lem->filename);
+
+  /* Check module metadata consistency */
+  if( lem->module_name && !lem->module_version ){
+    fprintf(stderr, "%s:1:1: error: %%module_name requires %%module_version\n",
+            lem->filename);
+    errors++;
+  }
+
+  /* Validate semantic version format */
+  if( lem->module_version ){
+    int major, minor, patch;
+    if( sscanf(lem->module_version, "%d.%d.%d", &major, &minor, &patch) != 3 ){
+      fprintf(stderr, "%s:1:1: error: invalid semantic version format: %s\n",
+              lem->filename, lem->module_version);
+      errors++;
+    }
+  }
+
+  /* Check that exported symbols are defined */
+  if( lem->exports ){
+    struct exported_symbol *exp;
+    for(exp = lem->exports; exp; exp = exp->next){
+      sp = Symbol_find(exp->name);
+      if( !sp ){
+        fprintf(stderr, "%s:1:1: error: exported symbol '%s' is not defined\n",
+                lem->filename, exp->name);
+        errors++;
+      }else if( sp->type != NONTERMINAL ){
+        fprintf(stderr, "%s:1:1: warning: exported symbol '%s' is a terminal (exports are usually non-terminals)\n",
+                lem->filename, exp->name);
+        warnings++;
+      }
+    }
+  }
+
+  /* Check for undefined symbols in rules - could be expanded in future */
+  for(rp = lem->rule; rp; rp = rp->next){
+    for(i = 0; i < rp->nrhs; i++){
+      sp = rp->rhs[i];
+      /* Additional validation could be added here */
+      (void)sp; /* Suppress unused warning */
+    }
+  }
+
+  /* Check for unused non-terminals (have type declaration but no rules) */
+  for(i = lem->nterminal; i < lem->nsymbol; i++){
+    sp = lem->symbols[i];
+    if( sp->type == NONTERMINAL ){
+      /* Skip special symbols */
+      if( strcmp(sp->name, "error") == 0 ) continue;
+      if( strcmp(sp->name, "{default}") == 0 ) continue;
+
+      /* Check if this symbol has any rules that produce it */
+      int has_rules = 0;
+      for(rp = lem->rule; rp; rp = rp->next){
+        if( rp->lhs == sp ){
+          has_rules = 1;
+          break;
+        }
+      }
+
+      if( !has_rules && sp->datatype ){
+        /* Symbol has a type declaration but no production rules */
+        fprintf(stderr, "%s:1:1: warning: non-terminal '%s' has type but no rules\n",
+                lem->filename, sp->name);
+        warnings++;
+      }
+    }
+  }
+
+  /* Summary */
+  printf("\n");
+  if( errors == 0 && warnings == 0 ){
+    printf("✓ No errors or warnings\n");
+  }else{
+    fprintf(stderr, "%d errors, %d warnings\n", errors, warnings);
+  }
+
+  return errors;
+}
+
+/*
+** Format a grammar file - rewrite with consistent formatting.
+** Returns 0 on success, non-zero on error.
+*/
+static int format_grammar(struct lime *lem){
+  FILE *out;
+  struct rule *rp;
+  struct symbol *sp;
+  int i;
+  char *outfile;
+  int sz;
+
+  printf("Formatting %s...\n", lem->filename);
+
+  /* Create output filename (input.lime -> input.lime.formatted) */
+  sz = lemonStrlen(lem->filename) + 20;
+  outfile = (char*)lime_malloc(sz);
+  lemon_sprintf(outfile, "%s.formatted", lem->filename);
+
+  out = fopen(outfile, "w");
+  if( !out ){
+    fprintf(stderr, "Cannot open %s for writing\n", outfile);
+    lime_free(outfile);
+    return 1;
+  }
+
+  /* Output header comment */
+  fprintf(out, "/* Formatted by Lime */\n\n");
+
+  /* Output module directives */
+  if( lem->module_name ){
+    fprintf(out, "%%module_name %s\n", lem->module_name);
+    if( lem->module_version ){
+      fprintf(out, "%%module_version \"%s\"\n", lem->module_version);
+    }
+    if( lem->module_description ){
+      fprintf(out, "%%module_description \"%s\"\n", lem->module_description);
+    }
+    fprintf(out, "\n");
+  }
+
+  /* Output dependencies */
+  if( lem->dependencies ){
+    struct module_dependency *dep;
+    for(dep = lem->dependencies; dep; dep = dep->next){
+      fprintf(out, "%%require %s", dep->name);
+      if( dep->version_constraint ){
+        fprintf(out, " \"%s\"", dep->version_constraint);
+      }
+      fprintf(out, ".\n");
+    }
+    fprintf(out, "\n");
+  }
+
+  /* Output exports */
+  if( lem->exports ){
+    struct exported_symbol *exp;
+    fprintf(out, "%%export");
+    for(exp = lem->exports; exp; exp = exp->next){
+      fprintf(out, " %s", exp->name);
+    }
+    fprintf(out, ".\n\n");
+  }
+
+  /* Output imports */
+  if( lem->imports ){
+    struct imported_symbol *imp;
+    char *last_module = NULL;
+
+    /* Group imports by source module */
+    for(imp = lem->imports; imp; imp = imp->next){
+      if( !last_module || strcmp(last_module, imp->from_module) != 0 ){
+        if( last_module ){
+          fprintf(out, ".\n");
+        }
+        fprintf(out, "%%import");
+        last_module = imp->from_module;
+      }
+      fprintf(out, " %s", imp->name);
+    }
+    if( last_module ){
+      fprintf(out, " from %s.\n\n", last_module);
+    }
+  }
+
+  /* Output standard Lime directives */
+  if( lem->name ){
+    fprintf(out, "%%name %s\n", lem->name);
+  }
+  if( lem->tokentype ){
+    fprintf(out, "%%token_type {%s}\n", lem->tokentype);
+  }
+  if( lem->arg ){
+    fprintf(out, "%%extra_argument {%s}\n", lem->arg);
+  }
+  if( lem->ctx ){
+    fprintf(out, "%%extra_context {%s}\n", lem->ctx);
+  }
+  fprintf(out, "\n");
+
+  /* Output token declarations */
+  fprintf(out, "/* Token declarations */\n");
+  for(i = 1; i < lem->nterminal; i++){
+    sp = lem->symbols[i];
+    if( sp->type == TERMINAL && strcmp(sp->name, "$") != 0 ){
+      fprintf(out, "%%token %s", sp->name);
+      if( sp->datatype ){
+        fprintf(out, " {%s}", sp->datatype);
+      }
+      fprintf(out, ".\n");
+    }
+  }
+  fprintf(out, "\n");
+
+  /* Output type declarations */
+  fprintf(out, "/* Type declarations */\n");
+  for(i = lem->nterminal; i < lem->nsymbol; i++){
+    sp = lem->symbols[i];
+    if( sp->datatype ){
+      fprintf(out, "%%type %s {%s}\n", sp->name, sp->datatype);
+    }
+  }
+  fprintf(out, "\n");
+
+  /* Output grammar rules */
+  fprintf(out, "/* Grammar rules */\n");
+  for(rp = lem->rule; rp; rp = rp->next){
+    fprintf(out, "%s ::=", rp->lhs->name);
+    for(i = 0; i < rp->nrhs; i++){
+      fprintf(out, " %s", rp->rhs[i]->name);
+    }
+    fprintf(out, ".");
+
+    if( rp->code ){
+      fprintf(out, " {\n");
+      /* Output code with proper indentation */
+      const char *code = rp->code;
+      fprintf(out, "  %s", code);
+      if( code[strlen(code)-1] != '\n' ){
+        fprintf(out, "\n");
+      }
+      fprintf(out, "}");
+    }
+    fprintf(out, "\n");
+  }
+
+  fclose(out);
+  printf("✓ Formatted output written to: %s\n", outfile);
+  printf("  Review the formatted file and rename it if correct:\n");
+  printf("    mv %s %s\n", outfile, lem->filename);
+
+  lime_free(outfile);
+  return 0;
+}
+
 /* The main program.  Parse the command line and do it... */
 int main(int argc, char **argv){
   static int version = 0;
@@ -1781,6 +2029,8 @@ int main(int argc, char **argv){
   static int sqlFlag = 0;
   static int printPP = 0;
   static int snapshotFlag = 0;
+  static int lintFlag = 0;
+  static int formatFlag = 0;
 
   static struct s_options options[] = {
     {OPT_FLAG, "b", (char*)&basisflag, "Print only the basis in report."},
@@ -1789,8 +2039,10 @@ int main(int argc, char **argv){
     {OPT_FSTR, "D", (char*)handle_D_option, "Define an %ifdef macro."},
     {OPT_FLAG, "E", (char*)&printPP, "Print input file after preprocessing."},
     {OPT_FSTR, "f", 0, "Ignored.  (Placeholder for -f compiler options.)"},
+    {OPT_FLAG, "F", (char*)&formatFlag, "Format grammar file consistently."},
     {OPT_FLAG, "g", (char*)&rpflag, "Print grammar without actions."},
     {OPT_FSTR, "I", 0, "Ignored.  (Placeholder for '-I' compiler options.)"},
+    {OPT_FLAG, "L", (char*)&lintFlag, "Validate grammar and module directives."},
     {OPT_FLAG, "m", (char*)&mhflag, "Output a makeheaders compatible file."},
     {OPT_FLAG, "l", (char*)&nolinenosflag, "Do not print #line statements."},
     {OPT_FLAG, "n", (char*)&snapshotFlag,
@@ -1843,6 +2095,7 @@ int main(int argc, char **argv){
   /* Parse the input file */
   Parse(&lem);
   if( lem.printPreprocessed || lem.errorcnt ) exit(lem.errorcnt);
+
   if( lem.nrule==0 ){
     fprintf(stderr,"Empty grammar.\n");
     exit(1);
@@ -1861,6 +2114,18 @@ int main(int argc, char **argv){
   lem.nsymbol = i - 1;
   for(i=1; ISUPPER(lem.symbols[i]->name[0]); i++);
   lem.nterminal = i;
+
+  /* Handle --lint flag (needs symbols to be counted) */
+  if( lintFlag ){
+    int lint_errors = lint_grammar(&lem);
+    exit(lint_errors);
+  }
+
+  /* Handle -F flag (needs symbols to be counted) */
+  if( formatFlag ){
+    int format_result = format_grammar(&lem);
+    exit(format_result);
+  }
 
   /* Assign sequential rule numbers.  Start with 0.  Put rules that have no
   ** reduce action C-code associated with them last, so that the switch()
