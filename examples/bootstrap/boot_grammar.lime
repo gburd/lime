@@ -1,0 +1,348 @@
+/*
+ * PostgreSQL Bootstrap (BKI) Grammar for Lime Parser Generator
+ *
+ * Converted from: src/backend/bootstrap/bootparse.y
+ * Original: PostgreSQL Global Development Group
+ *
+ * This grammar handles the BKI (Backend Interface) file format used
+ * for database system catalog initialization during initdb.
+ *
+ * BKI commands:
+ *   open <relname>
+ *   close <relname>
+ *   create <relname> <oid> [bootstrap] [shared_relation] [rowtype_oid <oid>]
+ *          (<colname> = <typename> [FORCE NOT NULL | FORCE NULL], ...)
+ *   insert (<value> | _null_ , ...)
+ *   declare [unique] index <idxname> <oid> on <relname> using <amname>
+ *           (<colname> <opclass>, ...)
+ *   declare toast <oid> <oid> on <relname>
+ *   build indices
+ *
+ * Conversion conventions (matching examples/pg/ pattern):
+ *   Bison $$  -> A    (LHS result)
+ *   Bison $N  -> B,C,D,...  (RHS params, positional)
+ *   Bison %prec TOKEN -> [TOKEN]
+ */
+
+/* ======================================================================
+ * PARSER CONFIGURATION
+ * ====================================================================== */
+
+/*
+ * Parser name prefix (replaces Bison's %name-prefix="boot_yy").
+ */
+%name boot
+
+/*
+ * Token type: all tokens carry a BootToken value.
+ */
+%token_type {BootToken}
+
+/*
+ * Extra argument passed to the parser (replaces Bison's %parse-param).
+ * Provides access to the scanner state and parse results.
+ */
+%extra_argument {BootParseState *pstate}
+
+%include {
+#include "boot_gram_defs.h"
+}
+
+%syntax_error {
+    boot_yyerror(pstate, "syntax error");
+}
+
+%parse_failure {
+    boot_yyerror(pstate, "parse failure");
+}
+
+/* ======================================================================
+ * TOKEN DECLARATIONS
+ * ====================================================================== */
+
+/* Identifier and literal values */
+%token ID.
+
+/* Punctuation */
+%token COMMA.
+%token EQUALS.
+%token LPAREN.
+%token RPAREN.
+
+/* Reserved keyword: _null_ */
+%token NULLVAL.
+
+/* Unreserved keywords (can also be used as identifiers via boot_ident) */
+%token OPEN.
+%token XCLOSE.
+%token XCREATE.
+%token INSERT_TUPLE.
+%token XDECLARE.
+%token INDEX.
+%token ON.
+%token USING.
+%token XBUILD.
+%token INDICES.
+%token UNIQUE.
+%token XTOAST.
+%token OBJ_ID.
+%token XBOOTSTRAP.
+%token XSHARED_RELATION.
+%token XROWTYPE_OID.
+%token XFORCE.
+%token XNOT.
+%token XNULL.
+
+/* ======================================================================
+ * NON-TERMINAL TYPE DECLARATIONS
+ * ====================================================================== */
+
+%type topLevel {int}
+%type boot_queries {int}
+%type boot_query {int}
+%type boot_openStmt {int}
+%type boot_closeStmt {int}
+%type boot_createStmt {int}
+%type boot_insertStmt {int}
+%type boot_declareIndexStmt {int}
+%type boot_declareUniqueIndexStmt {int}
+%type boot_declareToastStmt {int}
+%type boot_buildIndsStmt {int}
+
+%type boot_index_params {BootIndexParamList *}
+%type boot_index_param {BootIndexParam *}
+
+%type boot_ident {char *}
+%type oidspec {Oid}
+
+%type optbootstrap {int}
+%type optsharedrelation {int}
+%type optrowtypeoid {Oid}
+%type boot_column_nullness {int}
+
+%type boot_column_list {int}
+%type boot_column_def {int}
+%type boot_column_val_list {int}
+%type boot_column_val {int}
+
+/* ======================================================================
+ * START SYMBOL
+ * ====================================================================== */
+
+%start_symbol topLevel
+
+/* ======================================================================
+ * GRAMMAR RULES
+ * ====================================================================== */
+
+/*
+ * topLevel: entry point - a sequence of BKI commands
+ */
+topLevel(A) ::= boot_queries(B). {
+    A = B;
+}
+topLevel(A) ::= . {
+    A = 0;
+}
+
+/*
+ * boot_queries: one or more BKI commands
+ */
+boot_queries(A) ::= boot_query(B). {
+    A = B;
+}
+boot_queries(A) ::= boot_queries boot_query(B). {
+    A = B;
+}
+
+/*
+ * boot_query: a single BKI command
+ */
+boot_query(A) ::= boot_openStmt(B).                { A = B; }
+boot_query(A) ::= boot_closeStmt(B).               { A = B; }
+boot_query(A) ::= boot_createStmt(B).              { A = B; }
+boot_query(A) ::= boot_insertStmt(B).              { A = B; }
+boot_query(A) ::= boot_declareIndexStmt(B).        { A = B; }
+boot_query(A) ::= boot_declareUniqueIndexStmt(B).  { A = B; }
+boot_query(A) ::= boot_declareToastStmt(B).        { A = B; }
+boot_query(A) ::= boot_buildIndsStmt(B).           { A = B; }
+
+/* ---------------------------------------------------------------
+ * open <relname>
+ * --------------------------------------------------------------- */
+boot_openStmt(A) ::= OPEN boot_ident(B). {
+    boot_do_start(pstate);
+    boot_openrel(pstate, B);
+    boot_do_end(pstate);
+    A = 0;
+}
+
+/* ---------------------------------------------------------------
+ * close <relname>
+ * --------------------------------------------------------------- */
+boot_closeStmt(A) ::= XCLOSE boot_ident(B). {
+    boot_do_start(pstate);
+    boot_closerel(pstate, B);
+    boot_do_end(pstate);
+    A = 0;
+}
+
+/* ---------------------------------------------------------------
+ * create <relname> <oid> [bootstrap] [shared_relation]
+ *        [rowtype_oid <oid>] ( <col_list> )
+ *
+ * NOTE: The original Bison grammar uses mid-rule actions. Lime does
+ * not support mid-rule actions, so we restructure slightly. The
+ * "do_start" for column list processing is called at the beginning
+ * of the create action, and the column list is processed before
+ * the closing RPAREN action fires.
+ * --------------------------------------------------------------- */
+boot_createStmt(A) ::= XCREATE boot_ident(B) oidspec(C) optbootstrap(D) optsharedrelation(E) optrowtypeoid(F) LPAREN boot_column_list RPAREN. {
+    boot_do_create(pstate, B, C, D, E, F);
+    A = 0;
+}
+
+/* ---------------------------------------------------------------
+ * insert ( <val_list> )
+ * --------------------------------------------------------------- */
+boot_insertStmt(A) ::= INSERT_TUPLE LPAREN boot_column_val_list RPAREN. {
+    boot_do_insert(pstate);
+    A = 0;
+}
+
+/* ---------------------------------------------------------------
+ * declare index <idxname> <oid> on <relname> using <amname>
+ *         ( <index_params> )
+ * --------------------------------------------------------------- */
+boot_declareIndexStmt(A) ::= XDECLARE INDEX boot_ident(B) oidspec(C) ON boot_ident(D) USING boot_ident(E) LPAREN boot_index_params(F) RPAREN. {
+    boot_do_declare_index(pstate, B, C, D, E, F, 0 /* not unique */);
+    A = 0;
+}
+
+/* ---------------------------------------------------------------
+ * declare unique index <idxname> <oid> on <relname> using <amname>
+ *         ( <index_params> )
+ * --------------------------------------------------------------- */
+boot_declareUniqueIndexStmt(A) ::= XDECLARE UNIQUE INDEX boot_ident(B) oidspec(C) ON boot_ident(D) USING boot_ident(E) LPAREN boot_index_params(F) RPAREN. {
+    boot_do_declare_index(pstate, B, C, D, E, F, 1 /* unique */);
+    A = 0;
+}
+
+/* ---------------------------------------------------------------
+ * declare toast <oid> <oid> on <relname>
+ * --------------------------------------------------------------- */
+boot_declareToastStmt(A) ::= XDECLARE XTOAST oidspec(B) oidspec(C) ON boot_ident(D). {
+    boot_do_declare_toast(pstate, D, B, C);
+    A = 0;
+}
+
+/* ---------------------------------------------------------------
+ * build indices
+ * --------------------------------------------------------------- */
+boot_buildIndsStmt(A) ::= XBUILD INDICES. {
+    boot_do_build_indices(pstate);
+    A = 0;
+}
+
+/* ---------------------------------------------------------------
+ * Index parameter list
+ * --------------------------------------------------------------- */
+boot_index_params(A) ::= boot_index_params(B) COMMA boot_index_param(C). {
+    A = boot_index_param_list_append(pstate, B, C);
+}
+boot_index_params(A) ::= boot_index_param(B). {
+    A = boot_index_param_list_create(pstate, B);
+}
+
+boot_index_param(A) ::= boot_ident(B) boot_ident(C). {
+    A = boot_make_index_param(pstate, B, C);
+}
+
+/* ---------------------------------------------------------------
+ * Optional clauses for CREATE
+ * --------------------------------------------------------------- */
+optbootstrap(A) ::= XBOOTSTRAP. { A = 1; }
+optbootstrap(A) ::= .           { A = 0; }
+
+optsharedrelation(A) ::= XSHARED_RELATION. { A = 1; }
+optsharedrelation(A) ::= .                 { A = 0; }
+
+optrowtypeoid(A) ::= XROWTYPE_OID oidspec(B). { A = B; }
+optrowtypeoid(A) ::= .                        { A = 0; /* InvalidOid */ }
+
+/* ---------------------------------------------------------------
+ * Column definition list (for CREATE)
+ * --------------------------------------------------------------- */
+boot_column_list(A) ::= boot_column_def(B). {
+    A = B;
+}
+boot_column_list(A) ::= boot_column_list COMMA boot_column_def(B). {
+    A = B;
+}
+
+boot_column_def(A) ::= boot_ident(B) EQUALS boot_ident(C) boot_column_nullness(D). {
+    boot_do_define_attr(pstate, B, C, D);
+    A = 0;
+}
+
+/* ---------------------------------------------------------------
+ * Column nullness for column definitions
+ * --------------------------------------------------------------- */
+boot_column_nullness(A) ::= XFORCE XNOT XNULL. { A = BOOTCOL_NULL_FORCE_NOT_NULL; }
+boot_column_nullness(A) ::= XFORCE XNULL.       { A = BOOTCOL_NULL_FORCE_NULL; }
+boot_column_nullness(A) ::= .                    { A = BOOTCOL_NULL_AUTO; }
+
+/* ---------------------------------------------------------------
+ * OID specification (an identifier interpreted as a numeric OID)
+ * --------------------------------------------------------------- */
+oidspec(A) ::= boot_ident(B). {
+    A = boot_atooid(B);
+}
+
+/* ---------------------------------------------------------------
+ * Column value list (for INSERT)
+ * --------------------------------------------------------------- */
+boot_column_val_list(A) ::= boot_column_val(B). {
+    A = B;
+}
+boot_column_val_list(A) ::= boot_column_val_list boot_column_val(B). {
+    A = B;
+}
+boot_column_val_list(A) ::= boot_column_val_list COMMA boot_column_val(B). {
+    A = B;
+}
+
+boot_column_val(A) ::= boot_ident(B). {
+    boot_do_insert_one_value(pstate, B);
+    A = 0;
+}
+boot_column_val(A) ::= NULLVAL. {
+    boot_do_insert_one_null(pstate);
+    A = 0;
+}
+
+/* ---------------------------------------------------------------
+ * boot_ident: identifier or unreserved keyword used as identifier
+ *
+ * All keywords except NULLVAL can be used as identifiers.
+ * --------------------------------------------------------------- */
+boot_ident(A) ::= ID(B).               { A = B.str; }
+boot_ident(A) ::= OPEN(B).             { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= XCLOSE(B).           { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= XCREATE(B).          { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= INSERT_TUPLE(B).     { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= XDECLARE(B).         { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= INDEX(B).            { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= ON(B).               { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= USING(B).            { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= XBUILD(B).           { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= INDICES(B).          { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= UNIQUE(B).           { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= XTOAST(B).           { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= OBJ_ID(B).           { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= XBOOTSTRAP(B).       { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= XSHARED_RELATION(B). { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= XROWTYPE_OID(B).     { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= XFORCE(B).           { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= XNOT(B).             { A = boot_pstrdup(pstate, B.kw); }
+boot_ident(A) ::= XNULL(B).            { A = boot_pstrdup(pstate, B.kw); }

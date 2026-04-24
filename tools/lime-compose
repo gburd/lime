@@ -1,0 +1,448 @@
+#!/usr/bin/env python3
+"""
+lime-compose -- Compose literate .lime grammar modules into a single parser file.
+
+Literate .lime files are Markdown documents containing YAML metadata and
+```lime code blocks. This tool extracts grammar code from those blocks,
+resolves inter-module dependencies via topological sort, and concatenates
+the results into a single .lime file suitable for the Lime parser generator.
+
+Usage:
+    lime-compose [options] <file.md>...
+    lime-compose --help
+
+Options:
+    -o FILE, --output FILE   Write composed grammar to FILE (default: stdout)
+    -v, --verbose            Print module resolution order to stderr
+    -n, --dry-run            Validate and show resolution order without output
+    --no-validate            Skip dependency validation
+    --list-modules           List modules found in input files and exit
+    -h, --help               Show this help message and exit
+"""
+
+from __future__ import print_function
+
+import argparse
+import os
+import re
+import sys
+
+
+# ---------------------------------------------------------------------------
+# Data structures
+# ---------------------------------------------------------------------------
+
+class Module(object):
+    """A single grammar module extracted from a literate .lime file."""
+
+    def __init__(self, name, version, description, provides, depends,
+                 code_blocks, source_file):
+        self.name = name
+        self.version = version
+        self.description = description
+        self.provides = provides        # list of capability names
+        self.depends = depends          # list of capability names
+        self.code_blocks = code_blocks  # list of (label, code) tuples
+        self.source_file = source_file
+
+
+# ---------------------------------------------------------------------------
+# Parsing
+# ---------------------------------------------------------------------------
+
+_YAML_FENCE_RE = re.compile(r'^```ya?ml\s*$')
+_LIME_FENCE_RE = re.compile(r'^```lime(?:\s+(.+))?\s*$')
+_CLOSE_FENCE_RE = re.compile(r'^```\s*$')
+
+
+def _parse_yaml_block(lines):
+    """Parse a simple YAML-like block into a dict.
+
+    Supports only flat key: value pairs and key: [list, items] syntax.
+    No full YAML parser is used to keep the tool dependency-free.
+    """
+    result = {}
+    for line in lines:
+        line = line.rstrip()
+        if not line or line.lstrip().startswith('#'):
+            continue
+        m = re.match(r'^(\w[\w_-]*)\s*:\s*(.*)', line)
+        if not m:
+            continue
+        key = m.group(1)
+        value = m.group(2).strip()
+        # Handle inline list: [a, b, c]
+        if value.startswith('[') and value.endswith(']'):
+            items = value[1:-1]
+            if items.strip():
+                result[key] = [s.strip().strip('"').strip("'")
+                               for s in items.split(',') if s.strip()]
+            else:
+                result[key] = []
+        elif value.startswith('"') and value.endswith('"'):
+            result[key] = value[1:-1]
+        elif value.startswith("'") and value.endswith("'"):
+            result[key] = value[1:-1]
+        else:
+            result[key] = value
+    return result
+
+
+def parse_literate_file(filepath):
+    """Parse a literate .lime Markdown file and return a Module.
+
+    The file must contain exactly one ```yaml metadata block and one or
+    more ```lime code blocks.  Everything else is treated as documentation
+    and ignored during composition.
+    """
+    if not os.path.isfile(filepath):
+        raise FileNotFoundError("File not found: %s" % filepath)
+
+    with open(filepath, 'r') as f:
+        lines = f.readlines()
+
+    metadata_blocks = []
+    code_blocks = []
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # Check for ```yaml block
+        if _YAML_FENCE_RE.match(line.rstrip()):
+            i += 1
+            block_lines = []
+            while i < len(lines) and not _CLOSE_FENCE_RE.match(lines[i].rstrip()):
+                block_lines.append(lines[i])
+                i += 1
+            if i >= len(lines):
+                raise SyntaxError(
+                    "%s: unclosed ```yaml block starting near line %d"
+                    % (filepath, i - len(block_lines)))
+            metadata_blocks.append(block_lines)
+            i += 1
+            continue
+
+        # Check for ```lime block (with optional label)
+        m = _LIME_FENCE_RE.match(line.rstrip())
+        if m:
+            label = m.group(1) or ""
+            i += 1
+            block_lines = []
+            while i < len(lines) and not _CLOSE_FENCE_RE.match(lines[i].rstrip()):
+                block_lines.append(lines[i])
+                i += 1
+            if i >= len(lines):
+                raise SyntaxError(
+                    "%s: unclosed ```lime block starting near line %d"
+                    % (filepath, i - len(block_lines)))
+            code_blocks.append((label.strip(), ''.join(block_lines)))
+            i += 1
+            continue
+
+        i += 1
+
+    # Validate metadata
+    if len(metadata_blocks) == 0:
+        raise ValueError(
+            "%s: no ```yaml metadata block found. "
+            "Every literate .lime file must have exactly one metadata block."
+            % filepath)
+    if len(metadata_blocks) > 1:
+        raise ValueError(
+            "%s: multiple ```yaml metadata blocks found (expected exactly one)."
+            % filepath)
+
+    meta = _parse_yaml_block(metadata_blocks[0])
+
+    # Required fields
+    name = meta.get('name')
+    if not name:
+        raise ValueError(
+            "%s: metadata is missing required 'name' field." % filepath)
+
+    # Validate name is ASCII identifier
+    if not re.match(r'^[A-Za-z_][A-Za-z0-9_.-]*$', name):
+        raise ValueError(
+            "%s: module name '%s' contains invalid characters. "
+            "Use ASCII letters, digits, underscores, dots, and hyphens."
+            % (filepath, name))
+
+    version = meta.get('version', '0.0.0')
+    description = meta.get('description', '')
+    provides = meta.get('provides', [])
+    depends = meta.get('depends', [])
+
+    if isinstance(provides, str):
+        provides = [provides]
+    if isinstance(depends, str):
+        depends = [depends]
+
+    if len(code_blocks) == 0:
+        raise ValueError(
+            "%s: no ```lime code blocks found. "
+            "At least one code block is required." % filepath)
+
+    return Module(
+        name=name,
+        version=version,
+        description=description,
+        provides=provides,
+        depends=depends,
+        code_blocks=code_blocks,
+        source_file=filepath,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dependency resolution
+# ---------------------------------------------------------------------------
+
+def validate_dependencies(modules):
+    """Check that all dependencies are satisfied by some module's provides list.
+
+    Returns a list of error strings (empty if valid).
+    """
+    # Build the set of all provided capabilities
+    provided = set()
+    for mod in modules:
+        for cap in mod.provides:
+            provided.add(cap)
+
+    errors = []
+    for mod in modules:
+        for dep in mod.depends:
+            if dep not in provided:
+                errors.append(
+                    "Module '%s' (%s) depends on '%s', "
+                    "which is not provided by any input module."
+                    % (mod.name, mod.source_file, dep))
+
+    # Check for duplicate module names
+    seen_names = {}
+    for mod in modules:
+        if mod.name in seen_names:
+            errors.append(
+                "Duplicate module name '%s': found in both '%s' and '%s'."
+                % (mod.name, seen_names[mod.name], mod.source_file))
+        seen_names[mod.name] = mod.source_file
+
+    # Check for duplicate provides
+    seen_provides = {}
+    for mod in modules:
+        for cap in mod.provides:
+            if cap in seen_provides and seen_provides[cap] != mod.name:
+                errors.append(
+                    "Capability '%s' is provided by both '%s' and '%s'."
+                    % (cap, seen_provides[cap], mod.name))
+            seen_provides[cap] = mod.name
+
+    return errors
+
+
+def topological_sort(modules):
+    """Sort modules so that dependencies come before dependents.
+
+    Uses Kahn's algorithm. Raises ValueError on cyclic dependencies.
+    Returns a new list of modules in dependency order.
+    """
+    # Map capability -> module that provides it
+    provider = {}
+    for mod in modules:
+        for cap in mod.provides:
+            provider[cap] = mod.name
+
+    # Map module name -> module
+    by_name = {mod.name: mod for mod in modules}
+
+    # Build adjacency: mod.name -> set of module names it depends on
+    deps = {}
+    for mod in modules:
+        deps[mod.name] = set()
+        for cap in mod.depends:
+            prov = provider.get(cap)
+            if prov and prov != mod.name:
+                deps[mod.name].add(prov)
+
+    # Reverse adjacency: module name -> set of modules that depend on it
+    rdeps = {mod.name: set() for mod in modules}
+    for name, dep_set in deps.items():
+        for d in dep_set:
+            rdeps[d].add(name)
+
+    # Kahn's algorithm
+    in_degree = {name: len(dep_set) for name, dep_set in deps.items()}
+    queue = sorted([name for name, deg in in_degree.items() if deg == 0])
+    result = []
+
+    while queue:
+        # Take the alphabetically first to ensure deterministic ordering
+        current = queue.pop(0)
+        result.append(current)
+        for dependent in sorted(rdeps[current]):
+            in_degree[dependent] -= 1
+            if in_degree[dependent] == 0:
+                queue.append(dependent)
+        queue.sort()
+
+    if len(result) != len(modules):
+        remaining = set(by_name.keys()) - set(result)
+        raise ValueError(
+            "Cyclic dependency detected among modules: %s"
+            % ', '.join(sorted(remaining)))
+
+    return [by_name[name] for name in result]
+
+
+# ---------------------------------------------------------------------------
+# Composition
+# ---------------------------------------------------------------------------
+
+def compose(modules, include_provenance=True):
+    """Compose sorted modules into a single .lime grammar string."""
+    parts = []
+
+    parts.append("/*")
+    parts.append(" * Composed grammar generated by lime-compose")
+    parts.append(" *")
+    parts.append(" * Modules (%d):" % len(modules))
+    for mod in modules:
+        parts.append(" *   - %s %s" % (mod.name, mod.version))
+        if mod.description:
+            parts.append(" *     %s" % mod.description)
+    parts.append(" */")
+    parts.append("")
+
+    for mod in modules:
+        if include_provenance:
+            parts.append(
+                "/* " + "=" * 66 + " */")
+            parts.append(
+                "/* Module: %-55s */" % mod.name)
+            if mod.version != '0.0.0':
+                parts.append(
+                    "/* Version: %-54s */" % mod.version)
+            parts.append(
+                "/* Source: %-55s */" % os.path.basename(mod.source_file))
+            parts.append(
+                "/* " + "=" * 66 + " */")
+            parts.append("")
+
+        for label, code in mod.code_blocks:
+            if label and include_provenance:
+                parts.append("/* -- %s -- */" % label)
+            parts.append(code.rstrip())
+            parts.append("")
+
+    return '\n'.join(parts) + '\n'
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog='lime-compose',
+        description='Compose literate .lime grammar modules into a single parser file.',
+        epilog='See docs/LITERATE_FORMAT.md for the literate grammar specification.',
+    )
+    parser.add_argument(
+        'files', metavar='FILE', nargs='*',
+        help='Literate .lime Markdown files to compose')
+    parser.add_argument(
+        '-o', '--output', metavar='FILE', default=None,
+        help='Write composed grammar to FILE (default: stdout)')
+    parser.add_argument(
+        '-v', '--verbose', action='store_true',
+        help='Print module resolution order to stderr')
+    parser.add_argument(
+        '-n', '--dry-run', action='store_true',
+        help='Validate and show resolution order without producing output')
+    parser.add_argument(
+        '--no-validate', action='store_true',
+        help='Skip dependency validation')
+    parser.add_argument(
+        '--list-modules', action='store_true',
+        help='List modules found in input files and exit')
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if not args.files:
+        parser.print_help(sys.stderr)
+        return 1
+
+    # Parse all input files
+    modules = []
+    errors = []
+    for filepath in args.files:
+        try:
+            mod = parse_literate_file(filepath)
+            modules.append(mod)
+        except (FileNotFoundError, SyntaxError, ValueError) as e:
+            errors.append(str(e))
+
+    if errors:
+        for err in errors:
+            print("ERROR: %s" % err, file=sys.stderr)
+        return 1
+
+    # List modules mode
+    if args.list_modules:
+        for mod in modules:
+            provides = ', '.join(mod.provides) if mod.provides else '(none)'
+            depends = ', '.join(mod.depends) if mod.depends else '(none)'
+            print("%-20s v%-10s provides: %-30s depends: %s"
+                  % (mod.name, mod.version, provides, depends))
+        return 0
+
+    # Validate dependencies
+    if not args.no_validate:
+        dep_errors = validate_dependencies(modules)
+        if dep_errors:
+            for err in dep_errors:
+                print("ERROR: %s" % err, file=sys.stderr)
+            return 1
+
+    # Topological sort
+    try:
+        sorted_modules = topological_sort(modules)
+    except ValueError as e:
+        print("ERROR: %s" % e, file=sys.stderr)
+        return 1
+
+    if args.verbose or args.dry_run:
+        print("Module resolution order:", file=sys.stderr)
+        for i, mod in enumerate(sorted_modules, 1):
+            print("  %d. %s (%s)" % (i, mod.name, mod.source_file),
+                  file=sys.stderr)
+
+    if args.dry_run:
+        return 0
+
+    # Compose output
+    output = compose(sorted_modules)
+
+    if args.output:
+        output_dir = os.path.dirname(args.output)
+        if output_dir and not os.path.isdir(output_dir):
+            print("ERROR: Output directory does not exist: %s" % output_dir,
+                  file=sys.stderr)
+            return 1
+        with open(args.output, 'w') as f:
+            f.write(output)
+        if args.verbose:
+            print("Wrote composed grammar to %s" % args.output,
+                  file=sys.stderr)
+    else:
+        sys.stdout.write(output)
+
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

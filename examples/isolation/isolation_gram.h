@@ -1,0 +1,14 @@
+#define SQLBLOCK                         1
+#define IDENTIFIER                       2
+#define INTEGER                          3
+#define NOTICES                          4
+#define PERMUTATION                      5
+#define SESSION                          6
+#define SETUP                            7
+#define STEP                             8
+#define TEARDOWN                         9
+#define TEST                            10
+#define COMMA                           11
+#define LPAREN                          12
+#define RPAREN                          13
+#define STAR                            14

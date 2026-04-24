@@ -1,0 +1,1187 @@
+# Type Declarations
+
+All %type declarations mapping non-terminals to their C types.
+These must appear before the production rules.
+
+```yaml
+name: pg-type-decls
+version: 17.0.0
+description: Non-terminal type declarations
+provides: [pg-type-decls]
+depends: [pg-config]
+```
+
+## Non-Terminal Type Declarations
+
+```lime type-declarations
+/* Type declarations for all non-terminals */
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type stmt {Node *}
+%type toplevel_stmt {Node *}
+%type schema_stmt {Node *}
+%type routine_body_stmt {Node *}
+%type alterEventTrigStmt {Node *}
+%type alterCollationStmt {Node *}
+%type alterDatabaseStmt {Node *}
+%type alterDatabaseSetStmt {Node *}
+%type alterDomainStmt {Node *}
+%type alterEnumStmt {Node *}
+%type alterFdwStmt {Node *}
+%type alterForeignServerStmt {Node *}
+%type alterGroupStmt {Node *}
+%type alterObjectDependsStmt {Node *}
+%type alterObjectSchemaStmt {Node *}
+%type alterOwnerStmt {Node *}
+%type alterOperatorStmt {Node *}
+%type alterTypeStmt {Node *}
+%type alterSeqStmt {Node *}
+%type alterSystemStmt {Node *}
+%type alterTableStmt {Node *}
+%type alterTblSpcStmt {Node *}
+%type alterExtensionStmt {Node *}
+%type alterExtensionContentsStmt {Node *}
+%type alterCompositeTypeStmt {Node *}
+%type alterUserMappingStmt {Node *}
+%type alterRoleStmt {Node *}
+%type alterRoleSetStmt {Node *}
+%type alterPolicyStmt {Node *}
+%type alterStatsStmt {Node *}
+%type alterDefaultPrivilegesStmt {Node *}
+%type defACLAction {Node *}
+%type analyzeStmt {Node *}
+%type callStmt {Node *}
+%type closePortalStmt {Node *}
+%type commentStmt {Node *}
+%type constraintsSetStmt {Node *}
+%type copyStmt {Node *}
+%type createAsStmt {Node *}
+%type createCastStmt {Node *}
+%type createDomainStmt {Node *}
+%type createExtensionStmt {Node *}
+%type createGroupStmt {Node *}
+%type createOpClassStmt {Node *}
+%type createOpFamilyStmt {Node *}
+%type alterOpFamilyStmt {Node *}
+%type createPLangStmt {Node *}
+%type createSchemaStmt {Node *}
+%type createSeqStmt {Node *}
+%type createStmt {Node *}
+%type createStatsStmt {Node *}
+%type createTableSpaceStmt {Node *}
+%type createFdwStmt {Node *}
+%type createForeignServerStmt {Node *}
+%type createForeignTableStmt {Node *}
+%type createAssertionStmt {Node *}
+%type createTransformStmt {Node *}
+%type createTrigStmt {Node *}
+%type createEventTrigStmt {Node *}
+%type createPropGraphStmt {Node *}
+%type alterPropGraphStmt {Node *}
+%type createUserStmt {Node *}
+%type createUserMappingStmt {Node *}
+%type createRoleStmt {Node *}
+%type createPolicyStmt {Node *}
+%type createdbStmt {Node *}
+%type declareCursorStmt {Node *}
+%type defineStmt {Node *}
+%type deleteStmt {Node *}
+%type discardStmt {Node *}
+%type doStmt {Node *}
+%type dropOpClassStmt {Node *}
+%type dropOpFamilyStmt {Node *}
+%type dropStmt {Node *}
+%type dropCastStmt {Node *}
+%type dropRoleStmt {Node *}
+%type dropdbStmt {Node *}
+%type dropTableSpaceStmt {Node *}
+%type dropTransformStmt {Node *}
+%type dropUserMappingStmt {Node *}
+%type explainStmt {Node *}
+%type fetchStmt {Node *}
+%type grantStmt {Node *}
+%type grantRoleStmt {Node *}
+%type importForeignSchemaStmt {Node *}
+%type indexStmt {Node *}
+%type insertStmt {Node *}
+%type listenStmt {Node *}
+%type loadStmt {Node *}
+%type lockStmt {Node *}
+%type mergeStmt {Node *}
+%type notifyStmt {Node *}
+%type explainableStmt {Node *}
+%type preparableStmt {Node *}
+%type createFunctionStmt {Node *}
+%type alterFunctionStmt {Node *}
+%type reindexStmt {Node *}
+%type removeAggrStmt {Node *}
+%type removeFuncStmt {Node *}
+%type removeOperStmt {Node *}
+%type renameStmt {Node *}
+%type repackStmt {Node *}
+%type returnStmt {Node *}
+%type revokeStmt {Node *}
+%type revokeRoleStmt {Node *}
+%type ruleActionStmt {Node *}
+%type ruleActionStmtOrEmpty {Node *}
+%type ruleStmt {Node *}
+%type secLabelStmt {Node *}
+%type selectStmt {Node *}
+%type transactionStmt {Node *}
+%type transactionStmtLegacy {Node *}
+%type truncateStmt {Node *}
+%type unlistenStmt {Node *}
+%type updateStmt {Node *}
+%type vacuumStmt {Node *}
+%type variableResetStmt {Node *}
+%type variableSetStmt {Node *}
+%type variableShowStmt {Node *}
+%type viewStmt {Node *}
+%type waitStmt {Node *}
+%type checkPointStmt {Node *}
+%type createConversionStmt {Node *}
+%type deallocateStmt {Node *}
+%type prepareStmt {Node *}
+%type executeStmt {Node *}
+%type dropOwnedStmt {Node *}
+%type reassignOwnedStmt {Node *}
+%type alterTSConfigurationStmt {Node *}
+%type alterTSDictionaryStmt {Node *}
+%type createMatViewStmt {Node *}
+%type refreshMatViewStmt {Node *}
+%type createAmStmt {Node *}
+%type createPublicationStmt {Node *}
+%type alterPublicationStmt {Node *}
+%type createSubscriptionStmt {Node *}
+%type alterSubscriptionStmt {Node *}
+%type dropSubscriptionStmt {Node *}
+%type select_no_parens {Node *}
+%type select_with_parens {Node *}
+%type select_clause {Node *}
+%type simple_select {Node *}
+%type values_clause {Node *}
+%type pLpgSQL_Expr {Node *}
+%type pLAssignStmt {Node *}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type opt_single_name {char *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type opt_qualified_name {List *}
+
+/* --- Bison: %type <boolean>  =>  C type: bool --- */
+%type opt_concurrently {bool}
+%type opt_usingindex {bool}
+
+/* --- Bison: %type <dbehavior>  =>  C type: DropBehavior --- */
+%type opt_drop_behavior {DropBehavior}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type opt_utility_option_list {List *}
+%type opt_wait_with_clause {List *}
+%type utility_option_list {List *}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type utility_option_elem {DefElem *}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type utility_option_name {char *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type utility_option_arg {Node *}
+%type alter_column_default {Node *}
+%type opclass_item {Node *}
+%type opclass_drop {Node *}
+%type alter_using {Node *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type add_drop {int}
+%type opt_asc_desc {int}
+%type opt_nulls_order {int}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type alter_table_cmd {Node *}
+%type alter_type_cmd {Node *}
+%type opt_collate_clause {Node *}
+%type replica_identity {Node *}
+%type partition_cmd {Node *}
+%type index_partition_cmd {Node *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type alter_table_cmds {List *}
+%type alter_type_cmds {List *}
+%type alter_identity_column_option_list {List *}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type alter_identity_column_option {DefElem *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type set_statistics_value {Node *}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type set_access_method_name {char *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type createdb_opt_list {List *}
+%type createdb_opt_items {List *}
+%type copy_opt_list {List *}
+%type transaction_mode_list {List *}
+%type create_extension_opt_list {List *}
+%type alter_extension_opt_list {List *}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type createdb_opt_item {DefElem *}
+%type copy_opt_item {DefElem *}
+%type transaction_mode_item {DefElem *}
+%type create_extension_opt_item {DefElem *}
+%type alter_extension_opt_item {DefElem *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type opt_lock {int}
+%type lock_type {int}
+%type cast_context {int}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type drop_option {DefElem *}
+
+/* --- Bison: %type <boolean>  =>  C type: bool --- */
+%type opt_or_replace {bool}
+%type opt_no {bool}
+%type opt_grant_grant_option {bool}
+%type opt_nowait {bool}
+%type opt_if_exists {bool}
+%type opt_with_data {bool}
+%type opt_transaction_chain {bool}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type grant_role_opt_list {List *}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type grant_role_opt {DefElem *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type grant_role_opt_value {Node *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type opt_nowait_or_skip {int}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type optRoleList {List *}
+%type alterOptRoleList {List *}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type createOptRoleElem {DefElem *}
+%type alterOptRoleElem {DefElem *}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type opt_type {char *}
+%type foreign_server_version {char *}
+%type opt_foreign_server_version {char *}
+%type opt_in_database {char *}
+%type parameter_name {char *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type optSchemaEltList {List *}
+%type parameter_name_list {List *}
+
+/* --- Bison: %type <chr>  =>  C type: char --- */
+%type am_type {char}
+
+/* --- Bison: %type <boolean>  =>  C type: bool --- */
+%type triggerForSpec {bool}
+%type triggerForType {bool}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type triggerActionTime {int}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type triggerEvents {List *}
+%type triggerOneEvent {List *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type triggerFuncArg {Node *}
+%type triggerWhen {Node *}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type transitionRelName {char *}
+
+/* --- Bison: %type <boolean>  =>  C type: bool --- */
+%type transitionRowOrTable {bool}
+%type transitionOldOrNew {bool}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type triggerTransition {Node *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type event_trigger_when_list {List *}
+%type event_trigger_value_list {List *}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type event_trigger_when_item {DefElem *}
+
+/* --- Bison: %type <chr>  =>  C type: char --- */
+%type enable_trigger {char}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type copy_file_name {char *}
+%type access_method_clause {char *}
+%type attr_name {char *}
+%type table_access_method_clause {char *}
+%type name {char *}
+%type cursor_name {char *}
+%type file_name {char *}
+%type cluster_index_specification {char *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type func_name {List *}
+%type handler_name {List *}
+%type qual_Op {List *}
+%type qual_all_Op {List *}
+%type subquery_Op {List *}
+%type opt_inline_handler {List *}
+%type opt_validator {List *}
+%type validator_clause {List *}
+%type opt_collate {List *}
+
+/* --- Bison: %type <range>  =>  C type: RangeVar * --- */
+%type qualified_name {RangeVar *}
+%type insert_target {RangeVar *}
+%type optConstrFromTable {RangeVar *}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type all_Op {char *}
+%type mathOp {char *}
+%type row_security_cmd {char *}
+%type rowSecurityDefaultForCmd {char *}
+
+/* --- Bison: %type <boolean>  =>  C type: bool --- */
+%type rowSecurityDefaultPermissive {bool}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type rowSecurityOptionalWithCheck {Node *}
+%type rowSecurityOptionalExpr {Node *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type rowSecurityDefaultToRole {List *}
+%type rowSecurityOptionalToRole {List *}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type iso_level {char *}
+%type opt_encoding {char *}
+
+/* --- Bison: %type <rolespec>  =>  C type: roleSpec * --- */
+%type grantee {roleSpec *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type grantee_list {List *}
+
+/* --- Bison: %type <accesspriv>  =>  C type: AccessPriv * --- */
+%type privilege {AccessPriv *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type privileges {List *}
+%type privilege_list {List *}
+
+/* --- Bison: %type <privtarget>  =>  C type: struct PrivTarget * --- */
+%type privilege_target {struct PrivTarget *}
+
+/* --- Bison: %type <objwithargs>  =>  C type: ObjectWithArgs * --- */
+%type function_with_argtypes {ObjectWithArgs *}
+%type aggregate_with_argtypes {ObjectWithArgs *}
+%type operator_with_argtypes {ObjectWithArgs *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type function_with_argtypes_list {List *}
+%type aggregate_with_argtypes_list {List *}
+%type operator_with_argtypes_list {List *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type defacl_privilege_target {int}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type defACLOption {DefElem *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type defACLOptionList {List *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type import_qualification_type {int}
+
+/* --- Bison: %type <importqual>  =>  C type: struct ImportQual * --- */
+%type import_qualification {struct ImportQual *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type vacuum_relation {Node *}
+
+/* --- Bison: %type <selectlimit>  =>  C type: struct SelectLimit * --- */
+%type opt_select_limit {struct SelectLimit *}
+%type select_limit {struct SelectLimit *}
+%type limit_clause {struct SelectLimit *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type parse_toplevel {List *}
+%type stmtmulti {List *}
+%type routine_body_stmt_list {List *}
+%type optTableElementList {List *}
+%type tableElementList {List *}
+%type optInherit {List *}
+%type definition {List *}
+%type optTypedTableElementList {List *}
+%type typedTableElementList {List *}
+%type reloptions {List *}
+%type opt_reloptions {List *}
+%type optWith {List *}
+%type opt_definition {List *}
+%type func_args {List *}
+%type func_args_list {List *}
+%type func_args_with_defaults {List *}
+%type func_args_with_defaults_list {List *}
+%type aggr_args {List *}
+%type aggr_args_list {List *}
+%type func_as {List *}
+%type createfunc_opt_list {List *}
+%type opt_createfunc_opt_list {List *}
+%type alterfunc_opt_list {List *}
+%type old_aggr_definition {List *}
+%type old_aggr_list {List *}
+%type oper_argtypes {List *}
+%type ruleActionList {List *}
+%type ruleActionMulti {List *}
+%type opt_column_list {List *}
+%type columnList {List *}
+%type opt_name_list {List *}
+%type sort_clause {List *}
+%type opt_sort_clause {List *}
+%type sortby_list {List *}
+%type index_params {List *}
+%type stats_params {List *}
+%type opt_include {List *}
+%type opt_c_include {List *}
+%type index_including_params {List *}
+%type name_list {List *}
+%type role_list {List *}
+%type from_clause {List *}
+%type from_list {List *}
+%type opt_array_bounds {List *}
+%type qualified_name_list {List *}
+%type any_name {List *}
+%type any_name_list {List *}
+%type type_name_list {List *}
+%type any_operator {List *}
+%type expr_list {List *}
+%type attrs {List *}
+%type distinct_clause {List *}
+%type opt_distinct_clause {List *}
+%type target_list {List *}
+%type opt_target_list {List *}
+%type insert_column_list {List *}
+%type set_target_list {List *}
+%type merge_values_clause {List *}
+%type set_clause_list {List *}
+%type set_clause {List *}
+%type def_list {List *}
+%type operator_def_list {List *}
+%type indirection {List *}
+%type opt_indirection {List *}
+%type reloption_list {List *}
+%type triggerFuncArgs {List *}
+%type opclass_item_list {List *}
+%type opclass_drop_list {List *}
+%type opclass_purpose {List *}
+%type opt_opfamily {List *}
+%type transaction_mode_list_or_empty {List *}
+%type optTableFuncElementList {List *}
+%type tableFuncElementList {List *}
+%type opt_type_modifiers {List *}
+%type prep_type_clause {List *}
+%type execute_param_clause {List *}
+%type using_clause {List *}
+%type returning_with_clause {List *}
+%type returning_options {List *}
+%type opt_enum_val_list {List *}
+%type enum_val_list {List *}
+%type table_func_column_list {List *}
+%type create_generic_options {List *}
+%type alter_generic_options {List *}
+%type relation_expr_list {List *}
+%type dostmt_opt_list {List *}
+%type transform_element_list {List *}
+%type transform_type_list {List *}
+%type triggerTransitions {List *}
+%type triggerReferencing {List *}
+%type vacuum_relation_list {List *}
+%type opt_vacuum_relation_list {List *}
+%type drop_option_list {List *}
+%type pub_obj_list {List *}
+%type pub_all_obj_type_list {List *}
+%type pub_except_obj_list {List *}
+%type opt_pub_except_clause {List *}
+
+/* --- Bison: %type <retclause>  =>  C type: ReturningClause * --- */
+%type returning_clause {ReturningClause *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type returning_option {Node *}
+
+/* --- Bison: %type <retoptionkind>  =>  C type: ReturningOptionKind --- */
+%type returning_option_kind {ReturningOptionKind}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type opt_routine_body {Node *}
+
+/* --- Bison: %type <groupclause>  =>  C type: struct GroupClause * --- */
+%type group_clause {struct GroupClause *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type group_by_list {List *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type group_by_item {Node *}
+%type empty_grouping_set {Node *}
+%type rollup_clause {Node *}
+%type cube_clause {Node *}
+%type grouping_sets_clause {Node *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type opt_fdw_options {List *}
+%type fdw_options {List *}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type fdw_option {DefElem *}
+
+/* --- Bison: %type <range>  =>  C type: RangeVar * --- */
+%type optTempTableName {RangeVar *}
+
+/* --- Bison: %type <into>  =>  C type: IntoClause * --- */
+%type into_clause {IntoClause *}
+%type create_as_target {IntoClause *}
+%type create_mv_target {IntoClause *}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type createfunc_opt_item {DefElem *}
+%type common_func_opt_item {DefElem *}
+%type dostmt_opt_item {DefElem *}
+
+/* --- Bison: %type <fun_param>  =>  C type: FunctionParameter * --- */
+%type func_arg {FunctionParameter *}
+%type func_arg_with_default {FunctionParameter *}
+%type table_func_column {FunctionParameter *}
+%type aggr_arg {FunctionParameter *}
+
+/* --- Bison: %type <fun_param_mode>  =>  C type: FunctionParameterMode --- */
+%type arg_class {FunctionParameterMode}
+
+/* --- Bison: %type <typnam>  =>  C type: TypeName * --- */
+%type func_return {TypeName *}
+%type func_type {TypeName *}
+
+/* --- Bison: %type <boolean>  =>  C type: bool --- */
+%type opt_trusted {bool}
+%type opt_restart_seqs {bool}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type optTemp {int}
+%type optNoLog {int}
+
+/* --- Bison: %type <oncommit>  =>  C type: OnCommitAction --- */
+%type onCommitOption {OnCommitAction}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type for_locking_strength {int}
+%type opt_for_locking_strength {int}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type for_locking_item {Node *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type for_locking_clause {List *}
+%type opt_for_locking_clause {List *}
+%type for_locking_items {List *}
+%type locked_rels_list {List *}
+
+/* --- Bison: %type <setquantifier>  =>  C type: SetQuantifier --- */
+%type set_quantifier {SetQuantifier}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type join_qual {Node *}
+
+/* --- Bison: %type <jtype>  =>  C type: JoinType --- */
+%type join_type {JoinType}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type extract_list {List *}
+%type overlay_list {List *}
+%type position_list {List *}
+%type substr_list {List *}
+%type trim_list {List *}
+%type opt_interval {List *}
+%type interval_second {List *}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type unicode_normal_form {char *}
+
+/* --- Bison: %type <boolean>  =>  C type: bool --- */
+%type opt_instead {bool}
+%type opt_unique {bool}
+%type opt_verbose {bool}
+%type opt_full {bool}
+%type opt_freeze {bool}
+%type opt_analyze {bool}
+%type opt_default {bool}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type opt_binary {DefElem *}
+%type copy_delimiter {DefElem *}
+
+/* --- Bison: %type <boolean>  =>  C type: bool --- */
+%type copy_from {bool}
+%type opt_program {bool}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type event {int}
+%type cursor_options {int}
+%type opt_hold {int}
+%type opt_set_data {int}
+
+/* --- Bison: %type <objtype>  =>  C type: ObjectType --- */
+%type object_type_any_name {ObjectType}
+%type object_type_name {ObjectType}
+%type object_type_name_on_any_name {ObjectType}
+%type drop_type_name {ObjectType}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type fetch_args {Node *}
+%type select_limit_value {Node *}
+%type offset_clause {Node *}
+%type select_offset_value {Node *}
+%type select_fetch_first_value {Node *}
+%type i_or_F_const {Node *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type row_or_rows {int}
+%type first_or_next {int}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type optSeqOptList {List *}
+%type seqOptList {List *}
+%type optParenthesizedSeqOptList {List *}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type seqOptElem {DefElem *}
+
+/* --- Bison: %type <istmt>  =>  C type: insertStmt * --- */
+%type insert_rest {insertStmt *}
+
+/* --- Bison: %type <infer>  =>  C type: InferClause * --- */
+%type opt_conf_expr {InferClause *}
+
+/* --- Bison: %type <onconflict>  =>  C type: OnConflictClause * --- */
+%type opt_on_conflict {OnConflictClause *}
+
+/* --- Bison: %type <mergewhen>  =>  C type: MergeWhenClause * --- */
+%type merge_insert {MergeWhenClause *}
+%type merge_update {MergeWhenClause *}
+%type merge_delete {MergeWhenClause *}
+
+/* --- Bison: %type <mergematch>  =>  C type: MergeMatchKind --- */
+%type merge_when_tgt_matched {MergeMatchKind}
+%type merge_when_tgt_not_matched {MergeMatchKind}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type merge_when_clause {Node *}
+%type opt_merge_when_condition {Node *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type merge_when_list {List *}
+
+/* --- Bison: %type <vsetstmt>  =>  C type: variableSetStmt * --- */
+%type generic_set {variableSetStmt *}
+%type set_rest {variableSetStmt *}
+%type set_rest_more {variableSetStmt *}
+%type generic_reset {variableSetStmt *}
+%type reset_rest {variableSetStmt *}
+%type setResetClause {variableSetStmt *}
+%type functionSetResetClause {variableSetStmt *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type tableElement {Node *}
+%type typedTableElement {Node *}
+%type constraintElem {Node *}
+%type domainConstraintElem {Node *}
+%type tableFuncElement {Node *}
+%type columnDef {Node *}
+%type columnOptions {Node *}
+%type optionalPeriodName {Node *}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type def_elem {DefElem *}
+%type reloption_elem {DefElem *}
+%type old_aggr_elem {DefElem *}
+%type operator_def_elem {DefElem *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type def_arg {Node *}
+%type columnElem {Node *}
+%type where_clause {Node *}
+%type where_or_current_clause {Node *}
+%type a_expr {Node *}
+%type b_expr {Node *}
+%type c_expr {Node *}
+%type aexprConst {Node *}
+%type indirection_el {Node *}
+%type opt_slice_bound {Node *}
+%type columnref {Node *}
+%type having_clause {Node *}
+%type func_table {Node *}
+%type xmltable {Node *}
+%type array_expr {Node *}
+%type optWhereClause {Node *}
+%type operator_def_arg {Node *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type opt_column_and_period_list {List *}
+%type rowsfrom_item {List *}
+%type rowsfrom_list {List *}
+%type opt_col_def_list {List *}
+
+/* --- Bison: %type <boolean>  =>  C type: bool --- */
+%type opt_ordinality {bool}
+%type opt_without_overlaps {bool}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type exclusionConstraintList {List *}
+%type exclusionConstraintElem {List *}
+%type func_arg_list {List *}
+%type func_arg_list_opt {List *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type func_arg_expr {Node *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type row {List *}
+%type explicit_row {List *}
+%type implicit_row {List *}
+%type type_list {List *}
+%type array_expr_list {List *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type case_expr {Node *}
+%type case_arg {Node *}
+%type when_clause {Node *}
+%type case_default {Node *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type when_clause_list {List *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type opt_search_clause {Node *}
+%type opt_cycle_clause {Node *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type sub_type {int}
+%type opt_materialized {int}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type numericOnly {Node *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type numericOnly_list {List *}
+
+/* --- Bison: %type <alias>  =>  C type: Alias * --- */
+%type alias_clause {Alias *}
+%type opt_alias_clause {Alias *}
+%type opt_alias_clause_for_join_using {Alias *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type func_alias_clause {List *}
+
+/* --- Bison: %type <sortby>  =>  C type: SortBy * --- */
+%type sortby {SortBy *}
+
+/* --- Bison: %type <ielem>  =>  C type: IndexElem * --- */
+%type index_elem {IndexElem *}
+%type index_elem_options {IndexElem *}
+
+/* --- Bison: %type <selem>  =>  C type: StatsElem * --- */
+%type stats_param {StatsElem *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type table_ref {Node *}
+
+/* --- Bison: %type <jexpr>  =>  C type: JoinExpr * --- */
+%type joined_table {JoinExpr *}
+
+/* --- Bison: %type <range>  =>  C type: RangeVar * --- */
+%type relation_expr {RangeVar *}
+%type extended_relation_expr {RangeVar *}
+%type relation_expr_opt_alias {RangeVar *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type tablesample_clause {Node *}
+%type opt_repeatable_clause {Node *}
+
+/* --- Bison: %type <target>  =>  C type: ResTarget * --- */
+%type target_el {ResTarget *}
+%type set_target {ResTarget *}
+%type insert_column_item {ResTarget *}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type generic_option_name {char *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type generic_option_arg {Node *}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type generic_option_elem {DefElem *}
+%type alter_generic_option_elem {DefElem *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type generic_option_list {List *}
+%type alter_generic_option_list {List *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type reindex_target_relation {int}
+%type reindex_target_all {int}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type copy_generic_opt_arg {Node *}
+%type copy_generic_opt_arg_list_item {Node *}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type copy_generic_opt_elem {DefElem *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type copy_generic_opt_list {List *}
+%type copy_generic_opt_arg_list {List *}
+%type copy_options {List *}
+
+/* --- Bison: %type <typnam>  =>  C type: TypeName * --- */
+%type typename {TypeName *}
+%type simpleTypename {TypeName *}
+%type constTypename {TypeName *}
+%type genericType {TypeName *}
+%type numeric {TypeName *}
+%type opt_float {TypeName *}
+%type jsonType {TypeName *}
+%type character_tn {TypeName *}
+%type constCharacter {TypeName *}
+%type characterWithLength {TypeName *}
+%type characterWithoutLength {TypeName *}
+%type constDatetime {TypeName *}
+%type constInterval {TypeName *}
+%type bit {TypeName *}
+%type constBit {TypeName *}
+%type bitWithLength {TypeName *}
+%type bitWithoutLength {TypeName *}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type character {char *}
+%type extract_arg {char *}
+
+/* --- Bison: %type <boolean>  =>  C type: bool --- */
+%type opt_varying {bool}
+%type opt_timezone {bool}
+%type opt_no_inherit {bool}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type iconst {int}
+%type signedIconst {int}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type sconst {char *}
+%type comment_text {char *}
+%type notify_payload {char *}
+%type roleId {char *}
+%type opt_boolean_or_string {char *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type var_list {List *}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type colId {char *}
+%type colLabel {char *}
+%type bareColLabel {char *}
+%type nonReservedWord {char *}
+%type nonReservedWord_or_Sconst {char *}
+%type var_name {char *}
+%type type_function_name {char *}
+%type param_name {char *}
+%type createdb_opt_name {char *}
+%type plassign_target {char *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type var_value {Node *}
+%type zone_value {Node *}
+
+/* --- Bison: %type <rolespec>  =>  C type: roleSpec * --- */
+%type auth_ident {roleSpec *}
+%type roleSpec {roleSpec *}
+%type opt_granted_by {roleSpec *}
+
+/* --- Bison: %type <publicationobjectspec>  =>  C type: publicationObjSpec * --- */
+%type publicationObjSpec {publicationObjSpec *}
+%type publicationExceptObjSpec {publicationObjSpec *}
+
+/* --- Bison: %type <publicationallobjectspec>  =>  C type: publicationAllObjSpec * --- */
+%type publicationAllObjSpec {publicationAllObjSpec *}
+
+/* --- Bison: %type <keyword>  =>  C type: const char * --- */
+%type unreserved_keyword {const char *}
+%type type_func_name_keyword {const char *}
+%type col_name_keyword {const char *}
+%type reserved_keyword {const char *}
+%type bare_label_keyword {const char *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type domainConstraint {Node *}
+%type tableConstraint {Node *}
+%type tableLikeClause {Node *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type tableLikeOptionList {int}
+%type tableLikeOption {int}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type column_compression {char *}
+%type opt_column_compression {char *}
+%type column_storage {char *}
+%type opt_column_storage {char *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type colQualList {List *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type colConstraint {Node *}
+%type colConstraintElem {Node *}
+%type constraintAttr {Node *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type key_match {int}
+
+/* --- Bison: %type <keyaction>  =>  C type: struct KeyAction * --- */
+%type key_delete {struct KeyAction *}
+%type key_update {struct KeyAction *}
+%type key_action {struct KeyAction *}
+
+/* --- Bison: %type <keyactions>  =>  C type: struct KeyActions * --- */
+%type key_actions {struct KeyActions *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type constraintAttributeSpec {int}
+%type constraintAttributeElem {int}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type existingIndex {char *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type constraints_set_list {List *}
+
+/* --- Bison: %type <boolean>  =>  C type: bool --- */
+%type constraints_set_mode {bool}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type optTableSpace {char *}
+%type optConsTableSpace {char *}
+
+/* --- Bison: %type <rolespec>  =>  C type: roleSpec * --- */
+%type optTableSpaceOwner {roleSpec *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type opt_check_option {int}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type opt_provider {char *}
+%type security_label {char *}
+
+/* --- Bison: %type <target>  =>  C type: ResTarget * --- */
+%type labeled_expr {ResTarget *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type labeled_expr_list {List *}
+%type xml_attributes {List *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type xml_root_version {Node *}
+%type opt_xml_root_standalone {Node *}
+%type xmlexists_argument {Node *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type document_or_content {int}
+
+/* --- Bison: %type <boolean>  =>  C type: bool --- */
+%type xml_indent_option {bool}
+%type xml_whitespace_option {bool}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type xmltable_column_list {List *}
+%type xmltable_column_option_list {List *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type xmltable_column_el {Node *}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type xmltable_column_option_el {DefElem *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type xml_namespace_list {List *}
+
+/* --- Bison: %type <target>  =>  C type: ResTarget * --- */
+%type xml_namespace_el {ResTarget *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type func_application {Node *}
+%type func_expr_common_subexpr {Node *}
+%type func_expr {Node *}
+%type func_expr_windowless {Node *}
+%type common_table_expr {Node *}
+
+/* --- Bison: %type <with>  =>  C type: WithClause * --- */
+%type with_clause {WithClause *}
+%type opt_with_clause {WithClause *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type cte_list {List *}
+%type within_group_clause {List *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type filter_clause {Node *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type window_clause {List *}
+%type window_definition_list {List *}
+%type opt_partition_clause {List *}
+
+/* --- Bison: %type <windef>  =>  C type: WindowDef * --- */
+%type window_definition {WindowDef *}
+%type over_clause {WindowDef *}
+%type window_specification {WindowDef *}
+%type opt_frame_clause {WindowDef *}
+%type frame_extent {WindowDef *}
+%type frame_bound {WindowDef *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type null_treatment {int}
+%type opt_window_exclusion_clause {int}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type opt_existing_window_name {char *}
+
+/* --- Bison: %type <boolean>  =>  C type: bool --- */
+%type opt_if_not_exists {bool}
+%type opt_unique_null_treatment {bool}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type generated_when {int}
+%type override_kind {int}
+%type opt_virtual_or_stored {int}
+
+/* --- Bison: %type <partspec>  =>  C type: partitionSpec * --- */
+%type partitionSpec {partitionSpec *}
+%type optPartitionSpec {partitionSpec *}
+
+/* --- Bison: %type <partelem>  =>  C type: PartitionElem * --- */
+%type part_elem {PartitionElem *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type part_params {List *}
+
+/* --- Bison: %type <partboundspec>  =>  C type: partitionBoundSpec * --- */
+%type partitionBoundSpec {partitionBoundSpec *}
+
+/* --- Bison: %type <singlepartspec>  =>  C type: singlePartitionSpec * --- */
+%type singlePartitionSpec {singlePartitionSpec *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type partitions_list {List *}
+%type hash_partbound {List *}
+
+/* --- Bison: %type <defelt>  =>  C type: DefElem * --- */
+%type hash_partbound_elem {DefElem *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type json_format_clause {Node *}
+%type json_format_clause_opt {Node *}
+%type json_value_expr {Node *}
+%type json_returning_clause_opt {Node *}
+%type json_name_and_value {Node *}
+%type json_aggregate_func {Node *}
+%type json_argument {Node *}
+%type json_behavior {Node *}
+%type json_on_error_clause_opt {Node *}
+%type json_table {Node *}
+%type json_table_column_definition {Node *}
+%type json_table_column_path_clause_opt {Node *}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type json_name_and_value_list {List *}
+%type json_value_expr_list {List *}
+%type json_array_aggregate_order_by_clause_opt {List *}
+%type json_arguments {List *}
+%type json_behavior_clause_opt {List *}
+%type json_passing_clause_opt {List *}
+%type json_table_column_definition_list {List *}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type json_table_path_name_opt {char *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type json_behavior_type {int}
+%type json_predicate_type_constraint {int}
+%type json_quotes_clause_opt {int}
+%type json_wrapper_behavior {int}
+
+/* --- Bison: %type <boolean>  =>  C type: bool --- */
+%type json_key_uniqueness_constraint_opt {bool}
+%type json_object_constructor_null_clause_opt {bool}
+%type json_array_constructor_null_clause_opt {bool}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type vertex_tables_clause {List *}
+%type edge_tables_clause {List *}
+%type opt_vertex_tables_clause {List *}
+%type opt_edge_tables_clause {List *}
+%type vertex_table_list {List *}
+%type opt_graph_table_key_clause {List *}
+%type edge_table_list {List *}
+%type source_vertex_table {List *}
+%type destination_vertex_table {List *}
+%type opt_element_table_label_and_properties {List *}
+%type label_and_properties_list {List *}
+%type add_label_list {List *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type vertex_table_definition {Node *}
+%type edge_table_definition {Node *}
+
+/* --- Bison: %type <alias>  =>  C type: Alias * --- */
+%type opt_propgraph_table_alias {Alias *}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type element_table_label_clause {char *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type label_and_properties {Node *}
+%type element_table_properties {Node *}
+%type add_label {Node *}
+
+/* --- Bison: %type <ival>  =>  C type: int --- */
+%type vertex_or_edge {int}
+
+/* --- Bison: %type <list>  =>  C type: List * --- */
+%type opt_graph_pattern_quantifier {List *}
+%type path_pattern_list {List *}
+%type path_pattern {List *}
+%type path_pattern_expression {List *}
+%type path_term {List *}
+
+/* --- Bison: %type <node>  =>  C type: Node * --- */
+%type graph_pattern {Node *}
+%type path_factor {Node *}
+%type path_primary {Node *}
+%type opt_is_label_expression {Node *}
+%type label_expression {Node *}
+%type label_disjunction {Node *}
+%type label_term {Node *}
+
+/* --- Bison: %type <str>  =>  C type: char * --- */
+%type opt_colid {char *}
+```

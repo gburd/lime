@@ -1,0 +1,66 @@
+% access_control.dl -- Role-based access control in Datalog
+%
+% Models a simple RBAC system: users have roles, roles have
+% permissions, and access decisions are derived by rules.
+
+% --- Facts: users and role assignments ---
+
+user("alice").
+user("bob").
+user("carol").
+user("dave").
+
+role_assignment("alice", admin).
+role_assignment("bob", editor).
+role_assignment("carol", viewer).
+role_assignment("dave", editor).
+
+% --- Facts: role hierarchy ---
+
+role_inherits(admin, editor).
+role_inherits(editor, viewer).
+
+% --- Facts: permissions ---
+
+permission(admin, delete).
+permission(editor, write).
+permission(viewer, read).
+
+% --- Facts: resources ---
+
+resource(doc1, "Design Document").
+resource(doc2, "Meeting Notes").
+resource(doc3, "Classified Report").
+
+restricted(doc3).
+
+% --- Rules ---
+
+% Transitive role inheritance
+has_role(User, Role) :- role_assignment(User, Role).
+has_role(User, Role) :- role_assignment(User, R), role_inherits(R, Role).
+has_role(User, Role) :- has_role(User, R), role_inherits(R, Role).
+
+% Effective permissions through role hierarchy
+has_permission(User, Perm) :- has_role(User, Role), permission(Role, Perm).
+
+% Access check: can a user access a resource?
+can_access(User, Res) :- user(User), resource(Res, _),
+                          has_permission(User, read),
+                          not restricted(Res).
+
+% Admin can access everything
+can_access(User, Res) :- user(User), resource(Res, _),
+                          has_role(User, admin).
+
+% Can modify: requires write permission
+can_modify(User, Res) :- can_access(User, Res),
+                          has_permission(User, write).
+
+% --- Queries ---
+
+?- has_role("alice", X).
+?- has_permission("bob", X).
+?- can_access("carol", X).
+?- can_modify("alice", doc1).
+?- can_access("carol", doc3).

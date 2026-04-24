@@ -101,6 +101,54 @@ test_extension_coverage = executable('test_extension_coverage',
 
 test('extension_coverage', test_extension_coverage)
 
+test_parser_manager = executable('test_parser_manager',
+  'test_parser_manager.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('parser_manager', test_parser_manager, timeout : 120)
+
+test_runtime_management = executable('test_runtime_management',
+  'test_runtime_management.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('runtime_management', test_runtime_management, timeout : 120)
+
+test_merkle_tree = executable('test_merkle_tree',
+  'test_merkle_tree.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('merkle_tree', test_merkle_tree)
+
+test_dependency_resolver = executable('test_dependency_resolver',
+  'test_dependency_resolver.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('dependency_resolver', test_dependency_resolver)
+
+test_parser_composition = executable('test_parser_composition',
+  'test_parser_composition.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('parser_composition', test_parser_composition)
+
+test_random_composition = executable('test_random_composition',
+  'test_random_composition.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('random_composition', test_random_composition, timeout : 120)
+
 # Temporarily disabled due to API mismatches
 #test_coverage_boost = executable('test_coverage_boost',
 #  'test_coverage_boost.c',

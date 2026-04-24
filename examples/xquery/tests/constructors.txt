@@ -1,0 +1,31 @@
+# Computed constructors
+
+# Element constructor
+element book { "content" }
+
+# Element with nested elements
+element catalog { element item { "first" } }
+
+# Attribute constructor
+attribute id { "123" }
+
+# Element with attribute
+element entry { attribute id { "1" }, "text content" }
+
+# Document constructor
+document { element root { "data" } }
+
+# Text constructor
+text { "hello world" }
+
+# Comment constructor
+comment { "this is a comment" }
+
+# Processing instruction
+processing-instruction xml-stylesheet { "type='text/xsl'" }
+
+# Element with FLWOR content
+element results { for $x in //item return element row { $x/name } }
+
+# Nested constructors
+element outer { element inner { attribute type { "test" }, "value" } }

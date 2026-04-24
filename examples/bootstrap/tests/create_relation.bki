@@ -1,0 +1,23 @@
+# Test CREATE statement
+# Creates a bootstrap relation with column definitions
+
+create pg_type 1247 bootstrap shared_relation rowtype_oid 71 (
+  oid = oid FORCE NOT NULL,
+  typname = name FORCE NOT NULL,
+  typnamespace = oid FORCE NOT NULL,
+  typowner = oid FORCE NOT NULL,
+  typlen = int2 FORCE NOT NULL,
+  typbyval = bool FORCE NOT NULL,
+  typtype = char FORCE NOT NULL,
+  typcategory = char FORCE NOT NULL,
+  typispreferred = bool FORCE NOT NULL,
+  typisdefined = bool FORCE NOT NULL,
+  typdelim = char FORCE NOT NULL,
+  typrelid = oid FORCE NOT NULL,
+  typelem = oid FORCE NOT NULL,
+  typarray = oid FORCE NOT NULL,
+  typinput = regproc FORCE NOT NULL,
+  typoutput = regproc FORCE NOT NULL,
+  typreceive = regproc FORCE NOT NULL,
+  typsend = regproc FORCE NOT NULL
+)

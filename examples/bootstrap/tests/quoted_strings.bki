@@ -1,0 +1,13 @@
+# Test single-quoted strings (treated as identifiers)
+
+create test_rel 8888 (
+  col1 = text,
+  col2 = text
+)
+
+open test_rel
+
+insert ('hello world' 'it''s a test')
+insert ('line 1' 'value with spaces')
+
+close test_rel

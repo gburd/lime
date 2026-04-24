@@ -1,0 +1,36 @@
+# MongoDB query operators
+
+# Comparison operators
+{ "age": { "$gt": 25 } }
+{ "age": { "$gte": 18 } }
+{ "age": { "$lt": 65 } }
+{ "age": { "$lte": 100 } }
+{ "status": { "$eq": "active" } }
+{ "status": { "$ne": "deleted" } }
+{ "size": { "$in": ["S", "M", "L"] } }
+{ "color": { "$nin": ["red", "blue"] } }
+
+# Combined comparison
+{ "age": { "$gt": 25, "$lte": 65 } }
+{ "price": { "$gte": 10, "$lt": 100 } }
+
+# Logical operators
+{ "$and": [{ "status": "A" }, { "age": { "$lt": 30 } }] }
+{ "$or": [{ "status": "A" }, { "status": "B" }] }
+{ "$nor": [{ "price": 1.99 }, { "sale": true }] }
+{ "age": { "$not": { "$gt": 25 } } }
+
+# Element operators
+{ "email": { "$exists": true } }
+{ "phone": { "$exists": false } }
+{ "zipCode": { "$type": "string" } }
+
+# Array operators
+{ "tags": { "$all": ["ssl", "security"] } }
+{ "results": { "$elemMatch": { "$gte": 80, "$lt": 85 } } }
+{ "tags": { "$size": 3 } }
+
+# Evaluation operators
+{ "name": { "$regex": "^Al" } }
+{ "name": { "$regex": "^al", "$options": "i" } }
+{ "qty": { "$mod": [4, 0] } }

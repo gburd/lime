@@ -12,6 +12,7 @@
 #define PG_KWLIST_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <string.h>
 #include "pg_grammar.h"  /* Token ID #defines */
 
@@ -549,7 +550,7 @@ static const PgKwEntry pg_keywords[] = {
  * Returns a pointer to the PgKwEntry, or NULL if not found.
  */
 static inline const PgKwEntry *
-pg_kw_lookup(const char *str, int len)
+pg_kw_lookup(const char *str, size_t len)
 {
     int lo = 0;
     int hi = PG_NUM_KEYWORDS - 1;

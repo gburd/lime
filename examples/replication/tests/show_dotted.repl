@@ -1,0 +1,1 @@
+SHOW pg_catalog.max_wal_senders

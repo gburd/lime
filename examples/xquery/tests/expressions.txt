@@ -1,0 +1,46 @@
+# XQuery-specific expressions
+
+# If-then-else
+if (true()) then "yes" else "no"
+if (count(//error) > 0) then "errors" else "ok"
+if ($x > 0) then $x else -$x
+
+# Quantified expressions
+some $x in (1, 2, 3) satisfies $x > 2
+every $x in (1, 2, 3) satisfies $x > 0
+some $x in //price, $y in //discount satisfies $x > $y
+
+# Value comparison operators
+$a eq $b
+$x ne 0
+$price lt 100
+$age le 65
+$score gt 90
+$count ge 1
+
+# Node comparison
+$a is $b
+
+# Range expression
+1 to 10
+
+# Sequence expression
+(1, 2, 3)
+("a", "b", "c")
+(1, "two", 3.0)
+
+# Empty sequence
+()
+
+# Integer division
+10 idiv 3
+
+# Union/intersect/except
+$a union $b
+$a intersect $b
+$a except $b
+//book | //article
+
+# Parenthesized expressions
+(for $x in (1, 2) return $x * 2)
+(if (true()) then 1 else 2) + 3

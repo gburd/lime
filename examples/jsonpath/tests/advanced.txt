@@ -1,0 +1,67 @@
+# Advanced JSONPath expressions
+
+# Arithmetic
+$.x + 1
+$.x - 1
+$.x * 2
+$.x / 2
+$.x % 3
+-$.x
++$.x
+
+# Nested accessors
+$.store.book[*].author
+$.store.book[0,1].title
+$.store.book[0 to 2].price
+
+# Chained methods
+$.x.floor().type()
+
+# Filters with complex predicates
+$.items[*] ? (@.price < 10)
+$.items[*] ? (@.price > 5 && @.price < 20)
+$.items[*] ? (@.name starts with "A")
+
+# Any-level wildcards
+$.**
+$.**.name
+$.**{2}
+$.**{1 to 5}
+
+# Mode prefixes
+strict $.x
+lax $.x
+
+# Variables
+$x
+$myVar
+
+# Comparison operators
+$.x == 1
+$.x != 1
+$.x <> 1
+$.x < 1
+$.x <= 1
+$.x > 1
+$.x >= 1
+
+# Quoted strings with escapes
+"hello world"
+"line\nbreak"
+"tab\there"
+
+# Numeric formats
+0
+123
+3.14
+1.5e10
+0xFF
+0o77
+0b1010
+
+# Parenthesized expressions
+($.x + $.y)
+($.x).type()
+
+# Comments in input
+$.x /* a comment */ .y

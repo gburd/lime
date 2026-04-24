@@ -1,0 +1,871 @@
+/*
+ * xquery.lime -- XQuery 1.0 Grammar for the Lime Parser Generator
+ *
+ * A literate grammar implementing a substantial subset of the XQuery 1.0
+ * W3C Recommendation, extending XPath with FLWOR expressions, element
+ * constructors, function declarations, and module structure.
+ *
+ * ---
+ * title: XQuery 1.0 Parser
+ * version: 1.0.0
+ * language: xquery
+ * standard: "W3C XQuery 1.0 Recommendation (23 January 2007)"
+ * exports:
+ *   - xquery_module
+ *   - flwor_expr
+ *   - element_constructor
+ *   - function_decl
+ *   - quantified_expr
+ * dependencies:
+ *   - name: xpath
+ *     version: "1.0.0"
+ *     imports: [xpath_expr, location_path, step, expr]
+ * description: |
+ *   XQuery 1.0 parser extending XPath 1.0 with FLWOR expressions,
+ *   computed element/attribute constructors, user-defined functions,
+ *   module prolog with namespace declarations, quantified expressions,
+ *   if-then-else, typeswitch, and sequence expressions.
+ *
+ * examples:
+ *   - |
+ *     (: Simple FLWOR query :)
+ *     for $book in //book
+ *     where $book/price < 30
+ *     order by $book/title
+ *     return $book/title
+ *   - |
+ *     (: Join query :)
+ *     for $b in //book, $a in //author
+ *     where $b/author-ref = $a/@id
+ *     return element result { $b/title, $a/name }
+ *   - |
+ *     (: User function :)
+ *     declare function local:factorial($n as xs:integer) as xs:integer {
+ *       if ($n le 1) then 1
+ *       else $n * local:factorial($n - 1)
+ *     };
+ *     local:factorial(10)
+ *   - |
+ *     (: Quantified expression :)
+ *     some $x in (1, 2, 3) satisfies $x > 2
+ *   - |
+ *     (: Computed element constructor :)
+ *     element catalog {
+ *       for $item in //item
+ *       return element entry { attribute id { $item/@id }, $item/name }
+ *     }
+ *   - |
+ *     (: Conditional :)
+ *     if (count(//error) > 0)
+ *     then "errors found"
+ *     else "all clear"
+ *
+ * composition_hash: null
+ * ---
+ */
+
+/*
+ * ## XQuery 1.0 Overview
+ *
+ * XQuery is a query language for XML. It extends XPath 2.0 with:
+ *
+ *   - FLWOR expressions (for, let, where, order by, return)
+ *   - Element and attribute constructors
+ *   - User-defined functions
+ *   - Module structure with namespace declarations
+ *   - Quantified expressions (some/every ... satisfies)
+ *   - Conditional expressions (if/then/else)
+ *   - Type expressions (instance of, cast as, etc.)
+ *   - Sequence expressions with comma operator
+ *
+ * Variables are prefixed with $ (e.g., $book, $x).
+ * Comments use (: ... :) syntax.
+ */
+
+/* ======================================================================
+ * PARSER CONFIGURATION
+ * ====================================================================== */
+
+%name xqueryParse
+
+%token_type {XQToken}
+
+%extra_argument {XQParseState *pstate}
+
+%include {
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include "xquery_internal.h"
+#include "xquery_helpers.h"
+}
+
+%syntax_error {
+    pstate->error = 1;
+    if (pstate->errMsg == NULL) {
+        pstate->errMsg = "syntax error in XQuery expression";
+    }
+}
+
+%parse_failure {
+    pstate->error = 1;
+    if (pstate->errMsg == NULL) {
+        pstate->errMsg = "XQuery parse failure";
+    }
+}
+
+%start_symbol xquery_top
+
+/* ======================================================================
+ * TOKEN DECLARATIONS
+ * ====================================================================== */
+
+/* XPath operators and punctuation */
+%token SLASH.           /* /   */
+%token DOUBLE_SLASH.    /* //  */
+%token DOT.             /* .   */
+%token DOUBLE_DOT.      /* ..  */
+%token AT.              /* @   */
+%token COMMA.           /* ,   */
+%token COLON_COLON.     /* ::  */
+%token LPAREN.          /* (   */
+%token RPAREN.          /* )   */
+%token LBRACKET.        /* [   */
+%token RBRACKET.        /* ]   */
+%token PLUS.            /* +   */
+%token MINUS.           /* -   */
+%token STAR.            /* *   */
+%token PIPE.            /* |   */
+%token EQUALS.          /* =   */
+%token NOT_EQUALS.      /* !=  */
+%token LESS_THAN.       /* <   */
+%token LESS_EQUAL.      /* <=  */
+%token GREATER_THAN.    /* >   */
+%token GREATER_EQUAL.   /* >=  */
+%token SEMICOLON.       /* ;   */
+
+/* XQuery additional operators */
+%token LBRACE.          /* {   */
+%token RBRACE.          /* }   */
+%token ASSIGN.          /* :=  */
+%token CONCAT_OP.       /* ||  */
+%token NODE_PRECEDES.   /* <<  */
+%token NODE_FOLLOWS.    /* >>  */
+
+/* XPath keywords */
+%token KW_OR.
+%token KW_AND.
+%token KW_DIV.
+%token KW_MOD.
+
+/* XQuery value comparison keywords */
+%token KW_EQ.
+%token KW_NE.
+%token KW_LT.
+%token KW_LE.
+%token KW_GT.
+%token KW_GE.
+
+/* XQuery keywords */
+%token KW_FOR.
+%token KW_LET.
+%token KW_WHERE.
+%token KW_ORDER.
+%token KW_BY.
+%token KW_RETURN.
+%token KW_IN.
+%token KW_AT_WORD.      /* at (positional variable) */
+%token KW_IF.
+%token KW_THEN.
+%token KW_ELSE.
+%token KW_SOME.
+%token KW_EVERY.
+%token KW_SATISFIES.
+%token KW_IS.
+%token KW_TO.
+%token KW_UNION.
+%token KW_INTERSECT.
+%token KW_EXCEPT.
+%token KW_INSTANCE.
+%token KW_OF.
+%token KW_TREAT.
+%token KW_AS.
+%token KW_CASTABLE.
+%token KW_CAST.
+%token KW_IDIV.
+
+/* Declaration keywords */
+%token KW_DECLARE.
+%token KW_FUNCTION.
+%token KW_VARIABLE.
+%token KW_NAMESPACE.
+%token KW_DEFAULT.
+%token KW_ELEMENT.
+%token KW_IMPORT.
+%token KW_MODULE.
+%token KW_STABLE.
+
+/* Computed constructor keywords */
+%token KW_ATTRIBUTE.
+%token KW_DOCUMENT.
+%token KW_TEXT.
+%token KW_COMMENT.
+%token KW_PI.           /* processing-instruction */
+
+/* Sort order */
+%token KW_ASCENDING.
+%token KW_DESCENDING.
+
+/* Typeswitch */
+%token KW_TYPESWITCH.
+%token KW_CASE.
+
+/* XPath axis names */
+%token AXIS_ANCESTOR.
+%token AXIS_ANCESTOR_OR_SELF.
+%token AXIS_ATTRIBUTE.
+%token AXIS_CHILD.
+%token AXIS_DESCENDANT.
+%token AXIS_DESCENDANT_OR_SELF.
+%token AXIS_FOLLOWING.
+%token AXIS_FOLLOWING_SIBLING.
+%token AXIS_NAMESPACE.
+%token AXIS_PARENT.
+%token AXIS_PRECEDING.
+%token AXIS_PRECEDING_SIBLING.
+%token AXIS_SELF.
+
+/* Node type tests */
+%token NODE_TYPE_COMMENT.
+%token NODE_TYPE_TEXT.
+%token NODE_TYPE_PI.
+%token NODE_TYPE_NODE.
+
+/* Literals and names */
+%token LITERAL.
+%token NUMBER.
+%token NAME_TEST.
+%token FUNCTION_NAME.
+%token VARIABLE_REF.
+
+/* ======================================================================
+ * OPERATOR PRECEDENCE
+ *
+ * Based on XQuery 1.0 operator precedence (lowest to highest).
+ * ====================================================================== */
+
+%nonassoc LONE_SLASH.
+%left COMMA.
+%left KW_FOR KW_LET KW_SOME KW_EVERY.
+%right KW_RETURN.
+%right KW_ELSE.
+%left KW_OR.
+%left KW_AND.
+%left KW_TO.
+%left EQUALS NOT_EQUALS.
+%left LESS_THAN LESS_EQUAL GREATER_THAN GREATER_EQUAL.
+%left KW_EQ KW_NE KW_LT KW_LE KW_GT KW_GE KW_IS NODE_PRECEDES NODE_FOLLOWS.
+%left CONCAT_OP.
+%left PIPE KW_UNION.
+%left KW_INTERSECT KW_EXCEPT.
+%left KW_INSTANCE KW_TREAT KW_CASTABLE KW_CAST.
+%left PLUS MINUS.
+%left STAR KW_DIV KW_MOD KW_IDIV.
+%right UMINUS.
+
+/* ======================================================================
+ * NON-TERMINAL TYPE DECLARATIONS
+ * ====================================================================== */
+
+%type xquery_top         {XQNode *}
+%type module             {XQNode *}
+%type prolog             {XQNode *}
+%type prolog_decl_list   {XQNodeList *}
+%type prolog_decl        {XQNode *}
+%type query_body         {XQNode *}
+%type expr               {XQNode *}
+%type expr_single        {XQNode *}
+%type flwor_expr         {XQNode *}
+%type fl_clause_list     {XQNodeList *}
+%type fl_clause          {XQNode *}
+%type for_clause         {XQNode *}
+%type let_clause         {XQNode *}
+%type opt_where          {XQNode *}
+%type opt_order_by       {XQNode *}
+%type order_spec_list    {XQNodeList *}
+%type order_spec         {XQNode *}
+%type opt_sort_dir       {XQSortOrder}
+%type quantified_expr    {XQNode *}
+%type quant_binding_list {XQNodeList *}
+%type quant_binding      {XQNode *}
+%type if_expr            {XQNode *}
+%type or_expr            {XQNode *}
+%type and_expr           {XQNode *}
+%type comparison_expr    {XQNode *}
+%type range_expr         {XQNode *}
+%type additive_expr      {XQNode *}
+%type multiplicative_expr {XQNode *}
+%type unary_expr         {XQNode *}
+%type union_expr         {XQNode *}
+%type intersect_expr     {XQNode *}
+%type path_expr          {XQNode *}
+%type filter_expr        {XQNode *}
+%type location_path      {XQNode *}
+%type absolute_location_path {XQNode *}
+%type relative_location_path {XQNode *}
+%type step               {XQNode *}
+%type axis_specifier     {XPathAxisType}
+%type axis_name          {XPathAxisType}
+%type node_test          {XQNode *}
+%type predicate_list     {XQNode *}
+%type predicate          {XQNode *}
+%type abbreviated_step   {XQNode *}
+%type primary_expr       {XQNode *}
+%type function_call      {XQNode *}
+%type argument_list      {XQNodeList *}
+%type arguments          {XQNodeList *}
+%type computed_constructor {XQNode *}
+%type opt_enclosed_expr  {XQNode *}
+%type function_decl      {XQNode *}
+%type param_list         {XQNodeList *}
+%type params             {XQNodeList *}
+%type param              {XQNode *}
+%type opt_type_decl      {XQNode *}
+%type sequence_type      {XQNode *}
+%type opt_occurrence     {int}
+%type variable_decl      {XQNode *}
+%type ns_decl            {XQNode *}
+
+/* ======================================================================
+ * GRAMMAR RULES
+ * ====================================================================== */
+
+/* ----- Top-level ----- */
+xquery_top(A) ::= module(B). {
+    A = B;
+    pstate->result = B;
+}
+
+/* ----- Module -----
+ * A module is an optional prolog followed by a query body.
+ * Prolog declarations are terminated by semicolons.
+ */
+module(A) ::= prolog(B) query_body(C). {
+    A = xq_make_module(B, C);
+}
+
+module(A) ::= query_body(B). {
+    A = xq_make_module(NULL, B);
+}
+
+/* ----- Prolog ----- */
+prolog(A) ::= prolog_decl_list(B). {
+    A = xq_make_prolog(B);
+}
+
+prolog_decl_list(A) ::= prolog_decl(B) SEMICOLON. {
+    A = xq_list_make1(B);
+}
+
+prolog_decl_list(A) ::= prolog_decl_list(B) prolog_decl(C) SEMICOLON. {
+    A = xq_list_append(B, C);
+}
+
+/* ----- Prolog declarations ----- */
+prolog_decl(A) ::= ns_decl(B). { A = B; }
+prolog_decl(A) ::= variable_decl(B). { A = B; }
+prolog_decl(A) ::= function_decl(B). { A = B; }
+
+/* declare namespace prefix = "uri" */
+ns_decl(A) ::= KW_DECLARE KW_NAMESPACE NAME_TEST(B) EQUALS LITERAL(C). {
+    A = xq_make_ns_decl(B.str.val, B.str.len, C.str.val, C.str.len);
+}
+
+/* declare default element namespace "uri" */
+ns_decl(A) ::= KW_DECLARE KW_DEFAULT KW_ELEMENT KW_NAMESPACE LITERAL(B). {
+    A = xq_make_default_ns_decl(B.str.val, B.str.len);
+}
+
+/* declare variable $name := expr */
+variable_decl(A) ::= KW_DECLARE KW_VARIABLE VARIABLE_REF(B) ASSIGN expr_single(C). {
+    A = xq_make_variable_decl(B.str.val, B.str.len, NULL, C);
+}
+
+/* declare function name(params) as type { body } */
+function_decl(A) ::= KW_DECLARE KW_FUNCTION FUNCTION_NAME(B) LPAREN param_list(C) RPAREN opt_type_decl(D) LBRACE expr(E) RBRACE. {
+    A = xq_make_function_decl(B.str.val, B.str.len, C, D, E);
+}
+
+/* Function parameters */
+param_list(A) ::= . { A = NULL; }
+param_list(A) ::= params(B). { A = B; }
+
+params(A) ::= param(B). { A = xq_list_make1(B); }
+params(A) ::= params(B) COMMA param(D). { A = xq_list_append(B, D); }
+
+param(A) ::= VARIABLE_REF(B). {
+    A = xq_make_param(B.str.val, B.str.len, NULL);
+}
+
+param(A) ::= VARIABLE_REF(B) KW_AS sequence_type(D). {
+    A = xq_make_param(B.str.val, B.str.len, D);
+}
+
+/* Optional type declaration: as SequenceType */
+opt_type_decl(A) ::= KW_AS sequence_type(B). { A = B; }
+opt_type_decl(A) ::= . { A = NULL; }
+
+/* Sequence type: TypeName OccurrenceIndicator? */
+sequence_type(A) ::= NAME_TEST(B) opt_occurrence(C). {
+    A = xq_make_sequence_type(B.str.val, B.str.len, C);
+}
+
+opt_occurrence(A) ::= STAR. { A = '*'; }
+opt_occurrence(A) ::= PLUS. { A = '+'; }
+opt_occurrence(A) ::= . { A = 0; }
+
+/* ----- Query body ----- */
+query_body(A) ::= expr(B). {
+    A = xq_make_query_body(B);
+}
+
+/* ----- Expr: comma-separated sequence ----- */
+expr(A) ::= expr_single(B). { A = B; }
+
+expr(A) ::= expr(B) COMMA expr_single(D). {
+    /* Sequence expression: (a, b, c) */
+    XQNodeList *items;
+    if (B->type == XQ_AST_SEQUENCE) {
+        items = B->value.sequence.items;
+    } else {
+        items = xq_list_make1(B);
+    }
+    A = xq_make_sequence(xq_list_append(items, D));
+}
+
+/* ----- ExprSingle: one of the main expression forms ----- */
+expr_single(A) ::= flwor_expr(B). { A = B; }
+expr_single(A) ::= quantified_expr(B). { A = B; }
+expr_single(A) ::= if_expr(B). { A = B; }
+expr_single(A) ::= or_expr(B). { A = B; }
+
+/* ======================================================================
+ * FLWOR EXPRESSION
+ *
+ * for $var in expr (, $var in expr)*
+ * let $var := expr (, $var := expr)*
+ * where expr
+ * order by spec (, spec)*
+ * return expr
+ * ====================================================================== */
+
+flwor_expr(A) ::= fl_clause_list(B) opt_where(C) opt_order_by(D) KW_RETURN expr_single(F). {
+    A = xq_make_flwor(B, C, D, F);
+}
+
+fl_clause_list(A) ::= fl_clause(B). {
+    A = xq_list_make1(B);
+}
+
+fl_clause_list(A) ::= fl_clause_list(B) fl_clause(C). {
+    A = xq_list_append(B, C);
+}
+
+fl_clause(A) ::= for_clause(B). { A = B; }
+fl_clause(A) ::= let_clause(B). { A = B; }
+
+/* for $var in expr */
+for_clause(A) ::= KW_FOR VARIABLE_REF(B) KW_IN expr_single(D). {
+    A = xq_make_for_clause(B.str.val, B.str.len, D, NULL, 0);
+}
+
+/* for $var at $pos in expr */
+for_clause(A) ::= KW_FOR VARIABLE_REF(B) KW_AT_WORD VARIABLE_REF(D) KW_IN expr_single(F). {
+    A = xq_make_for_clause(B.str.val, B.str.len, F, D.str.val, D.str.len);
+}
+
+/* let $var := expr */
+let_clause(A) ::= KW_LET VARIABLE_REF(B) ASSIGN expr_single(D). {
+    A = xq_make_let_clause(B.str.val, B.str.len, D);
+}
+
+/* Optional where clause */
+opt_where(A) ::= KW_WHERE expr_single(B). {
+    A = xq_make_where_clause(B);
+}
+opt_where(A) ::= . { A = NULL; }
+
+/* Optional order by clause */
+opt_order_by(A) ::= KW_ORDER KW_BY order_spec_list(B). {
+    A = xq_make_order_by(B, false);
+}
+opt_order_by(A) ::= KW_STABLE KW_ORDER KW_BY order_spec_list(B). {
+    A = xq_make_order_by(B, true);
+}
+opt_order_by(A) ::= . { A = NULL; }
+
+order_spec_list(A) ::= order_spec(B). { A = xq_list_make1(B); }
+order_spec_list(A) ::= order_spec_list(B) COMMA order_spec(D). {
+    A = xq_list_append(B, D);
+}
+
+order_spec(A) ::= expr_single(B) opt_sort_dir(C). {
+    A = xq_make_order_spec(B, C);
+}
+
+opt_sort_dir(A) ::= KW_ASCENDING. { A = XQ_SORT_ASCENDING; }
+opt_sort_dir(A) ::= KW_DESCENDING. { A = XQ_SORT_DESCENDING; }
+opt_sort_dir(A) ::= . { A = XQ_SORT_ASCENDING; }
+
+/* ======================================================================
+ * QUANTIFIED EXPRESSIONS
+ *
+ * some $var in expr (, $var in expr)* satisfies expr
+ * every $var in expr (, $var in expr)* satisfies expr
+ * ====================================================================== */
+
+quantified_expr(A) ::= KW_SOME quant_binding_list(B) KW_SATISFIES expr_single(D). {
+    A = xq_make_some_expr(B, D);
+}
+
+quantified_expr(A) ::= KW_EVERY quant_binding_list(B) KW_SATISFIES expr_single(D). {
+    A = xq_make_every_expr(B, D);
+}
+
+quant_binding_list(A) ::= quant_binding(B). { A = xq_list_make1(B); }
+quant_binding_list(A) ::= quant_binding_list(B) COMMA quant_binding(D). {
+    A = xq_list_append(B, D);
+}
+
+quant_binding(A) ::= VARIABLE_REF(B) KW_IN expr_single(D). {
+    A = xq_make_quant_binding(B.str.val, B.str.len, D);
+}
+
+/* ======================================================================
+ * IF-THEN-ELSE
+ * ====================================================================== */
+
+if_expr(A) ::= KW_IF LPAREN expr(C) RPAREN KW_THEN expr_single(F) KW_ELSE expr_single(H). {
+    A = xq_make_if_expr(C, F, H);
+}
+
+/* ======================================================================
+ * XPATH EXPRESSION HIERARCHY
+ *
+ * Extended with XQuery operators (value comparison, range, etc.)
+ * ====================================================================== */
+
+/* ----- OrExpr ----- */
+or_expr(A) ::= and_expr(B). { A = B; }
+or_expr(A) ::= or_expr(B) KW_OR and_expr(C). {
+    A = xq_make_binary(XQ_OP_OR, B, C);
+}
+
+/* ----- AndExpr ----- */
+and_expr(A) ::= comparison_expr(B). { A = B; }
+and_expr(A) ::= and_expr(B) KW_AND comparison_expr(C). {
+    A = xq_make_binary(XQ_OP_AND, B, C);
+}
+
+/* ----- ComparisonExpr -----
+ * Handles general comparison (=, !=, <, <=, >, >=),
+ * value comparison (eq, ne, lt, le, gt, ge),
+ * and node comparison (is, <<, >>).
+ */
+comparison_expr(A) ::= range_expr(B). { A = B; }
+
+/* General comparison */
+comparison_expr(A) ::= range_expr(B) EQUALS range_expr(C). {
+    A = xq_make_binary(XQ_OP_GEN_EQ, B, C);
+}
+comparison_expr(A) ::= range_expr(B) NOT_EQUALS range_expr(C). {
+    A = xq_make_binary(XQ_OP_GEN_NE, B, C);
+}
+comparison_expr(A) ::= range_expr(B) LESS_THAN range_expr(C). {
+    A = xq_make_binary(XQ_OP_GEN_LT, B, C);
+}
+comparison_expr(A) ::= range_expr(B) LESS_EQUAL range_expr(C). {
+    A = xq_make_binary(XQ_OP_GEN_LE, B, C);
+}
+comparison_expr(A) ::= range_expr(B) GREATER_THAN range_expr(C). {
+    A = xq_make_binary(XQ_OP_GEN_GT, B, C);
+}
+comparison_expr(A) ::= range_expr(B) GREATER_EQUAL range_expr(C). {
+    A = xq_make_binary(XQ_OP_GEN_GE, B, C);
+}
+
+/* Value comparison */
+comparison_expr(A) ::= range_expr(B) KW_EQ range_expr(C). {
+    A = xq_make_binary(XQ_OP_VAL_EQ, B, C);
+}
+comparison_expr(A) ::= range_expr(B) KW_NE range_expr(C). {
+    A = xq_make_binary(XQ_OP_VAL_NE, B, C);
+}
+comparison_expr(A) ::= range_expr(B) KW_LT range_expr(C). {
+    A = xq_make_binary(XQ_OP_VAL_LT, B, C);
+}
+comparison_expr(A) ::= range_expr(B) KW_LE range_expr(C). {
+    A = xq_make_binary(XQ_OP_VAL_LE, B, C);
+}
+comparison_expr(A) ::= range_expr(B) KW_GT range_expr(C). {
+    A = xq_make_binary(XQ_OP_VAL_GT, B, C);
+}
+comparison_expr(A) ::= range_expr(B) KW_GE range_expr(C). {
+    A = xq_make_binary(XQ_OP_VAL_GE, B, C);
+}
+
+/* Node comparison */
+comparison_expr(A) ::= range_expr(B) KW_IS range_expr(C). {
+    A = xq_make_binary(XQ_OP_IS, B, C);
+}
+comparison_expr(A) ::= range_expr(B) NODE_PRECEDES range_expr(C). {
+    A = xq_make_binary(XQ_OP_PRECEDES, B, C);
+}
+comparison_expr(A) ::= range_expr(B) NODE_FOLLOWS range_expr(C). {
+    A = xq_make_binary(XQ_OP_FOLLOWS, B, C);
+}
+
+/* ----- RangeExpr: to operator ----- */
+range_expr(A) ::= additive_expr(B). { A = B; }
+range_expr(A) ::= additive_expr(B) KW_TO additive_expr(C). {
+    A = xq_make_binary(XQ_OP_TO, B, C);
+}
+
+/* ----- AdditiveExpr ----- */
+additive_expr(A) ::= multiplicative_expr(B). { A = B; }
+additive_expr(A) ::= additive_expr(B) PLUS multiplicative_expr(C). {
+    A = xq_make_binary(XQ_OP_ADD, B, C);
+}
+additive_expr(A) ::= additive_expr(B) MINUS multiplicative_expr(C). {
+    A = xq_make_binary(XQ_OP_SUB, B, C);
+}
+
+/* ----- MultiplicativeExpr ----- */
+multiplicative_expr(A) ::= unary_expr(B). { A = B; }
+multiplicative_expr(A) ::= multiplicative_expr(B) STAR unary_expr(C). {
+    A = xq_make_binary(XQ_OP_MUL, B, C);
+}
+multiplicative_expr(A) ::= multiplicative_expr(B) KW_DIV unary_expr(C). {
+    A = xq_make_binary(XQ_OP_DIV, B, C);
+}
+multiplicative_expr(A) ::= multiplicative_expr(B) KW_IDIV unary_expr(C). {
+    A = xq_make_binary(XQ_OP_IDIV, B, C);
+}
+multiplicative_expr(A) ::= multiplicative_expr(B) KW_MOD unary_expr(C). {
+    A = xq_make_binary(XQ_OP_MOD, B, C);
+}
+
+/* ----- UnaryExpr ----- */
+unary_expr(A) ::= union_expr(B). { A = B; }
+unary_expr(A) ::= MINUS unary_expr(B). [UMINUS] {
+    A = xq_make_unary(XQ_OP_NEGATE, B);
+}
+unary_expr(A) ::= PLUS unary_expr(B). [UMINUS] {
+    A = xq_make_unary(XQ_OP_POSITIVE, B);
+}
+
+/* ----- UnionExpr ----- */
+union_expr(A) ::= intersect_expr(B). { A = B; }
+union_expr(A) ::= union_expr(B) PIPE intersect_expr(C). {
+    A = xq_make_binary(XQ_OP_UNION, B, C);
+}
+union_expr(A) ::= union_expr(B) KW_UNION intersect_expr(C). {
+    A = xq_make_binary(XQ_OP_UNION, B, C);
+}
+
+/* ----- IntersectExceptExpr ----- */
+intersect_expr(A) ::= path_expr(B). { A = B; }
+intersect_expr(A) ::= intersect_expr(B) KW_INTERSECT path_expr(C). {
+    A = xq_make_binary(XQ_OP_INTERSECT, B, C);
+}
+intersect_expr(A) ::= intersect_expr(B) KW_EXCEPT path_expr(C). {
+    A = xq_make_binary(XQ_OP_EXCEPT, B, C);
+}
+
+/* ======================================================================
+ * PATH EXPRESSIONS (inherited from XPath)
+ * ====================================================================== */
+
+path_expr(A) ::= location_path(B). { A = B; }
+path_expr(A) ::= filter_expr(B). { A = B; }
+path_expr(A) ::= filter_expr(B) SLASH relative_location_path(C). {
+    A = xq_make_path(B, C);
+}
+path_expr(A) ::= filter_expr(B) DOUBLE_SLASH relative_location_path(C). {
+    XQNode *dsos = xq_make_step(XPATH_AXIS_DESCENDANT_OR_SELF,
+                                 xq_make_node_type_test(XPATH_NODE_TYPE_NODE), NULL);
+    A = xq_make_path(B, xq_make_path(dsos, C));
+}
+
+/* ----- FilterExpr ----- */
+filter_expr(A) ::= primary_expr(B). { A = B; }
+filter_expr(A) ::= filter_expr(B) predicate(C). {
+    A = xq_make_filter(B, C);
+}
+
+/* ----- LocationPath ----- */
+location_path(A) ::= relative_location_path(B). { A = B; }
+location_path(A) ::= absolute_location_path(B). { A = B; }
+
+/* ----- AbsoluteLocationPath ----- */
+absolute_location_path(A) ::= SLASH. [LONE_SLASH] {
+    A = xq_make_root();
+}
+absolute_location_path(A) ::= SLASH relative_location_path(B). {
+    A = xq_make_absolute_path(B);
+}
+absolute_location_path(A) ::= DOUBLE_SLASH relative_location_path(B). {
+    XQNode *dsos = xq_make_step(XPATH_AXIS_DESCENDANT_OR_SELF,
+                                 xq_make_node_type_test(XPATH_NODE_TYPE_NODE), NULL);
+    A = xq_make_absolute_path(xq_make_path(dsos, B));
+}
+
+/* ----- RelativeLocationPath ----- */
+relative_location_path(A) ::= step(B). { A = B; }
+relative_location_path(A) ::= relative_location_path(B) SLASH step(C). {
+    A = xq_make_path(B, C);
+}
+relative_location_path(A) ::= relative_location_path(B) DOUBLE_SLASH step(C). {
+    XQNode *dsos = xq_make_step(XPATH_AXIS_DESCENDANT_OR_SELF,
+                                 xq_make_node_type_test(XPATH_NODE_TYPE_NODE), NULL);
+    A = xq_make_path(B, xq_make_path(dsos, C));
+}
+
+/* ----- Step ----- */
+step(A) ::= axis_specifier(B) node_test(C) predicate_list(D). {
+    A = xq_make_step(B, C, D);
+}
+step(A) ::= node_test(B) predicate_list(C). {
+    A = xq_make_step(XPATH_AXIS_CHILD, B, C);
+}
+step(A) ::= abbreviated_step(B). { A = B; }
+
+/* ----- AxisSpecifier ----- */
+axis_specifier(A) ::= axis_name(B) COLON_COLON. { A = B; }
+axis_specifier(A) ::= AT. { A = XPATH_AXIS_ATTRIBUTE; }
+
+/* ----- AxisName ----- */
+axis_name(A) ::= AXIS_CHILD.              { A = XPATH_AXIS_CHILD; }
+axis_name(A) ::= AXIS_DESCENDANT.         { A = XPATH_AXIS_DESCENDANT; }
+axis_name(A) ::= AXIS_PARENT.             { A = XPATH_AXIS_PARENT; }
+axis_name(A) ::= AXIS_ANCESTOR.           { A = XPATH_AXIS_ANCESTOR; }
+axis_name(A) ::= AXIS_FOLLOWING_SIBLING.  { A = XPATH_AXIS_FOLLOWING_SIBLING; }
+axis_name(A) ::= AXIS_PRECEDING_SIBLING.  { A = XPATH_AXIS_PRECEDING_SIBLING; }
+axis_name(A) ::= AXIS_FOLLOWING.          { A = XPATH_AXIS_FOLLOWING; }
+axis_name(A) ::= AXIS_PRECEDING.          { A = XPATH_AXIS_PRECEDING; }
+axis_name(A) ::= AXIS_ATTRIBUTE.          { A = XPATH_AXIS_ATTRIBUTE; }
+axis_name(A) ::= AXIS_NAMESPACE.          { A = XPATH_AXIS_NAMESPACE; }
+axis_name(A) ::= AXIS_SELF.               { A = XPATH_AXIS_SELF; }
+axis_name(A) ::= AXIS_DESCENDANT_OR_SELF. { A = XPATH_AXIS_DESCENDANT_OR_SELF; }
+axis_name(A) ::= AXIS_ANCESTOR_OR_SELF.   { A = XPATH_AXIS_ANCESTOR_OR_SELF; }
+
+/* ----- NodeTest ----- */
+node_test(A) ::= NAME_TEST(B). {
+    A = xq_make_name_test(B.str.val, B.str.len);
+}
+node_test(A) ::= STAR. {
+    A = xq_make_name_test("*", 1);
+}
+node_test(A) ::= NODE_TYPE_COMMENT LPAREN RPAREN. {
+    A = xq_make_node_type_test(XPATH_NODE_TYPE_COMMENT);
+}
+node_test(A) ::= NODE_TYPE_TEXT LPAREN RPAREN. {
+    A = xq_make_node_type_test(XPATH_NODE_TYPE_TEXT);
+}
+node_test(A) ::= NODE_TYPE_PI LPAREN RPAREN. {
+    A = xq_make_node_type_test(XPATH_NODE_TYPE_PI);
+}
+node_test(A) ::= NODE_TYPE_PI LPAREN LITERAL(B) RPAREN. {
+    A = xq_make_pi_test(B.str.val, B.str.len);
+}
+node_test(A) ::= NODE_TYPE_NODE LPAREN RPAREN. {
+    A = xq_make_node_type_test(XPATH_NODE_TYPE_NODE);
+}
+
+/* ----- Predicate ----- */
+predicate(A) ::= LBRACKET expr(B) RBRACKET. { A = B; }
+predicate_list(A) ::= . { A = NULL; }
+predicate_list(A) ::= predicate_list(B) predicate(C). {
+    A = xq_append_predicate(B, C);
+}
+
+/* ----- AbbreviatedStep ----- */
+abbreviated_step(A) ::= DOT. {
+    A = xq_make_step(XPATH_AXIS_SELF,
+                      xq_make_node_type_test(XPATH_NODE_TYPE_NODE), NULL);
+}
+abbreviated_step(A) ::= DOUBLE_DOT. {
+    A = xq_make_step(XPATH_AXIS_PARENT,
+                      xq_make_node_type_test(XPATH_NODE_TYPE_NODE), NULL);
+}
+
+/* ======================================================================
+ * PRIMARY EXPRESSIONS
+ * ====================================================================== */
+
+primary_expr(A) ::= VARIABLE_REF(B). {
+    A = xq_make_variable_ref(B.str.val, B.str.len);
+}
+primary_expr(A) ::= LPAREN expr(B) RPAREN. { A = B; }
+primary_expr(A) ::= LPAREN RPAREN. { A = xq_make_sequence(NULL); }
+primary_expr(A) ::= LITERAL(B). {
+    A = xq_make_literal(B.str.val, B.str.len);
+}
+primary_expr(A) ::= NUMBER(B). {
+    A = xq_make_number(B.numval);
+}
+primary_expr(A) ::= function_call(B). { A = B; }
+primary_expr(A) ::= computed_constructor(B). { A = B; }
+
+/* ----- FunctionCall ----- */
+function_call(A) ::= FUNCTION_NAME(B) LPAREN argument_list(C) RPAREN. {
+    A = xq_make_function_call(B.str.val, B.str.len, C);
+}
+
+argument_list(A) ::= . { A = NULL; }
+argument_list(A) ::= arguments(B). { A = B; }
+
+arguments(A) ::= expr_single(B). { A = xq_list_make1(B); }
+arguments(A) ::= arguments(B) COMMA expr_single(D). {
+    A = xq_list_append(B, D);
+}
+
+/* ======================================================================
+ * COMPUTED CONSTRUCTORS
+ *
+ * element name { content }
+ * attribute name { value }
+ * document { content }
+ * text { value }
+ * comment { value }
+ * processing-instruction name { value }
+ * ====================================================================== */
+
+computed_constructor(A) ::= KW_ELEMENT NAME_TEST(B) LBRACE opt_enclosed_expr(D) RBRACE. {
+    A = xq_make_comp_elem(B.str.val, B.str.len, D);
+}
+
+computed_constructor(A) ::= KW_ATTRIBUTE NAME_TEST(B) LBRACE opt_enclosed_expr(D) RBRACE. {
+    A = xq_make_comp_attr(B.str.val, B.str.len, D);
+}
+
+computed_constructor(A) ::= KW_DOCUMENT LBRACE opt_enclosed_expr(B) RBRACE. {
+    A = xq_make_comp_doc(B);
+}
+
+computed_constructor(A) ::= KW_TEXT LBRACE opt_enclosed_expr(B) RBRACE. {
+    A = xq_make_comp_text(B);
+}
+
+computed_constructor(A) ::= KW_COMMENT LBRACE opt_enclosed_expr(B) RBRACE. {
+    A = xq_make_comp_comment(B);
+}
+
+computed_constructor(A) ::= KW_PI NAME_TEST(B) LBRACE opt_enclosed_expr(D) RBRACE. {
+    A = xq_make_comp_pi(B.str.val, B.str.len, D);
+}
+
+opt_enclosed_expr(A) ::= expr(B). { A = B; }
+opt_enclosed_expr(A) ::= . { A = NULL; }

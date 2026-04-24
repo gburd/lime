@@ -1,0 +1,13 @@
+% minimal.dl -- Minimal test cases for the Datalog parser
+
+% Simple fact
+hello.
+
+% Fact with arguments
+parent(tom, bob).
+
+% Simple rule
+child(X, Y) :- parent(Y, X).
+
+% Simple query
+?- child(bob, X).

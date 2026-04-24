@@ -1,0 +1,203 @@
+.\" parse-manager(1) - Lime parser plugin management tool
+.\" Man page generated for the Lime Parser Generator project.
+.TH PARSE-MANAGER 1 "2026-04-23" "Lime 0.1" "Lime Parser Tools"
+.SH NAME
+parse-manager \- manage Lime parser plugins at runtime
+.SH SYNOPSIS
+.B parse-manager
+.RI [ options ]
+.I command
+.RI [ args... ]
+.SH DESCRIPTION
+.B parse-manager
+is a command-line tool for loading, inspecting, testing, and benchmarking
+parser plugins built with the Lime parser generator. It uses the
+.B ParserManager
+library API to dynamically load parser plugins from shared libraries and
+manage them at runtime.
+.PP
+Parser plugins implement the
+.B LimeParserPlugin
+interface and are typically built as shared libraries (.so files) that
+export the
+.B lime_plugin_entry
+symbol.
+.SH OPTIONS
+.TP
+.BR \-s ", " \-\-search\-path " " \fIdir\fR
+Add a directory to the plugin search path. The manager will search
+these directories when loading a plugin with a relative path.
+May be specified multiple times.
+.TP
+.BR \-v ", " \-\-validate
+Enable snapshot validation on load. When a plugin creates a snapshot,
+the manager will call the plugin's
+.B validate_snapshot
+callback (if available) before making the snapshot active.
+.TP
+.BR \-j ", " \-\-jit
+Enable automatic JIT compilation. When a plugin creates a snapshot and
+advertises JIT capability, the manager will compile the action tables
+to machine code for faster parsing.
+.TP
+.BR \-q ", " \-\-quiet
+Suppress non-essential output.
+.TP
+.BR \-h ", " \-\-help
+Show usage summary and exit.
+.SH COMMANDS
+.SS list
+.B parse-manager list
+.PP
+Show all currently loaded parser plugins in a table format. Displays
+the plugin handle, name, version, active status, type (dynamic/static),
+and capabilities.
+.SS load
+.B parse-manager load
+.I path
+.PP
+Load a parser plugin from a shared library at
+.IR path .
+The library must export the
+.B lime_plugin_entry
+function. On success, prints the assigned handle and plugin name.
+.SS unload
+.B parse-manager unload
+.I name
+.PP
+Unload the plugin with the given name. Calls the plugin's
+.B destroy()
+callback and removes it from the registry. If the plugin was the
+active parser, it is deactivated first.
+.SS info
+.B parse-manager info
+.I name
+.PP
+Show detailed information about the named plugin, including version,
+type, active status, and a checklist of supported capabilities.
+.SS activate
+.B parse-manager activate
+.I name
+.RI [ grammar-file ]
+.PP
+Set the named plugin as the active parser. If
+.I grammar-file
+is provided, the plugin's
+.B create_snapshot()
+callback is called to produce a parser snapshot from the grammar.
+.SS test
+.B parse-manager test
+.I name
+.I input-file
+.PP
+Parse the given input file using the named parser plugin. Reports
+success or failure and the time taken.
+.SS compare
+.B parse-manager compare
+.I name1
+.I name2
+.I input-file
+.PP
+Parse the same input file with two different parser plugins and
+compare the results. Reports whether both parsers agree and their
+relative performance.
+.SS benchmark
+.B parse-manager benchmark
+.I name
+.I file
+.RI [ file... ]
+.PP
+Run a performance benchmark of the named parser on one or more input
+files. Automatically scales the number of iterations based on file
+size. Reports per-file timing, overall throughput, and a summary.
+.SS version
+.B parse-manager version
+.PP
+Show version information for the tool, plugin ABI, parser library,
+and JIT availability.
+.SS help
+.B parse-manager help
+.RI [ command ]
+.PP
+Show help for a specific command, or list all available commands.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Error (invalid arguments, plugin not found, parse failure, etc.).
+.SH EXAMPLES
+Load a plugin and list it:
+.PP
+.RS
+.nf
+$ parse-manager load /usr/lib/lime/sql_parser.so
+Loaded plugin 'sql_parser' (handle 1, version 1.0.0)
+
+$ parse-manager list
+ID    Name                  Version     Active    Type      Capabilities
+------------------------------------------------------------------------------------------
+1     sql_parser            1.0.0         *       dynamic   snapshot, extensible
+.fi
+.RE
+.PP
+Test a parser on a SQL file:
+.PP
+.RS
+.nf
+$ parse-manager activate sql_parser grammar.y
+Activated parser 'sql_parser' with grammar 'grammar.y'.
+
+$ parse-manager test sql_parser query.sql
+Parsing 'query.sql' with plugin 'sql_parser'...
+OK: Parse succeeded
+  Time: 0.342 ms
+  Input: 1024 bytes from 'query.sql'
+.fi
+.RE
+.PP
+Compare two parser versions:
+.PP
+.RS
+.nf
+$ parse-manager load parser_v1.so
+$ parse-manager load parser_v2.so
+$ parse-manager compare parser_v1 parser_v2 big_query.sql
+Comparing parsers on 'big_query.sql' (65536 bytes):
+
+  Parser                Result      Time (ms)
+--------------------------------------------------
+  parser_v1             OK          12.450
+  parser_v2             OK          8.230
+
+Both parsers succeeded.
+'parser_v2' was 1.5x faster.
+.fi
+.RE
+.PP
+Benchmark a parser:
+.PP
+.RS
+.nf
+$ parse-manager benchmark sql_parser tests/*.sql
+Benchmarking parser 'sql_parser' on 5 file(s):
+
+  File                                      Size (B)      Iters    Avg (ms)  Result
+------------------------------------------------------------------------------------------
+  tests/simple.sql                              128       1000       0.012  OK
+  tests/complex.sql                            8192         10       1.234  OK
+  tests/huge.sql                              65536         10      12.345  OK
+
+Summary:
+  Files:    5 total, 5 succeeded, 0 failed
+  Total:    73856 bytes
+  Avg time: 4.530 ms per file
+  Throughput: 16.3 MB/s (approximate)
+.fi
+.RE
+.SH SEE ALSO
+.BR lime (1),
+.BR dlopen (3)
+.SH AUTHORS
+Lime Parser Generator project.

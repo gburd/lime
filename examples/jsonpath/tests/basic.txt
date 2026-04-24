@@ -1,0 +1,73 @@
+# Basic JSONPath expressions
+# One expression per line; lines starting with # are comments.
+
+# Root and simple accessors
+$
+$.x
+$.store
+$.store.book
+$.*
+$[*]
+
+# Key access with dotted paths
+$.store.book.author
+$.a.b.c.d
+
+# Array indexing
+$[0]
+$[1]
+$[0,1,2]
+$[0 to 5]
+$[*]
+
+# Wildcard descendants
+$.**
+$.**.name
+
+# Current node
+@
+@.name
+
+# Variables
+$var
+$myVariable
+
+# Scalar values
+"hello"
+42
+3.14
+true
+false
+null
+
+# Method calls
+$.x.abs()
+$.x.size()
+$.x.type()
+$.x.floor()
+$.x.double()
+$.x.ceiling()
+$.x.keyvalue()
+$.x.bigint()
+$.x.boolean()
+$.x.date()
+$.x.integer()
+$.x.number()
+$.x.string()
+
+# Datetime methods
+$.x.datetime()
+$.x.datetime("YYYY-MM-DD")
+$.x.time()
+$.x.time(3)
+$.x.time_tz()
+$.x.time_tz(6)
+$.x.timestamp()
+$.x.timestamp(0)
+$.x.timestamp_tz()
+$.x.timestamp_tz(9)
+
+# Decimal with precision
+$.x.decimal()
+$.x.decimal(10)
+$.x.decimal(10,2)

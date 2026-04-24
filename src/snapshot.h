@@ -11,6 +11,7 @@
 #define SNAPSHOT_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdatomic.h>
 
 /* Forward declarations for Lemon grammar structures.
@@ -20,6 +21,85 @@ struct symbol;
 struct rule;
 struct state;
 
+/* ------------------------------------------------------------------ */
+/*  Semantic versioning                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+** A parsed semantic version: major.minor.patch with optional prerelease
+** label (e.g. "1.2.3-beta.1").  The prerelease string is heap-allocated
+** and owned by the SemVer struct; it is NULL when not present.
+*/
+typedef struct SemVer {
+    uint32_t major;
+    uint32_t minor;
+    uint32_t patch;
+    char *prerelease;              /* malloc'd, NULL if absent          */
+} SemVer;
+
+/*
+** Version constraint operators used in dependency declarations.
+*/
+typedef enum VersionOp {
+    VERSION_OP_EQ = 0,            /* == exact match                    */
+    VERSION_OP_GTE,               /* >= greater-than-or-equal          */
+    VERSION_OP_LTE,               /* <= less-than-or-equal             */
+    VERSION_OP_GT,                /* >  strictly greater               */
+    VERSION_OP_LT,                /* <  strictly less                  */
+    VERSION_OP_CARET,             /* ^  compatible (same major)        */
+    VERSION_OP_TILDE,             /* ~  approximately (same major.minor) */
+} VersionOp;
+
+/*
+** A single version constraint on a dependency, e.g. ">=1.2.0".
+*/
+typedef struct VersionConstraint {
+    VersionOp op;
+    SemVer version;
+} VersionConstraint;
+
+/* ------------------------------------------------------------------ */
+/*  Module dependency metadata                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+** A dependency declaration from one module to another.  Each dependency
+** names a target module and carries one or more version constraints.
+** Dependencies may be optional: optional dependencies that cannot be
+** satisfied are silently ignored rather than treated as errors.
+*/
+typedef struct ParserDependency {
+    char *module_name;             /* Target module name (owned)         */
+    uint8_t merkle_root[32];       /* Expected content hash (zero = any) */
+    VersionConstraint *constraints; /* Array of version constraints       */
+    uint32_t nconstraints;         /* Number of constraints              */
+    bool optional;                 /* If true, unsatisfied is not an error */
+} ParserDependency;
+
+/*
+** A parser module: a named, versioned unit of grammar with explicit
+** dependency, export, and import declarations.  Modules are the unit
+** of composition -- the dependency resolver works over graphs of
+** ParserModule nodes.
+*/
+typedef struct ParserModule {
+    char *name;                    /* Unique module name (owned)         */
+    SemVer version;                /* Module version                     */
+
+    ParserDependency *dependencies; /* Array of dependencies (owned)     */
+    uint32_t ndependencies;
+
+    char **exports;                /* NULL-terminated symbol names exported */
+    uint32_t nexports;
+
+    char **imports;                /* NULL-terminated symbol names imported */
+    uint32_t nimports;
+} ParserModule;
+
+/* ------------------------------------------------------------------ */
+/*  Snapshot                                                           */
+/* ------------------------------------------------------------------ */
+
 /*
 ** A ParserSnapshot holds a frozen copy of every table the generated parser
 ** needs at runtime. Fields fall into three groups:
@@ -27,6 +107,7 @@ struct state;
 **   1. Bookkeeping   - version, refcount, timestamps
 **   2. Grammar data  - symbols, rules, states (deep copies)
 **   3. Action tables  - the compact arrays that drive the parse engine
+**   4. Module data   - optional module identity and content hash
 */
 typedef struct ParserSnapshot {
     /* Monotonically increasing version number. Each new snapshot produced
@@ -59,6 +140,11 @@ typedef struct ParserSnapshot {
     uint16_t *yy_default;         /* Default action for each state         */
     uint32_t action_count;         /* Number of entries in yy_action        */
     uint32_t lookahead_count;      /* Number of entries in yy_lookahead     */
+
+    /* --- Module identity (optional, NULL when not part of a module) --- */
+
+    uint8_t merkle_root[32];       /* Content hash of grammar data       */
+    ParserModule *module;          /* Owning module metadata (or NULL)   */
 
     /* Nanosecond-precision wall-clock time when this snapshot was created */
     uint64_t create_time_ns;
@@ -98,5 +184,50 @@ void snapshot_release(ParserSnapshot *snap);
 ** is modified to emit dynamic tables (Task #3).
 */
 ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error);
+
+/* ------------------------------------------------------------------ */
+/*  SemVer utilities                                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+** Parse a semantic version string ("1.2.3" or "1.2.3-beta.1") into a
+** SemVer struct.  Returns true on success.  On failure *out is zeroed
+** and the function returns false.
+*/
+bool semver_parse(const char *str, SemVer *out);
+
+/*
+** Compare two semantic versions.  Returns <0, 0, or >0 following the
+** same convention as strcmp.  Prerelease versions sort before their
+** release counterpart (e.g. 1.0.0-alpha < 1.0.0).
+*/
+int semver_compare(const SemVer *a, const SemVer *b);
+
+/*
+** Check whether *ver* satisfies *constraint*.
+*/
+bool semver_satisfies(const SemVer *ver, const VersionConstraint *constraint);
+
+/*
+** Free resources owned by a SemVer (just the prerelease string).
+** Does not free the SemVer struct itself.
+*/
+void semver_destroy(SemVer *v);
+
+/* ------------------------------------------------------------------ */
+/*  Module lifecycle helpers                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+** Deep-free a ParserModule and all memory it owns (name, version,
+** dependencies, exports, imports).  Does not free the pointer itself
+** unless *mod* was heap-allocated by the caller.
+*/
+void parser_module_destroy_contents(ParserModule *mod);
+
+/*
+** Deep-free a ParserDependency's owned memory.
+*/
+void parser_dependency_destroy_contents(ParserDependency *dep);
 
 #endif /* SNAPSHOT_H */

@@ -1,0 +1,517 @@
+/*
+ * mongodb.lime
+ *    Grammar for MongoDB query language -- Lime parser generator format
+ *
+ * ---
+ * title: MongoDB Query Language Parser
+ * version: 1.0.0
+ * description: |
+ *   LALR(1) grammar for parsing MongoDB query documents, update documents,
+ *   and aggregation pipeline stages. Supports the core MongoDB query
+ *   language operators including comparison, logical, element, evaluation,
+ *   and array operators. Also supports update operators and aggregation
+ *   pipeline stages.
+ *
+ * language: MongoDB Query Language
+ * parser_type: LALR(1)
+ * target: C
+ *
+ * grammar_features:
+ *   - JSON document syntax (objects, arrays, literals)
+ *   - Query operators ($eq, $gt, $lt, $gte, $lte, $ne, $in, $nin)
+ *   - Logical operators ($and, $or, $not, $nor)
+ *   - Element operators ($exists, $type)
+ *   - Evaluation operators ($regex, $mod)
+ *   - Array operators ($all, $elemMatch, $size)
+ *   - Update operators ($set, $inc, $push, $pull, $unset, $mul, etc.)
+ *   - Aggregation stages ($match, $group, $project, $sort, $limit, etc.)
+ *   - Aggregation accumulators ($sum, $avg, $first, $last)
+ *   - Field dot notation (e.g., "address.city")
+ *   - Shell syntax: db.collection.find(), .update(), .aggregate()
+ *
+ * examples:
+ *   - |
+ *     # Simple equality query
+ *     { "name": "Alice" }
+ *   - |
+ *     # Comparison operators
+ *     { "age": { "$gt": 25, "$lte": 65 } }
+ *   - |
+ *     # Logical operators
+ *     { "$or": [ { "status": "A" }, { "age": { "$lt": 30 } } ] }
+ *   - |
+ *     # Update with $set and $inc
+ *     { "$set": { "status": "modified" }, "$inc": { "count": 1 } }
+ *   - |
+ *     # Aggregation pipeline
+ *     [ { "$match": { "status": "A" } },
+ *       { "$group": { "_id": "$cust_id", "total": { "$sum": "$amount" } } } ]
+ *   - |
+ *     # Shell-style find
+ *     db.users.find({ "age": { "$gte": 21 } }, { "name": 1, "age": 1 })
+ *
+ * dependencies: []
+ * composition_hash: null
+ * ---
+ */
+
+%include {
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include "mongodb_internal.h"
+#include "mongodb_helpers.h"
+}
+
+/*
+ * Token type -- the semantic value carried by every token.
+ */
+%token_type {MdbToken}
+
+/*
+ * Extra argument passed to the parser.
+ */
+%extra_argument {MdbParseState *pstate}
+
+/*
+ * Parser name prefix.
+ */
+%name mongodbParse
+
+/*
+ * Error handling
+ */
+%syntax_error {
+    pstate->error = 1;
+    if (pstate->errMsg == NULL) {
+        pstate->errMsg = "syntax error in MongoDB query";
+    }
+}
+
+%parse_failure {
+    pstate->error = 1;
+    if (pstate->errMsg == NULL) {
+        pstate->errMsg = "MongoDB query parse failure";
+    }
+}
+
+/*
+ * Start symbol
+ */
+%start_symbol input
+
+/* ======================================================================
+ * TOKEN DECLARATIONS
+ * ====================================================================== */
+
+/* Structural */
+%token LBRACE.          /* { */
+%token RBRACE.          /* } */
+%token LBRACKET.        /* [ */
+%token RBRACKET.        /* ] */
+%token COLON.           /* : */
+%token COMMA.           /* , */
+%token LPAREN.          /* ( */
+%token RPAREN.          /* ) */
+%token DOT.             /* . */
+
+/* Literals */
+%token STRING.          /* "..." */
+%token INT_LIT.         /* 123 */
+%token FLOAT_LIT.       /* 1.23 */
+%token KW_TRUE.         /* true */
+%token KW_FALSE.        /* false */
+%token KW_NULL.         /* null */
+
+/* Identifiers */
+%token IDENT.           /* bare identifier */
+%token DOLLAR_IDENT.    /* $fieldRef or unrecognized $keyword */
+
+/* Shell keywords */
+%token KW_DB.           /* db */
+%token KW_FIND.         /* find */
+%token KW_UPDATE.       /* update */
+%token KW_AGGREGATE.    /* aggregate */
+%token KW_OBJECTID.     /* ObjectId */
+
+/* Query operators -- comparison */
+%token OP_EQ.           /* $eq */
+%token OP_NE.           /* $ne */
+%token OP_GT.           /* $gt */
+%token OP_GTE.          /* $gte */
+%token OP_LT.           /* $lt */
+%token OP_LTE.          /* $lte */
+%token OP_IN.           /* $in */
+%token OP_NIN.          /* $nin */
+
+/* Query operators -- logical */
+%token OP_AND.          /* $and */
+%token OP_OR.           /* $or */
+%token OP_NOT.          /* $not */
+%token OP_NOR.          /* $nor */
+
+/* Query operators -- element */
+%token OP_EXISTS.       /* $exists */
+%token OP_TYPE.         /* $type */
+
+/* Query operators -- evaluation */
+%token OP_REGEX.        /* $regex */
+%token OP_OPTIONS.      /* $options */
+%token OP_MOD.          /* $mod */
+
+/* Query operators -- array */
+%token OP_ALL.          /* $all */
+%token OP_ELEMMATCH.    /* $elemMatch */
+%token OP_SIZE.         /* $size */
+
+/* Update operators -- field */
+%token UP_SET.          /* $set */
+%token UP_UNSET.        /* $unset */
+%token UP_INC.          /* $inc */
+%token UP_MUL.          /* $mul */
+%token UP_RENAME.       /* $rename */
+%token UP_MIN.          /* $min */
+%token UP_MAX.          /* $max */
+%token UP_CURRENTDATE.  /* $currentDate */
+%token UP_SETONINSERT.  /* $setOnInsert */
+
+/* Update operators -- array */
+%token UP_PUSH.         /* $push */
+%token UP_PULL.         /* $pull */
+%token UP_ADDTOSET.     /* $addToSet */
+%token UP_POP.          /* $pop */
+
+/* Aggregation stages */
+%token AGG_MATCH.       /* $match */
+%token AGG_GROUP.       /* $group */
+%token AGG_PROJECT.     /* $project */
+%token AGG_SORT.        /* $sort */
+%token AGG_LIMIT.       /* $limit */
+%token AGG_SKIP.        /* $skip */
+%token AGG_UNWIND.      /* $unwind */
+%token AGG_LOOKUP.      /* $lookup */
+%token AGG_OUT.         /* $out */
+%token AGG_COUNT.       /* $count */
+
+/* Aggregation accumulator expressions */
+%token AGG_SUM.         /* $sum */
+%token AGG_AVG.         /* $avg */
+%token AGG_FIRST.       /* $first */
+%token AGG_LAST.        /* $last */
+
+/* ======================================================================
+ * NON-TERMINAL TYPE DECLARATIONS
+ * ====================================================================== */
+
+%type input             {MdbNode *}
+%type document          {MdbNode *}
+%type pair_list         {MdbNodeList *}
+%type pair              {MdbNode *}
+%type key               {MdbString}
+%type value             {MdbNode *}
+%type array             {MdbNode *}
+%type value_list        {MdbNodeList *}
+%type opt_value_list    {MdbNodeList *}
+%type query_op_pair     {MdbNode *}
+%type comparison_op     {MdbNodeType}
+%type logical_op_pair   {MdbNode *}
+%type logical_op        {MdbNodeType}
+%type element_op_pair   {MdbNode *}
+%type array_op_pair     {MdbNode *}
+%type eval_op_pair      {MdbNode *}
+%type update_op_pair    {MdbNode *}
+%type update_op         {MdbNodeType}
+%type agg_stage_pair    {MdbNode *}
+%type agg_stage_op      {MdbNodeType}
+%type agg_expr_pair     {MdbNode *}
+%type agg_accum_op      {MdbNodeType}
+%type shell_statement   {MdbNode *}
+%type collection_name   {MdbString}
+%type opt_projection    {MdbNode *}
+%type operator_key      {MdbString}
+
+/* ======================================================================
+ * GRAMMAR RULES
+ * ====================================================================== */
+
+/* ----- Top-level input -----
+ * Accepts: a JSON document, a JSON array (aggregation pipeline),
+ * or a shell-style statement.
+ */
+input(A) ::= document(B). {
+    A = B;
+    pstate->result = A;
+}
+
+input(A) ::= array(B). {
+    A = B;
+    pstate->result = A;
+}
+
+input(A) ::= shell_statement(B). {
+    A = B;
+    pstate->result = A;
+}
+
+/* ----- Shell-style statements -----
+ * db.collection.find(query)
+ * db.collection.find(query, projection)
+ * db.collection.update(query, update)
+ * db.collection.aggregate(pipeline)
+ */
+shell_statement(A) ::= KW_DB DOT collection_name DOT KW_FIND LPAREN document(E) opt_projection(F) RPAREN. {
+    A = mdb_make_find(E, F);
+}
+
+shell_statement(A) ::= KW_DB DOT collection_name DOT KW_UPDATE LPAREN document(E) COMMA document(G) RPAREN. {
+    A = mdb_make_update(E, G);
+}
+
+shell_statement(A) ::= KW_DB DOT collection_name DOT KW_AGGREGATE LPAREN array(E) RPAREN. {
+    A = mdb_make_aggregate(E);
+}
+
+collection_name(A) ::= IDENT(B). { A = B.str; }
+collection_name(A) ::= STRING(B). { A = B.str; }
+
+opt_projection(A) ::= COMMA document(C). { A = C; }
+opt_projection(A) ::= . { A = NULL; }
+
+/* ----- Document (JSON object) -----
+ * { }
+ * { pair, pair, ... }
+ */
+document(A) ::= LBRACE RBRACE. {
+    A = mdb_make_document(NULL);
+}
+
+document(A) ::= LBRACE pair_list(B) RBRACE. {
+    A = mdb_make_document(B);
+}
+
+pair_list(A) ::= pair(B). {
+    A = mdb_list_make1(B);
+}
+
+pair_list(A) ::= pair_list(B) COMMA pair(D). {
+    A = mdb_list_append(B, D);
+}
+
+/* ----- Key-value pair -----
+ * A pair can be a plain key: value, a query operator, a logical operator,
+ * an update operator, an aggregation stage, or an aggregation expression.
+ */
+pair(A) ::= key(B) COLON value(D). {
+    A = mdb_make_pair(&B, D);
+}
+
+pair(A) ::= query_op_pair(B). { A = B; }
+pair(A) ::= logical_op_pair(B). { A = B; }
+pair(A) ::= element_op_pair(B). { A = B; }
+pair(A) ::= array_op_pair(B). { A = B; }
+pair(A) ::= eval_op_pair(B). { A = B; }
+pair(A) ::= update_op_pair(B). { A = B; }
+pair(A) ::= agg_stage_pair(B). { A = B; }
+pair(A) ::= agg_expr_pair(B). { A = B; }
+
+/* ----- Key names -----
+ * Keys can be strings, identifiers, or certain keywords used as keys.
+ */
+key(A) ::= STRING(B). { A = B.str; }
+key(A) ::= IDENT(B). { A = B.str; }
+key(A) ::= DOLLAR_IDENT(B). { A = B.str; }
+
+/* Allow shell keywords as document keys */
+key(A) ::= KW_DB(B). { A = B.str; }
+key(A) ::= KW_FIND(B). { A = B.str; }
+key(A) ::= KW_UPDATE(B). { A = B.str; }
+key(A) ::= KW_AGGREGATE(B). { A = B.str; }
+
+/* Allow operator tokens to be used as generic keys (via their string value).
+ * This handles cases like unrecognized operators falling through as pairs.
+ */
+key(A) ::= operator_key(B). { A = B; }
+
+operator_key(A) ::= OP_OPTIONS(B). { A = B.str; }
+
+/* ----- Values -----
+ * Any JSON value: string, number, bool, null, document, array, ObjectId(...)
+ */
+value(A) ::= STRING(B). { A = mdb_make_string(&B.str); }
+value(A) ::= INT_LIT(B). { A = mdb_make_int(B.ival); }
+value(A) ::= FLOAT_LIT(B). { A = mdb_make_double(B.dval); }
+value(A) ::= KW_TRUE. { A = mdb_make_bool(true); }
+value(A) ::= KW_FALSE. { A = mdb_make_bool(false); }
+value(A) ::= KW_NULL. { A = mdb_make_null(); }
+value(A) ::= document(B). { A = B; }
+value(A) ::= array(B). { A = B; }
+value(A) ::= DOLLAR_IDENT(B). { A = mdb_make_field_path(&B.str); }
+value(A) ::= KW_OBJECTID LPAREN STRING(C) RPAREN. { A = mdb_make_object_id(&C.str); }
+
+/* ----- Array -----
+ * [ ]
+ * [ value, value, ... ]
+ */
+array(A) ::= LBRACKET RBRACKET. {
+    A = mdb_make_array(NULL);
+}
+
+array(A) ::= LBRACKET opt_value_list(B) RBRACKET. {
+    A = mdb_make_array(B);
+}
+
+opt_value_list(A) ::= value_list(B). { A = B; }
+
+value_list(A) ::= value(B). {
+    A = mdb_list_make1(B);
+}
+
+value_list(A) ::= value_list(B) COMMA value(D). {
+    A = mdb_list_append(B, D);
+}
+
+/* ======================================================================
+ * QUERY OPERATORS
+ *
+ * These rules handle operators that appear as keys within query documents.
+ * Example: { "age": { "$gt": 25 } }
+ *          The inner { "$gt": 25 } pair is a query_op_pair.
+ * ====================================================================== */
+
+/* ----- Comparison operators ----- */
+query_op_pair(A) ::= comparison_op(B) COLON value(D). {
+    A = mdb_make_query_op(B, NULL, D);
+}
+
+comparison_op(A) ::= OP_EQ. { A = MDB_OP_EQ; }
+comparison_op(A) ::= OP_NE. { A = MDB_OP_NE; }
+comparison_op(A) ::= OP_GT. { A = MDB_OP_GT; }
+comparison_op(A) ::= OP_GTE. { A = MDB_OP_GTE; }
+comparison_op(A) ::= OP_LT. { A = MDB_OP_LT; }
+comparison_op(A) ::= OP_LTE. { A = MDB_OP_LTE; }
+comparison_op(A) ::= OP_IN. { A = MDB_OP_IN; }
+comparison_op(A) ::= OP_NIN. { A = MDB_OP_NIN; }
+
+/* ----- Logical operators -----
+ * { "$and": [ ... ] }
+ * { "$or": [ ... ] }
+ * { "$nor": [ ... ] }
+ * { "$not": { ... } }
+ */
+logical_op_pair(A) ::= logical_op(B) COLON array(D). {
+    A = mdb_make_logical_op(B, D);
+}
+
+logical_op_pair(A) ::= OP_NOT COLON document(D). {
+    A = mdb_make_logical_op(MDB_OP_NOT, D);
+}
+
+logical_op(A) ::= OP_AND. { A = MDB_OP_AND; }
+logical_op(A) ::= OP_OR. { A = MDB_OP_OR; }
+logical_op(A) ::= OP_NOR. { A = MDB_OP_NOR; }
+
+/* ----- Element operators -----
+ * { "$exists": true }
+ * { "$type": "string" }
+ */
+element_op_pair(A) ::= OP_EXISTS COLON value(D). {
+    A = mdb_make_query_op(MDB_OP_EXISTS, NULL, D);
+}
+
+element_op_pair(A) ::= OP_TYPE COLON value(D). {
+    A = mdb_make_query_op(MDB_OP_TYPE, NULL, D);
+}
+
+/* ----- Array operators -----
+ * { "$all": [ ... ] }
+ * { "$elemMatch": { ... } }
+ * { "$size": 3 }
+ */
+array_op_pair(A) ::= OP_ALL COLON array(D). {
+    A = mdb_make_query_op(MDB_OP_ALL, NULL, D);
+}
+
+array_op_pair(A) ::= OP_ELEMMATCH COLON document(D). {
+    A = mdb_make_query_op(MDB_OP_ELEMMATCH, NULL, D);
+}
+
+array_op_pair(A) ::= OP_SIZE COLON value(D). {
+    A = mdb_make_query_op(MDB_OP_SIZE, NULL, D);
+}
+
+/* ----- Evaluation operators -----
+ * { "$regex": "pattern" }
+ * { "$regex": "pattern", "$options": "flags" }
+ * { "$mod": [ divisor, remainder ] }
+ */
+eval_op_pair(A) ::= OP_REGEX COLON value(D). {
+    A = mdb_make_query_op(MDB_OP_REGEX, NULL, D);
+}
+
+eval_op_pair(A) ::= OP_MOD COLON array(D). {
+    A = mdb_make_query_op(MDB_OP_MOD, NULL, D);
+}
+
+/* ======================================================================
+ * UPDATE OPERATORS
+ *
+ * Example: { "$set": { "status": "active" }, "$inc": { "count": 1 } }
+ * ====================================================================== */
+
+update_op_pair(A) ::= update_op(B) COLON document(D). {
+    A = mdb_make_update_op(B, D);
+}
+
+update_op(A) ::= UP_SET. { A = MDB_UP_SET; }
+update_op(A) ::= UP_UNSET. { A = MDB_UP_UNSET; }
+update_op(A) ::= UP_INC. { A = MDB_UP_INC; }
+update_op(A) ::= UP_MUL. { A = MDB_UP_MUL; }
+update_op(A) ::= UP_RENAME. { A = MDB_UP_RENAME; }
+update_op(A) ::= UP_MIN. { A = MDB_UP_MIN; }
+update_op(A) ::= UP_MAX. { A = MDB_UP_MAX; }
+update_op(A) ::= UP_CURRENTDATE. { A = MDB_UP_CURRENTDATE; }
+update_op(A) ::= UP_SETONINSERT. { A = MDB_UP_SETONDISERT; }
+update_op(A) ::= UP_PUSH. { A = MDB_UP_PUSH; }
+update_op(A) ::= UP_PULL. { A = MDB_UP_PULL; }
+update_op(A) ::= UP_ADDTOSET. { A = MDB_UP_ADDTOSET; }
+update_op(A) ::= UP_POP. { A = MDB_UP_POP; }
+
+/* ======================================================================
+ * AGGREGATION STAGES
+ *
+ * Example: { "$match": { "status": "A" } }
+ *          { "$group": { "_id": "$dept", "count": { "$sum": 1 } } }
+ * ====================================================================== */
+
+agg_stage_pair(A) ::= agg_stage_op(B) COLON value(D). {
+    A = mdb_make_agg_stage(B, D);
+}
+
+agg_stage_op(A) ::= AGG_MATCH. { A = MDB_AGG_MATCH; }
+agg_stage_op(A) ::= AGG_GROUP. { A = MDB_AGG_GROUP; }
+agg_stage_op(A) ::= AGG_PROJECT. { A = MDB_AGG_PROJECT; }
+agg_stage_op(A) ::= AGG_SORT. { A = MDB_AGG_SORT; }
+agg_stage_op(A) ::= AGG_LIMIT. { A = MDB_AGG_LIMIT; }
+agg_stage_op(A) ::= AGG_SKIP. { A = MDB_AGG_SKIP; }
+agg_stage_op(A) ::= AGG_UNWIND. { A = MDB_AGG_UNWIND; }
+agg_stage_op(A) ::= AGG_LOOKUP. { A = MDB_AGG_LOOKUP; }
+agg_stage_op(A) ::= AGG_OUT. { A = MDB_AGG_OUT; }
+agg_stage_op(A) ::= AGG_COUNT. { A = MDB_AGG_COUNT; }
+
+/* ======================================================================
+ * AGGREGATION ACCUMULATOR EXPRESSIONS
+ *
+ * Example: { "$sum": "$amount" }
+ *          { "$avg": "$score" }
+ * ====================================================================== */
+
+agg_expr_pair(A) ::= agg_accum_op(B) COLON value(D). {
+    A = mdb_make_agg_expr(B, D);
+}
+
+agg_accum_op(A) ::= AGG_SUM. { A = MDB_AGG_SUM; }
+agg_accum_op(A) ::= AGG_AVG. { A = MDB_AGG_AVG; }
+agg_accum_op(A) ::= AGG_FIRST. { A = MDB_AGG_FIRST; }
+agg_accum_op(A) ::= AGG_LAST. { A = MDB_AGG_LAST; }

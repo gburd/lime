@@ -1,0 +1,16 @@
+# Prolog declarations with query body
+
+# Namespace declaration
+declare namespace ns = "http://example.com"; //ns:item
+
+# Variable declaration
+declare variable $x := 42; $x + 1
+
+# Function declaration
+declare function local:double($n) { $n * 2 }; local:double(21)
+
+# Function with type
+declare function local:add($a as xs:integer, $b as xs:integer) as xs:integer { $a + $b }; local:add(1, 2)
+
+# Multiple declarations
+declare namespace lib = "http://example.com/lib"; declare variable $max := 100; for $x in 1 to $max return $x

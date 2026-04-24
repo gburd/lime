@@ -1,0 +1,16 @@
+# Test INSERT statement
+# Inserts rows with values and nulls
+
+create test_rel 9999 (
+  col1 = int4,
+  col2 = text,
+  col3 = bool
+)
+
+open test_rel
+
+insert (1 hello t)
+insert (2 world f)
+insert (3 _null_ t)
+
+close test_rel

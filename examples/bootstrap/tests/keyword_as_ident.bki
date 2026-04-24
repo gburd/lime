@@ -1,0 +1,23 @@
+# Test using keywords as identifiers
+# All keywords except _null_ should be usable as identifiers
+
+create index 5555 (
+  open = text,
+  close = text,
+  create = text,
+  insert = text,
+  declare = text,
+  on = text,
+  using = text,
+  build = text,
+  indices = text,
+  unique = text,
+  toast = text,
+  OID = text,
+  bootstrap = text,
+  shared_relation = text,
+  rowtype_oid = text,
+  FORCE = text,
+  NOT = text,
+  NULL = text
+)

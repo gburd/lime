@@ -1,0 +1,31 @@
+# FLWOR expressions
+
+# Simple for-return
+for $x in //book return $x/title
+
+# For with where
+for $book in //book where $book/price < 30 return $book/title
+
+# For with order by
+for $book in //book order by $book/title return $book/title
+
+# For with order by descending
+for $book in //book order by $book/price descending return $book/title
+
+# Let expression
+let $total := count(//item) return $total
+
+# For-let combination
+for $b in //book let $t := $b/title where $b/price < 50 return $t
+
+# Multiple for clauses
+for $b in //book for $a in //author where $b/author-ref = $a/@id return $b/title
+
+# For with positional variable
+for $x at $i in (1, 2, 3) return $i
+
+# Order by with multiple specs
+for $x in //item order by $x/category, $x/price descending return $x/name
+
+# Where with complex condition
+for $p in //product where $p/price > 10 and $p/stock > 0 return $p/name

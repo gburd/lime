@@ -1,0 +1,42 @@
+# MongoDB update documents
+
+# $set operator
+{ "$set": { "status": "modified" } }
+{ "$set": { "name": "Alice", "age": 31 } }
+
+# $unset operator
+{ "$unset": { "middleName": "" } }
+
+# $inc operator
+{ "$inc": { "count": 1 } }
+{ "$inc": { "count": -1, "version": 1 } }
+
+# $mul operator
+{ "$mul": { "price": 1.1 } }
+
+# $rename operator
+{ "$rename": { "nmae": "name" } }
+
+# $min and $max
+{ "$min": { "lowScore": 150 } }
+{ "$max": { "highScore": 950 } }
+
+# $currentDate
+{ "$currentDate": { "lastModified": true } }
+
+# $setOnInsert
+{ "$setOnInsert": { "defaultValue": 0 } }
+
+# Combined update operators
+{ "$set": { "status": "active" }, "$inc": { "loginCount": 1 } }
+{ "$set": { "name": "Bob" }, "$unset": { "temp": "" }, "$inc": { "version": 1 } }
+
+# Array update operators
+{ "$push": { "tags": "newTag" } }
+{ "$pull": { "tags": "oldTag" } }
+{ "$addToSet": { "tags": "uniqueTag" } }
+{ "$pop": { "scores": 1 } }
+{ "$pop": { "scores": -1 } }
+
+# Nested update
+{ "$set": { "address.city": "Boston", "address.state": "MA" } }

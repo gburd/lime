@@ -1,0 +1,48 @@
+% genealogy.dl -- Classic Datalog genealogy example
+%
+% Demonstrates facts, recursive rules, and queries using
+% a family tree database.
+
+% --- Facts: the family tree ---
+
+parent(tom, bob).
+parent(tom, liz).
+parent(bob, ann).
+parent(bob, pat).
+parent(pat, jim).
+parent(liz, mia).
+
+% Gender facts
+male(tom).
+male(bob).
+male(pat).
+male(jim).
+female(liz).
+female(ann).
+female(mia).
+
+% --- Rules ---
+
+% Direct parent-child relationships
+father(X, Y) :- parent(X, Y), male(X).
+mother(X, Y) :- parent(X, Y), female(X).
+
+% Grandparent
+grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
+
+% Siblings share a parent
+sibling(X, Y) :- parent(Z, X), parent(Z, Y), X \= Y.
+
+% Ancestor (recursive)
+ancestor(X, Y) :- parent(X, Y).
+ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y).
+
+% Descendant (symmetric to ancestor)
+descendant(X, Y) :- ancestor(Y, X).
+
+% --- Queries ---
+
+?- grandparent(tom, X).
+?- ancestor(tom, jim).
+?- sibling(ann, X).
+?- descendant(jim, X).

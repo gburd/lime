@@ -1,0 +1,260 @@
+/*
+ * PostgreSQL Isolation Test Spec Grammar for Lime Parser Generator
+ *
+ * Converted from: src/test/isolation/specparse.y
+ * Original: PostgreSQL Global Development Group
+ *
+ * This grammar parses isolation test specification files that describe
+ * concurrent sessions, steps, and permutation orderings for testing
+ * transaction isolation behavior.
+ *
+ * Spec file structure:
+ *   [setup { SQL } ...]
+ *   [teardown { SQL }]
+ *   session "name" [setup { SQL }] step "name" { SQL } ... [teardown { SQL }]
+ *   ...
+ *   [permutation "step1" "step2" ...]
+ *   ...
+ */
+
+/* ======================================================================
+ * PARSER CONFIGURATION
+ * ====================================================================== */
+
+%name isol
+
+%token_type {IsolToken}
+
+%extra_argument {IsolParseState *pstate}
+
+%include {
+#include "isolation_defs.h"
+}
+
+%syntax_error {
+    isol_yyerror(pstate, "syntax error");
+}
+
+%parse_failure {
+    isol_yyerror(pstate, "parse failure");
+}
+
+/* ======================================================================
+ * TOKEN DECLARATIONS
+ * ====================================================================== */
+
+%token SQLBLOCK.        /* SQL block: { ... } */
+%token IDENTIFIER.      /* Plain or double-quoted identifier */
+%token INTEGER.         /* Numeric literal */
+
+/* Keywords */
+%token NOTICES.
+%token PERMUTATION.
+%token SESSION.
+%token SETUP.
+%token STEP.
+%token TEARDOWN.
+%token TEST.
+
+/* Punctuation */
+%token COMMA.           /* , */
+%token LPAREN.          /* ( */
+%token RPAREN.          /* ) */
+%token STAR.            /* * */
+
+/* ======================================================================
+ * NON-TERMINAL TYPE DECLARATIONS
+ * ====================================================================== */
+
+%type testSpec {int}
+%type setup_list {IsolPtrList *}
+%type opt_setup {char *}
+%type setup {char *}
+%type opt_teardown {char *}
+%type session_list {IsolPtrList *}
+%type session {Session *}
+%type step_list {IsolPtrList *}
+%type step {Step *}
+%type opt_permutation_list {IsolPtrList *}
+%type permutation_list {IsolPtrList *}
+%type permutation {Permutation *}
+%type permutation_step_list {IsolPtrList *}
+%type permutation_step {PermutationStep *}
+%type blocker_list {IsolPtrList *}
+%type blocker {PermutationStepBlocker *}
+
+/* ======================================================================
+ * START SYMBOL
+ * ====================================================================== */
+
+%start_symbol testSpec
+
+/* ======================================================================
+ * GRAMMAR RULES
+ * ====================================================================== */
+
+/*
+ * testSpec: top-level rule
+ *   setup_list opt_teardown session_list opt_permutation_list
+ */
+testSpec(A) ::= setup_list(B) opt_teardown(C) session_list(D) opt_permutation_list(E). {
+    pstate->result.setupsqls = (char **)B->elements;
+    pstate->result.nsetupsqls = B->nelements;
+    pstate->result.teardownsql = C;
+    pstate->result.sessions = (Session **)D->elements;
+    pstate->result.nsessions = D->nelements;
+    pstate->result.permutations = (Permutation **)E->elements;
+    pstate->result.npermutations = E->nelements;
+    A = 0;
+}
+
+/* ---------------------------------------------------------------
+ * Setup list (zero or more SETUP { sql } blocks)
+ * --------------------------------------------------------------- */
+setup_list(A) ::= . {
+    A = isol_ptr_list_empty(pstate);
+}
+
+setup_list(A) ::= setup_list(B) setup(C). {
+    A = isol_ptr_list_append(pstate, B, C);
+}
+
+/* ---------------------------------------------------------------
+ * Optional setup / teardown
+ * --------------------------------------------------------------- */
+opt_setup(A) ::= . {
+    A = NULL;
+}
+
+opt_setup(A) ::= setup(B). {
+    A = B;
+}
+
+setup(A) ::= SETUP SQLBLOCK(B). {
+    A = B.str;
+}
+
+opt_teardown(A) ::= . {
+    A = NULL;
+}
+
+opt_teardown(A) ::= TEARDOWN SQLBLOCK(B). {
+    A = B.str;
+}
+
+/* ---------------------------------------------------------------
+ * Session list (one or more sessions)
+ * --------------------------------------------------------------- */
+session_list(A) ::= session(B). {
+    A = isol_ptr_list_create(pstate, B);
+}
+
+session_list(A) ::= session_list(B) session(C). {
+    A = isol_ptr_list_append(pstate, B, C);
+}
+
+/* ---------------------------------------------------------------
+ * Session definition
+ * --------------------------------------------------------------- */
+session(A) ::= SESSION IDENTIFIER(B) opt_setup(C) step_list(D) opt_teardown(E). {
+    A = isol_make_session(pstate, B.str, C, D, E);
+}
+
+/* ---------------------------------------------------------------
+ * Step list (one or more steps within a session)
+ * --------------------------------------------------------------- */
+step_list(A) ::= step(B). {
+    A = isol_ptr_list_create(pstate, B);
+}
+
+step_list(A) ::= step_list(B) step(C). {
+    A = isol_ptr_list_append(pstate, B, C);
+}
+
+/* ---------------------------------------------------------------
+ * Step definition
+ * --------------------------------------------------------------- */
+step(A) ::= STEP IDENTIFIER(B) SQLBLOCK(C). {
+    A = isol_make_step(pstate, B.str, C.str);
+}
+
+/* ---------------------------------------------------------------
+ * Optional permutation list
+ * --------------------------------------------------------------- */
+opt_permutation_list(A) ::= permutation_list(B). {
+    A = B;
+}
+
+opt_permutation_list(A) ::= . {
+    A = isol_ptr_list_empty(pstate);
+}
+
+/* ---------------------------------------------------------------
+ * Permutation list (one or more permutations)
+ * --------------------------------------------------------------- */
+permutation_list(A) ::= permutation(B). {
+    A = isol_ptr_list_create(pstate, B);
+}
+
+permutation_list(A) ::= permutation_list(B) permutation(C). {
+    A = isol_ptr_list_append(pstate, B, C);
+}
+
+/* ---------------------------------------------------------------
+ * Permutation: a specific ordering of steps
+ * --------------------------------------------------------------- */
+permutation(A) ::= PERMUTATION permutation_step_list(B). {
+    A = isol_make_permutation(pstate, B);
+}
+
+/* ---------------------------------------------------------------
+ * Permutation step list
+ * --------------------------------------------------------------- */
+permutation_step_list(A) ::= permutation_step(B). {
+    A = isol_ptr_list_create(pstate, B);
+}
+
+permutation_step_list(A) ::= permutation_step_list(B) permutation_step(C). {
+    A = isol_ptr_list_append(pstate, B, C);
+}
+
+/* ---------------------------------------------------------------
+ * Permutation step: a step name with optional blocker list
+ * --------------------------------------------------------------- */
+permutation_step(A) ::= IDENTIFIER(B). {
+    A = isol_make_perm_step(pstate, B.str, NULL);
+}
+
+permutation_step(A) ::= IDENTIFIER(B) LPAREN blocker_list(C) RPAREN. {
+    A = isol_make_perm_step(pstate, B.str, C);
+}
+
+/* ---------------------------------------------------------------
+ * Blocker list: comma-separated blockers
+ * --------------------------------------------------------------- */
+blocker_list(A) ::= blocker(B). {
+    A = isol_ptr_list_create(pstate, B);
+}
+
+blocker_list(A) ::= blocker_list(B) COMMA blocker(C). {
+    A = isol_ptr_list_append(pstate, B, C);
+}
+
+/* ---------------------------------------------------------------
+ * Blocker: wait condition for a permutation step
+ *
+ *   identifier                    -> wait for step
+ *   identifier NOTICES INTEGER    -> wait for N notices from step
+ *   *                             -> wait once (wildcard)
+ * --------------------------------------------------------------- */
+blocker(A) ::= IDENTIFIER(B). {
+    A = isol_make_blocker_step(pstate, B.str);
+}
+
+blocker(A) ::= IDENTIFIER(B) NOTICES INTEGER(C). {
+    A = isol_make_blocker_notices(pstate, B.str, C.ival);
+}
+
+blocker(A) ::= STAR. {
+    A = isol_make_blocker_once(pstate);
+}

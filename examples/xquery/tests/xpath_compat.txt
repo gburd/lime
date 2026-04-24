@@ -1,0 +1,60 @@
+# XPath expressions (compatibility with XPath subset)
+
+# Simple paths
+child::para
+para
+*
+@name
+@*
+.
+..
+/
+/para
+//para
+.//para
+
+# Multi-step
+child::*/child::para
+/descendant::olist/child::item
+para/text()
+
+# Predicates
+child::para[1]
+para[@type="warning"]
+chapter[title]
+
+# Expressions
+3 + 4
+10 - 3
+6 * 7
+10 div 3
+10 mod 3
+-5
+
+# Comparisons
+3 < 5
+3 <= 5
+5 > 3
+5 >= 3
+@name = "test"
+@name != "test"
+
+# Boolean
+true() or false()
+true() and false()
+
+# Functions
+last()
+position()
+count(//item)
+concat("a", "b", "c")
+string-length("hello")
+
+# Variables
+$x
+$ns:var
+
+# Nested
+(1 + 2) * 3
+count(//item) > 5
+/bookstore/book[price>35]/title

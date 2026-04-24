@@ -1,0 +1,9 @@
+# Predicate expressions
+$.x == 1 && $.y == 2
+$.x == 1 || $.y == 2
+!($.x == 1)
+($.x == 1) is unknown
+exists($.x)
+$.x starts with "hello"
+$.name like_regex "^[A-Z]"
+$.name like_regex "^test" flag "i"

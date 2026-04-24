@@ -1,0 +1,46 @@
+% negation.dl -- Stratified negation and comparison operators
+%
+% Demonstrates negation-as-failure (not) and built-in comparison
+% predicates in Datalog rule bodies.
+
+% --- Facts ---
+
+node(a).
+node(b).
+node(c).
+node(d).
+node(e).
+
+infected(b).
+infected(d).
+
+employee(alice, 55000).
+employee(bob, 72000).
+employee(carol, 48000).
+employee(dave, 91000).
+employee(eve, 63000).
+
+% --- Rules with negation ---
+
+% Safe nodes: not infected
+safe(X) :- node(X), not infected(X).
+
+% --- Rules with comparison ---
+
+% High earners: salary > 60000
+high_earner(Name) :- employee(Name, Salary), Salary > 60000.
+
+% Low earners: salary <= 50000
+low_earner(Name) :- employee(Name, Salary), Salary <= 50000.
+
+% Earns more than another
+earns_more(X, Y) :- employee(X, Sx), employee(Y, Sy), Sx > Sy.
+
+% Same salary
+same_salary(X, Y) :- employee(X, S), employee(Y, S), X \= Y.
+
+% --- Queries ---
+
+?- safe(X).
+?- high_earner(X).
+?- earns_more(dave, X).

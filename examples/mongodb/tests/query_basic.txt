@@ -1,0 +1,41 @@
+# Basic MongoDB query documents
+
+# Empty document
+{}
+
+# Simple equality
+{ "name": "Alice" }
+
+# Multiple fields
+{ "name": "Alice", "age": 30 }
+
+# Nested document
+{ "address": { "city": "NYC", "state": "NY" } }
+
+# Integer value
+{ "count": 42 }
+
+# Float value
+{ "price": 19.99 }
+
+# Boolean values
+{ "active": true }
+{ "deleted": false }
+
+# Null value
+{ "middleName": null }
+
+# Array value
+{ "tags": ["mongodb", "database", "nosql"] }
+
+# Nested arrays
+{ "matrix": [[1, 2], [3, 4]] }
+
+# Mixed types in array
+{ "data": [1, "two", true, null, { "x": 3 }] }
+
+# Dot notation field (as string key)
+{ "address.city": "NYC" }
+
+# ObjectId
+{ "_id": ObjectId("507f1f77bcf86cd799439011") }

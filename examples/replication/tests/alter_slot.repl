@@ -1,0 +1,1 @@
+ALTER_REPLICATION_SLOT myslot (failover true)

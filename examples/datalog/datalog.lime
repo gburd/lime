@@ -1,0 +1,587 @@
+/*
+ * datalog.lime -- Datalog/EDN Parser (Literate Grammar)
+ *
+ * A complete Datalog parser with EDN (Extensible Data Notation) data types,
+ * designed for the Lime parser generator's modular composition system.
+ *
+ * --- module ---
+ * name: datalog
+ * version: 1.0.0
+ * description: >
+ *   Datalog parser supporting facts, Horn clause rules, and queries.
+ *   Includes EDN data structures (vectors, maps, sets, keywords).
+ *   Follows Prolog/Datomic conventions: variables uppercase, atoms lowercase.
+ * dependencies: []
+ * exports:
+ *   - program
+ *   - clause
+ *   - fact
+ *   - rule
+ *   - query
+ *   - literal
+ *   - term
+ *   - edn_value
+ * --- end ---
+ *
+ * Datalog is a declarative logic programming language that is a subset of
+ * Prolog. It restricts Prolog in ways that guarantee termination of queries:
+ *
+ *   - No function symbols (terms are variables, atoms, or constants)
+ *   - No negation in rule heads (Horn clauses only)
+ *   - Every variable in the head must appear in the body (range-restriction)
+ *
+ * This grammar also supports:
+ *   - Stratified negation (not) in rule bodies
+ *   - Aggregation syntax (count, sum, min, max)
+ *   - EDN data literals for Datomic-style usage
+ *   - Query directives (?- prefix)
+ *
+ * --- examples ---
+ *
+ * # Facts (ground atoms -- no variables):
+ *   parent(tom, bob).
+ *   parent(tom, liz).
+ *   parent(bob, ann).
+ *   parent(bob, pat).
+ *   age(tom, 65).
+ *   name(tom, "Thomas").
+ *
+ * # Rules (Horn clauses -- head :- body):
+ *   grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
+ *   ancestor(X, Y) :- parent(X, Y).
+ *   ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y).
+ *   sibling(X, Y) :- parent(Z, X), parent(Z, Y), X \= Y.
+ *
+ * # Queries:
+ *   ?- grandparent(tom, X).
+ *   ?- ancestor(tom, ann).
+ *   ?- sibling(ann, X).
+ *
+ * # EDN data in facts (Datomic-style):
+ *   schema(:person/name, :db.type/string, :db.cardinality/one).
+ *   data(:entity/1, :person/name, "Alice").
+ *   tags(:entity/1, [:hobby, :sport, :music]).
+ *   attrs(:entity/1, {:name "Alice", :age 30}).
+ *
+ * --- end ---
+ */
+
+/* ======================================================================
+ * PARSER CONFIGURATION
+ * ====================================================================== */
+
+%name datalogParse
+
+%token_type {DatalogToken}
+
+%extra_argument {DatalogParseState *pstate}
+
+%include {
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include "datalog_defs.h"
+#include "datalog_helpers.h"
+}
+
+%syntax_error {
+    pstate->error = 1;
+    if (pstate->errMsg == NULL) {
+        pstate->errMsg = "syntax error in Datalog program";
+    }
+}
+
+%parse_failure {
+    pstate->error = 1;
+    if (pstate->errMsg == NULL) {
+        pstate->errMsg = "Datalog parse failure";
+    }
+}
+
+%start_symbol program
+
+/* ======================================================================
+ * TOKEN DECLARATIONS
+ *
+ * Terminals recognized by the tokenizer. Token names follow Lime
+ * conventions: all uppercase, descriptive.
+ * ====================================================================== */
+
+/* Identifiers and literals */
+%token ATOM.            /* lowercase-starting identifier: parent, tom, bob */
+%token VARIABLE.        /* uppercase-starting identifier: X, Y, Parent */
+%token UNDERSCORE.      /* anonymous variable: _ */
+%token INTEGER.         /* integer literal: 42, -7 */
+%token FLOAT.           /* floating-point literal: 3.14, -2.5e10 */
+%token STRING.          /* quoted string: "hello world" */
+%token KEYWORD.         /* EDN keyword: :name, :person/age */
+
+/* Punctuation */
+%token LPAREN.          /* ( */
+%token RPAREN.          /* ) */
+%token LBRACKET.        /* [ */
+%token RBRACKET.        /* ] */
+%token LBRACE.          /* { */
+%token RBRACE.          /* } */
+%token COMMA.           /* , */
+%token DOT.             /* . */
+%token PIPE.            /* | */
+%token HASH_LBRACE.     /* #{ -- set literal opener */
+
+/* Operators */
+%token RULE_OP.         /* :- */
+%token QUERY_OP.        /* ?- */
+%token NOT_OP.          /* not or \+ */
+%token NEQ_OP.          /* \= or != */
+%token EQ_OP.           /* = */
+%token LT_OP.           /* < */
+%token GT_OP.           /* > */
+%token LTE_OP.          /* <= */
+%token GTE_OP.          /* >= */
+
+/* Aggregation keywords */
+%token COUNT.           /* count */
+%token SUM.             /* sum */
+%token MIN.             /* min */
+%token MAX.             /* max */
+%token AVG.             /* avg */
+
+/* Boolean literals */
+%token TRUE_K.          /* true */
+%token FALSE_K.         /* false */
+%token NIL_K.           /* nil */
+
+/* ======================================================================
+ * PRECEDENCE DECLARATIONS
+ *
+ * Lower declarations = lower precedence.
+ * Comma (conjunction) is the weakest operator in rule bodies.
+ * ====================================================================== */
+
+%left COMMA.
+%left NOT_OP.
+%nonassoc EQ_OP NEQ_OP LT_OP GT_OP LTE_OP GTE_OP.
+
+/* ======================================================================
+ * NON-TERMINAL TYPE DECLARATIONS
+ * ====================================================================== */
+
+%type program           {DlProgram *}
+%type clause_list       {DlClauseList *}
+%type clause            {DlClause *}
+%type fact              {DlClause *}
+%type rule              {DlClause *}
+%type query             {DlClause *}
+%type head              {DlLiteral *}
+%type body              {DlLiteralList *}
+%type literal_list      {DlLiteralList *}
+%type body_literal      {DlLiteral *}
+%type literal           {DlLiteral *}
+%type negated_literal   {DlLiteral *}
+%type comparison        {DlLiteral *}
+%type comp_op           {DlCompOp}
+%type aggregate_literal {DlLiteral *}
+%type aggregate_func    {DlAggFunc}
+%type term_list         {DlTermList *}
+%type term              {DlTerm *}
+%type atom_term         {DlTerm *}
+%type variable_term     {DlTerm *}
+%type constant_term     {DlTerm *}
+%type edn_value         {DlTerm *}
+%type edn_vector        {DlTerm *}
+%type edn_map           {DlTerm *}
+%type edn_set           {DlTerm *}
+%type edn_map_pairs     {DlTermList *}
+%type edn_map_pair      {DlTermList *}
+%type edn_elements      {DlTermList *}
+
+/* ======================================================================
+ * GRAMMAR RULES
+ *
+ * Datalog grammar following standard conventions:
+ *   - Facts:   head.
+ *   - Rules:   head :- body.
+ *   - Queries: ?- body.
+ *
+ * Conversion conventions (matching other Lime examples):
+ *   Bison $$  -> A    (LHS result)
+ *   Bison $N  -> B,C,D,...  (RHS params, positional)
+ * ====================================================================== */
+
+/* ----- program: top-level entry point ----- */
+
+/*
+ * A Datalog program is a sequence of zero or more clauses.
+ * Each clause is terminated by a period.
+ */
+program(A) ::= clause_list(B). {
+    A = dl_make_program(pstate, B);
+}
+
+program(A) ::= . {
+    A = dl_make_program(pstate, NULL);
+}
+
+/* ----- clause_list: sequence of clauses ----- */
+
+clause_list(A) ::= clause(B). {
+    A = dl_clause_list_create(B);
+}
+
+clause_list(A) ::= clause_list(B) clause(C). {
+    A = dl_clause_list_append(B, C);
+}
+
+/* ----- clause: a fact, rule, or query ----- */
+
+clause(A) ::= fact(B).  { A = B; }
+clause(A) ::= rule(B).  { A = B; }
+clause(A) ::= query(B). { A = B; }
+
+/* ----- fact: a ground atom terminated by a period -----
+ *
+ * Examples:
+ *   parent(tom, bob).
+ *   age(tom, 65).
+ *   name(tom, "Thomas").
+ */
+fact(A) ::= head(B) DOT. {
+    A = dl_make_fact(pstate, B);
+}
+
+/* ----- rule: a Horn clause (head :- body.) -----
+ *
+ * Examples:
+ *   grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
+ *   ancestor(X, Y) :- parent(X, Y).
+ *   ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y).
+ */
+rule(A) ::= head(B) RULE_OP body(D) DOT. {
+    A = dl_make_rule(pstate, B, D);
+}
+
+/* ----- query: a goal to evaluate (?- body.) -----
+ *
+ * Examples:
+ *   ?- grandparent(tom, X).
+ *   ?- ancestor(tom, ann).
+ */
+query(A) ::= QUERY_OP body(C) DOT. {
+    A = dl_make_query(pstate, C);
+}
+
+/* ----- head: the consequent of a clause ----- */
+
+head(A) ::= literal(B). {
+    A = B;
+}
+
+/* ----- body: the antecedent(s) of a rule or query ----- */
+
+body(A) ::= literal_list(B). {
+    A = B;
+}
+
+/* ----- literal_list: comma-separated body literals ----- */
+
+literal_list(A) ::= body_literal(B). {
+    A = dl_literal_list_create(B);
+}
+
+literal_list(A) ::= literal_list(B) COMMA body_literal(D). {
+    A = dl_literal_list_append(B, D);
+}
+
+/* ----- body_literal: a single element in a rule body ----- */
+
+body_literal(A) ::= literal(B).           { A = B; }
+body_literal(A) ::= negated_literal(B).   { A = B; }
+body_literal(A) ::= comparison(B).        { A = B; }
+body_literal(A) ::= aggregate_literal(B). { A = B; }
+
+/* ----- literal: a positive atom with arguments -----
+ *
+ * Examples:
+ *   parent(X, Y)
+ *   ancestor(tom, ann)
+ */
+literal(A) ::= ATOM(B) LPAREN term_list(D) RPAREN. {
+    A = dl_make_literal(pstate, B.str, D);
+}
+
+/* Nullary predicate (no arguments) */
+literal(A) ::= ATOM(B). {
+    A = dl_make_literal(pstate, B.str, NULL);
+}
+
+/* ----- negated_literal: negation-as-failure -----
+ *
+ * Example:
+ *   not member(X, excluded)
+ */
+negated_literal(A) ::= NOT_OP literal(C). {
+    A = dl_make_negated(pstate, C);
+}
+
+/* ----- comparison: built-in comparison predicates -----
+ *
+ * Examples:
+ *   X \= Y
+ *   Age > 18
+ *   X = tom
+ */
+comparison(A) ::= term(B) comp_op(C) term(D). {
+    A = dl_make_comparison(pstate, C, B, D);
+}
+
+comp_op(A) ::= EQ_OP.  { A = DL_COMP_EQ; }
+comp_op(A) ::= NEQ_OP. { A = DL_COMP_NEQ; }
+comp_op(A) ::= LT_OP.  { A = DL_COMP_LT; }
+comp_op(A) ::= GT_OP.  { A = DL_COMP_GT; }
+comp_op(A) ::= LTE_OP. { A = DL_COMP_LTE; }
+comp_op(A) ::= GTE_OP. { A = DL_COMP_GTE; }
+
+/* ----- aggregate_literal: aggregation expressions -----
+ *
+ * Examples:
+ *   count(X, parent(X, _))
+ *   sum(Age, person(_, Age))
+ */
+aggregate_literal(A) ::= aggregate_func(B) LPAREN term(D) COMMA literal(F) RPAREN. {
+    A = dl_make_aggregate(pstate, B, D, F);
+}
+
+aggregate_func(A) ::= COUNT. { A = DL_AGG_COUNT; }
+aggregate_func(A) ::= SUM.   { A = DL_AGG_SUM; }
+aggregate_func(A) ::= MIN.   { A = DL_AGG_MIN; }
+aggregate_func(A) ::= MAX.   { A = DL_AGG_MAX; }
+aggregate_func(A) ::= AVG.   { A = DL_AGG_AVG; }
+
+/* ----- term_list: comma-separated terms ----- */
+
+term_list(A) ::= term(B). {
+    A = dl_term_list_create(B);
+}
+
+term_list(A) ::= term_list(B) COMMA term(D). {
+    A = dl_term_list_append(B, D);
+}
+
+/* ----- term: an argument to a predicate -----
+ *
+ * Terms in Datalog are restricted compared to Prolog:
+ * no compound terms (function symbols). Only variables, atoms,
+ * and constants are allowed. EDN values extend the constant
+ * domain for Datomic-style usage.
+ */
+term(A) ::= variable_term(B). { A = B; }
+term(A) ::= atom_term(B).     { A = B; }
+term(A) ::= constant_term(B). { A = B; }
+term(A) ::= edn_value(B).     { A = B; }
+
+/* ----- variable_term: a logic variable -----
+ *
+ * Variables start with an uppercase letter (Prolog convention).
+ * The anonymous variable _ matches anything but creates no binding.
+ *
+ * Examples: X, Parent, _
+ */
+variable_term(A) ::= VARIABLE(B). {
+    A = dl_make_variable(pstate, B.str);
+}
+
+variable_term(A) ::= UNDERSCORE. {
+    A = dl_make_anon_variable(pstate);
+}
+
+/* ----- atom_term: a symbolic constant -----
+ *
+ * Atoms start with a lowercase letter.
+ * Examples: tom, bob, parent
+ */
+atom_term(A) ::= ATOM(B). {
+    A = dl_make_atom(pstate, B.str);
+}
+
+/* ----- constant_term: numeric, string, boolean, or nil constants ----- */
+
+constant_term(A) ::= INTEGER(B). {
+    A = dl_make_integer(pstate, B.str);
+}
+
+constant_term(A) ::= FLOAT(B). {
+    A = dl_make_float(pstate, B.str);
+}
+
+constant_term(A) ::= STRING(B). {
+    A = dl_make_string(pstate, B.str);
+}
+
+constant_term(A) ::= TRUE_K. {
+    A = dl_make_boolean(pstate, 1);
+}
+
+constant_term(A) ::= FALSE_K. {
+    A = dl_make_boolean(pstate, 0);
+}
+
+constant_term(A) ::= NIL_K. {
+    A = dl_make_nil(pstate);
+}
+
+/* ----- edn_value: EDN (Extensible Data Notation) values -----
+ *
+ * EDN extends Datalog terms with rich data structures borrowed
+ * from Clojure/Datomic. Keywords serve as attribute names;
+ * vectors, maps, and sets provide structured data.
+ *
+ * Examples:
+ *   :person/name       -- keyword
+ *   [:a, :b, :c]       -- vector
+ *   {:name "Alice"}    -- map
+ *   #{1, 2, 3}         -- set
+ */
+edn_value(A) ::= KEYWORD(B). {
+    A = dl_make_keyword(pstate, B.str);
+}
+
+edn_value(A) ::= edn_vector(B). { A = B; }
+edn_value(A) ::= edn_map(B).    { A = B; }
+edn_value(A) ::= edn_set(B).    { A = B; }
+
+/* ----- edn_vector: ordered collection [...] ----- */
+
+edn_vector(A) ::= LBRACKET edn_elements(C) RBRACKET. {
+    A = dl_make_vector(pstate, C);
+}
+
+edn_vector(A) ::= LBRACKET RBRACKET. {
+    A = dl_make_vector(pstate, NULL);
+}
+
+/* ----- edn_map: key-value collection {...} ----- */
+
+edn_map(A) ::= LBRACE edn_map_pairs(C) RBRACE. {
+    A = dl_make_map(pstate, C);
+}
+
+edn_map(A) ::= LBRACE RBRACE. {
+    A = dl_make_map(pstate, NULL);
+}
+
+/* ----- edn_set: unique collection #{...} ----- */
+
+edn_set(A) ::= HASH_LBRACE edn_elements(C) RBRACE. {
+    A = dl_make_set(pstate, C);
+}
+
+edn_set(A) ::= HASH_LBRACE RBRACE. {
+    A = dl_make_set(pstate, NULL);
+}
+
+/* ----- edn_map_pairs: key-value pairs in a map ----- */
+
+edn_map_pairs(A) ::= edn_map_pair(B). {
+    A = B;
+}
+
+edn_map_pairs(A) ::= edn_map_pairs(B) COMMA edn_map_pair(D). {
+    A = dl_term_list_concat(B, D);
+}
+
+/* A map pair is: key value (EDN style, no separator) or key: value */
+edn_map_pair(A) ::= term(B) term(C). {
+    A = dl_term_list_create(B);
+    A = dl_term_list_append(A, C);
+}
+
+/* ----- edn_elements: comma-separated or space-separated elements ----- */
+
+edn_elements(A) ::= term(B). {
+    A = dl_term_list_create(B);
+}
+
+edn_elements(A) ::= edn_elements(B) COMMA term(D). {
+    A = dl_term_list_append(B, D);
+}
+
+edn_elements(A) ::= edn_elements(B) term(C). {
+    A = dl_term_list_append(B, C);
+}
+
+/*
+ * --- tests ---
+ *
+ * # Basic facts
+ * input: "parent(tom, bob)."
+ * expect: parse_ok
+ * ast: fact(literal("parent", [atom("tom"), atom("bob")]))
+ *
+ * input: "age(tom, 65)."
+ * expect: parse_ok
+ *
+ * input: "name(tom, \"Thomas\")."
+ * expect: parse_ok
+ *
+ * # Rules
+ * input: "grandparent(X, Z) :- parent(X, Y), parent(Y, Z)."
+ * expect: parse_ok
+ * ast: rule(literal("grandparent", [var("X"), var("Z")]),
+ *           [literal("parent", [var("X"), var("Y")]),
+ *            literal("parent", [var("Y"), var("Z")])])
+ *
+ * input: "ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y)."
+ * expect: parse_ok
+ *
+ * # Queries
+ * input: "?- grandparent(tom, X)."
+ * expect: parse_ok
+ *
+ * input: "?- ancestor(tom, ann)."
+ * expect: parse_ok
+ *
+ * # Negation
+ * input: "safe(X) :- node(X), not infected(X)."
+ * expect: parse_ok
+ *
+ * # Comparison
+ * input: "adult(X) :- person(X, Age), Age > 18."
+ * expect: parse_ok
+ *
+ * # Anonymous variable
+ * input: "has_child(X) :- parent(X, _)."
+ * expect: parse_ok
+ *
+ * # EDN keywords
+ * input: "schema(:person/name, :db.type/string)."
+ * expect: parse_ok
+ *
+ * # EDN vectors
+ * input: "tags(alice, [:hobby, :sport])."
+ * expect: parse_ok
+ *
+ * # EDN maps
+ * input: "attrs(alice, {:name \"Alice\", :age 30})."
+ * expect: parse_ok
+ *
+ * # EDN sets
+ * input: "perms(alice, #{:read, :write})."
+ * expect: parse_ok
+ *
+ * # Empty program
+ * input: ""
+ * expect: parse_ok
+ *
+ * # Syntax errors
+ * input: "parent(tom,)."
+ * expect: parse_error
+ *
+ * input: "parent tom bob."
+ * expect: parse_error
+ *
+ * input: ":- parent(tom, bob)."
+ * expect: parse_error
+ *
+ * --- end ---
+ */

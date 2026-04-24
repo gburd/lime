@@ -1,0 +1,58 @@
+% datomic_schema.dl -- Datomic-style schema and data with EDN types
+%
+% Demonstrates EDN data structures (keywords, vectors, maps, sets)
+% integrated with Datalog facts and rules.
+
+% --- Schema definitions using EDN keywords ---
+
+schema(:person/name, :db.type/string, :db.cardinality/one).
+schema(:person/age, :db.type/long, :db.cardinality/one).
+schema(:person/email, :db.type/string, :db.cardinality/many).
+schema(:person/friends, :db.type/ref, :db.cardinality/many).
+schema(:person/tags, :db.type/keyword, :db.cardinality/many).
+
+% --- Entity data using EDN literals ---
+
+entity(1, :person/name, "Alice").
+entity(1, :person/age, 30).
+entity(1, :person/email, "alice@example.com").
+entity(1, :person/tags, #{:developer, :musician}).
+
+entity(2, :person/name, "Bob").
+entity(2, :person/age, 25).
+entity(2, :person/email, "bob@example.com").
+entity(2, :person/tags, #{:designer, :photographer}).
+
+entity(3, :person/name, "Carol").
+entity(3, :person/age, 35).
+entity(3, :person/tags, #{:developer, :writer}).
+
+% Friend relationships
+entity(1, :person/friends, 2).
+entity(1, :person/friends, 3).
+entity(2, :person/friends, 1).
+
+% --- Structured data as map values ---
+
+profile(1, {:name "Alice", :role "Engineer", :level 3}).
+profile(2, {:name "Bob", :role "Designer", :level 2}).
+
+% --- Vector data ---
+
+skills(1, [:clojure, :java, :python]).
+skills(2, [:figma, :sketch, :css]).
+
+% --- Rules over Datomic-style data ---
+
+person_name(Id, Name) :- entity(Id, :person/name, Name).
+person_age(Id, Age) :- entity(Id, :person/age, Age).
+friends(A, B) :- entity(A, :person/friends, B).
+
+% Mutual friends
+mutual_friends(A, B) :- friends(A, B), friends(B, A).
+
+% --- Queries ---
+
+?- person_name(1, X).
+?- person_age(X, 30).
+?- mutual_friends(1, X).

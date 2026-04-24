@@ -1,0 +1,585 @@
+/*
+ * pgbench Expression Parser -- Lime Format
+ *
+ * Converted from PostgreSQL src/bin/pgbench/exprparse.y (Bison format).
+ * This parser handles the simple expression language used in pgbench
+ * benchmarking scripts (\set variable expressions).
+ *
+ * Conversion conventions (matching examples/pg/gram.lime):
+ *   Bison $$    -> result stored via semantic action
+ *   Bison $N    -> A,B,C,... (positional params, left to right)
+ *   Bison %prec -> [TOKEN]
+ *   Bison 'x'   -> named tokens (LPAREN, RPAREN, COMMA, etc.)
+ *   Empty alt   -> nt ::=.
+ */
+
+%include {
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <assert.h>
+#include "pgbench_expr.h"  /* generated header */
+
+/*
+ * Forward declarations for AST construction helpers.
+ * In a full integration these would come from pgbench.h;
+ * here we provide standalone implementations.
+ */
+
+/* Expression node types */
+typedef enum {
+    EXPR_NULL,
+    EXPR_BOOLEAN,
+    EXPR_INTEGER,
+    EXPR_DOUBLE,
+    EXPR_VARIABLE,
+    EXPR_OP,
+    EXPR_FUNC
+} ExprType;
+
+/* A simple expression AST node */
+typedef struct Expr {
+    ExprType    type;
+    union {
+        bool        bval;
+        int64_t     ival;
+        double      dval;
+        char       *varname;
+        struct {
+            char           *name;
+            struct Expr    *left;
+            struct Expr    *right;
+        } op;
+        struct {
+            int             fnumber;
+            struct ExprList *args;
+        } func;
+    } u;
+} Expr;
+
+/* Expression list (linked list) */
+typedef struct ExprLink {
+    Expr            *expr;
+    struct ExprLink *next;
+} ExprLink;
+
+typedef struct ExprList {
+    ExprLink *head;
+    ExprLink *tail;
+} ExprList;
+
+/* Parse state passed via %extra_argument */
+typedef struct ParseState {
+    Expr    *result;     /* output: root of parsed expression tree */
+    int      errors;     /* error count */
+} ParseState;
+
+/* --- AST constructor helpers --- */
+
+static Expr *make_null_constant(void) {
+    Expr *e = (Expr *)calloc(1, sizeof(Expr));
+    e->type = EXPR_NULL;
+    return e;
+}
+
+static Expr *make_boolean_constant(bool bval) {
+    Expr *e = (Expr *)calloc(1, sizeof(Expr));
+    e->type = EXPR_BOOLEAN;
+    e->u.bval = bval;
+    return e;
+}
+
+static Expr *make_integer_constant(int64_t ival) {
+    Expr *e = (Expr *)calloc(1, sizeof(Expr));
+    e->type = EXPR_INTEGER;
+    e->u.ival = ival;
+    return e;
+}
+
+static Expr *make_double_constant(double dval) {
+    Expr *e = (Expr *)calloc(1, sizeof(Expr));
+    e->type = EXPR_DOUBLE;
+    e->u.dval = dval;
+    return e;
+}
+
+static Expr *make_variable(char *varname) {
+    Expr *e = (Expr *)calloc(1, sizeof(Expr));
+    e->type = EXPR_VARIABLE;
+    e->u.varname = varname;
+    return e;
+}
+
+static ExprList *make_elist(Expr *expr, ExprList *list) {
+    if (list == NULL) {
+        list = (ExprList *)calloc(1, sizeof(ExprList));
+    }
+    ExprLink *link = (ExprLink *)calloc(1, sizeof(ExprLink));
+    link->expr = expr;
+    link->next = NULL;
+    if (list->head == NULL)
+        list->head = link;
+    else
+        list->tail->next = link;
+    list->tail = link;
+    return list;
+}
+
+static Expr *make_op(const char *opname, Expr *left, Expr *right) {
+    Expr *e = (Expr *)calloc(1, sizeof(Expr));
+    e->type = EXPR_OP;
+    e->u.op.name = strdup(opname);
+    e->u.op.left = left;
+    e->u.op.right = right;
+    return e;
+}
+
+static Expr *make_uop(const char *opname, Expr *operand) {
+    Expr *e = (Expr *)calloc(1, sizeof(Expr));
+    e->type = EXPR_OP;
+    e->u.op.name = strdup(opname);
+    e->u.op.left = operand;
+    e->u.op.right = NULL;
+    return e;
+}
+
+static Expr *make_func(int fnumber, ExprList *args) {
+    Expr *e = (Expr *)calloc(1, sizeof(Expr));
+    e->type = EXPR_FUNC;
+    e->u.func.fnumber = fnumber;
+    e->u.func.args = args;
+    return e;
+}
+
+/* --- Free helpers for memory cleanup --- */
+
+static void free_expr(Expr *e);
+
+static void free_elist(ExprList *list) {
+    if (!list) return;
+    ExprLink *link = list->head;
+    while (link) {
+        ExprLink *next = link->next;
+        free_expr(link->expr);
+        free(link);
+        link = next;
+    }
+    free(list);
+}
+
+static void free_expr(Expr *e) {
+    if (!e) return;
+    switch (e->type) {
+        case EXPR_VARIABLE:
+            free(e->u.varname);
+            break;
+        case EXPR_OP:
+            free(e->u.op.name);
+            free_expr(e->u.op.left);
+            free_expr(e->u.op.right);
+            break;
+        case EXPR_FUNC:
+            free_elist(e->u.func.args);
+            break;
+        default:
+            break;
+    }
+    free(e);
+}
+
+/* --- Expression printing (for test/debug) --- */
+
+static void print_expr(Expr *e, int depth);
+
+static void print_indent(int depth) {
+    for (int i = 0; i < depth; i++) printf("  ");
+}
+
+static void print_elist(ExprList *list, int depth) {
+    if (!list) return;
+    ExprLink *link = list->head;
+    while (link) {
+        print_expr(link->expr, depth);
+        link = link->next;
+    }
+}
+
+static void print_expr(Expr *e, int depth) {
+    if (!e) { print_indent(depth); printf("(null)\n"); return; }
+    print_indent(depth);
+    switch (e->type) {
+        case EXPR_NULL:
+            printf("NULL\n");
+            break;
+        case EXPR_BOOLEAN:
+            printf("BOOLEAN: %s\n", e->u.bval ? "true" : "false");
+            break;
+        case EXPR_INTEGER:
+            printf("INTEGER: %ld\n", (long)e->u.ival);
+            break;
+        case EXPR_DOUBLE:
+            printf("DOUBLE: %g\n", e->u.dval);
+            break;
+        case EXPR_VARIABLE:
+            printf("VARIABLE: %s\n", e->u.varname);
+            break;
+        case EXPR_OP:
+            printf("OP: %s\n", e->u.op.name);
+            print_expr(e->u.op.left, depth + 1);
+            if (e->u.op.right)
+                print_expr(e->u.op.right, depth + 1);
+            break;
+        case EXPR_FUNC:
+            printf("FUNC: #%d\n", e->u.func.fnumber);
+            print_elist(e->u.func.args, depth + 1);
+            break;
+    }
+}
+}
+
+/* ======================================================================
+ * Parser configuration
+ * ====================================================================== */
+
+/*
+ * Token type: all tokens carry a TokenValue union.
+ */
+%token_type {TokenValue}
+
+/*
+ * Extra argument passed to the parser.
+ */
+%extra_argument {ParseState *pstate}
+
+/*
+ * Parser name prefix (replaces Bison's %name-prefix="expr_yy").
+ */
+%name pgbenchExpr
+
+/*
+ * Error handling.
+ */
+%syntax_error {
+    pstate->errors++;
+    fprintf(stderr, "pgbench expression: syntax error\n");
+}
+
+%parse_failure {
+    pstate->errors++;
+    fprintf(stderr, "pgbench expression: parse failure\n");
+}
+
+/*
+ * Start symbol.
+ */
+%start_symbol result
+
+/* ======================================================================
+ * Non-terminal types
+ * ====================================================================== */
+
+%type result       {Expr *}
+%type expr         {Expr *}
+%type case_control {Expr *}
+%type elist        {ExprList *}
+%type when_then_list {ExprList *}
+%type function     {int}
+
+/* ======================================================================
+ * Token declarations
+ * ====================================================================== */
+
+/* Literal value tokens */
+%token NULL_CONST.
+%token INTEGER_CONST.
+%token MAXINT_PLUS_ONE_CONST.
+%token DOUBLE_CONST.
+%token BOOLEAN_CONST.
+%token VARIABLE.
+%token FUNCTION.
+
+/* Operator tokens */
+%token AND_OP.
+%token OR_OP.
+%token NOT_OP.
+%token NE_OP.
+%token LE_OP.
+%token GE_OP.
+%token LS_OP.
+%token RS_OP.
+%token IS_OP.
+%token ISNULL_OP.
+%token NOTNULL_OP.
+
+/* Keyword tokens */
+%token CASE_KW.
+%token WHEN_KW.
+%token THEN_KW.
+%token ELSE_KW.
+%token END_KW.
+
+/* Single-character operator tokens (Lime requires named tokens) */
+%token PLUS.       /* + */
+%token MINUS.      /* - */
+%token STAR.       /* * */
+%token SLASH.      /* / */
+%token PERCENT.    /* % */
+%token LT.         /* < */
+%token GT.         /* > */
+%token EQ.         /* = */
+%token AMP.        /* & */
+%token PIPE.       /* | */
+%token HASH.       /* # */
+%token TILDE.      /* ~ */
+%token LPAREN.     /* ( */
+%token RPAREN.     /* ) */
+%token COMMA.      /* , */
+
+/* Pseudo-token for unary operator precedence */
+%token UNARY.
+
+/* ======================================================================
+ * Precedence declarations (lowest to highest)
+ *
+ * Taken from PostgreSQL SQL parser precedence levels.
+ * ====================================================================== */
+
+%left OR_OP.
+%left AND_OP.
+%right NOT_OP.
+%nonassoc IS_OP ISNULL_OP NOTNULL_OP.
+%nonassoc LT GT EQ LE_OP GE_OP NE_OP.
+%left PIPE HASH AMP LS_OP RS_OP TILDE.
+%left PLUS MINUS.
+%left STAR SLASH PERCENT.
+%right UNARY.
+
+/* ======================================================================
+ * Grammar rules
+ *
+ * Lime convention:
+ *   nonterminal(RESULT) ::= rhs_symbol(A) rhs_symbol(B) ... { action }
+ *   [TOKEN] at end of rule overrides precedence (like Bison %prec)
+ * ====================================================================== */
+
+/*
+ * Top-level: a single expression that becomes the parse result.
+ */
+result(R) ::= expr(A). {
+    R = A;
+    pstate->result = A;
+}
+
+/*
+ * Expression list (function arguments).
+ * Empty list returns NULL.
+ */
+elist(R) ::= . {
+    R = NULL;
+}
+
+elist(R) ::= expr(A). {
+    R = make_elist(A, NULL);
+}
+
+elist(R) ::= elist(A) COMMA expr(B). {
+    R = make_elist(B, A);
+}
+
+/*
+ * Expressions.
+ */
+
+/* Parenthesized expression */
+expr(R) ::= LPAREN expr(A) RPAREN. {
+    R = A;
+}
+
+/* Unary plus: +expr (no-op) */
+expr(R) ::= PLUS expr(A). [UNARY] {
+    R = A;
+}
+
+/* Unary minus: -expr implemented as (0 - expr) */
+expr(R) ::= MINUS expr(A). [UNARY] {
+    R = make_op("-", make_integer_constant(0), A);
+}
+
+/* Special PG_INT64_MIN handling: -9223372036854775808 */
+expr(R) ::= MINUS MAXINT_PLUS_ONE_CONST. [UNARY] {
+    R = make_integer_constant(INT64_MIN);
+}
+
+/* Bitwise complement: ~expr implemented as (0xFFFF...FFFF xor expr) */
+expr(R) ::= TILDE expr(A). {
+    R = make_op("#", make_integer_constant(~(int64_t)0), A);
+}
+
+/* Logical NOT */
+expr(R) ::= NOT_OP expr(A). {
+    R = make_uop("!not", A);
+}
+
+/* Binary arithmetic */
+expr(R) ::= expr(A) PLUS expr(B). {
+    R = make_op("+", A, B);
+}
+
+expr(R) ::= expr(A) MINUS expr(B). {
+    R = make_op("-", A, B);
+}
+
+expr(R) ::= expr(A) STAR expr(B). {
+    R = make_op("*", A, B);
+}
+
+expr(R) ::= expr(A) SLASH expr(B). {
+    R = make_op("/", A, B);
+}
+
+expr(R) ::= expr(A) PERCENT expr(B). {
+    R = make_op("mod", A, B);
+}
+
+/* Comparison operators */
+expr(R) ::= expr(A) LT expr(B). {
+    R = make_op("<", A, B);
+}
+
+expr(R) ::= expr(A) LE_OP expr(B). {
+    R = make_op("<=", A, B);
+}
+
+/* Note: > is implemented as reversed < (matching Bison original) */
+expr(R) ::= expr(A) GT expr(B). {
+    R = make_op("<", B, A);
+}
+
+/* Note: >= is implemented as reversed <= (matching Bison original) */
+expr(R) ::= expr(A) GE_OP expr(B). {
+    R = make_op("<=", B, A);
+}
+
+expr(R) ::= expr(A) EQ expr(B). {
+    R = make_op("=", A, B);
+}
+
+expr(R) ::= expr(A) NE_OP expr(B). {
+    R = make_op("<>", A, B);
+}
+
+/* Bitwise operators */
+expr(R) ::= expr(A) AMP expr(B). {
+    R = make_op("&", A, B);
+}
+
+expr(R) ::= expr(A) PIPE expr(B). {
+    R = make_op("|", A, B);
+}
+
+expr(R) ::= expr(A) HASH expr(B). {
+    R = make_op("#", A, B);
+}
+
+expr(R) ::= expr(A) LS_OP expr(B). {
+    R = make_op("<<", A, B);
+}
+
+expr(R) ::= expr(A) RS_OP expr(B). {
+    R = make_op(">>", A, B);
+}
+
+/* Logical operators */
+expr(R) ::= expr(A) AND_OP expr(B). {
+    R = make_op("!and", A, B);
+}
+
+expr(R) ::= expr(A) OR_OP expr(B). {
+    R = make_op("!or", A, B);
+}
+
+/* IS variants */
+expr(R) ::= expr(A) ISNULL_OP. {
+    R = make_op("!is", A, make_null_constant());
+}
+
+expr(R) ::= expr(A) NOTNULL_OP. {
+    R = make_uop("!not", make_op("!is", A, make_null_constant()));
+}
+
+expr(R) ::= expr(A) IS_OP NULL_CONST. {
+    R = make_op("!is", A, make_null_constant());
+}
+
+expr(R) ::= expr(A) IS_OP NOT_OP NULL_CONST. {
+    R = make_uop("!not", make_op("!is", A, make_null_constant()));
+}
+
+expr(R) ::= expr(A) IS_OP BOOLEAN_CONST(B). {
+    R = make_op("!is", A, make_boolean_constant(B.bval));
+}
+
+expr(R) ::= expr(A) IS_OP NOT_OP BOOLEAN_CONST(B). {
+    R = make_uop("!not", make_op("!is", A, make_boolean_constant(B.bval)));
+}
+
+/* Constants */
+expr(R) ::= NULL_CONST. {
+    R = make_null_constant();
+}
+
+expr(R) ::= BOOLEAN_CONST(A). {
+    R = make_boolean_constant(A.bval);
+}
+
+expr(R) ::= INTEGER_CONST(A). {
+    R = make_integer_constant(A.ival);
+}
+
+expr(R) ::= DOUBLE_CONST(A). {
+    R = make_double_constant(A.dval);
+}
+
+/* Variable reference */
+expr(R) ::= VARIABLE(A). {
+    R = make_variable(A.str);
+}
+
+/* Function call */
+expr(R) ::= function(A) LPAREN elist(B) RPAREN. {
+    R = make_func(A, B);
+}
+
+/* CASE expression */
+expr(R) ::= case_control(A). {
+    R = A;
+}
+
+/* WHEN ... THEN list */
+when_then_list(R) ::= when_then_list(A) WHEN_KW expr(B) THEN_KW expr(C). {
+    R = make_elist(C, make_elist(B, A));
+}
+
+when_then_list(R) ::= WHEN_KW expr(A) THEN_KW expr(B). {
+    R = make_elist(B, make_elist(A, NULL));
+}
+
+/* CASE control */
+case_control(R) ::= CASE_KW when_then_list(A) END_KW. {
+    /* No ELSE clause: default to NULL */
+    R = make_func(-1, make_elist(make_null_constant(), A));
+}
+
+case_control(R) ::= CASE_KW when_then_list(A) ELSE_KW expr(B) END_KW. {
+    R = make_func(-1, make_elist(B, A));
+}
+
+/* Function name lookup */
+function(R) ::= FUNCTION(A). {
+    /* In a full integration this would call find_func().
+     * Here we store the function number from the tokenizer. */
+    R = A.ival;
+    free(A.str);
+}

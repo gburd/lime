@@ -1,0 +1,433 @@
+/*
+ * PostgreSQL Replication Protocol Grammar for Lime Parser Generator
+ *
+ * Converted from: src/backend/replication/repl_gram.y (448 lines)
+ * Original: PostgreSQL Global Development Group
+ *
+ * This grammar handles the replication protocol commands sent by
+ * streaming replication clients to the WAL sender process:
+ *
+ *   IDENTIFY_SYSTEM
+ *   BASE_BACKUP [( option [, ...] )]
+ *   START_REPLICATION [SLOT slot] [PHYSICAL] lsn [TIMELINE tli]
+ *   START_REPLICATION SLOT slot LOGICAL lsn [( option [, ...] )]
+ *   CREATE_REPLICATION_SLOT slot [TEMPORARY] PHYSICAL|LOGICAL plugin [options]
+ *   DROP_REPLICATION_SLOT slot [WAIT]
+ *   ALTER_REPLICATION_SLOT slot ( option [, ...] )
+ *   READ_REPLICATION_SLOT slot
+ *   TIMELINE_HISTORY tli
+ *   SHOW setting
+ *   UPLOAD_MANIFEST
+ *
+ * Conversion conventions (matching examples/pg/ and examples/bootstrap/):
+ *   Bison $$    -> result stored via semantic action
+ *   Bison $N    -> A,B,C,... (positional params, left to right)
+ *   Bison %prec -> [TOKEN]
+ *   Bison 'x'   -> named tokens (LPAREN, RPAREN, COMMA, SEMI, DOT)
+ *   Empty alt   -> nt ::=.
+ */
+
+/* ======================================================================
+ * PARSER CONFIGURATION
+ * ====================================================================== */
+
+%name repl
+
+%token_type {ReplToken}
+
+%extra_argument {ReplParseState *pstate}
+
+%include {
+#include "repl_defs.h"
+#include "repl_gram.h"
+}
+
+%syntax_error {
+    repl_yyerror(pstate, "syntax error in replication command");
+}
+
+%parse_failure {
+    repl_yyerror(pstate, "replication command parse failure");
+}
+
+%start_symbol firstcmd
+
+/* ======================================================================
+ * NON-TERMINAL TYPES
+ * ====================================================================== */
+
+%type firstcmd              {ReplCommand *}
+%type command               {ReplCommand *}
+%type identify_system       {ReplCommand *}
+%type base_backup           {ReplCommand *}
+%type start_replication     {ReplCommand *}
+%type start_logical_replication {ReplCommand *}
+%type create_replication_slot {ReplCommand *}
+%type drop_replication_slot {ReplCommand *}
+%type alter_replication_slot {ReplCommand *}
+%type read_replication_slot {ReplCommand *}
+%type timeline_history      {ReplCommand *}
+%type show                  {ReplCommand *}
+%type upload_manifest       {ReplCommand *}
+
+%type generic_option_list   {ReplOptionList *}
+%type generic_option        {ReplDefElem *}
+%type plugin_options        {ReplOptionList *}
+%type plugin_opt_list       {ReplOptionList *}
+%type plugin_opt_elem       {ReplDefElem *}
+%type plugin_opt_arg        {char *}
+%type create_slot_options   {ReplOptionList *}
+%type create_slot_legacy_opt_list {ReplOptionList *}
+%type create_slot_legacy_opt {ReplDefElem *}
+
+%type opt_slot              {char *}
+%type opt_timeline          {uint32}
+%type opt_temporary         {bool}
+%type var_name              {char *}
+%type ident_or_keyword      {char *}
+
+/* ======================================================================
+ * TOKEN DECLARATIONS
+ * ====================================================================== */
+
+/* Non-keyword tokens */
+%token SCONST.
+%token IDENT.
+%token UCONST.
+%token RECPTR.
+
+/* Keyword tokens */
+%token K_BASE_BACKUP.
+%token K_IDENTIFY_SYSTEM.
+%token K_READ_REPLICATION_SLOT.
+%token K_SHOW.
+%token K_START_REPLICATION.
+%token K_CREATE_REPLICATION_SLOT.
+%token K_DROP_REPLICATION_SLOT.
+%token K_ALTER_REPLICATION_SLOT.
+%token K_TIMELINE_HISTORY.
+%token K_WAIT.
+%token K_TIMELINE.
+%token K_PHYSICAL.
+%token K_LOGICAL.
+%token K_SLOT.
+%token K_RESERVE_WAL.
+%token K_TEMPORARY.
+%token K_TWO_PHASE.
+%token K_EXPORT_SNAPSHOT.
+%token K_NOEXPORT_SNAPSHOT.
+%token K_USE_SNAPSHOT.
+%token K_UPLOAD_MANIFEST.
+
+/* Punctuation tokens */
+%token LPAREN.      /* ( */
+%token RPAREN.      /* ) */
+%token COMMA.       /* , */
+%token SEMI.        /* ; */
+%token DOT.         /* . */
+
+/* ======================================================================
+ * GRAMMAR RULES
+ * ====================================================================== */
+
+/*
+ * Top-level: a command with optional trailing semicolon.
+ */
+firstcmd(R) ::= command(A) opt_semicolon. {
+    R = A;
+    pstate->result = A;
+}
+
+opt_semicolon ::= SEMI.
+opt_semicolon ::= .
+
+/*
+ * Command dispatch.
+ */
+command(R) ::= identify_system(A).          { R = A; }
+command(R) ::= base_backup(A).              { R = A; }
+command(R) ::= start_replication(A).        { R = A; }
+command(R) ::= start_logical_replication(A). { R = A; }
+command(R) ::= create_replication_slot(A).  { R = A; }
+command(R) ::= drop_replication_slot(A).    { R = A; }
+command(R) ::= alter_replication_slot(A).   { R = A; }
+command(R) ::= read_replication_slot(A).    { R = A; }
+command(R) ::= timeline_history(A).         { R = A; }
+command(R) ::= show(A).                     { R = A; }
+command(R) ::= upload_manifest(A).          { R = A; }
+
+/* ------------------------------------------------------------------
+ * IDENTIFY_SYSTEM
+ * ------------------------------------------------------------------ */
+identify_system(R) ::= K_IDENTIFY_SYSTEM. {
+    R = repl_make_command(pstate, REPL_CMD_IDENTIFY_SYSTEM);
+}
+
+/* ------------------------------------------------------------------
+ * READ_REPLICATION_SLOT slot
+ * ------------------------------------------------------------------ */
+read_replication_slot(R) ::= K_READ_REPLICATION_SLOT var_name(A). {
+    R = repl_make_command(pstate, REPL_CMD_READ_REPLICATION_SLOT);
+    R->u.read_slot.slotname = A;
+}
+
+/* ------------------------------------------------------------------
+ * SHOW setting
+ * ------------------------------------------------------------------ */
+show(R) ::= K_SHOW var_name(A). {
+    R = repl_make_command(pstate, REPL_CMD_SHOW);
+    R->u.show.varname = A;
+}
+
+/* var_name allows dotted identifiers: foo.bar.baz */
+var_name(R) ::= IDENT(A). {
+    R = A.str;
+}
+
+var_name(R) ::= var_name(A) DOT IDENT(B). {
+    R = repl_psprintf(pstate, "%s.%s", A, B.str);
+    free(A);
+    free(B.str);
+}
+
+/* ------------------------------------------------------------------
+ * BASE_BACKUP [ ( option_list ) ]
+ * ------------------------------------------------------------------ */
+base_backup(R) ::= K_BASE_BACKUP LPAREN generic_option_list(A) RPAREN. {
+    R = repl_make_command(pstate, REPL_CMD_BASE_BACKUP);
+    R->u.base_backup.options = A;
+}
+
+base_backup(R) ::= K_BASE_BACKUP. {
+    R = repl_make_command(pstate, REPL_CMD_BASE_BACKUP);
+    R->u.base_backup.options = NULL;
+}
+
+/* ------------------------------------------------------------------
+ * CREATE_REPLICATION_SLOT slot [TEMPORARY] PHYSICAL [options]
+ * CREATE_REPLICATION_SLOT slot [TEMPORARY] LOGICAL plugin [options]
+ * ------------------------------------------------------------------ */
+create_replication_slot(R) ::= K_CREATE_REPLICATION_SLOT IDENT(A) opt_temporary(B) K_PHYSICAL create_slot_options(C). {
+    R = repl_make_command(pstate, REPL_CMD_CREATE_REPLICATION_SLOT);
+    R->u.create_slot.kind = REPLICATION_KIND_PHYSICAL;
+    R->u.create_slot.slotname = A.str;
+    R->u.create_slot.temporary = B;
+    R->u.create_slot.options = C;
+}
+
+create_replication_slot(R) ::= K_CREATE_REPLICATION_SLOT IDENT(A) opt_temporary(B) K_LOGICAL IDENT(C) create_slot_options(D). {
+    R = repl_make_command(pstate, REPL_CMD_CREATE_REPLICATION_SLOT);
+    R->u.create_slot.kind = REPLICATION_KIND_LOGICAL;
+    R->u.create_slot.slotname = A.str;
+    R->u.create_slot.temporary = B;
+    R->u.create_slot.plugin = C.str;
+    R->u.create_slot.options = D;
+}
+
+create_slot_options(R) ::= LPAREN generic_option_list(A) RPAREN. {
+    R = A;
+}
+
+create_slot_options(R) ::= create_slot_legacy_opt_list(A). {
+    R = A;
+}
+
+create_slot_legacy_opt_list(R) ::= create_slot_legacy_opt_list(A) create_slot_legacy_opt(B). {
+    R = repl_option_list_append(pstate, A, B);
+}
+
+create_slot_legacy_opt_list(R) ::= . {
+    R = NULL;
+}
+
+create_slot_legacy_opt(R) ::= K_EXPORT_SNAPSHOT. {
+    R = repl_make_defelem_str(pstate, "snapshot", "export");
+}
+
+create_slot_legacy_opt(R) ::= K_NOEXPORT_SNAPSHOT. {
+    R = repl_make_defelem_str(pstate, "snapshot", "nothing");
+}
+
+create_slot_legacy_opt(R) ::= K_USE_SNAPSHOT. {
+    R = repl_make_defelem_str(pstate, "snapshot", "use");
+}
+
+create_slot_legacy_opt(R) ::= K_RESERVE_WAL. {
+    R = repl_make_defelem_bool(pstate, "reserve_wal", true);
+}
+
+create_slot_legacy_opt(R) ::= K_TWO_PHASE. {
+    R = repl_make_defelem_bool(pstate, "two_phase", true);
+}
+
+/* ------------------------------------------------------------------
+ * DROP_REPLICATION_SLOT slot [WAIT]
+ * ------------------------------------------------------------------ */
+drop_replication_slot(R) ::= K_DROP_REPLICATION_SLOT IDENT(A). {
+    R = repl_make_command(pstate, REPL_CMD_DROP_REPLICATION_SLOT);
+    R->u.drop_slot.slotname = A.str;
+    R->u.drop_slot.wait = false;
+}
+
+drop_replication_slot(R) ::= K_DROP_REPLICATION_SLOT IDENT(A) K_WAIT. {
+    R = repl_make_command(pstate, REPL_CMD_DROP_REPLICATION_SLOT);
+    R->u.drop_slot.slotname = A.str;
+    R->u.drop_slot.wait = true;
+}
+
+/* ------------------------------------------------------------------
+ * ALTER_REPLICATION_SLOT slot ( option_list )
+ * ------------------------------------------------------------------ */
+alter_replication_slot(R) ::= K_ALTER_REPLICATION_SLOT IDENT(A) LPAREN generic_option_list(B) RPAREN. {
+    R = repl_make_command(pstate, REPL_CMD_ALTER_REPLICATION_SLOT);
+    R->u.alter_slot.slotname = A.str;
+    R->u.alter_slot.options = B;
+}
+
+/* ------------------------------------------------------------------
+ * START_REPLICATION [SLOT slot] [PHYSICAL] lsn [TIMELINE tli]
+ * ------------------------------------------------------------------ */
+start_replication(R) ::= K_START_REPLICATION opt_slot(A) opt_physical RECPTR(B) opt_timeline(C). {
+    R = repl_make_command(pstate, REPL_CMD_START_REPLICATION);
+    R->u.start_repl.kind = REPLICATION_KIND_PHYSICAL;
+    R->u.start_repl.slotname = A;
+    R->u.start_repl.startpoint = B.recptr;
+    R->u.start_repl.timeline = C;
+}
+
+/* ------------------------------------------------------------------
+ * START_REPLICATION SLOT slot LOGICAL lsn [( option [, ...] )]
+ * ------------------------------------------------------------------ */
+start_logical_replication(R) ::= K_START_REPLICATION K_SLOT IDENT(A) K_LOGICAL RECPTR(B) plugin_options(C). {
+    R = repl_make_command(pstate, REPL_CMD_START_REPLICATION);
+    R->u.start_repl.kind = REPLICATION_KIND_LOGICAL;
+    R->u.start_repl.slotname = A.str;
+    R->u.start_repl.startpoint = B.recptr;
+    R->u.start_repl.options = C;
+}
+
+/* ------------------------------------------------------------------
+ * TIMELINE_HISTORY tli
+ * ------------------------------------------------------------------ */
+timeline_history(R) ::= K_TIMELINE_HISTORY UCONST(A). {
+    if (A.uintval == 0) {
+        repl_yyerror(pstate, "invalid timeline 0");
+    }
+    R = repl_make_command(pstate, REPL_CMD_TIMELINE_HISTORY);
+    R->u.timeline_history.timeline = A.uintval;
+}
+
+/* ------------------------------------------------------------------
+ * UPLOAD_MANIFEST
+ * ------------------------------------------------------------------ */
+upload_manifest(R) ::= K_UPLOAD_MANIFEST. {
+    R = repl_make_command(pstate, REPL_CMD_UPLOAD_MANIFEST);
+}
+
+/* ------------------------------------------------------------------
+ * Optional clauses
+ * ------------------------------------------------------------------ */
+opt_physical ::= K_PHYSICAL.
+opt_physical ::= .
+
+opt_temporary(R) ::= K_TEMPORARY. { R = true; }
+opt_temporary(R) ::= .            { R = false; }
+
+opt_slot(R) ::= K_SLOT IDENT(A). { R = A.str; }
+opt_slot(R) ::= .                 { R = NULL; }
+
+opt_timeline(R) ::= K_TIMELINE UCONST(A). {
+    if (A.uintval == 0) {
+        repl_yyerror(pstate, "invalid timeline 0");
+    }
+    R = A.uintval;
+}
+opt_timeline(R) ::= . { R = 0; }
+
+/* ------------------------------------------------------------------
+ * Plugin options: ( ident value [, ...] )
+ * ------------------------------------------------------------------ */
+plugin_options(R) ::= LPAREN plugin_opt_list(A) RPAREN. { R = A; }
+plugin_options(R) ::= .                                  { R = NULL; }
+
+plugin_opt_list(R) ::= plugin_opt_elem(A). {
+    R = repl_option_list_create(pstate, A);
+}
+
+plugin_opt_list(R) ::= plugin_opt_list(A) COMMA plugin_opt_elem(B). {
+    R = repl_option_list_append(pstate, A, B);
+}
+
+plugin_opt_elem(R) ::= IDENT(A) plugin_opt_arg(B). {
+    if (B) {
+        R = repl_make_defelem_str(pstate, A.str, B);
+        free(B);
+    } else {
+        R = repl_make_defelem(pstate, A.str);
+    }
+    free(A.str);
+}
+
+plugin_opt_arg(R) ::= SCONST(A). { R = A.str; }
+plugin_opt_arg(R) ::= .          { R = NULL; }
+
+/* ------------------------------------------------------------------
+ * Generic options: name [value] [, ...]
+ * ------------------------------------------------------------------ */
+generic_option_list(R) ::= generic_option_list(A) COMMA generic_option(B). {
+    R = repl_option_list_append(pstate, A, B);
+}
+
+generic_option_list(R) ::= generic_option(A). {
+    R = repl_option_list_create(pstate, A);
+}
+
+generic_option(R) ::= ident_or_keyword(A). {
+    R = repl_make_defelem(pstate, A);
+    free(A);
+}
+
+generic_option(R) ::= ident_or_keyword(A) IDENT(B). {
+    R = repl_make_defelem_str(pstate, A, B.str);
+    free(A);
+    free(B.str);
+}
+
+generic_option(R) ::= ident_or_keyword(A) SCONST(B). {
+    R = repl_make_defelem_str(pstate, A, B.str);
+    free(A);
+    free(B.str);
+}
+
+generic_option(R) ::= ident_or_keyword(A) UCONST(B). {
+    R = repl_make_defelem_int(pstate, A, (int)B.uintval);
+    free(A);
+}
+
+/* ------------------------------------------------------------------
+ * ident_or_keyword: IDENT or any keyword used as an option name
+ *
+ * Matches the Bison original which allows all keywords as option
+ * names in generic option lists.
+ * ------------------------------------------------------------------ */
+ident_or_keyword(R) ::= IDENT(A).                   { R = A.str; }
+ident_or_keyword(R) ::= K_BASE_BACKUP.              { R = repl_pstrdup(pstate, "base_backup"); }
+ident_or_keyword(R) ::= K_IDENTIFY_SYSTEM.          { R = repl_pstrdup(pstate, "identify_system"); }
+ident_or_keyword(R) ::= K_SHOW.                     { R = repl_pstrdup(pstate, "show"); }
+ident_or_keyword(R) ::= K_START_REPLICATION.         { R = repl_pstrdup(pstate, "start_replication"); }
+ident_or_keyword(R) ::= K_CREATE_REPLICATION_SLOT.   { R = repl_pstrdup(pstate, "create_replication_slot"); }
+ident_or_keyword(R) ::= K_DROP_REPLICATION_SLOT.     { R = repl_pstrdup(pstate, "drop_replication_slot"); }
+ident_or_keyword(R) ::= K_ALTER_REPLICATION_SLOT.    { R = repl_pstrdup(pstate, "alter_replication_slot"); }
+ident_or_keyword(R) ::= K_TIMELINE_HISTORY.          { R = repl_pstrdup(pstate, "timeline_history"); }
+ident_or_keyword(R) ::= K_WAIT.                     { R = repl_pstrdup(pstate, "wait"); }
+ident_or_keyword(R) ::= K_TIMELINE.                  { R = repl_pstrdup(pstate, "timeline"); }
+ident_or_keyword(R) ::= K_PHYSICAL.                  { R = repl_pstrdup(pstate, "physical"); }
+ident_or_keyword(R) ::= K_LOGICAL.                   { R = repl_pstrdup(pstate, "logical"); }
+ident_or_keyword(R) ::= K_SLOT.                      { R = repl_pstrdup(pstate, "slot"); }
+ident_or_keyword(R) ::= K_RESERVE_WAL.               { R = repl_pstrdup(pstate, "reserve_wal"); }
+ident_or_keyword(R) ::= K_TEMPORARY.                 { R = repl_pstrdup(pstate, "temporary"); }
+ident_or_keyword(R) ::= K_TWO_PHASE.                 { R = repl_pstrdup(pstate, "two_phase"); }
+ident_or_keyword(R) ::= K_EXPORT_SNAPSHOT.            { R = repl_pstrdup(pstate, "export_snapshot"); }
+ident_or_keyword(R) ::= K_NOEXPORT_SNAPSHOT.          { R = repl_pstrdup(pstate, "noexport_snapshot"); }
+ident_or_keyword(R) ::= K_USE_SNAPSHOT.               { R = repl_pstrdup(pstate, "use_snapshot"); }
+ident_or_keyword(R) ::= K_UPLOAD_MANIFEST.            { R = repl_pstrdup(pstate, "upload_manifest"); }

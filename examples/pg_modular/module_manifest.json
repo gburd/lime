@@ -1,0 +1,412 @@
+{
+  "name": "postgresql-grammar",
+  "version": "17.0.0",
+  "description": "PostgreSQL SQL grammar modularized for lime-compose",
+  "parser_name": "pg",
+  "modules": [
+    {
+      "name": "pg-config",
+      "file": "config.md",
+      "provides": [
+        "pg-config"
+      ],
+      "depends": [
+        "pg-tokens"
+      ]
+    },
+    {
+      "name": "pg-tokens",
+      "file": "tokens.md",
+      "provides": [
+        "pg-tokens",
+        "pg-precedence"
+      ],
+      "depends": []
+    },
+    {
+      "name": "pg-type-decls",
+      "file": "base/type_decls.md",
+      "provides": [
+        "pg-type-decls"
+      ],
+      "depends": [
+        "pg-config"
+      ]
+    },
+    {
+      "name": "pg-toplevel",
+      "file": "base/toplevel.md",
+      "provides": [
+        "pg-toplevel"
+      ],
+      "depends": [
+        "pg-type-decls"
+      ]
+    },
+    {
+      "name": "pg-base-helpers",
+      "file": "base/helpers.md",
+      "provides": [
+        "pg-base-helpers"
+      ],
+      "depends": [
+        "pg-type-decls"
+      ]
+    },
+    {
+      "name": "pg-keywords",
+      "file": "base/keywords.md",
+      "provides": [
+        "pg-keywords"
+      ],
+      "depends": [
+        "pg-type-decls"
+      ]
+    },
+    {
+      "name": "pg-variables",
+      "file": "utility/variables.md",
+      "provides": [
+        "pg-variables"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-typenames",
+      "file": "base/typenames.md",
+      "provides": [
+        "pg-typenames"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-keywords"
+      ]
+    },
+    {
+      "name": "pg-expr",
+      "file": "expr/expressions.md",
+      "provides": [
+        "pg-expressions"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-typenames",
+        "pg-base-helpers",
+        "pg-keywords"
+      ]
+    },
+    {
+      "name": "pg-from",
+      "file": "from_clause/from.md",
+      "provides": [
+        "pg-from-clause"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-select-clauses",
+      "file": "select_targets/clauses.md",
+      "provides": [
+        "pg-select-clauses"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-window",
+      "file": "window/window.md",
+      "provides": [
+        "pg-window"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions"
+      ]
+    },
+    {
+      "name": "pg-cte",
+      "file": "cte/cte.md",
+      "provides": [
+        "pg-cte"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions"
+      ]
+    },
+    {
+      "name": "pg-select",
+      "file": "dml/select.md",
+      "provides": [
+        "pg-select"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-from-clause",
+        "pg-select-clauses",
+        "pg-window",
+        "pg-cte",
+        "pg-expressions"
+      ]
+    },
+    {
+      "name": "pg-insert",
+      "file": "dml/insert.md",
+      "provides": [
+        "pg-insert"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-select",
+        "pg-expressions",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-update",
+      "file": "dml/update.md",
+      "provides": [
+        "pg-update"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions",
+        "pg-from-clause",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-delete",
+      "file": "dml/delete.md",
+      "provides": [
+        "pg-delete"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-merge",
+      "file": "dml/merge.md",
+      "provides": [
+        "pg-merge"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-ddl-tables",
+      "file": "ddl/tables.md",
+      "provides": [
+        "pg-ddl-tables"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions",
+        "pg-typenames",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-ddl-alter-table",
+      "file": "ddl/alter_table.md",
+      "provides": [
+        "pg-ddl-alter-table"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-ddl-index",
+      "file": "ddl/index.md",
+      "provides": [
+        "pg-ddl-index"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-ddl-sequence",
+      "file": "ddl/sequence.md",
+      "provides": [
+        "pg-ddl-sequence"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-ddl-drop",
+      "file": "ddl/drop.md",
+      "provides": [
+        "pg-ddl-drop"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-ddl-alter-misc",
+      "file": "ddl/alter_misc.md",
+      "provides": [
+        "pg-ddl-alter-misc"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-ddl-extensions",
+      "file": "ddl/extensions.md",
+      "provides": [
+        "pg-ddl-extensions"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-ddl-schema",
+      "file": "ddl/schema.md",
+      "provides": [
+        "pg-ddl-schema"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-functions",
+      "file": "functions/functions.md",
+      "provides": [
+        "pg-functions"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions",
+        "pg-typenames",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-security",
+      "file": "security/security.md",
+      "provides": [
+        "pg-security"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-transactions",
+      "file": "transactions/transactions.md",
+      "provides": [
+        "pg-transactions"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-views-triggers",
+      "file": "ddl/views_triggers.md",
+      "provides": [
+        "pg-views-triggers"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-utility",
+      "file": "utility/utility.md",
+      "provides": [
+        "pg-utility"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-json-xml",
+      "file": "expr/json_xml.md",
+      "provides": [
+        "pg-json-xml"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions",
+        "pg-typenames"
+      ]
+    },
+    {
+      "name": "pg-graph",
+      "file": "expr/graph.md",
+      "provides": [
+        "pg-graph"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-pub-sub",
+      "file": "ddl/pub_sub.md",
+      "provides": [
+        "pg-pub-sub"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-base-helpers"
+      ]
+    },
+    {
+      "name": "pg-plpgsql",
+      "file": "base/plpgsql.md",
+      "provides": [
+        "pg-plpgsql"
+      ],
+      "depends": [
+        "pg-type-decls",
+        "pg-expressions"
+      ]
+    }
+  ]
+}

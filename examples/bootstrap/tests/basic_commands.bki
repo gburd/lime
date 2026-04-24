@@ -1,0 +1,8 @@
+# Basic BKI command test
+# Tests the fundamental BKI operations
+
+# Open a relation
+open pg_class
+
+# Close it
+close pg_class

@@ -1,0 +1,31 @@
+% graph.dl -- Graph reachability in Datalog
+%
+% Demonstrates transitive closure computation, a classic
+% Datalog application.
+
+% --- Facts: directed edges ---
+
+edge(a, b).
+edge(b, c).
+edge(c, d).
+edge(d, e).
+edge(b, d).
+edge(a, e).
+
+% --- Rules ---
+
+% Reachability: transitive closure of edge relation
+reachable(X, Y) :- edge(X, Y).
+reachable(X, Y) :- edge(X, Z), reachable(Z, Y).
+
+% Path of length exactly 2
+path2(X, Y) :- edge(X, Z), edge(Z, Y).
+
+% Nodes with no outgoing edges (sinks)
+has_out(X) :- edge(X, _).
+
+% --- Queries ---
+
+?- reachable(a, X).
+?- reachable(X, e).
+?- path2(a, X).

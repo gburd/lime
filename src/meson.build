@@ -8,9 +8,16 @@ lib_sources = files(
   'extension.c',
   'conflict.c',
   'snapshot_modify.c',
+  'dependency_resolver.c',
+  'parser_manager.c',
+  'parser_plugin.c',
+  'parser_operations.c',
+  'merkle_tree.c',
+  'parser_composition.c',
 )
 
 thread_dep = dependency('threads')
+dl_dep = cc.find_library('dl', required : false)
 
 # Check if coverage is enabled
 coverage_args = []
@@ -62,7 +69,7 @@ lime_parser_lib = static_library('lime_parser',
   include_directories : inc,
   c_args : coverage_args,
   link_args : coverage_link_args,
-  dependencies : [thread_dep],
+  dependencies : [thread_dep, dl_dep],
   link_with : [tokenize_simd_lib, jit_lib],
   install : true,
 )
@@ -70,5 +77,5 @@ lime_parser_lib = static_library('lime_parser',
 lime_parser_dep = declare_dependency(
   link_with : [lime_parser_lib, tokenize_simd_lib, jit_lib],
   include_directories : inc,
-  dependencies : [thread_dep] + jit_deps,
+  dependencies : [thread_dep, dl_dep] + jit_deps,
 )

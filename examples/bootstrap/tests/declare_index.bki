@@ -1,0 +1,10 @@
+# Test DECLARE INDEX statements
+
+create pg_type 1247 bootstrap (
+  oid = oid,
+  typname = name
+)
+
+declare index pg_type_oid_index 2703 on pg_type using btree (oid oid_ops)
+
+declare unique index pg_type_typname_nsp_index 2704 on pg_type using btree (typname name_ops, typnamespace oid_ops)

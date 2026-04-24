@@ -1,0 +1,134 @@
+# Basic XPath 1.0 expressions for testing
+# Lines starting with # are comments; blank lines are skipped.
+
+# Simple location paths
+child::para
+child::*
+child::text()
+child::node()
+child::comment()
+
+# Attribute axis
+attribute::name
+attribute::*
+
+# Abbreviated syntax
+para
+*
+@name
+@*
+.
+..
+
+# Absolute paths
+/
+/child::para
+/para
+
+# Descendant paths
+descendant::para
+descendant-or-self::para
+
+# Ancestor axis
+ancestor::div
+ancestor-or-self::div
+
+# Self axis
+self::para
+
+# Following/preceding axes
+following::para
+following-sibling::para
+preceding::para
+preceding-sibling::para
+
+# Namespace axis
+namespace::*
+
+# Multi-step paths
+child::*/child::para
+/descendant::olist/child::item
+para/text()
+
+# Abbreviated double-slash
+//para
+.//para
+/descendant-or-self::node()/child::para
+
+# Parent abbreviated
+../@lang
+
+# Predicates
+child::para[1]
+child::para[last()]
+child::para[position()=1]
+para[@type="warning"]
+chapter[title]
+employee[@secretary and @assistant]
+
+# Union
+book/chapter | book/appendix
+
+# Expressions
+3 + 4
+10 - 3
+6 * 7
+10 div 3
+10 mod 3
+-5
+
+# Relational
+3 < 5
+3 <= 5
+5 > 3
+5 >= 3
+
+# Equality
+@name = "test"
+@name != "test"
+
+# Boolean operators
+true() or false()
+true() and false()
+
+# Function calls
+last()
+position()
+count(//item)
+id("x")
+local-name()
+namespace-uri()
+name()
+string(42)
+concat("a", "b", "c")
+starts-with("hello", "he")
+contains("hello", "ell")
+substring-before("hello-world", "-")
+substring-after("hello-world", "-")
+substring("hello", 2, 3)
+string-length("hello")
+normalize-space("  hi  ")
+translate("abc", "abc", "ABC")
+boolean(1)
+not(false())
+true()
+false()
+lang("en")
+number("42")
+sum(//price)
+floor(3.7)
+ceiling(3.2)
+round(3.5)
+
+# Variable references
+$x
+$ns:var
+
+# Nested expressions
+(1 + 2) * 3
+count(//item) > 5
+
+# Complex paths
+/bookstore/book[price>35]/title
+//book[@lang='en']/title
+//book[last()]/title

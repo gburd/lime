@@ -7,6 +7,7 @@ LIME      ?= ../../lime
 CC        ?= cc
 CFLAGS    ?= -std=c11 -Wall -Wextra -g -O2
 LDFLAGS   ?=
+PYTHON3   ?= python3
 
 # Source files
 TOKENS     = tokens.lime
@@ -15,7 +16,9 @@ COMBINED   = pg_grammar.lime
 TEMPLATE   = ../../limpar.c
 PARSER_C   = pg_grammar.c
 PARSER_H   = pg_grammar.h
+KWLIST_H   = pg_kwlist.h
 TOKENIZER  = tokenize.c
+TOKENIZER_H = tokenize.h
 HELPERS    = pg_gram_helpers.c
 
 # Object files
@@ -23,14 +26,15 @@ PARSER_O   = pg_grammar.o
 TOKENIZER_O = tokenize.o
 HELPERS_O  = pg_gram_helpers.o
 
-# Output executable
+# Output executables
 TARGET     = pg_parser
+TOKENIZE_BIN = pg_tokenize
 
 # Test files
 TEST_DIR   = tests
 TEST_SRC   = $(wildcard $(TEST_DIR)/*.sql)
 
-.PHONY: all lime generate compile test clean distclean
+.PHONY: all lime generate compile test tokenize clean distclean
 
 all: $(TARGET)
 
@@ -48,13 +52,18 @@ $(COMBINED): $(TOKENS) $(GRAMMAR)
 generate: $(PARSER_C) $(PARSER_H)
 
 $(PARSER_C) $(PARSER_H): $(COMBINED) $(LIME) $(TEMPLATE)
-	$(LIME) -T$(TEMPLATE) $(COMBINED)
+	-$(LIME) -T$(TEMPLATE) $(COMBINED)
+	@test -f $(PARSER_C) || { echo "ERROR: Lime failed to generate $(PARSER_C)"; exit 1; }
+
+# Generate keyword lookup table from Lime header + grammar
+$(KWLIST_H): $(PARSER_H) $(GRAMMAR) gen_kwlist.py
+	$(PYTHON3) gen_kwlist.py
 
 # Compile individual object files
 $(PARSER_O): $(PARSER_C) $(PARSER_H)
 	$(CC) $(CFLAGS) -c -o $@ $(PARSER_C)
 
-$(TOKENIZER_O): $(TOKENIZER)
+$(TOKENIZER_O): $(TOKENIZER) $(TOKENIZER_H) $(PARSER_H) $(KWLIST_H)
 	$(CC) $(CFLAGS) -c -o $@ $(TOKENIZER)
 
 $(HELPERS_O): $(HELPERS) pg_gram_helpers.h $(PARSER_H)
@@ -63,6 +72,12 @@ $(HELPERS_O): $(HELPERS) pg_gram_helpers.h $(PARSER_H)
 # Link the parser executable
 $(TARGET): $(PARSER_O) $(TOKENIZER_O) $(HELPERS_O)
 	$(CC) $(LDFLAGS) -o $@ $^
+
+# Build standalone tokenizer test tool
+tokenize: $(TOKENIZE_BIN)
+
+$(TOKENIZE_BIN): $(TOKENIZER) $(TOKENIZER_H) $(PARSER_H) $(KWLIST_H)
+	$(CC) $(CFLAGS) -DPG_TOKENIZE_MAIN -o $@ $(TOKENIZER)
 
 # Run tests
 test: $(TARGET)
@@ -88,8 +103,8 @@ test: $(TARGET)
 
 clean:
 	rm -f $(PARSER_O) $(TOKENIZER_O) $(HELPERS_O)
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(TOKENIZE_BIN)
 
 distclean: clean
-	rm -f $(PARSER_C) $(PARSER_H) $(COMBINED)
+	rm -f $(PARSER_C) $(PARSER_H) $(COMBINED) $(KWLIST_H)
 	rm -f pg_grammar.out

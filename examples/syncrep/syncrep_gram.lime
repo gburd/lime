@@ -1,0 +1,121 @@
+/*
+ * PostgreSQL Synchronous Replication Config Grammar for Lime
+ *
+ * Converted from: src/backend/replication/syncrep_gram.y
+ * Original: PostgreSQL Global Development Group
+ *
+ * This grammar parses the synchronous_standby_names GUC parameter.
+ *
+ * Supported formats:
+ *   standby1, standby2            (priority-based, num_sync=1)
+ *   N (standby1, standby2, ...)   (priority-based, num_sync=N)
+ *   ANY N (standby1, ...)         (quorum-based, num_sync=N)
+ *   FIRST N (standby1, ...)       (priority-based, explicit)
+ *
+ * Conversion conventions (matching examples/pg/ and examples/bootstrap/):
+ *   Bison $$  -> A    (LHS result)
+ *   Bison $N  -> B,C,D,...  (RHS params, positional)
+ */
+
+/* ======================================================================
+ * PARSER CONFIGURATION
+ * ====================================================================== */
+
+%name syncrep
+
+%token_type {SyncRepToken}
+
+%extra_argument {SyncRepParseState *pstate}
+
+%include {
+#include "syncrep_defs.h"
+}
+
+%syntax_error {
+    syncrep_yyerror(pstate, "syntax error");
+}
+
+%parse_failure {
+    syncrep_yyerror(pstate, "parse failure");
+}
+
+/* ======================================================================
+ * TOKEN DECLARATIONS
+ * ====================================================================== */
+
+%token NAME.           /* Identifier or double-quoted identifier */
+%token NUM.            /* Numeric literal (digits) */
+%token JUNK.           /* Unrecognized input */
+%token ANY.            /* Keyword: ANY (case-insensitive) */
+%token FIRST.          /* Keyword: FIRST (case-insensitive) */
+%token COMMA.          /* , */
+%token LPAREN.         /* ( */
+%token RPAREN.         /* ) */
+
+/* ======================================================================
+ * NON-TERMINAL TYPE DECLARATIONS
+ * ====================================================================== */
+
+%type result {SyncRepConfig *}
+%type standby_config {SyncRepConfig *}
+%type standby_list {SyncRepNameList *}
+%type standby_name {char *}
+
+/* ======================================================================
+ * START SYMBOL
+ * ====================================================================== */
+
+%start_symbol result
+
+/* ======================================================================
+ * GRAMMAR RULES
+ * ====================================================================== */
+
+/*
+ * result: top-level rule, stores parsed config in pstate
+ */
+result(A) ::= standby_config(B). {
+    pstate->result = B;
+    A = B;
+}
+
+/*
+ * standby_config: the four supported formats
+ *
+ *   standby_list               -> priority, num_sync=1
+ *   N ( standby_list )         -> priority, num_sync=N
+ *   ANY N ( standby_list )     -> quorum, num_sync=N
+ *   FIRST N ( standby_list )   -> priority, num_sync=N (explicit)
+ */
+standby_config(A) ::= standby_list(B). {
+    A = syncrep_create_config(pstate, "1", B, SYNC_REP_PRIORITY);
+}
+
+standby_config(A) ::= NUM(B) LPAREN standby_list(C) RPAREN. {
+    A = syncrep_create_config(pstate, B.str, C, SYNC_REP_PRIORITY);
+}
+
+standby_config(A) ::= ANY NUM(B) LPAREN standby_list(C) RPAREN. {
+    A = syncrep_create_config(pstate, B.str, C, SYNC_REP_QUORUM);
+}
+
+standby_config(A) ::= FIRST NUM(B) LPAREN standby_list(C) RPAREN. {
+    A = syncrep_create_config(pstate, B.str, C, SYNC_REP_PRIORITY);
+}
+
+/*
+ * standby_list: comma-separated list of standby names
+ */
+standby_list(A) ::= standby_name(B). {
+    A = syncrep_name_list_create(pstate, B);
+}
+
+standby_list(A) ::= standby_list(B) COMMA standby_name(C). {
+    A = syncrep_name_list_append(pstate, B, C);
+}
+
+/*
+ * standby_name: an identifier or a number used as a name
+ */
+standby_name(A) ::= NAME(B). { A = B.str; }
+standby_name(A) ::= NUM(B).  { A = B.str; }

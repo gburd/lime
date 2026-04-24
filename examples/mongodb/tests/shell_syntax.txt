@@ -1,0 +1,18 @@
+# MongoDB shell-style statements
+
+# Simple find
+db.users.find({})
+db.users.find({ "name": "Alice" })
+
+# Find with projection
+db.users.find({ "age": { "$gte": 21 } }, { "name": 1, "age": 1 })
+
+# Find with query operators
+db.orders.find({ "$or": [{ "status": "A" }, { "qty": { "$lt": 30 } }] })
+
+# Update
+db.users.update({ "name": "Alice" }, { "$set": { "age": 31 } })
+db.products.update({ "sku": "abc123" }, { "$inc": { "quantity": -1 }, "$set": { "lastSold": "today" } })
+
+# Aggregate
+db.orders.aggregate([{ "$match": { "status": "A" } }, { "$group": { "_id": "$cust_id", "total": { "$sum": "$amount" } } }])

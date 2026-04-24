@@ -1,0 +1,710 @@
+/*
+ * xpath.lime -- XPath 1.0 Grammar for the Lime Parser Generator
+ *
+ * A literate grammar implementing the XPath 1.0 W3C Recommendation
+ * (https://www.w3.org/TR/1999/REC-xpath-19991116/).
+ *
+ * ---
+ * title: XPath 1.0 Parser
+ * version: 1.0.0
+ * language: xpath
+ * standard: "W3C XPath 1.0 Recommendation (16 November 1999)"
+ * exports:
+ *   - xpath_expr
+ *   - location_path
+ *   - step
+ *   - expr
+ * dependencies: []
+ * description: |
+ *   Complete XPath 1.0 parser supporting location paths, axes, node tests,
+ *   predicates, expressions, and all built-in functions.  Handles both the
+ *   full unabbreviated syntax and the abbreviated syntax (@, .., //).
+ * ---
+ */
+
+/*
+ * ## Overview
+ *
+ * XPath 1.0 is a language for addressing parts of an XML document.  An
+ * XPath expression is evaluated against an XML document to produce an
+ * object of one of four basic types:
+ *
+ *   - node-set   (an unordered collection of nodes without duplicates)
+ *   - boolean
+ *   - number     (IEEE 754 double-precision floating-point)
+ *   - string     (a sequence of UCS characters)
+ *
+ * The most important construct is the location path, which selects a
+ * set of nodes relative to a context node.
+ */
+
+/*
+ * ## Location Paths
+ *
+ * A location path is either absolute (starts with /) or relative.
+ * It consists of a series of location steps separated by /.
+ * Each step has three parts:
+ *
+ *   axis :: node-test [predicate ...]
+ *
+ * For example:
+ *   child::para[position()=1]
+ *   /descendant-or-self::node()/child::para
+ */
+
+/*
+ * ## Axes
+ *
+ * XPath 1.0 defines 13 axes:
+ *
+ *   1.  child              - children of the context node
+ *   2.  descendant         - descendants of the context node
+ *   3.  parent             - parent of the context node
+ *   4.  ancestor           - ancestors of the context node
+ *   5.  following-sibling  - following siblings of the context node
+ *   6.  preceding-sibling  - preceding siblings of the context node
+ *   7.  following          - after the context node in document order
+ *   8.  preceding          - before the context node in document order
+ *   9.  attribute          - attributes of the context node
+ *  10.  namespace          - namespace nodes of the context node
+ *  11.  self               - the context node itself
+ *  12.  descendant-or-self - the context node and its descendants
+ *  13.  ancestor-or-self   - the context node and its ancestors
+ *
+ * Forward axes: child, descendant, following-sibling, following,
+ *               descendant-or-self, self, attribute, namespace
+ * Reverse axes: parent, ancestor, preceding-sibling, preceding,
+ *               ancestor-or-self
+ *
+ * Proximity position is 1-indexed and determined by document order for
+ * forward axes, reverse document order for reverse axes.
+ */
+
+/*
+ * ## Abbreviated Syntax
+ *
+ *   @name          =>  attribute::name
+ *   .              =>  self::node()
+ *   ..             =>  parent::node()
+ *   //             =>  /descendant-or-self::node()/
+ *   para           =>  child::para  (child:: is the default axis)
+ */
+
+/*
+ * ## Built-in Functions
+ *
+ * ### Node Set Functions
+ *   - last()              -> number
+ *   - position()          -> number
+ *   - count(node-set)     -> number
+ *   - id(object)          -> node-set
+ *   - local-name(node-set?) -> string
+ *   - namespace-uri(node-set?) -> string
+ *   - name(node-set?)     -> string
+ *
+ * ### String Functions
+ *   - string(object?)           -> string
+ *   - concat(string, string+)   -> string
+ *   - starts-with(string, string) -> boolean
+ *   - contains(string, string)  -> boolean
+ *   - substring-before(string, string) -> string
+ *   - substring-after(string, string)  -> string
+ *   - substring(string, number, number?) -> string
+ *   - string-length(string?)    -> number
+ *   - normalize-space(string?)  -> number
+ *   - translate(string, string, string) -> string
+ *
+ * ### Boolean Functions
+ *   - boolean(object)  -> boolean
+ *   - not(boolean)     -> boolean
+ *   - true()           -> boolean
+ *   - false()          -> boolean
+ *   - lang(string)     -> boolean
+ *
+ * ### Number Functions
+ *   - number(object?)  -> number
+ *   - sum(node-set)    -> number
+ *   - floor(number)    -> number
+ *   - ceiling(number)  -> number
+ *   - round(number)    -> number
+ */
+
+/*
+ * ## Examples
+ *
+ *   child::para                      Select all para children
+ *   child::text()                    Select all text node children
+ *   child::node()                    Select all children
+ *   attribute::name                  Select the "name" attribute
+ *   descendant::para                 Select all para descendants
+ *   ancestor::div                    Select all div ancestors
+ *   self::para                       Select context node if it is para
+ *   descendant-or-self::para         Select para descendants and self
+ *   ancestor-or-self::div            Select div ancestors and self
+ *   /                                Select the document root
+ *   /descendant::para                Select all para in the document
+ *   //para                           Abbreviated: all para in document
+ *   .//para                          All para descendants of context
+ *   ..                               Select the parent node
+ *   para[@type="warning"]            para children with type="warning"
+ *   para[@type="warning"][5]         Fifth such para
+ *   chapter[title]                   chapter children with a title child
+ *   employee[@secretary and @assistant]
+ *   book/chapter | book/appendix     Union of two node-sets
+ *   count(//item)                    Count all item elements
+ *   sum(//price)                     Sum all price values
+ *   concat("hello", " ", "world")   String concatenation
+ */
+
+/* ======================================================================
+ * PARSER CONFIGURATION
+ * ====================================================================== */
+
+/*
+ * Parser name prefix -- the generated functions will be named
+ * xpathParseAlloc, xpathParseFree, xpathParse, etc.
+ */
+%name xpathParse
+
+/*
+ * Token type -- the semantic value carried by every token.
+ * Replaces Bison's %union.
+ */
+%token_type {XPathToken}
+
+/*
+ * Extra argument passed to the parser.
+ * Provides access to the parse result and error context.
+ */
+%extra_argument {XPathParseState *pstate}
+
+%include {
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include "xpath_internal.h"
+#include "xpath_helpers.h"
+}
+
+/*
+ * Error handling
+ */
+%syntax_error {
+    pstate->error = 1;
+    if (pstate->errMsg == NULL) {
+        pstate->errMsg = "syntax error in XPath expression";
+    }
+}
+
+%parse_failure {
+    pstate->error = 1;
+    if (pstate->errMsg == NULL) {
+        pstate->errMsg = "XPath parse failure";
+    }
+}
+
+/*
+ * Start symbol
+ */
+%start_symbol xpath_top
+
+/* ======================================================================
+ * TOKEN DECLARATIONS
+ *
+ * Tokens produced by the XPath tokenizer.
+ * ====================================================================== */
+
+/* Operators and punctuation */
+%token SLASH.           /* /   */
+%token DOUBLE_SLASH.    /* //  */
+%token DOT.             /* .   */
+%token DOUBLE_DOT.      /* ..  */
+%token AT.              /* @   */
+%token COMMA.           /* ,   */
+%token COLON_COLON.     /* ::  */
+%token LPAREN.          /* (   */
+%token RPAREN.          /* )   */
+%token LBRACKET.        /* [   */
+%token RBRACKET.        /* ]   */
+%token PLUS.            /* +   */
+%token MINUS.           /* -   */
+%token STAR.            /* *   (multiply or name test wildcard) */
+%token PIPE.            /* |   */
+%token EQUALS.          /* =   */
+%token NOT_EQUALS.      /* !=  */
+%token LESS_THAN.       /* <   */
+%token LESS_EQUAL.      /* <=  */
+%token GREATER_THAN.    /* >   */
+%token GREATER_EQUAL.   /* >=  */
+%token DOLLAR.          /* $   (variable reference prefix) */
+
+/* Keywords */
+%token KW_OR.           /* or  */
+%token KW_AND.          /* and */
+%token KW_DIV.          /* div */
+%token KW_MOD.          /* mod */
+
+/* Axis names */
+%token AXIS_ANCESTOR.
+%token AXIS_ANCESTOR_OR_SELF.
+%token AXIS_ATTRIBUTE.
+%token AXIS_CHILD.
+%token AXIS_DESCENDANT.
+%token AXIS_DESCENDANT_OR_SELF.
+%token AXIS_FOLLOWING.
+%token AXIS_FOLLOWING_SIBLING.
+%token AXIS_NAMESPACE.
+%token AXIS_PARENT.
+%token AXIS_PRECEDING.
+%token AXIS_PRECEDING_SIBLING.
+%token AXIS_SELF.
+
+/* Node type tests */
+%token NODE_TYPE_COMMENT.        /* comment()                */
+%token NODE_TYPE_TEXT.            /* text()                   */
+%token NODE_TYPE_PI.             /* processing-instruction() */
+%token NODE_TYPE_NODE.           /* node()                   */
+
+/* Literals and names */
+%token LITERAL.         /* quoted string: "..." or '...'     */
+%token NUMBER.          /* numeric literal: 42, 3.14, .5     */
+%token NAME_TEST.       /* NCName or NCName:NCName or NCName:* */
+%token FUNCTION_NAME.   /* NCName followed by (              */
+%token VARIABLE_REF.    /* $QName (dollar sign already consumed) */
+
+/* ======================================================================
+ * OPERATOR PRECEDENCE
+ *
+ * XPath 1.0 operator precedence (lowest to highest):
+ *   |    (union)
+ *   or
+ *   and
+ *   =  !=
+ *   <  <=  >  >=
+ *   +  -
+ *   *  div  mod
+ *   unary -
+ * ====================================================================== */
+
+/*
+ * LONE_SLASH is a pseudo-token used to give the "/ alone" production
+ * (absolute_location_path ::= SLASH) a very low precedence, so that
+ * the parser prefers to shift tokens like STAR and NAME_TEST (starting
+ * a relative location path) rather than reducing "/" as a complete
+ * absolute location path.
+ */
+%nonassoc LONE_SLASH.
+%left PIPE.
+%left KW_OR.
+%left KW_AND.
+%left EQUALS NOT_EQUALS.
+%left LESS_THAN LESS_EQUAL GREATER_THAN GREATER_EQUAL.
+%left PLUS MINUS.
+%left STAR KW_DIV KW_MOD.
+%right UMINUS.
+
+/* ======================================================================
+ * NON-TERMINAL TYPE DECLARATIONS
+ * ====================================================================== */
+
+%type xpath_top          {XPathNode *}
+%type expr               {XPathNode *}
+%type or_expr            {XPathNode *}
+%type and_expr           {XPathNode *}
+%type equality_expr      {XPathNode *}
+%type relational_expr    {XPathNode *}
+%type additive_expr      {XPathNode *}
+%type multiplicative_expr {XPathNode *}
+%type unary_expr         {XPathNode *}
+%type union_expr         {XPathNode *}
+%type path_expr          {XPathNode *}
+%type filter_expr        {XPathNode *}
+%type location_path      {XPathNode *}
+%type absolute_location_path {XPathNode *}
+%type relative_location_path {XPathNode *}
+%type step               {XPathNode *}
+%type axis_specifier     {XPathAxisType}
+%type axis_name          {XPathAxisType}
+%type node_test          {XPathNode *}
+%type predicate_list     {XPathNode *}
+%type predicate          {XPathNode *}
+%type abbreviated_step   {XPathNode *}
+%type primary_expr       {XPathNode *}
+%type function_call      {XPathNode *}
+%type argument_list      {XPathNodeList *}
+%type arguments          {XPathNodeList *}
+
+/* ======================================================================
+ * GRAMMAR RULES
+ *
+ * Based on the XPath 1.0 grammar productions from the W3C Recommendation.
+ * Sections referenced as [N] correspond to the grammar production numbers.
+ *
+ * Lime conventions:
+ *   LHS(A)  -- result value
+ *   RHS(B), RHS(C), ... -- positional references to RHS symbols
+ *   [TOKEN] -- precedence override (Bison's %prec)
+ * ====================================================================== */
+
+/* ----- [1] top-level: captures the result ----- */
+xpath_top(A) ::= expr(B). {
+    A = B;
+    pstate->result = B;
+}
+
+/* ----- [14] Expr: top-level expression, same as OrExpr ----- */
+expr(A) ::= or_expr(B). { A = B; }
+
+/* ----- [21] OrExpr ----- */
+or_expr(A) ::= and_expr(B). { A = B; }
+
+or_expr(A) ::= or_expr(B) KW_OR and_expr(C). {
+    A = xpath_make_binary(XPATH_OP_OR, B, C);
+}
+
+/* ----- [22] AndExpr ----- */
+and_expr(A) ::= equality_expr(B). { A = B; }
+
+and_expr(A) ::= and_expr(B) KW_AND equality_expr(C). {
+    A = xpath_make_binary(XPATH_OP_AND, B, C);
+}
+
+/* ----- [23] EqualityExpr ----- */
+equality_expr(A) ::= relational_expr(B). { A = B; }
+
+equality_expr(A) ::= equality_expr(B) EQUALS relational_expr(C). {
+    A = xpath_make_binary(XPATH_OP_EQ, B, C);
+}
+
+equality_expr(A) ::= equality_expr(B) NOT_EQUALS relational_expr(C). {
+    A = xpath_make_binary(XPATH_OP_NE, B, C);
+}
+
+/* ----- [24] RelationalExpr ----- */
+relational_expr(A) ::= additive_expr(B). { A = B; }
+
+relational_expr(A) ::= relational_expr(B) LESS_THAN additive_expr(C). {
+    A = xpath_make_binary(XPATH_OP_LT, B, C);
+}
+
+relational_expr(A) ::= relational_expr(B) LESS_EQUAL additive_expr(C). {
+    A = xpath_make_binary(XPATH_OP_LE, B, C);
+}
+
+relational_expr(A) ::= relational_expr(B) GREATER_THAN additive_expr(C). {
+    A = xpath_make_binary(XPATH_OP_GT, B, C);
+}
+
+relational_expr(A) ::= relational_expr(B) GREATER_EQUAL additive_expr(C). {
+    A = xpath_make_binary(XPATH_OP_GE, B, C);
+}
+
+/* ----- [25] AdditiveExpr ----- */
+additive_expr(A) ::= multiplicative_expr(B). { A = B; }
+
+additive_expr(A) ::= additive_expr(B) PLUS multiplicative_expr(C). {
+    A = xpath_make_binary(XPATH_OP_ADD, B, C);
+}
+
+additive_expr(A) ::= additive_expr(B) MINUS multiplicative_expr(C). {
+    A = xpath_make_binary(XPATH_OP_SUB, B, C);
+}
+
+/* ----- [26] MultiplicativeExpr ----- */
+multiplicative_expr(A) ::= unary_expr(B). { A = B; }
+
+multiplicative_expr(A) ::= multiplicative_expr(B) STAR unary_expr(C). {
+    A = xpath_make_binary(XPATH_OP_MUL, B, C);
+}
+
+multiplicative_expr(A) ::= multiplicative_expr(B) KW_DIV unary_expr(C). {
+    A = xpath_make_binary(XPATH_OP_DIV, B, C);
+}
+
+multiplicative_expr(A) ::= multiplicative_expr(B) KW_MOD unary_expr(C). {
+    A = xpath_make_binary(XPATH_OP_MOD, B, C);
+}
+
+/* ----- [27] UnaryExpr ----- */
+unary_expr(A) ::= union_expr(B). { A = B; }
+
+unary_expr(A) ::= MINUS unary_expr(B). [UMINUS] {
+    A = xpath_make_unary(XPATH_OP_NEGATE, B);
+}
+
+/* ----- [18] UnionExpr ----- */
+union_expr(A) ::= path_expr(B). { A = B; }
+
+union_expr(A) ::= union_expr(B) PIPE path_expr(C). {
+    A = xpath_make_binary(XPATH_OP_UNION, B, C);
+}
+
+/* ----- [19] PathExpr -----
+ *
+ * A PathExpr is either a LocationPath or a FilterExpr,
+ * optionally followed by / or // and a RelativeLocationPath.
+ */
+path_expr(A) ::= location_path(B). { A = B; }
+
+path_expr(A) ::= filter_expr(B). { A = B; }
+
+path_expr(A) ::= filter_expr(B) SLASH relative_location_path(C). {
+    A = xpath_make_path(B, C);
+}
+
+path_expr(A) ::= filter_expr(B) DOUBLE_SLASH relative_location_path(C). {
+    /*
+     * filter // relative  =>  filter / descendant-or-self::node() / relative
+     */
+    XPathNode *dsos = xpath_make_step(XPATH_AXIS_DESCENDANT_OR_SELF,
+                                      xpath_make_node_type_test(XPATH_NODE_TYPE_NODE),
+                                      NULL);
+    XPathNode *expanded = xpath_make_path(dsos, C);
+    A = xpath_make_path(B, expanded);
+}
+
+/* ----- [20] FilterExpr -----
+ *
+ * A FilterExpr is a PrimaryExpr followed by zero or more predicates.
+ */
+filter_expr(A) ::= primary_expr(B). { A = B; }
+
+filter_expr(A) ::= filter_expr(B) predicate(C). {
+    A = xpath_make_filter(B, C);
+}
+
+/* ----- [1] LocationPath ----- */
+location_path(A) ::= relative_location_path(B). { A = B; }
+
+location_path(A) ::= absolute_location_path(B). { A = B; }
+
+/* ----- [2] AbsoluteLocationPath ----- */
+
+/*
+ * A bare "/" selects the document root node.
+ *
+ * IMPORTANT: This production has a potential ambiguity with
+ * SLASH relative_location_path below.  The tokenizer uses
+ * lookahead context to disambiguate: if / is at the end of
+ * expression or is followed by an operator, it is a standalone
+ * root step; otherwise it begins / relative_location_path.
+ *
+ * We handle this by making "/" alone produce a root node,
+ * and "/" followed by a relative path produce an absolute path.
+ */
+absolute_location_path(A) ::= SLASH. [LONE_SLASH] {
+    A = xpath_make_root();
+}
+
+absolute_location_path(A) ::= SLASH relative_location_path(B). {
+    A = xpath_make_absolute_path(B);
+}
+
+/*
+ * AbbreviatedAbsoluteLocationPath:
+ *   // RelativeLocationPath
+ *   expands to /descendant-or-self::node()/RelativeLocationPath
+ */
+absolute_location_path(A) ::= DOUBLE_SLASH relative_location_path(B). {
+    XPathNode *dsos = xpath_make_step(XPATH_AXIS_DESCENDANT_OR_SELF,
+                                      xpath_make_node_type_test(XPATH_NODE_TYPE_NODE),
+                                      NULL);
+    XPathNode *rel = xpath_make_path(dsos, B);
+    A = xpath_make_absolute_path(rel);
+}
+
+/* ----- [3] RelativeLocationPath ----- */
+relative_location_path(A) ::= step(B). { A = B; }
+
+relative_location_path(A) ::= relative_location_path(B) SLASH step(C). {
+    A = xpath_make_path(B, C);
+}
+
+/*
+ * AbbreviatedRelativeLocationPath:
+ *   RelativeLocationPath // Step
+ *   expands to RelativeLocationPath/descendant-or-self::node()/Step
+ */
+relative_location_path(A) ::= relative_location_path(B) DOUBLE_SLASH step(C). {
+    XPathNode *dsos = xpath_make_step(XPATH_AXIS_DESCENDANT_OR_SELF,
+                                      xpath_make_node_type_test(XPATH_NODE_TYPE_NODE),
+                                      NULL);
+    A = xpath_make_path(B, xpath_make_path(dsos, C));
+}
+
+/* ----- [4] Step -----
+ *
+ * A step has three parts:
+ *   1. An axis specifier (axis_name :: or abbreviated form)
+ *   2. A node test (name test or node type test)
+ *   3. Zero or more predicates
+ *
+ * The abbreviated forms . and .. are handled separately.
+ */
+step(A) ::= axis_specifier(B) node_test(C) predicate_list(D). {
+    A = xpath_make_step(B, C, D);
+}
+
+/*
+ * When no axis is specified, the default axis depends on the node test:
+ *   - For attribute node tests: attribute axis
+ *   - For all others: child axis (most common case)
+ *
+ * Per the XPath spec, the abbreviated step "foo" means child::foo.
+ */
+step(A) ::= node_test(B) predicate_list(C). {
+    A = xpath_make_step(XPATH_AXIS_CHILD, B, C);
+}
+
+/* AbbreviatedStep: . and .. */
+step(A) ::= abbreviated_step(B). { A = B; }
+
+/* ----- [5] AxisSpecifier ----- */
+axis_specifier(A) ::= axis_name(B) COLON_COLON. { A = B; }
+
+/*
+ * Abbreviated axis specifier: @ means attribute::
+ */
+axis_specifier(A) ::= AT. { A = XPATH_AXIS_ATTRIBUTE; }
+
+/* ----- [6] AxisName ----- */
+
+/*
+ * All 13 XPath 1.0 axes.
+ *
+ * Forward axes (context position in document order):
+ *   child, descendant, following-sibling, following,
+ *   attribute, namespace, self, descendant-or-self
+ *
+ * Reverse axes (context position in reverse document order):
+ *   parent, ancestor, preceding-sibling, preceding,
+ *   ancestor-or-self
+ */
+axis_name(A) ::= AXIS_CHILD.              { A = XPATH_AXIS_CHILD; }
+axis_name(A) ::= AXIS_DESCENDANT.         { A = XPATH_AXIS_DESCENDANT; }
+axis_name(A) ::= AXIS_PARENT.             { A = XPATH_AXIS_PARENT; }
+axis_name(A) ::= AXIS_ANCESTOR.           { A = XPATH_AXIS_ANCESTOR; }
+axis_name(A) ::= AXIS_FOLLOWING_SIBLING.  { A = XPATH_AXIS_FOLLOWING_SIBLING; }
+axis_name(A) ::= AXIS_PRECEDING_SIBLING.  { A = XPATH_AXIS_PRECEDING_SIBLING; }
+axis_name(A) ::= AXIS_FOLLOWING.          { A = XPATH_AXIS_FOLLOWING; }
+axis_name(A) ::= AXIS_PRECEDING.          { A = XPATH_AXIS_PRECEDING; }
+axis_name(A) ::= AXIS_ATTRIBUTE.          { A = XPATH_AXIS_ATTRIBUTE; }
+axis_name(A) ::= AXIS_NAMESPACE.          { A = XPATH_AXIS_NAMESPACE; }
+axis_name(A) ::= AXIS_SELF.               { A = XPATH_AXIS_SELF; }
+axis_name(A) ::= AXIS_DESCENDANT_OR_SELF. { A = XPATH_AXIS_DESCENDANT_OR_SELF; }
+axis_name(A) ::= AXIS_ANCESTOR_OR_SELF.   { A = XPATH_AXIS_ANCESTOR_OR_SELF; }
+
+/* ----- [7] NodeTest -----
+ *
+ * A node test is either:
+ *   - a name test (NCName, NCName:NCName, NCName:*, or *)
+ *   - a node type test: comment(), text(), processing-instruction(), node()
+ *   - processing-instruction('literal')
+ */
+node_test(A) ::= NAME_TEST(B). {
+    A = xpath_make_name_test(B.str.val, B.str.len);
+}
+
+node_test(A) ::= STAR. {
+    A = xpath_make_name_test("*", 1);
+}
+
+node_test(A) ::= NODE_TYPE_COMMENT LPAREN RPAREN. {
+    A = xpath_make_node_type_test(XPATH_NODE_TYPE_COMMENT);
+}
+
+node_test(A) ::= NODE_TYPE_TEXT LPAREN RPAREN. {
+    A = xpath_make_node_type_test(XPATH_NODE_TYPE_TEXT);
+}
+
+node_test(A) ::= NODE_TYPE_PI LPAREN RPAREN. {
+    A = xpath_make_node_type_test(XPATH_NODE_TYPE_PI);
+}
+
+node_test(A) ::= NODE_TYPE_PI LPAREN LITERAL(B) RPAREN. {
+    A = xpath_make_pi_test(B.str.val, B.str.len);
+}
+
+node_test(A) ::= NODE_TYPE_NODE LPAREN RPAREN. {
+    A = xpath_make_node_type_test(XPATH_NODE_TYPE_NODE);
+}
+
+/* ----- [8] Predicate ----- */
+predicate(A) ::= LBRACKET expr(B) RBRACKET. { A = B; }
+
+/* ----- Predicate list (zero or more predicates chained) ----- */
+predicate_list(A) ::= . { A = NULL; }
+
+predicate_list(A) ::= predicate_list(B) predicate(C). {
+    A = xpath_append_predicate(B, C);
+}
+
+/* ----- [12] AbbreviatedStep -----
+ *
+ * .   is equivalent to self::node()
+ * ..  is equivalent to parent::node()
+ */
+abbreviated_step(A) ::= DOT. {
+    A = xpath_make_step(XPATH_AXIS_SELF,
+                        xpath_make_node_type_test(XPATH_NODE_TYPE_NODE),
+                        NULL);
+}
+
+abbreviated_step(A) ::= DOUBLE_DOT. {
+    A = xpath_make_step(XPATH_AXIS_PARENT,
+                        xpath_make_node_type_test(XPATH_NODE_TYPE_NODE),
+                        NULL);
+}
+
+/* ----- [15] PrimaryExpr ----- */
+primary_expr(A) ::= VARIABLE_REF(B). {
+    A = xpath_make_variable_ref(B.str.val, B.str.len);
+}
+
+primary_expr(A) ::= LPAREN expr(B) RPAREN. { A = B; }
+
+primary_expr(A) ::= LITERAL(B). {
+    A = xpath_make_literal(B.str.val, B.str.len);
+}
+
+primary_expr(A) ::= NUMBER(B). {
+    A = xpath_make_number(B.numval);
+}
+
+primary_expr(A) ::= function_call(B). { A = B; }
+
+/* ----- [16] FunctionCall -----
+ *
+ * XPath 1.0 function calls.  The function name token is produced by
+ * the tokenizer when an NCName is immediately followed by '('.
+ *
+ * Built-in functions include:
+ *
+ * Node-set:  last, position, count, id, local-name, namespace-uri, name
+ * String:    string, concat, starts-with, contains, substring-before,
+ *            substring-after, substring, string-length, normalize-space,
+ *            translate
+ * Boolean:   boolean, not, true, false, lang
+ * Number:    number, sum, floor, ceiling, round
+ */
+function_call(A) ::= FUNCTION_NAME(B) LPAREN argument_list(C) RPAREN. {
+    A = xpath_make_function_call(B.str.val, B.str.len, C);
+}
+
+/* ----- [17] Argument -----
+ *
+ * Argument list is zero or more comma-separated expressions.
+ */
+argument_list(A) ::= . { A = NULL; }
+
+argument_list(A) ::= arguments(B). { A = B; }
+
+arguments(A) ::= expr(B). {
+    A = xpath_node_list_make1(B);
+}
+
+arguments(A) ::= arguments(B) COMMA expr(C). {
+    A = xpath_node_list_append(B, C);
+}

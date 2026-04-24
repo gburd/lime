@@ -1,0 +1,31 @@
+# MongoDB aggregation pipeline documents
+
+# Single-stage pipelines
+[{ "$match": { "status": "A" } }]
+[{ "$group": { "_id": "$dept", "count": { "$sum": 1 } } }]
+[{ "$project": { "name": 1, "age": 1 } }]
+[{ "$sort": { "age": -1 } }]
+[{ "$limit": 10 }]
+[{ "$skip": 5 }]
+[{ "$unwind": "$tags" }]
+[{ "$count": "totalDocuments" }]
+
+# Multi-stage pipeline
+[{ "$match": { "status": "A" } }, { "$group": { "_id": "$cust_id", "total": { "$sum": "$amount" } } }]
+
+# Pipeline with project and sort
+[{ "$project": { "name": 1, "total": { "$sum": "$scores" } } }, { "$sort": { "total": -1 } }]
+
+# $lookup stage
+[{ "$lookup": { "from": "inventory", "localField": "item", "foreignField": "sku", "as": "inventory_docs" } }]
+
+# $group with multiple accumulators
+[{ "$group": { "_id": "$category", "avgPrice": { "$avg": "$price" }, "count": { "$sum": 1 }, "firstItem": { "$first": "$name" }, "lastItem": { "$last": "$name" } } }]
+
+# $out stage
+[{ "$match": { "status": "active" } }, { "$out": "active_users" }]
+
+# Aggregation stage documents (as standalone objects)
+{ "$match": { "age": { "$gte": 21 } } }
+{ "$group": { "_id": null, "total": { "$sum": "$amount" }, "avg": { "$avg": "$amount" } } }
+{ "$project": { "name": 1, "_id": 0, "fullName": { "$first": "$names" } } }
