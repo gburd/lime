@@ -23,6 +23,7 @@ CharClassVector classify_scalar(const char *input, size_t offset) {
     uint32_t alpha = 0;
     uint32_t digit = 0;
     uint32_t space = 0;
+    uint32_t high = 0;
 
     for (int i = 0; i < 32; i++) {
         unsigned char c = p[i];
@@ -35,11 +36,15 @@ CharClassVector classify_scalar(const char *input, size_t offset) {
         if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
             space |= (uint32_t)1 << i;
         }
+        if (c >= 0x80) {
+            high |= (uint32_t)1 << i;
+        }
     }
 
     result.is_alpha_mask = alpha;
     result.is_digit_mask = digit;
     result.is_space_mask = space;
+    result.is_high_byte_mask = high;
     return result;
 }
 
@@ -106,10 +111,20 @@ CharClassVector classify_simd_avx2(const char *input, size_t offset) {
                            _mm256_or_si256(eq_tab,
                              _mm256_or_si256(eq_newline, eq_cr)));
 
+    /*
+    ** High bytes: c >= 0x80 (UTF-8 lead or continuation bytes).
+    ** Since _mm256_cmpgt_epi8 does signed comparison, bytes >= 0x80 are
+    ** negative in signed interpretation, so they are less than 0x7F.
+    ** Use: high = NOT (chunk > -1)  i.e. NOT (chunk >= 0).
+    ** Equivalently, movemask on the raw bytes gives us the sign bit of
+    ** each byte, which is 1 exactly when the byte >= 0x80.
+    */
+
     /* Convert vector results to 32-bit bitmasks */
     result.is_alpha_mask = (uint32_t)_mm256_movemask_epi8(is_alpha);
     result.is_digit_mask = (uint32_t)_mm256_movemask_epi8(is_digit);
     result.is_space_mask = (uint32_t)_mm256_movemask_epi8(is_space_v);
+    result.is_high_byte_mask = (uint32_t)_mm256_movemask_epi8(chunk);
 
     return result;
 }
@@ -211,10 +226,14 @@ CharClassVector classify_simd_neon(const char *input, size_t offset) {
                               vorrq_u8(eq_tab,
                                 vorrq_u8(eq_newline, eq_cr)));
 
+    /* High bytes: c >= 0x80 */
+    uint8x16_t is_high = vcgeq_u8(chunk, vdupq_n_u8(0x80));
+
     /* Convert to bitmasks -- only lower 16 bits are meaningful */
     result.is_alpha_mask = (uint32_t)neon_movemask(is_alpha);
     result.is_digit_mask = (uint32_t)neon_movemask(is_digit);
     result.is_space_mask = (uint32_t)neon_movemask(is_space);
+    result.is_high_byte_mask = (uint32_t)neon_movemask(is_high);
 
     return result;
 }

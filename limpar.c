@@ -218,6 +218,10 @@ struct yyStackEntry {
                          ** number for the token at this stack level */
   YYMINORTYPE minor;     /* The user-supplied minor token value.  This
                          ** is the value of the token  */
+#ifdef YYLOCATIONTYPE
+  YYLOCATIONTYPE yyloc;  /* Source location for this stack entry.
+                         ** Only present when %locations is active. */
+#endif
 };
 typedef struct yyStackEntry yyStackEntry;
 
@@ -240,6 +244,8 @@ struct yyParser {
 typedef struct yyParser yyParser;
 
 #include <assert.h>
+#include <stdlib.h>
+#include <string.h>
 #ifndef NDEBUG
 #include <stdio.h>
 static FILE *yyTraceFILE = 0;
@@ -546,6 +552,12 @@ int ParseCoverage(FILE *out){
 ** Find the appropriate action for a parser given the terminal
 ** look-ahead token iLookAhead.
 */
+/* Forward declaration for AOT-compiled action lookup */
+#ifdef YYAOT
+extern YYACTIONTYPE yy_find_shift_action_aot(YYACTIONTYPE stateno,
+                                              unsigned short iLookAhead);
+#endif
+
 static YYACTIONTYPE yy_find_shift_action(
   YYCODETYPE iLookAhead,    /* The look-ahead token */
   YYACTIONTYPE stateno      /* Current state number */
@@ -553,6 +565,10 @@ static YYACTIONTYPE yy_find_shift_action(
   int i;
 
   if( stateno>YY_MAX_SHIFT ) return stateno;
+#ifdef YYAOT
+  /* Use the AOT-compiled switch-based lookup instead of table-driven */
+  return yy_find_shift_action_aot(stateno, (unsigned short)iLookAhead);
+#endif
   assert( stateno <= YY_SHIFT_COUNT );
 #if defined(YYCOVERAGE)
   yycoverage[stateno][iLookAhead] = 1;
@@ -820,10 +836,16 @@ static void yy_syntax_error(
   yyParser *yypParser,           /* The parser */
   int yymajor,                   /* The major type of the error token */
   ParseTOKENTYPE yyminor         /* The minor type of the error token */
+#ifdef YYLOCATIONTYPE
+  ,YYLOCATIONTYPE yyloc          /* Source location of the error token */
+#endif
 ){
   ParseARG_FETCH
   ParseCTX_FETCH
 #define TOKEN yyminor
+#ifdef YYLOCATIONTYPE
+#define TOKEN_LOC yyloc
+#endif
 /************ Begin %syntax_error code ****************************************/
 %%
 /************ End %syntax_error code ******************************************/
@@ -876,6 +898,16 @@ static void yy_accept(
 ** Outputs:
 ** None.
 */
+
+/* Helper macro for calling yy_syntax_error with optional location argument */
+#ifdef YYLOCATIONTYPE
+# define YY_SYNTAX_ERROR(P,M,m) \
+    yy_syntax_error(P,M,m, (P)->yytos > (P)->yystack ? (P)->yytos->yyloc \
+      : (YYLOCATIONTYPE){0,0,0,0,0})
+#else
+# define YY_SYNTAX_ERROR(P,M,m) yy_syntax_error(P,M,m)
+#endif
+
 void Parse(
   void *yyp,                   /* The parser */
   int yymajor,                 /* The major token code number */
@@ -997,7 +1029,7 @@ void Parse(
       **
       */
       if( yypParser->yyerrcnt<0 ){
-        yy_syntax_error(yypParser,yymajor,yyminor);
+        YY_SYNTAX_ERROR(yypParser,yymajor,yyminor);
       }
       yymx = yypParser->yytos->major;
       if( yymx==YYERRORSYMBOL || yyerrorhit ){
@@ -1039,7 +1071,7 @@ void Parse(
       ** Applications can set this macro (for example inside %include) if
       ** they intend to abandon the parse upon the first syntax error seen.
       */
-      yy_syntax_error(yypParser,yymajor, yyminor);
+      YY_SYNTAX_ERROR(yypParser,yymajor,yyminor);
       yy_destructor(yypParser,(YYCODETYPE)yymajor,&yyminorunion);
       break;
 #else  /* YYERRORSYMBOL is not defined */
@@ -1051,11 +1083,27 @@ void Parse(
       **
       ** As before, subsequent error messages are suppressed until
       ** three input tokens have been successfully shifted.
+      **
+      ** If YYERRORSYNC is defined, use panic-mode recovery:
+      ** discard tokens until a synchronization token is found,
+      ** then resume parsing from the current state.
       */
       if( yypParser->yyerrcnt<=0 ){
-        yy_syntax_error(yypParser,yymajor, yyminor);
+        YY_SYNTAX_ERROR(yypParser,yymajor,yyminor);
       }
       yypParser->yyerrcnt = 3;
+#ifdef YYERRORSYNC
+      /* Panic-mode recovery: discard tokens until we find a sync token */
+      if( yymajor!=0 && (YYCODETYPE)yymajor<(YYCODETYPE)(sizeof(yy_is_sync_token)/sizeof(yy_is_sync_token[0]))
+          && yy_is_sync_token[(YYCODETYPE)yymajor] ){
+        /* Current token IS a sync token -- resume parsing here */
+        break;
+      }
+      /* Not a sync token -- discard and continue */
+      yy_destructor(yypParser,(YYCODETYPE)yymajor,&yyminorunion);
+      yymajor = YYNOCODE;
+      break;
+#else /* !YYERRORSYNC */
       yy_destructor(yypParser,(YYCODETYPE)yymajor,&yyminorunion);
       if( yyendofinput ){
         yy_parse_failed(yypParser);
@@ -1064,7 +1112,8 @@ void Parse(
 #endif
       }
       break;
-#endif
+#endif /* YYERRORSYNC */
+#endif /* YYERRORSYMBOL */
     }
   }
 #ifndef NDEBUG
@@ -1082,6 +1131,34 @@ void Parse(
   return;
 }
 
+#ifdef YYLOCATIONTYPE
+/*
+** Location-aware version of Parse().
+** Same as Parse() but also stores the source location for the shifted token.
+** Use this entry point when the %locations directive is active.
+**
+** The location is stored on the parse stack alongside the token value.
+** During reductions, a YYLOC(N) macro can access the location of the
+** Nth RHS symbol, and the result location is computed by merging the
+** locations of the first and last RHS symbols.
+*/
+void ParseLoc(
+  void *yyp,                   /* The parser */
+  int yymajor,                 /* The major token code number */
+  ParseTOKENTYPE yyminor,      /* The value for the token */
+  YYLOCATIONTYPE yyloc         /* Source location of the token */
+  ParseARG_PDECL               /* Optional %extra_argument parameter */
+){
+  yyParser *yypParser = (yyParser*)yyp;
+  /* Store the location for the next shift */
+  Parse(yyp, yymajor, yyminor ParseARG_PARAM);
+  /* After Parse shifts the token, patch the location on top of stack */
+  if( yypParser->yytos > yypParser->yystack ){
+    yypParser->yytos->yyloc = yyloc;
+  }
+}
+#endif /* YYLOCATIONTYPE */
+
 /*
 ** Return the fallback token corresponding to canonical token iToken, or
 ** 0 if iToken has no fallback.
@@ -1094,4 +1171,68 @@ int ParseFallback(int iToken){
   (void)iToken;
   return 0;
 #endif
+}
+
+/*
+** Return a heap-allocated string listing the tokens that would be
+** valid in the current parser state.  The caller must free() the
+** returned string.  Returns NULL if the parser is NULL or on
+** allocation failure.
+**
+** The output is a comma-separated list like: "SELECT, INSERT, UPDATE".
+** This is useful for producing human-readable error messages.
+*/
+char *ParseExpectedTokens(void *yyp){
+  yyParser *yypParser = (yyParser*)yyp;
+  if( yypParser==0 || yypParser->yytos==0 ) return 0;
+
+  YYACTIONTYPE stateno = yypParser->yytos->stateno;
+  char *buf = 0;
+  size_t buf_len = 0;
+  size_t buf_cap = 0;
+  int first = 1;
+  int i;
+
+  for(i=0; i<YYNTOKEN; i++){
+    YYACTIONTYPE act;
+#if YY_SHIFT_COUNT >= 0
+    int j = i + yy_shift_ofst[stateno];
+    if( j>=0 && j<YY_ACTTAB_COUNT && yy_lookahead[j]==(YYCODETYPE)i ){
+      act = yy_action[j];
+    }else{
+      act = yy_default[stateno];
+    }
+#else
+    act = yy_default[stateno];
+#endif
+    if( act!=YY_ERROR_ACTION && act!=yy_default[stateno] ){
+      const char *name = yyTokenName[i];
+      size_t nlen = 0;
+      const char *p = name;
+      while( *p ) { nlen++; p++; }
+
+      /* Need space for ", " + name + NUL */
+      size_t needed = buf_len + (first ? 0 : 2) + nlen + 1;
+      if( needed > buf_cap ){
+        size_t new_cap = (buf_cap == 0) ? 128 : buf_cap * 2;
+        if( new_cap < needed ) new_cap = needed;
+        char *tmp = (char*)realloc(buf, new_cap);
+        if( tmp==0 ){
+          free(buf);
+          return 0;
+        }
+        buf = tmp;
+        buf_cap = new_cap;
+      }
+      if( !first ){
+        buf[buf_len++] = ',';
+        buf[buf_len++] = ' ';
+      }
+      memcpy(buf + buf_len, name, nlen);
+      buf_len += nlen;
+      buf[buf_len] = 0;
+      first = 0;
+    }
+  }
+  return buf;
 }

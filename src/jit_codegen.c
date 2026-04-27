@@ -26,23 +26,7 @@
 
 #include <llvm-c/Core.h>
 
-/* Access JITContext internals */
-struct JITContext {
-    LLVMModuleRef module;
-    void *engine;
-    LLVMContextRef llvm_ctx;
-
-    void *parse_sequence_fn;  /* Pointer to jit_parse_sequence function */
-    uint32_t nstates;
-
-    struct {
-        uint32_t states_compiled;
-        uint32_t states_total;
-        uint64_t compile_time_ns;
-        uint64_t code_size_bytes;
-        int      available;
-    } stats;
-};
+/* Access JITStats from jit_context.h */
 
 static uint64_t now_ns(void) {
     struct timespec ts;
@@ -217,26 +201,36 @@ static LLVMValueRef generate_monolithic_parser(
     return fn;
 }
 
-JITStatus jit_codegen_generate(JITContext *ctx,
-                               const ParserSnapshot *snap) {
-    if (ctx == NULL || snap == NULL) return JIT_ERR_INVALID_ARG;
+/*
+** OrcJIT-compatible entry point: generates IR into an externally-provided
+** module rather than relying on JITContext internals. This decouples
+** codegen from the JIT engine lifetime, which OrcJIT requires since
+** modules are consumed (moved) into the JIT dylib.
+*/
+JITStatus jit_codegen_generate_into(LLVMContextRef llvm_ctx,
+                                     LLVMModuleRef module,
+                                     const ParserSnapshot *snap,
+                                     JITStats *stats_out) {
+    if (llvm_ctx == NULL || module == NULL || snap == NULL) {
+        return JIT_ERR_INVALID_ARG;
+    }
 
     uint64_t start = now_ns();
 
     /* Generate single monolithic parse function */
-    LLVMValueRef fn = generate_monolithic_parser(ctx->llvm_ctx, ctx->module, snap);
+    LLVMValueRef fn = generate_monolithic_parser(llvm_ctx, module, snap);
 
     if (fn == NULL) return JIT_ERR_CODEGEN_FAILED;
 
-    ctx->nstates = snap->nstate;
-
     uint64_t end = now_ns();
-    ctx->stats.compile_time_ns = end - start;
-    ctx->stats.states_compiled = snap->nstate;
-    ctx->stats.states_total = snap->nstate;
 
-    /* Estimate code size: ~200 bytes per state on average */
-    ctx->stats.code_size_bytes = snap->nstate * 200;
+    if (stats_out != NULL) {
+        stats_out->compile_time_ns = end - start;
+        stats_out->states_compiled = snap->nstate;
+        stats_out->states_total = snap->nstate;
+        /* Estimate code size: ~200 bytes per state on average */
+        stats_out->code_size_bytes = snap->nstate * 200;
+    }
 
     return JIT_OK;
 }

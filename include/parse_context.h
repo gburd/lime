@@ -30,4 +30,24 @@ ParseContext *parse_context_create(ParserSnapshot *snap);
 */
 void parse_context_destroy(ParseContext *ctx);
 
+/* ------------------------------------------------------------------ */
+/*  parser.h wrappers                                                  */
+/* ------------------------------------------------------------------ */
+
+ParseContext *parse_begin(ParserSnapshot *snap);
+void parse_end(ParseContext *ctx);
+ParserSnapshot *parse_get_snapshot(ParseContext *ctx);
+int parse_token(ParseContext *ctx, int token_code, void *token_value);
+
+/* ------------------------------------------------------------------ */
+/*  Snapshot action table lookup helpers                               */
+/* ------------------------------------------------------------------ */
+
+uint16_t snap_find_shift_action(const ParserSnapshot *snap,
+                                uint16_t stateno,
+                                uint16_t iLookAhead);
+uint16_t snap_find_reduce_action(const ParserSnapshot *snap,
+                                 uint16_t stateno,
+                                 uint16_t iLookAhead);
+
 #endif /* PARSE_CONTEXT_H */

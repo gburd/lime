@@ -14,6 +14,9 @@ lib_sources = files(
   'parser_operations.c',
   'merkle_tree.c',
   'parser_composition.c',
+  'utf8.c',
+  'lime_ast.c',
+  'glr.c',
 )
 
 thread_dep = dependency('threads')
@@ -41,10 +44,11 @@ tokenize_simd_lib = static_library('tokenize_simd',
 # When LLVM is available, the JIT subsystem compiles parser hot paths
 # into native code. Without LLVM, stub implementations are used.
 llvm_dep = dependency('llvm', modules : ['core', 'executionengine', 'mcjit',
-                                          'native', 'analysis', 'passes'],
+                                          'native', 'analysis', 'passes',
+                                          'orcjit'],
                       required : false)
 
-jit_sources = files('jit_context.c', 'jit_codegen.c', 'jit_policy.c')
+jit_sources = files('jit_context.c', 'jit_codegen.c', 'jit_policy.c', 'jit_tokenizer.c')
 jit_c_args = []
 jit_deps = []
 

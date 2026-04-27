@@ -1,4 +1,4 @@
-project('lime-parser', 'c',
+project('lime-parser', 'c', 'cpp',
   version : '0.1.0',
   default_options : [
     'c_std=c11',

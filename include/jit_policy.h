@@ -38,6 +38,7 @@ typedef struct JITMetrics {
     atomic_uint_fast64_t parse_count;         /* Number of parse sessions    */
     atomic_uint_fast64_t total_parse_time_ns; /* Cumulative parse wall-clock */
     atomic_uint_fast64_t action_lookup_count; /* Total action table lookups  */
+    atomic_uint_fast64_t total_tokens_parsed; /* Cumulative tokens across all parses */
     atomic_int           is_jitted;           /* 1 if JIT code is attached   */
     atomic_int           jit_in_progress;     /* 1 if background compile active */
 } JITMetrics;
@@ -67,6 +68,24 @@ typedef struct JITPolicyConfig {
     /* If true, JIT compilation happens on a background thread.
     ** If false, compilation is synchronous (blocks the caller). */
     bool background_compile;
+
+    /* Minimum number of parser states before considering JIT.
+    ** Small grammars don't benefit enough to justify compilation. */
+    uint32_t min_grammar_states;
+
+    /* Minimum average tokens per parse session before JIT.
+    ** Short inputs don't benefit from JIT compilation. */
+    uint32_t min_avg_tokens_per_parse;
+
+    /* Master switch for JIT compilation.
+    ** Set to false to disable JIT entirely regardless of metrics. */
+    bool enabled;
+
+    /* Enable JIT compilation of the keyword tokenizer.
+    ** When true, the JIT policy will compile a trie-based keyword
+    ** classifier from the TokenTable when the parser JIT triggers.
+    ** When false, keyword lookups always use the hash-based path. */
+    bool tokenizer_jit_enabled;
 } JITPolicyConfig;
 
 /* ------------------------------------------------------------------ */
@@ -76,10 +95,14 @@ typedef struct JITPolicyConfig {
 /*
 ** Return the default policy configuration.
 ** Defaults:
-**   min_parse_count         = 50
-**   min_total_parse_time_ns = 10,000,000  (10 ms cumulative)
+**   min_parse_count           = 200
+**   min_total_parse_time_ns   = 10,000,000  (10 ms cumulative)
 **   min_avg_lookups_per_parse = 100
-**   background_compile      = true
+**   background_compile        = true
+**   min_grammar_states        = 500
+**   min_avg_tokens_per_parse  = 200
+**   enabled                   = true
+**   tokenizer_jit_enabled     = true
 */
 JITPolicyConfig jit_policy_default_config(void);
 
@@ -97,6 +120,12 @@ void jit_metrics_init(JITMetrics *m);
 void jit_metrics_record_parse(JITMetrics *m,
                               uint64_t parse_time_ns,
                               uint64_t action_lookups);
+
+/*
+** Record the number of tokens processed in a parse session.
+** Thread-safe (uses atomic operations).
+*/
+void jit_metrics_record_tokens(JITMetrics *m, uint64_t token_count);
 
 /*
 ** Evaluate whether a snapshot should be JIT compiled based on its

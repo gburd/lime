@@ -1,0 +1,328 @@
+/* Lime benchmark grammar: scaled expression language (~250 rules)
+**
+** This grammar defines a richly-typed expression language with
+** enough productions to make parser generation non-trivial.
+** It mirrors bench_grammar.y (for bison) so timing comparisons
+** are meaningful.
+*/
+
+%name BenchParser
+
+%token_type {int}
+
+%left  OR.
+%left  AND.
+%right NOT.
+%left  EQ NE.
+%left  LT GT LE GE.
+%left  PLUS MINUS.
+%left  STAR SLASH PERCENT.
+%right UMINUS.
+%left  DOT LBRACKET.
+%left  LPAREN.
+
+/* Top-level */
+program ::= stmt_list.
+
+/* Statement list */
+stmt_list ::= stmt_list SEMI stmt.
+stmt_list ::= stmt.
+
+/* Statements */
+stmt ::= select_stmt.
+stmt ::= insert_stmt.
+stmt ::= update_stmt.
+stmt ::= delete_stmt.
+stmt ::= create_stmt.
+stmt ::= drop_stmt.
+stmt ::= alter_stmt.
+stmt ::= begin_stmt.
+stmt ::= commit_stmt.
+stmt ::= rollback_stmt.
+stmt ::= set_stmt.
+stmt ::= show_stmt.
+stmt ::= explain_stmt.
+stmt ::= grant_stmt.
+stmt ::= revoke_stmt.
+stmt ::= declare_stmt.
+stmt ::= if_stmt.
+stmt ::= while_stmt.
+stmt ::= for_stmt.
+stmt ::= return_stmt.
+stmt ::= call_stmt.
+stmt ::= raise_stmt.
+stmt ::= with_stmt.
+
+/* SELECT */
+select_stmt ::= SELECT select_cols FROM from_clause where_clause
+                group_clause having_clause order_clause limit_clause.
+select_stmt ::= SELECT select_cols FROM from_clause where_clause.
+select_stmt ::= SELECT select_cols FROM from_clause.
+select_stmt ::= SELECT select_cols.
+
+select_cols ::= select_cols COMMA select_col.
+select_cols ::= select_col.
+select_col  ::= expr AS ID.
+select_col  ::= expr.
+select_col  ::= STAR.
+
+/* FROM */
+from_clause ::= from_clause COMMA from_item.
+from_clause ::= from_item.
+from_item   ::= table_ref.
+from_item   ::= table_ref AS ID.
+from_item   ::= LPAREN select_stmt RPAREN AS ID.
+from_item   ::= from_item join_type JOIN from_item ON expr.
+from_item   ::= from_item join_type JOIN from_item USING LPAREN id_list RPAREN.
+from_item   ::= from_item CROSS JOIN from_item.
+from_item   ::= from_item NATURAL join_type JOIN from_item.
+
+join_type ::= INNER.
+join_type ::= LEFT.
+join_type ::= LEFT OUTER.
+join_type ::= RIGHT.
+join_type ::= RIGHT OUTER.
+join_type ::= FULL.
+join_type ::= FULL OUTER.
+join_type ::= .
+
+/* WHERE / GROUP BY / HAVING / ORDER BY / LIMIT */
+where_clause  ::= WHERE expr.
+group_clause  ::= GROUP BY expr_list.
+having_clause ::= HAVING expr.
+order_clause  ::= ORDER BY order_list.
+limit_clause  ::= LIMIT expr.
+limit_clause  ::= LIMIT expr OFFSET expr.
+limit_clause  ::= LIMIT expr COMMA expr.
+
+order_list ::= order_list COMMA order_item.
+order_list ::= order_item.
+order_item ::= expr ASC.
+order_item ::= expr DESC.
+order_item ::= expr.
+
+/* INSERT */
+insert_stmt ::= INSERT INTO table_ref LPAREN id_list RPAREN VALUES value_list_group.
+insert_stmt ::= INSERT INTO table_ref VALUES value_list_group.
+insert_stmt ::= INSERT INTO table_ref LPAREN id_list RPAREN select_stmt.
+insert_stmt ::= INSERT INTO table_ref select_stmt.
+insert_stmt ::= INSERT INTO table_ref DEFAULT VALUES.
+
+value_list_group ::= value_list_group COMMA LPAREN expr_list RPAREN.
+value_list_group ::= LPAREN expr_list RPAREN.
+
+/* UPDATE */
+update_stmt ::= UPDATE table_ref SET assignment_list where_clause.
+update_stmt ::= UPDATE table_ref SET assignment_list.
+assignment_list ::= assignment_list COMMA assignment.
+assignment_list ::= assignment.
+assignment ::= ID EQ expr.
+assignment ::= LPAREN id_list RPAREN EQ LPAREN expr_list RPAREN.
+
+/* DELETE */
+delete_stmt ::= DELETE FROM table_ref where_clause.
+delete_stmt ::= DELETE FROM table_ref.
+
+/* CREATE */
+create_stmt ::= CREATE TABLE table_ref LPAREN column_def_list RPAREN.
+create_stmt ::= CREATE TABLE IF NOT EXISTS table_ref LPAREN column_def_list RPAREN.
+create_stmt ::= CREATE INDEX ID ON table_ref LPAREN id_list RPAREN.
+create_stmt ::= CREATE UNIQUE INDEX ID ON table_ref LPAREN id_list RPAREN.
+create_stmt ::= CREATE VIEW ID AS select_stmt.
+create_stmt ::= CREATE OR REPLACE VIEW ID AS select_stmt.
+create_stmt ::= CREATE FUNCTION ID LPAREN param_list RPAREN RETURNS type_name AS block_stmt.
+create_stmt ::= CREATE TRIGGER ID trigger_timing trigger_event ON table_ref block_stmt.
+create_stmt ::= CREATE SEQUENCE ID.
+create_stmt ::= CREATE SCHEMA ID.
+create_stmt ::= CREATE TYPE ID AS LPAREN column_def_list RPAREN.
+create_stmt ::= CREATE EXTENSION ID.
+create_stmt ::= CREATE DOMAIN ID AS type_name constraint_list.
+create_stmt ::= CREATE AGGREGATE ID LPAREN type_name RPAREN LPAREN aggregate_def_list RPAREN.
+
+column_def_list ::= column_def_list COMMA column_def.
+column_def_list ::= column_def.
+column_def ::= ID type_name constraint_list.
+column_def ::= ID type_name.
+
+constraint_list ::= constraint_list constraint.
+constraint_list ::= constraint.
+constraint ::= NOT NULL.
+constraint ::= UNIQUE.
+constraint ::= PRIMARY KEY.
+constraint ::= DEFAULT expr.
+constraint ::= CHECK LPAREN expr RPAREN.
+constraint ::= REFERENCES table_ref LPAREN id_list RPAREN.
+constraint ::= FOREIGN KEY LPAREN id_list RPAREN REFERENCES table_ref LPAREN id_list RPAREN.
+
+/* DROP */
+drop_stmt ::= DROP TABLE table_ref.
+drop_stmt ::= DROP TABLE IF EXISTS table_ref.
+drop_stmt ::= DROP INDEX ID.
+drop_stmt ::= DROP VIEW ID.
+drop_stmt ::= DROP FUNCTION ID.
+drop_stmt ::= DROP TRIGGER ID.
+drop_stmt ::= DROP SEQUENCE ID.
+drop_stmt ::= DROP SCHEMA ID.
+
+/* ALTER */
+alter_stmt ::= ALTER TABLE table_ref ADD COLUMN column_def.
+alter_stmt ::= ALTER TABLE table_ref DROP COLUMN ID.
+alter_stmt ::= ALTER TABLE table_ref ALTER COLUMN ID SET type_name.
+alter_stmt ::= ALTER TABLE table_ref RENAME TO ID.
+alter_stmt ::= ALTER TABLE table_ref ADD constraint.
+alter_stmt ::= ALTER TABLE table_ref DROP CONSTRAINT ID.
+alter_stmt ::= ALTER SEQUENCE ID RESTART.
+alter_stmt ::= ALTER INDEX ID RENAME TO ID.
+
+/* Transaction */
+begin_stmt    ::= BEGIN.
+begin_stmt    ::= BEGIN TRANSACTION.
+commit_stmt   ::= COMMIT.
+rollback_stmt ::= ROLLBACK.
+rollback_stmt ::= ROLLBACK TO SAVEPOINT ID.
+
+/* SET / SHOW */
+set_stmt  ::= SET ID EQ expr.
+set_stmt  ::= SET ID TO expr.
+show_stmt ::= SHOW ID.
+show_stmt ::= SHOW ALL.
+
+/* EXPLAIN */
+explain_stmt ::= EXPLAIN select_stmt.
+explain_stmt ::= EXPLAIN ANALYZE select_stmt.
+explain_stmt ::= EXPLAIN VERBOSE select_stmt.
+
+/* GRANT / REVOKE */
+grant_stmt  ::= GRANT privilege_list ON table_ref TO ID.
+revoke_stmt ::= REVOKE privilege_list ON table_ref FROM ID.
+privilege_list ::= privilege_list COMMA privilege.
+privilege_list ::= privilege.
+privilege ::= SELECT.
+privilege ::= INSERT.
+privilege ::= UPDATE.
+privilege ::= DELETE.
+privilege ::= ALL.
+
+/* PL/SQL style */
+declare_stmt ::= DECLARE ID type_name.
+declare_stmt ::= DECLARE ID type_name DEFAULT expr.
+if_stmt   ::= IF expr THEN stmt_list END IF.
+if_stmt   ::= IF expr THEN stmt_list ELSE stmt_list END IF.
+if_stmt   ::= IF expr THEN stmt_list ELSIF expr THEN stmt_list END IF.
+while_stmt ::= WHILE expr LOOP stmt_list END LOOP.
+for_stmt   ::= FOR ID IN expr DOTDOT expr LOOP stmt_list END LOOP.
+return_stmt ::= RETURN expr.
+return_stmt ::= RETURN.
+call_stmt  ::= CALL ID LPAREN expr_list RPAREN.
+call_stmt  ::= CALL ID LPAREN RPAREN.
+raise_stmt ::= RAISE EXCEPTION STRING.
+raise_stmt ::= RAISE NOTICE STRING.
+block_stmt ::= BEGIN stmt_list END.
+
+/* WITH (CTE) */
+with_stmt ::= WITH cte_list select_stmt.
+with_stmt ::= WITH RECURSIVE cte_list select_stmt.
+cte_list  ::= cte_list COMMA cte_def.
+cte_list  ::= cte_def.
+cte_def   ::= ID AS LPAREN select_stmt RPAREN.
+
+/* Trigger details */
+trigger_timing ::= BEFORE.
+trigger_timing ::= AFTER.
+trigger_timing ::= INSTEAD OF.
+trigger_event  ::= INSERT.
+trigger_event  ::= UPDATE.
+trigger_event  ::= DELETE.
+
+/* Aggregate */
+aggregate_def_list ::= aggregate_def_list COMMA aggregate_def.
+aggregate_def_list ::= aggregate_def.
+aggregate_def ::= SFUNC EQ ID.
+aggregate_def ::= STYPE EQ type_name.
+aggregate_def ::= INITCOND EQ expr.
+
+/* Parameter list */
+param_list ::= param_list COMMA param.
+param_list ::= param.
+param_list ::= .
+param ::= ID type_name.
+param ::= type_name.
+
+/* Type name */
+type_name ::= ID.
+type_name ::= ID LPAREN INTEGER RPAREN.
+type_name ::= ID LPAREN INTEGER COMMA INTEGER RPAREN.
+type_name ::= ID LBRACKET RBRACKET.
+type_name ::= SETOF ID.
+
+/* Expression grammar */
+expr ::= expr PLUS expr.
+expr ::= expr MINUS expr.
+expr ::= expr STAR expr.
+expr ::= expr SLASH expr.
+expr ::= expr PERCENT expr.
+expr ::= expr EQ expr.
+expr ::= expr NE expr.
+expr ::= expr LT expr.
+expr ::= expr GT expr.
+expr ::= expr LE expr.
+expr ::= expr GE expr.
+expr ::= expr AND expr.
+expr ::= expr OR expr.
+expr ::= NOT expr.
+expr ::= MINUS expr. [UMINUS]
+expr ::= expr BETWEEN expr AND expr.
+expr ::= expr NOT BETWEEN expr AND expr.
+expr ::= expr IN LPAREN expr_list RPAREN.
+expr ::= expr NOT IN LPAREN expr_list RPAREN.
+expr ::= expr IN LPAREN select_stmt RPAREN.
+expr ::= expr LIKE expr.
+expr ::= expr NOT LIKE expr.
+expr ::= expr ILIKE expr.
+expr ::= expr IS NULL.
+expr ::= expr IS NOT NULL.
+expr ::= expr IS DISTINCT FROM expr.
+expr ::= EXISTS LPAREN select_stmt RPAREN.
+expr ::= CASE when_list else_opt END.
+expr ::= CASE expr when_list else_opt END.
+expr ::= CAST LPAREN expr AS type_name RPAREN.
+expr ::= COALESCE LPAREN expr_list RPAREN.
+expr ::= NULLIF LPAREN expr COMMA expr RPAREN.
+expr ::= GREATEST LPAREN expr_list RPAREN.
+expr ::= LEAST LPAREN expr_list RPAREN.
+expr ::= ID LPAREN expr_list RPAREN.
+expr ::= ID LPAREN STAR RPAREN.
+expr ::= ID LPAREN RPAREN.
+expr ::= ID LPAREN DISTINCT expr_list RPAREN.
+expr ::= expr DOT ID.
+expr ::= expr LBRACKET expr RBRACKET.
+expr ::= expr LBRACKET expr COLON expr RBRACKET.
+expr ::= LPAREN expr RPAREN.
+expr ::= LPAREN select_stmt RPAREN.
+expr ::= ID.
+expr ::= INTEGER.
+expr ::= FLOAT.
+expr ::= STRING.
+expr ::= NULL.
+expr ::= TRUE.
+expr ::= FALSE.
+expr ::= PARAM.
+expr ::= ARRAY LBRACKET expr_list RBRACKET.
+expr ::= ROW LPAREN expr_list RPAREN.
+expr ::= expr COLLATE ID.
+expr ::= expr TYPECAST type_name.
+
+/* WHEN / ELSE */
+when_list ::= when_list WHEN expr THEN expr.
+when_list ::= WHEN expr THEN expr.
+else_opt  ::= ELSE expr.
+else_opt  ::= .
+
+/* Lists */
+expr_list   ::= expr_list COMMA expr.
+expr_list   ::= expr.
+id_list     ::= id_list COMMA ID.
+id_list     ::= ID.
+table_ref   ::= ID.
+table_ref   ::= ID DOT ID.
+table_ref   ::= ID DOT ID DOT ID.

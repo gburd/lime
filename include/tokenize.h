@@ -72,7 +72,8 @@ enum {
     TK_DQUOTE_ID   = -28,   /* "quoted identifier" */
     TK_BACKTICK_ID = -29,   /* `backtick identifier` */
     TK_BRACKET_ID  = -30,   /* [bracket identifier] */
-    TK_ILLEGAL     = -31,   /* Unrecognized character */
+    TK_USTRING     = -31,   /* U&'...' Unicode escape string literal */
+    TK_ILLEGAL     = -32,   /* Unrecognized character */
 };
 
 /* ------------------------------------------------------------------ */

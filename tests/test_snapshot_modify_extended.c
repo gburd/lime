@@ -224,6 +224,7 @@ static void test_create_modified_null(void) {
         FAIL("should return MODIFY_ERR_ALLOC for NULL out");
         return;
     }
+    free(error); error = NULL;
 
     /* NULL base */
     result = create_modified_snapshot(NULL, &mod, 1, NULL, &out, &conflicts, &error);
@@ -233,6 +234,7 @@ static void test_create_modified_null(void) {
         FAIL("should fail for NULL base");
         return;
     }
+    free(error); error = NULL;
 
     /* NULL modifications */
     result = create_modified_snapshot(snap, NULL, 1, NULL, &out, &conflicts, &error);
@@ -242,6 +244,7 @@ static void test_create_modified_null(void) {
         FAIL("should fail for NULL mods");
         return;
     }
+    free(error); error = NULL;
 
     /* Zero count - might succeed as a simple clone */
     out = NULL;
@@ -250,6 +253,7 @@ static void test_create_modified_null(void) {
     if (out != NULL) {
         snapshot_release(out);
     }
+    free(error); error = NULL;
 
     snapshot_release(snap);
     PASS();

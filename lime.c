@@ -295,8 +295,10 @@ void Plink_delete(struct plink *);
 void Reprint(struct lime *);
 void ReportOutput(struct lime *);
 void ReportTable(struct lime *, int, int);
+void ReportAOTTable(struct lime *);
 void ReportSnapshotInit(struct lime *);
 void ReportHeader(struct lime *);
+static void GenerateASTActions(struct lime *);
 void CompressTables(struct lime *);
 void ResortStates(struct lime *);
 
@@ -471,6 +473,22 @@ struct imported_symbol {
   struct imported_symbol *next;
 };
 
+/* AST node definition structures for %ast_node directives */
+struct ast_field {
+  char *type;                  /* C type of the field (e.g., "int", "struct Expr *") */
+  char *name;                  /* Field name */
+  struct ast_field *next;      /* Next field in the list */
+};
+
+struct ast_node_def {
+  char *name;                  /* Node type name (e.g., "Expr") */
+  struct ast_field *fields;    /* Linked list of fields */
+  int tag;                     /* Enum tag value (assigned during code generation) */
+  int is_list;                 /* True if this is a %ast_list node */
+  char *element_type;          /* For list nodes: the element type name */
+  struct ast_node_def *next;   /* Next node definition */
+};
+
 /* The state vector for the entire parser generator is recorded as
 ** follows.  (LEMON uses no global variables and makes little use of
 ** static variables.  Fields in the following structure can be thought
@@ -538,6 +556,17 @@ struct lime {
   struct module_dependency *dependencies; /* Linked list of dependencies */
   struct exported_symbol *exports;        /* Linked list of exported symbols */
   struct imported_symbol *imports;        /* Linked list of imported symbols */
+  /* %expect directive: expected number of conflicts, -1 if unset */
+  int nexpect;
+  /* %locations directive: true if location tracking is enabled */
+  int has_locations;
+  /* %error_sync directive: list of sync tokens for panic-mode recovery */
+  char **error_sync_tokens;
+  int n_error_sync_tokens;
+  /* AST generation support */
+  char *ast_prefix;                      /* Prefix for AST types (e.g., "Ast") */
+  struct ast_node_def *ast_nodes;        /* Linked list of AST node defs */
+  int ast_auto;                          /* True if %ast_auto is active */
 };
 
 #define MemoryCheck(X) if((X)==0){ \
@@ -2031,6 +2060,8 @@ int main(int argc, char **argv){
   static int snapshotFlag = 0;
   static int lintFlag = 0;
   static int formatFlag = 0;
+  static int verboseConflict = 0;
+  static int aotFlag = 0;
 
   static struct s_options options[] = {
     {OPT_FLAG, "b", (char*)&basisflag, "Print only the basis in report."},
@@ -2041,6 +2072,8 @@ int main(int argc, char **argv){
     {OPT_FSTR, "f", 0, "Ignored.  (Placeholder for -f compiler options.)"},
     {OPT_FLAG, "F", (char*)&formatFlag, "Format grammar file consistently."},
     {OPT_FLAG, "g", (char*)&rpflag, "Print grammar without actions."},
+    {OPT_FLAG, "j", (char*)&aotFlag,
+                    "Generate AOT-compiled action table (*_aot.c)."},
     {OPT_FSTR, "I", 0, "Ignored.  (Placeholder for '-I' compiler options.)"},
     {OPT_FLAG, "L", (char*)&lintFlag, "Validate grammar and module directives."},
     {OPT_FLAG, "m", (char*)&mhflag, "Output a makeheaders compatible file."},
@@ -2059,6 +2092,8 @@ int main(int argc, char **argv){
     {OPT_FLAG, "x", (char*)&version, "Print the version number."},
     {OPT_FSTR, "T", (char*)handle_T_option, "Specify a template file."},
     {OPT_FSTR, "U", (char*)handle_U_option, "Undefine a macro."},
+    {OPT_FLAG, "V", (char*)&verboseConflict,
+                    "Verbose conflict diagnostics with derivation paths."},
     {OPT_FSTR, "W", 0, "Ignored.  (Placeholder for '-W' compiler options.)"},
     {OPT_FLAG,0,0,0}
   };
@@ -2078,6 +2113,7 @@ int main(int argc, char **argv){
   }
   memset(&lem, 0, sizeof(lem));
   lem.errorcnt = 0;
+  lem.nexpect = -1;
   qsort(azDefine, nDefine, sizeof(azDefine[0]), defineCmp);
 
   /* Initialize the machine */
@@ -2181,11 +2217,17 @@ int main(int argc, char **argv){
     /* Generate a report of the parser generated.  (the "y.output" file) */
     if( !quiet ) ReportOutput(&lem);
 
+    /* Generate automatic AST reduction actions if %ast_auto is enabled */
+    GenerateASTActions(&lem);
+
     /* Generate the source code for the parser */
     ReportTable(&lem, mhflag, sqlFlag);
 
     /* Generate snapshot initialization code if -n flag is set */
     if( snapshotFlag ) ReportSnapshotInit(&lem);
+
+    /* Generate AOT-compiled action table if -j flag is set */
+    if( aotFlag ) ReportAOTTable(&lem);
 
     /* Produce a header file for use by the scanner.  (This step is
     ** omitted if the "-m" option is used because makeheaders will
@@ -2208,8 +2250,20 @@ int main(int argc, char **argv){
     fprintf(stderr,"%d parsing conflicts.\n",lem.nconflict);
   }
 
-  /* return 0 on success, 1 on failure. */
-  exitcode = ((lem.errorcnt > 0) || (lem.nconflict > 0)) ? 1 : 0;
+  /* return 0 on success, 1 on failure.
+  ** If %expect N is set, only fail when the actual conflict count
+  ** differs from the expected count.  This matches Bison's behavior. */
+  if( lem.nexpect >= 0 ){
+    if( lem.nconflict != lem.nexpect ){
+      fprintf(stderr,"Expected %d conflict(s) but found %d.\n",
+              lem.nexpect, lem.nconflict);
+      exitcode = 1;
+    }else{
+      exitcode = (lem.errorcnt > 0) ? 1 : 0;
+    }
+  }else{
+    exitcode = ((lem.errorcnt > 0) || (lem.nconflict > 0)) ? 1 : 0;
+  }
   lime_free_all();
   exit(exitcode);
   return (exitcode);
@@ -2651,7 +2705,14 @@ enum e_state {
   WAITING_FOR_MODULE_EXPORT,
   WAITING_FOR_MODULE_IMPORT,
   WAITING_FOR_MODULE_IMPORT_FROM,
-  WAITING_FOR_MODULE_IMPORT_END
+  WAITING_FOR_MODULE_IMPORT_END,
+  WAITING_FOR_EXPECT_VALUE,
+  WAITING_FOR_ERROR_SYNC_TOKEN,
+  WAITING_FOR_AST_PREFIX_VALUE,
+  WAITING_FOR_AST_NODE_NAME,
+  WAITING_FOR_AST_NODE_BODY,
+  WAITING_FOR_AST_LIST_NAME,
+  WAITING_FOR_AST_LIST_ELEMENT
 };
 struct pstate {
   char *filename;       /* Name of the input file */
@@ -3003,6 +3064,22 @@ static void parseonetoken(struct pstate *psp)
           psp->state = WAITING_FOR_MODULE_EXPORT;
         }else if( strcmp(x,"import")==0 ){
           psp->state = WAITING_FOR_MODULE_IMPORT;
+        }else if( strcmp(x,"expect")==0 ){
+          psp->state = WAITING_FOR_EXPECT_VALUE;
+        }else if( strcmp(x,"locations")==0 ){
+          psp->gp->has_locations = 1;
+          psp->state = WAITING_FOR_DECL_OR_RULE;
+        }else if( strcmp(x,"error_sync")==0 ){
+          psp->state = WAITING_FOR_ERROR_SYNC_TOKEN;
+        }else if( strcmp(x,"ast_prefix")==0 ){
+          psp->state = WAITING_FOR_AST_PREFIX_VALUE;
+        }else if( strcmp(x,"ast_node")==0 ){
+          psp->state = WAITING_FOR_AST_NODE_NAME;
+        }else if( strcmp(x,"ast_list")==0 ){
+          psp->state = WAITING_FOR_AST_LIST_NAME;
+        }else if( strcmp(x,"ast_auto")==0 ){
+          psp->gp->ast_auto = 1;
+          psp->state = WAITING_FOR_DECL_OR_RULE;
         }else{
           ErrorMsg(psp->filename,psp->tokenlineno,
             "Unknown declaration keyword: \"%%%s\".",x);
@@ -3311,6 +3388,197 @@ static void parseonetoken(struct pstate *psp)
       }else{
         ErrorMsg(psp->filename, psp->tokenlineno,
           "Unexpected token after %%import from clause: %s", x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }
+      break;
+    case WAITING_FOR_ERROR_SYNC_TOKEN:
+      if( x[0]=='.' ){
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else if( ISUPPER(x[0]) ){
+        /* Add token to sync list */
+        int n = psp->gp->n_error_sync_tokens;
+        psp->gp->error_sync_tokens = (char**)realloc(
+          psp->gp->error_sync_tokens, (n+1)*sizeof(char*));
+        if( psp->gp->error_sync_tokens ){
+          psp->gp->error_sync_tokens[n] = (char*)Strsafe(x);
+          psp->gp->n_error_sync_tokens = n + 1;
+        }
+      }else{
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Expected terminal symbol in %%error_sync but got \"%s\".",x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }
+      break;
+    case WAITING_FOR_EXPECT_VALUE:
+      if( ISDIGIT(x[0]) ){
+        psp->gp->nexpect = atoi(x);
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else if( x[0]=='.' ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Missing argument to %%expect.");
+        psp->errorcnt++;
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else{
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Expected integer argument to %%expect but got \"%s\".",x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }
+      break;
+    case WAITING_FOR_AST_PREFIX_VALUE:
+      if( ISALPHA(x[0]) ){
+        psp->gp->ast_prefix = (char*)Strsafe(x);
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else if( x[0]=='.' ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Missing argument to %%ast_prefix.");
+        psp->errorcnt++;
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else{
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Expected identifier for %%ast_prefix but got \"%s\".",x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }
+      break;
+    case WAITING_FOR_AST_NODE_NAME:
+      if( ISALPHA(x[0]) ){
+        /* Store the node name temporarily in the pstate for the body parse */
+        struct ast_node_def *nd;
+        nd = (struct ast_node_def*)lime_malloc(sizeof(struct ast_node_def));
+        MemoryCheck(nd);
+        memset(nd, 0, sizeof(*nd));
+        nd->name = (char*)Strsafe(x);
+        nd->next = psp->gp->ast_nodes;
+        psp->gp->ast_nodes = nd;
+        psp->state = WAITING_FOR_AST_NODE_BODY;
+      }else if( x[0]=='.' ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Missing node name for %%ast_node.");
+        psp->errorcnt++;
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else{
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Expected identifier for %%ast_node name but got \"%s\".",x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }
+      break;
+    case WAITING_FOR_AST_NODE_BODY:
+      if( x[0]=='{' ){
+        /* Parse the body: "type1 name1; type2 name2; ..." */
+        const char *z = &x[1];
+        struct ast_node_def *nd = psp->gp->ast_nodes; /* most recent */
+        while( *z ){
+          const char *typeStart;
+          /* Skip whitespace */
+          while( *z && ISSPACE(*z) ) z++;
+          if( *z==0 || *z=='}' ) break;
+          /* Read the type (may include '*' and multi-word like "struct Foo *") */
+          typeStart = z;
+          while( *z && *z!=';' && *z!='}' ){
+            /* Scan forward looking for the last identifier before ';' or '}' */
+            z++;
+          }
+          /* Back up from z to find the field name (last word before ';' or '}') */
+          {
+            const char *e = z;
+            const char *ns, *ne;
+            /* Skip trailing whitespace */
+            while( e>typeStart && ISSPACE(e[-1]) ) e--;
+            ne = e;
+            /* Scan backwards for field name */
+            while( e>typeStart && (ISALNUM(e[-1]) || e[-1]=='_') ) e--;
+            ns = e;
+            if( ns < ne ){
+              /* Everything from typeStart to ns is the type (trim trailing space) */
+              const char *te = ns;
+              while( te>typeStart && ISSPACE(te[-1]) ) te--;
+              if( te > typeStart ){
+                struct ast_field *fld;
+                char *typeBuf, *nameBuf;
+                int typeLen = (int)(te - typeStart);
+                int nameLen = (int)(ne - ns);
+                fld = (struct ast_field*)lime_malloc(sizeof(struct ast_field));
+                MemoryCheck(fld);
+                typeBuf = (char*)lime_malloc(typeLen+1);
+                MemoryCheck(typeBuf);
+                memcpy(typeBuf, typeStart, typeLen);
+                typeBuf[typeLen] = 0;
+                nameBuf = (char*)lime_malloc(nameLen+1);
+                MemoryCheck(nameBuf);
+                memcpy(nameBuf, ns, nameLen);
+                nameBuf[nameLen] = 0;
+                fld->type = typeBuf;
+                fld->name = nameBuf;
+                fld->next = nd->fields;
+                nd->fields = fld;
+              }
+            }
+          }
+          if( *z==';' ) z++;
+        }
+        /* Reverse the field list so fields appear in declaration order */
+        {
+          struct ast_field *prev = 0, *cur = nd->fields, *next;
+          while( cur ){
+            next = cur->next;
+            cur->next = prev;
+            prev = cur;
+            cur = next;
+          }
+          nd->fields = prev;
+        }
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else if( x[0]=='.' ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Missing body for %%ast_node. Expected '{...}'.");
+        psp->errorcnt++;
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else{
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Expected '{' for %%ast_node body but got \"%s\".",x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }
+      break;
+    case WAITING_FOR_AST_LIST_NAME:
+      if( ISALPHA(x[0]) ){
+        struct ast_node_def *nd;
+        nd = (struct ast_node_def*)lime_malloc(sizeof(struct ast_node_def));
+        MemoryCheck(nd);
+        memset(nd, 0, sizeof(*nd));
+        nd->name = (char*)Strsafe(x);
+        nd->is_list = 1;
+        nd->next = psp->gp->ast_nodes;
+        psp->gp->ast_nodes = nd;
+        psp->state = WAITING_FOR_AST_LIST_ELEMENT;
+      }else if( x[0]=='.' ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Missing list name for %%ast_list.");
+        psp->errorcnt++;
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else{
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Expected identifier for %%ast_list name but got \"%s\".",x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }
+      break;
+    case WAITING_FOR_AST_LIST_ELEMENT:
+      if( ISALPHA(x[0]) ){
+        psp->gp->ast_nodes->element_type = (char*)Strsafe(x);
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else if( x[0]=='.' ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Missing element type for %%ast_list.");
+        psp->errorcnt++;
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else{
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Expected element type for %%ast_list but got \"%s\".",x);
         psp->errorcnt++;
         psp->state = RESYNC_AFTER_DECL_ERROR;
       }
@@ -3928,13 +4196,32 @@ int PrintAction(
       fprintf(fp,"%*s error",indent,ap->sp->name);
       break;
     case SRCONFLICT:
-    case RRCONFLICT:
-      fprintf(fp,"%*s reduce       %-7d ** Parsing conflict **",
+      fprintf(fp,"%*s reduce       %-7d ** Shift/Reduce conflict **",
         indent,ap->sp->name,ap->x.rp->iRule);
+      fprintf(fp,"\n%*s              on lookahead: %s",indent,"",ap->sp->name);
+      fprintf(fp,"\n%*s              reduce rule:  ",indent,"");
+      RulePrint(fp, ap->x.rp, -1);
+      fprintf(fp,"\n%*s              consider: add precedence to token '%s'",
+        indent,"",ap->sp->name);
+      if( ap->x.rp->precsym==0 ){
+        fprintf(fp,
+          "\n%*s              or: use %%left/%%right/%%nonassoc for '%s'",
+          indent,"",ap->sp->name);
+      }
+      break;
+    case RRCONFLICT:
+      fprintf(fp,"%*s reduce       %-7d ** Reduce/Reduce conflict **",
+        indent,ap->sp->name,ap->x.rp->iRule);
+      fprintf(fp,"\n%*s              on lookahead: %s",indent,"",ap->sp->name);
+      fprintf(fp,"\n%*s              reduce rule:  ",indent,"");
+      RulePrint(fp, ap->x.rp, -1);
+      fprintf(fp,"\n%*s              consider: use %%fallback or "
+        "refactor grammar to eliminate ambiguity",indent,"");
       break;
     case SSCONFLICT:
-      fprintf(fp,"%*s shift        %-7d ** Parsing conflict **",
+      fprintf(fp,"%*s shift        %-7d ** Shift/Shift conflict **",
         indent,ap->sp->name,ap->x.stp->statenum);
+      fprintf(fp,"\n%*s              on lookahead: %s",indent,"",ap->sp->name);
       break;
     case SH_RESOLVED:
       if( showPrecedenceConflict ){
@@ -4058,6 +4345,52 @@ void ReportOutput(struct lime *lemp)
     }
     fprintf(fp,"\n");
   }
+
+  /* Conflict summary section -- collects all conflicts in one place */
+  if( lemp->nconflict > 0 ){
+    int nc = 0;
+    fprintf(fp, "----------------------------------------------------\n");
+    fprintf(fp, "Conflict Summary (%d conflict%s):\n\n",
+            lemp->nconflict, lemp->nconflict==1 ? "" : "s");
+    for(i=0; i<lemp->nxstate; i++){
+      struct action *ap2;
+      stp = lemp->sorted[i];
+      for(ap2=stp->ap; ap2; ap2=ap2->next){
+        if( ap2->type==SRCONFLICT || ap2->type==RRCONFLICT
+            || ap2->type==SSCONFLICT ){
+          nc++;
+          fprintf(fp, "  %d. State %d, lookahead '%s': ",
+                  nc, stp->statenum, ap2->sp->name);
+          if( ap2->type==SRCONFLICT ){
+            fprintf(fp, "shift/reduce conflict (rule %d)\n",
+                    ap2->x.rp->iRule);
+            fprintf(fp, "     reduce rule: ");
+            RulePrint(fp, ap2->x.rp, -1);
+            fprintf(fp, "\n");
+          }else if( ap2->type==RRCONFLICT ){
+            fprintf(fp, "reduce/reduce conflict (rule %d)\n",
+                    ap2->x.rp->iRule);
+            fprintf(fp, "     reduce rule: ");
+            RulePrint(fp, ap2->x.rp, -1);
+            fprintf(fp, "\n");
+          }else{
+            fprintf(fp, "shift/shift conflict (state %d)\n",
+                    ap2->x.stp->statenum);
+          }
+        }
+      }
+    }
+    if( lemp->nexpect >= 0 ){
+      fprintf(fp, "\n  %%expect %d declared", lemp->nexpect);
+      if( lemp->nconflict == lemp->nexpect ){
+        fprintf(fp, " (matches)\n");
+      }else{
+        fprintf(fp, " (MISMATCH: found %d)\n", lemp->nconflict);
+      }
+    }
+    fprintf(fp, "\n");
+  }
+
   fclose(fp);
   return;
 }
@@ -4813,6 +5146,245 @@ static int axset_compare(const void *a, const void *b){
 /*
 ** Write text on "out" that describes the rule "rp".
 */
+/*
+** Find the AST node definition whose name matches (case-insensitively)
+** the given non-terminal name, using the ast_prefix if set.
+** For example, nonterminal "expr" matches ast_node "Expr" with prefix "Ast".
+*/
+static struct ast_node_def *find_ast_node(struct lime *lemp, const char *ntName){
+  struct ast_node_def *nd;
+  for(nd=lemp->ast_nodes; nd; nd=nd->next){
+    /* Compare lowercased versions */
+    const char *a = ntName;
+    const char *b = nd->name;
+    while( *a && *b ){
+      char ca = ISLOWER(*a) ? *a : (char)(*a + ('a'-'A'));
+      char cb = ISLOWER(*b) ? *b : (char)(*b + ('a'-'A'));
+      if( ca!=cb ) break;
+      a++; b++;
+    }
+    if( *a==0 && *b==0 ) return nd;
+  }
+  return 0;
+}
+
+/*
+** Generate automatic reduction actions for rules when %ast_auto is active.
+** Called from main() before ReportTable().
+**
+** For each rule:
+**   - If it already has an explicit action, skip it.
+**   - If the LHS non-terminal matches an %ast_node type, generate
+**     an AST_NEW() call that maps RHS elements to fields by position.
+**   - RHS non-terminals map to pointer fields, terminals to value fields.
+**   - If the count doesn't match, issue a warning and skip.
+*/
+static void GenerateASTActions(struct lime *lemp){
+  struct rule *rp;
+  const char *ap = lemp->ast_prefix ? lemp->ast_prefix : "";
+
+  if( !lemp->ast_auto || !lemp->ast_nodes ) return;
+
+  for(rp=lemp->rule; rp; rp=rp->next){
+    struct ast_node_def *nd;
+    struct ast_field *fld;
+    int nfields, i;
+    char *buf;
+    int bufsize, pos;
+
+    /* Skip rules that already have explicit actions */
+    if( rp->code!=0 ) continue;
+
+    /* Find matching AST node for the LHS */
+    nd = find_ast_node(lemp, rp->lhs->name);
+    if( nd==0 ) continue;
+
+    if( nd->is_list ){
+      /* For list nodes with exactly 1 RHS that matches element type, generate
+      ** a single-element list creation.  For 2 RHS (list + element), generate
+      ** an append. */
+      if( rp->nrhs==1 ){
+        /* list ::= element. --> create new list, append element */
+        bufsize = 256 + (int)strlen(ap) + (int)strlen(nd->name);
+        buf = (char*)lime_malloc(bufsize);
+        if( !buf ) continue;
+        lemon_sprintf(buf,
+          "\n  A = AST_NEW(arena, %s);\n"
+          "  %s_%s_append(arena, A, B);\n",
+          nd->name, ap, nd->name);
+        rp->code = Strsafe(buf);
+        rp->line = rp->ruleline;
+        rp->noCode = 0;
+        lime_free(buf);
+      }else if( rp->nrhs==2 ){
+        /* list ::= list element. --> append element to list */
+        bufsize = 256 + (int)strlen(ap) + (int)strlen(nd->name);
+        buf = (char*)lime_malloc(bufsize);
+        if( !buf ) continue;
+        lemon_sprintf(buf,
+          "\n  A = B;\n"
+          "  %s_%s_append(arena, A, C);\n",
+          ap, nd->name);
+        rp->code = Strsafe(buf);
+        rp->line = rp->ruleline;
+        rp->noCode = 0;
+        lime_free(buf);
+      }
+      continue;
+    }
+
+    /* Count fields in the AST node */
+    nfields = 0;
+    for(fld=nd->fields; fld; fld=fld->next) nfields++;
+
+    /* Count meaningful RHS elements (those with aliases, or all if none have aliases) */
+    /* Generate AST_NEW call: A = AST_NEW(arena, NodeType, B, C, D, ...); */
+
+    /* Build the action string */
+    bufsize = 128 + (int)strlen(ap) + (int)strlen(nd->name) + rp->nrhs * 8;
+    buf = (char*)lime_malloc(bufsize);
+    if( !buf ) continue;
+
+    pos = lemon_sprintf(buf, "\n  A = %s_new_%s(arena", ap, nd->name);
+
+    /* Map RHS to fields. Strategy:
+    ** - If the number of RHS symbols equals the number of fields,
+    **   map positionally using standard Lime labels (B, C, D, ...).
+    ** - Otherwise, skip the rule (too complex for auto-generation).
+    */
+    if( rp->nrhs == nfields ){
+      for(i=0; i<rp->nrhs; i++){
+        char label[4];
+        label[0] = ','; label[1] = ' ';
+        label[2] = (char)('B' + i); label[3] = 0;
+        memcpy(buf+pos, label, 3);
+        pos += 3;
+      }
+      memcpy(buf+pos, ");\n", 3);
+      pos += 3;
+      buf[pos] = 0;
+      rp->code = Strsafe(buf);
+      rp->line = rp->ruleline;
+      rp->noCode = 0;
+    }else if( rp->nrhs==0 && nfields==0 ){
+      memcpy(buf+pos, ");\n", 3);
+      pos += 3;
+      buf[pos] = 0;
+      rp->code = Strsafe(buf);
+      rp->line = rp->ruleline;
+      rp->noCode = 0;
+    }
+    /* else: mismatch, skip - the lint pass will warn about this */
+
+    lime_free(buf);
+  }
+}
+
+/*
+** Generate an ahead-of-time (AOT) compiled action table.
+** This produces a *_aot.c file containing a switch-based version
+** of yy_find_shift_action() that the C compiler can optimize into
+** efficient jump tables, matching JIT performance with zero runtime cost.
+*/
+void ReportAOTTable(struct lime *lemp){
+  FILE *out;
+  int i;
+  char *z;
+
+  /* Build filename: replace suffix with _aot.c */
+  z = file_makename(lemp, "_aot.c");
+  out = fopen(z,"wb");
+  if( out==0 ){
+    fprintf(stderr,"Can't open file \"%s\".\n", z);
+    free(z);
+    return;
+  }
+  free(z);
+
+  fprintf(out,
+    "/*\n"
+    "** AOT-compiled action table for %s.\n"
+    "** Generated by Lime with the -j flag.\n"
+    "**\n"
+    "** This file replaces the table-driven yy_find_shift_action()\n"
+    "** with an equivalent switch-based implementation that the C\n"
+    "** compiler optimizes into jump tables.\n"
+    "**\n"
+    "** To use: compile with -DYYAOT and link this file.\n"
+    "*/\n\n",
+    lemp->filename);
+
+  fprintf(out, "#include <stdint.h>\n\n");
+
+  /* Generate the YYACTIONTYPE typedef matching the parser */
+  {
+    int mx = lemp->maxAction;
+    const char *type;
+    if( mx <= 255 ) type = "unsigned char";
+    else if( mx <= 65535 ) type = "unsigned short";
+    else type = "unsigned int";
+    fprintf(out, "typedef %s YYACTIONTYPE_AOT;\n\n", type);
+  }
+
+  fprintf(out,
+    "YYACTIONTYPE_AOT yy_find_shift_action_aot(\n"
+    "  YYACTIONTYPE_AOT stateno,\n"
+    "  unsigned short iLookAhead\n"
+    "){\n");
+
+  fprintf(out, "  switch(stateno){\n");
+
+  for(i=0; i<lemp->nxstate; i++){
+    struct state *stp = lemp->sorted[i];
+    struct action *ap;
+    int has_actions = 0;
+
+    /* Check if this state has any shift/shiftreduce actions */
+    for(ap=stp->ap; ap; ap=ap->next){
+      if( ap->type==SHIFT || ap->type==SHIFTREDUCE ){
+        has_actions = 1;
+        break;
+      }
+    }
+
+    fprintf(out, "    case %d:\n", stp->statenum);
+    if( has_actions ){
+      fprintf(out, "      switch(iLookAhead){\n");
+      for(ap=stp->ap; ap; ap=ap->next){
+        if( ap->type==SHIFT ){
+          fprintf(out, "        case %d: return %d; /* %s -> shift state %d */\n",
+                  ap->sp->index,
+                  ap->x.stp->statenum,
+                  ap->sp->name,
+                  ap->x.stp->statenum);
+        }else if( ap->type==SHIFTREDUCE ){
+          fprintf(out, "        case %d: return %d; /* %s -> shift-reduce rule %d */\n",
+                  ap->sp->index,
+                  ap->x.rp->iRule + lemp->minShiftReduce,
+                  ap->sp->name,
+                  ap->x.rp->iRule);
+        }else if( ap->type==REDUCE ){
+          fprintf(out, "        case %d: return %d; /* %s -> reduce rule %d */\n",
+                  ap->sp->index,
+                  ap->x.rp->iRule + lemp->minReduce,
+                  ap->sp->name,
+                  ap->x.rp->iRule);
+        }
+      }
+      fprintf(out, "        default: return %d; /* default */\n",
+              lemp->noAction);
+      fprintf(out, "      }\n");
+    }else{
+      fprintf(out, "      return %d; /* default */\n", lemp->noAction);
+    }
+  }
+
+  fprintf(out, "    default: return %d;\n", lemp->noAction);
+  fprintf(out, "  }\n");
+  fprintf(out, "}\n");
+  fclose(out);
+}
+
 static void writeRuleText(FILE *out, struct rule *rp){
   int j;
   fprintf(out,"%s ::=", rp->lhs->name);
@@ -5094,6 +5666,89 @@ void ReportTable(
   fprintf(out,"#undef YYFALLBACK\n"); lineno++;
   if( lemp->has_fallback ){
     fprintf(out,"#define YYFALLBACK 1\n");  lineno++;
+  }
+  if( lemp->has_locations ){
+    fprintf(out,"#include \"lime_location.h\"\n"); lineno++;
+    fprintf(out,"#define YYLOCATIONTYPE LimeLocation\n"); lineno++;
+  }
+  if( lemp->n_error_sync_tokens > 0 ){
+    fprintf(out,"#define YYERRORSYNC 1\n"); lineno++;
+    fprintf(out,"static const unsigned char yy_is_sync_token[] = {\n"); lineno++;
+    for(i=0; i<lemp->nsymbol; i++){
+      int is_sync = 0;
+      for(j=0; j<lemp->n_error_sync_tokens; j++){
+        if( strcmp(lemp->symbols[i]->name,
+                   lemp->error_sync_tokens[j])==0 ){
+          is_sync = 1;
+          break;
+        }
+      }
+      fprintf(out,"  %d, /* %s */\n", is_sync, lemp->symbols[i]->name);
+      lineno++;
+    }
+    fprintf(out,"};\n"); lineno++;
+  }
+
+  /* Generate AST constructor implementations if %ast_node directives were used */
+  if( lemp->ast_nodes ){
+    const char *ap = lemp->ast_prefix ? lemp->ast_prefix : "";
+    struct ast_node_def *nd;
+
+    fprintf(out,"\n/* AST constructor implementations (generated by Lime) */\n");
+    lineno++;
+    for(nd=lemp->ast_nodes; nd; nd=nd->next){
+      if( nd->is_list ){
+        /* List constructor: allocate header */
+        fprintf(out,"%s%s *%s_new_%s(LimeArena *a){\n",
+                ap, nd->name, ap, nd->name); lineno++;
+        fprintf(out,"  %s%s *n = (%s%s*)lime_arena_alloc(a, sizeof(%s%s));\n",
+                ap, nd->name, ap, nd->name, ap, nd->name); lineno++;
+        fprintf(out,"  if(!n) return 0;\n"); lineno++;
+        fprintf(out,"  n->tag = %s%s_TAG;\n", ap, nd->name); lineno++;
+        fprintf(out,"  n->items = 0;\n"); lineno++;
+        fprintf(out,"  n->count = 0;\n"); lineno++;
+        fprintf(out,"  n->capacity = 0;\n"); lineno++;
+        fprintf(out,"  return n;\n"); lineno++;
+        fprintf(out,"}\n"); lineno++;
+
+        /* List append function */
+        fprintf(out,"void %s_%s_append(LimeArena *a, %s%s *list, %s%s *item){\n",
+                ap, nd->name, ap, nd->name, ap, nd->element_type); lineno++;
+        fprintf(out,"  if(list->count >= list->capacity){\n"); lineno++;
+        fprintf(out,"    int newcap = list->capacity ? list->capacity*2 : 4;\n"); lineno++;
+        fprintf(out,"    %s%s **newitems = (%s%s**)lime_arena_alloc(a, "
+                "newcap*sizeof(%s%s*));\n",
+                ap, nd->element_type, ap, nd->element_type,
+                ap, nd->element_type); lineno++;
+        fprintf(out,"    if(!newitems) return;\n"); lineno++;
+        fprintf(out,"    if(list->items){\n"); lineno++;
+        fprintf(out,"      int i; for(i=0;i<list->count;i++) newitems[i] = list->items[i];\n"); lineno++;
+        fprintf(out,"    }\n"); lineno++;
+        fprintf(out,"    list->items = newitems;\n"); lineno++;
+        fprintf(out,"    list->capacity = newcap;\n"); lineno++;
+        fprintf(out,"  }\n"); lineno++;
+        fprintf(out,"  list->items[list->count++] = item;\n"); lineno++;
+        fprintf(out,"}\n\n"); lineno += 2;
+      }else{
+        /* Regular node constructor */
+        struct ast_field *fld;
+        fprintf(out,"%s%s *%s_new_%s(LimeArena *a",
+                ap, nd->name, ap, nd->name);
+        for(fld=nd->fields; fld; fld=fld->next){
+          fprintf(out,", %s %s_", fld->type, fld->name);
+        }
+        fprintf(out,"){\n"); lineno++;
+        fprintf(out,"  %s%s *n = (%s%s*)lime_arena_alloc(a, sizeof(%s%s));\n",
+                ap, nd->name, ap, nd->name, ap, nd->name); lineno++;
+        fprintf(out,"  if(!n) return 0;\n"); lineno++;
+        fprintf(out,"  n->tag = %s%s_TAG;\n", ap, nd->name); lineno++;
+        for(fld=nd->fields; fld; fld=fld->next){
+          fprintf(out,"  n->%s = %s_;\n", fld->name, fld->name); lineno++;
+        }
+        fprintf(out,"  return n;\n"); lineno++;
+        fprintf(out,"}\n\n"); lineno += 2;
+      }
+    }
   }
 
   /* Compute the action table, but do not output it yet.  The action
@@ -5565,25 +6220,105 @@ void ReportHeader(struct lime *lemp)
 
   if( lemp->tokenprefix ) prefix = lemp->tokenprefix;
   else                    prefix = "";
-  in = file_open(lemp,".h","rb");
-  if( in ){
-    int nextChar;
-    for(i=1; i<lemp->nterminal && fgets(line,LINESIZE,in); i++){
-      lemon_sprintf(pattern,"#define %s%-30s %3d\n",
-                    prefix,lemp->symbols[i]->name,i);
-      if( strcmp(line,pattern) ) break;
-    }
-    nextChar = fgetc(in);
-    fclose(in);
-    if( i==lemp->nterminal && nextChar==EOF ){
-      /* No change in the file.  Don't rewrite it. */
-      return;
+  /* Skip change-detection when AST nodes are present (header has complex
+  ** content beyond simple #define lines) */
+  if( !lemp->ast_nodes ){
+    in = file_open(lemp,".h","rb");
+    if( in ){
+      int nextChar;
+      for(i=1; i<lemp->nterminal && fgets(line,LINESIZE,in); i++){
+        lemon_sprintf(pattern,"#define %s%-30s %3d\n",
+                      prefix,lemp->symbols[i]->name,i);
+        if( strcmp(line,pattern) ) break;
+      }
+      nextChar = fgetc(in);
+      fclose(in);
+      if( i==lemp->nterminal && nextChar==EOF ){
+        /* No change in the file.  Don't rewrite it. */
+        return;
+      }
     }
   }
   out = file_open(lemp,".h","wb");
   if( out ){
     for(i=1; i<lemp->nterminal; i++){
       fprintf(out,"#define %s%-30s %3d\n",prefix,lemp->symbols[i]->name,i);
+    }
+
+    /* Generate AST type definitions if %ast_node directives were used */
+    if( lemp->ast_nodes ){
+      const char *ap = lemp->ast_prefix ? lemp->ast_prefix : "";
+      struct ast_node_def *nd;
+      int tag;
+
+      fprintf(out,"\n/* AST node type tags (generated by Lime %%ast_node) */\n");
+      fprintf(out,"#ifndef LIME_AST_TYPES_DEFINED\n");
+      fprintf(out,"#define LIME_AST_TYPES_DEFINED\n");
+      fprintf(out,"#include \"lime_ast.h\"\n\n");
+
+      /* Assign tag values and emit enum */
+      tag = 1;
+      for(nd=lemp->ast_nodes; nd; nd=nd->next){
+        nd->tag = tag++;
+      }
+      fprintf(out,"enum %sNodeTag {\n", ap);
+      for(nd=lemp->ast_nodes; nd; nd=nd->next){
+        fprintf(out,"  %s%s_TAG = %d%s\n", ap, nd->name, nd->tag,
+                nd->next ? "," : "");
+      }
+      fprintf(out,"};\n\n");
+
+      /* Forward declarations */
+      for(nd=lemp->ast_nodes; nd; nd=nd->next){
+        fprintf(out,"typedef struct %s%s %s%s;\n", ap, nd->name, ap, nd->name);
+      }
+      fprintf(out,"\n");
+
+      /* Struct definitions */
+      for(nd=lemp->ast_nodes; nd; nd=nd->next){
+        if( nd->is_list ){
+          /* List node: contains an array of element pointers */
+          fprintf(out,"struct %s%s {\n", ap, nd->name);
+          fprintf(out,"  int tag;\n");
+          fprintf(out,"  %s%s **items;\n", ap, nd->element_type);
+          fprintf(out,"  int count;\n");
+          fprintf(out,"  int capacity;\n");
+          fprintf(out,"};\n\n");
+        }else{
+          /* Regular node with user-defined fields */
+          struct ast_field *fld;
+          fprintf(out,"struct %s%s {\n", ap, nd->name);
+          fprintf(out,"  int tag;\n");
+          for(fld=nd->fields; fld; fld=fld->next){
+            fprintf(out,"  %s %s;\n", fld->type, fld->name);
+          }
+          fprintf(out,"};\n\n");
+        }
+      }
+
+      /* Constructor prototypes */
+      for(nd=lemp->ast_nodes; nd; nd=nd->next){
+        if( nd->is_list ){
+          fprintf(out,"%s%s *%s_new_%s(LimeArena *a);\n",
+                  ap, nd->name, ap, nd->name);
+          fprintf(out,"void %s_%s_append(LimeArena *a, %s%s *list, %s%s *item);\n",
+                  ap, nd->name, ap, nd->name, ap, nd->element_type);
+        }else{
+          struct ast_field *fld;
+          fprintf(out,"%s%s *%s_new_%s(LimeArena *a",
+                  ap, nd->name, ap, nd->name);
+          for(fld=nd->fields; fld; fld=fld->next){
+            fprintf(out,", %s %s", fld->type, fld->name);
+          }
+          fprintf(out,");\n");
+        }
+      }
+
+      /* AST_NEW convenience macro */
+      fprintf(out,"\n#define AST_NEW(arena, Type, ...) "
+              "%s_new_##Type(arena, ##__VA_ARGS__)\n", ap);
+
+      fprintf(out,"\n#endif /* LIME_AST_TYPES_DEFINED */\n");
     }
     fclose(out);
   }

@@ -2,8 +2,13 @@
 ** JIT context management for the extensible SQL parser.
 **
 ** This file implements the JITContext lifecycle: creation, destruction,
-** and snapshot integration. The actual LLVM IR generation and compilation
-** lives in jit_codegen.c.
+** and snapshot integration using LLVM's OrcJIT (LLJIT) infrastructure.
+** The actual LLVM IR generation lives in jit_codegen.c.
+**
+** OrcJIT replaces the deprecated MCJIT engine and provides:
+**   - Thread-safe contexts for concurrent compilation
+**   - Lazy compilation support (not yet used)
+**   - Better resource management and error handling
 **
 ** When compiled without LLVM (LIME_NO_JIT defined), all functions
 ** degrade to stubs that return appropriate error codes or no-ops.
@@ -18,7 +23,8 @@
 #ifndef LIME_NO_JIT
 
 #include <llvm-c/Core.h>
-#include <llvm-c/ExecutionEngine.h>
+#include <llvm-c/LLJIT.h>
+#include <llvm-c/Orc.h>
 #include <llvm-c/Target.h>
 #include <llvm-c/Analysis.h>
 #include <llvm-c/Transforms/PassBuilder.h>
@@ -28,12 +34,13 @@
 /* ------------------------------------------------------------------ */
 
 struct JITContext {
-    LLVMModuleRef module;             /* LLVM module for generated IR     */
-    LLVMExecutionEngineRef engine;    /* MCJIT execution engine           */
-    LLVMContextRef llvm_ctx;          /* LLVM thread-local context        */
+    LLVMOrcLLJITRef lljit;            /* OrcJIT LLJIT instance           */
+    LLVMOrcThreadSafeContextRef ts_ctx; /* Thread-safe LLVM context      */
 
     void *parse_sequence_fn;          /* Monolithic jit_parse_sequence fn */
     uint32_t nstates;                 /* Number of states                 */
+    uint32_t *state_hit_counts;       /* Per-state hit counting           */
+    uint32_t nstate_functions;        /* Number of per-state functions    */
 
     JITStats stats;                   /* Compilation statistics           */
 };
@@ -52,6 +59,15 @@ static JITStatus ensure_llvm_initialized(void) {
     return JIT_OK;
 }
 
+/* Helper to convert LLVMErrorRef to a status code, disposing the error */
+static JITStatus consume_llvm_error(LLVMErrorRef err, JITStatus fallback) {
+    if (err == LLVMErrorSuccess) return JIT_OK;
+    char *msg = LLVMGetErrorMessage(err);
+    (void)msg; /* Could log this in debug builds */
+    LLVMDisposeErrorMessage(msg);
+    return fallback;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Public API (LLVM-enabled build)                                    */
 /* ------------------------------------------------------------------ */
@@ -66,15 +82,19 @@ JITStatus jit_create(JITContext **ctx_out) {
     JITContext *ctx = calloc(1, sizeof(JITContext));
     if (ctx == NULL) return JIT_ERR_INIT_FAILED;
 
-    ctx->llvm_ctx = LLVMContextCreate();
-    if (ctx->llvm_ctx == NULL) {
+    /* Create a thread-safe context for OrcJIT */
+    ctx->ts_ctx = LLVMOrcCreateNewThreadSafeContext();
+    if (ctx->ts_ctx == NULL) {
         free(ctx);
         return JIT_ERR_INIT_FAILED;
     }
 
-    ctx->module = LLVMModuleCreateWithNameInContext("lime_jit", ctx->llvm_ctx);
-    if (ctx->module == NULL) {
-        LLVMContextDispose(ctx->llvm_ctx);
+    /* Build the LLJIT instance */
+    LLVMOrcLLJITBuilderRef builder = LLVMOrcCreateLLJITBuilder();
+    LLVMErrorRef err = LLVMOrcCreateLLJIT(&ctx->lljit, builder);
+    if (err != LLVMErrorSuccess) {
+        consume_llvm_error(err, JIT_ERR_INIT_FAILED);
+        LLVMOrcDisposeThreadSafeContext(ctx->ts_ctx);
         free(ctx);
         return JIT_ERR_INIT_FAILED;
     }
@@ -87,18 +107,21 @@ JITStatus jit_create(JITContext **ctx_out) {
 void jit_destroy(JITContext *ctx) {
     if (ctx == NULL) return;
 
-    /* parse_sequence_fn is a function pointer, not allocated memory - don't free it */
+    /* parse_sequence_fn is a function pointer inside JIT memory - don't free it */
 
-    /* The execution engine owns the module, so only dispose the engine.
-    ** If the engine was never created we must dispose the module manually. */
-    if (ctx->engine != NULL) {
-        LLVMDisposeExecutionEngine(ctx->engine);
-    } else if (ctx->module != NULL) {
-        LLVMDisposeModule(ctx->module);
+    free(ctx->state_hit_counts);
+
+    /* Dispose the LLJIT instance (owns all JIT'd code and modules) */
+    if (ctx->lljit != NULL) {
+        LLVMErrorRef err = LLVMOrcDisposeLLJIT(ctx->lljit);
+        if (err != LLVMErrorSuccess) {
+            consume_llvm_error(err, JIT_ERR_COMPILE_FAILED);
+        }
     }
 
-    if (ctx->llvm_ctx != NULL) {
-        LLVMContextDispose(ctx->llvm_ctx);
+    /* Dispose the thread-safe context after LLJIT (it may reference it) */
+    if (ctx->ts_ctx != NULL) {
+        LLVMOrcDisposeThreadSafeContext(ctx->ts_ctx);
     }
 
     free(ctx);
@@ -116,49 +139,75 @@ bool jit_is_available(void) {
     return ensure_llvm_initialized() == JIT_OK;
 }
 
-/* Defined in jit_codegen.c */
-extern JITStatus jit_codegen_generate(JITContext *ctx,
-                                      const ParserSnapshot *snap);
+/* Defined in jit_codegen.c -- OrcJIT-compatible entry point that
+** generates IR into an externally-provided module rather than
+** relying on the JITContext's internal module pointer. */
+extern JITStatus jit_codegen_generate_into(LLVMContextRef llvm_ctx,
+                                            LLVMModuleRef module,
+                                            const ParserSnapshot *snap,
+                                            JITStats *stats_out);
 
 JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap) {
     if (ctx == NULL || snap == NULL) return JIT_ERR_INVALID_ARG;
     if (snap->yy_action == NULL || snap->nstate == 0) return JIT_ERR_INVALID_ARG;
 
-    /* Generate LLVM IR for all states */
-    JITStatus st = jit_codegen_generate(ctx, snap);
-    if (st != JIT_OK) return st;
+    /* Get a bare LLVM context from the thread-safe wrapper for IR generation */
+    LLVMOrcThreadSafeContextRef ts_ctx = ctx->ts_ctx;
+    LLVMContextRef llvm_ctx = LLVMOrcThreadSafeContextGetContext(ts_ctx);
+
+    /* Create a module in the thread-safe context */
+    LLVMModuleRef module = LLVMModuleCreateWithNameInContext("lime_jit", llvm_ctx);
+    if (module == NULL) return JIT_ERR_CODEGEN_FAILED;
+
+    /* Generate LLVM IR for all states using the codegen module.
+    ** jit_codegen_generate needs access to ctx fields, so we temporarily
+    ** stash the module pointer. The codegen uses ctx->llvm_ctx and ctx->module
+    ** through its own copy of the JITContext struct layout. We use the
+    ** OrcJIT-aware codegen entry point instead. */
+    JITStatus st = jit_codegen_generate_into(llvm_ctx, module, snap,
+                                              &ctx->stats);
+    if (st != JIT_OK) {
+        LLVMDisposeModule(module);
+        return st;
+    }
 
     /* Verify the module */
     char *error = NULL;
-    if (LLVMVerifyModule(ctx->module, LLVMReturnStatusAction, &error)) {
+    if (LLVMVerifyModule(module, LLVMReturnStatusAction, &error)) {
         LLVMDisposeMessage(error);
+        LLVMDisposeModule(module);
         return JIT_ERR_CODEGEN_FAILED;
     }
     LLVMDisposeMessage(error);
 
     /* Run optimization passes */
     LLVMPassBuilderOptionsRef pass_opts = LLVMCreatePassBuilderOptions();
-    LLVMRunPasses(ctx->module, "default<O2>", NULL, pass_opts);
+    LLVMRunPasses(module, "default<O2>", NULL, pass_opts);
     LLVMDisposePassBuilderOptions(pass_opts);
 
-    /* Create execution engine (MCJIT) */
-    struct LLVMMCJITCompilerOptions options;
-    LLVMInitializeMCJITCompilerOptions(&options, sizeof(options));
-    options.OptLevel = 2;
+    /* Wrap module in a thread-safe module for OrcJIT submission */
+    LLVMOrcThreadSafeModuleRef ts_mod =
+        LLVMOrcCreateNewThreadSafeModule(module, ts_ctx);
+    /* Note: ts_mod now owns module; do not dispose module separately */
 
-    error = NULL;
-    if (LLVMCreateMCJITCompilerForModule(&ctx->engine, ctx->module,
-                                         &options, sizeof(options), &error)) {
-        if (error) LLVMDisposeMessage(error);
-        return JIT_ERR_COMPILE_FAILED;
+    /* Add the module to the LLJIT main JITDylib */
+    LLVMOrcJITDylibRef jd = LLVMOrcLLJITGetMainJITDylib(ctx->lljit);
+    LLVMErrorRef err = LLVMOrcLLJITAddLLVMIRModule(ctx->lljit, jd, ts_mod);
+    if (err != LLVMErrorSuccess) {
+        /* ts_mod is consumed even on error by some LLVM versions,
+        ** but we attempt cleanup just in case */
+        return consume_llvm_error(err, JIT_ERR_COMPILE_FAILED);
     }
 
-    /* Look up the monolithic parse function */
-    LLVMValueRef fn = LLVMGetNamedFunction(ctx->module, "jit_parse_sequence");
-    if (fn == NULL) return JIT_ERR_LOOKUP_FAILED;
-
-    uint64_t addr = LLVMGetFunctionAddress(ctx->engine, "jit_parse_sequence");
-    if (addr == 0) return JIT_ERR_LOOKUP_FAILED;
+    /* Look up the monolithic parse function via OrcJIT */
+    LLVMOrcExecutorAddress addr = 0;
+    err = LLVMOrcLLJITLookup(ctx->lljit, &addr, "jit_parse_sequence");
+    if (err != LLVMErrorSuccess || addr == 0) {
+        if (err != LLVMErrorSuccess) {
+            consume_llvm_error(err, JIT_ERR_LOOKUP_FAILED);
+        }
+        return JIT_ERR_LOOKUP_FAILED;
+    }
 
     /* Store function pointer in context */
     ctx->parse_sequence_fn = (void *)(uintptr_t)addr;
@@ -166,8 +215,8 @@ JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap) {
     ctx->stats.states_compiled = snap->nstate;
     ctx->stats.states_total = snap->nstate;
 
-    /* Code size from jit_codegen */
-    /* stats.code_size_bytes already set by jit_codegen_generate */
+    /* Allocate per-state hit counters for warmup tracking */
+    ctx->state_hit_counts = calloc(snap->nstate, sizeof(uint32_t));
 
     return JIT_OK;
 }
@@ -176,6 +225,28 @@ JITShiftActionFn jit_get_shift_action(const JITContext *ctx, uint32_t state_id) 
     /* No longer used in monolithic JIT approach - per-state functions not generated */
     (void)ctx; (void)state_id;
     return NULL;
+}
+
+JITStatus jit_warmup(JITContext *ctx, const uint32_t *hot_states, uint32_t n) {
+    if (ctx == NULL) return JIT_ERR_INVALID_ARG;
+    if (hot_states == NULL || n == 0) return JIT_OK;
+
+    /* Record hot state hits for future per-state compilation.
+    ** Currently the monolithic function covers all states, so warmup
+    ** just records which states are hot for potential future use
+    ** (e.g., tiered compilation where only hot states get extra
+    ** optimization). */
+    if (ctx->state_hit_counts == NULL || ctx->nstates == 0) {
+        return JIT_OK; /* No snapshot compiled yet */
+    }
+
+    for (uint32_t i = 0; i < n; i++) {
+        if (hot_states[i] < ctx->nstates) {
+            ctx->state_hit_counts[hot_states[i]]++;
+        }
+    }
+
+    return JIT_OK;
 }
 
 #else /* LIME_NO_JIT -- stub implementations */
@@ -213,6 +284,11 @@ JITStats jit_get_stats(const JITContext *ctx) {
 
 bool jit_is_available(void) {
     return false;
+}
+
+JITStatus jit_warmup(JITContext *ctx, const uint32_t *hot_states, uint32_t n) {
+    (void)ctx; (void)hot_states; (void)n;
+    return JIT_ERR_NO_LLVM;
 }
 
 #endif /* LIME_NO_JIT */

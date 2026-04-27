@@ -19,6 +19,7 @@ typedef struct CharClassVector {
     uint32_t is_alpha_mask;   /* Bitmask: bit i set if character i is alphabetic */
     uint32_t is_digit_mask;   /* Bitmask: bit i set if character i is a digit */
     uint32_t is_space_mask;   /* Bitmask: bit i set if character i is whitespace */
+    uint32_t is_high_byte_mask; /* Bitmask: bit i set if byte i >= 0x80 (UTF-8 lead/continuation) */
 } CharClassVector;
 
 /* Function pointer type for classification.

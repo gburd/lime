@@ -149,6 +149,14 @@ test_random_composition = executable('test_random_composition',
 
 test('random_composition', test_random_composition, timeout : 120)
 
+test_shared_token_lifetime = executable('test_shared_token_lifetime',
+  'test_shared_token_lifetime.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('shared_token_lifetime', test_shared_token_lifetime, timeout : 120)
+
 # Temporarily disabled due to API mismatches
 #test_coverage_boost = executable('test_coverage_boost',
 #  'test_coverage_boost.c',

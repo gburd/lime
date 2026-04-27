@@ -405,6 +405,8 @@ static void run_comparison_benchmark(const BenchConfig *cfg) {
 /* ------------------------------------------------------------------ */
 
 int main(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
     printf("\n");
     printf("╔═══════════════════════════════════════════════════════════════╗\n");
     printf("║  JIT vs Interpreted Parser Benchmark                         ║\n");

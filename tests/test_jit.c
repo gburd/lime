@@ -334,10 +334,14 @@ static int test_jit_find_shift_action_with_jit(void) {
 
 static int test_policy_default_config(void) {
     JITPolicyConfig cfg = jit_policy_default_config();
-    ASSERT(cfg.min_parse_count == 50);
+    ASSERT(cfg.min_parse_count == 200);
     ASSERT(cfg.min_total_parse_time_ns == 10000000);
     ASSERT(cfg.min_avg_lookups_per_parse == 100);
     ASSERT(cfg.background_compile == true);
+    ASSERT(cfg.min_grammar_states == 500);
+    ASSERT(cfg.min_avg_tokens_per_parse == 200);
+    ASSERT(cfg.enabled == true);
+    ASSERT(cfg.tokenizer_jit_enabled == true);
     return 1;
 }
 
@@ -413,10 +417,12 @@ static int test_should_compile_above_thresholds(void) {
     jit_metrics_init(&m);
 
     /* Use very low thresholds to trigger easily */
-    JITPolicyConfig cfg;
+    JITPolicyConfig cfg = jit_policy_default_config();
     cfg.min_parse_count = 5;
     cfg.min_total_parse_time_ns = 1000;
     cfg.min_avg_lookups_per_parse = 10;
+    cfg.min_avg_tokens_per_parse = 0;
+    cfg.min_grammar_states = 0;
     cfg.background_compile = false;
 
     /* Record enough parses to exceed all thresholds */
@@ -438,10 +444,12 @@ static int test_should_compile_already_jitted(void) {
     JITMetrics m;
     jit_metrics_init(&m);
 
-    JITPolicyConfig cfg;
+    JITPolicyConfig cfg = jit_policy_default_config();
     cfg.min_parse_count = 1;
     cfg.min_total_parse_time_ns = 1;
     cfg.min_avg_lookups_per_parse = 1;
+    cfg.min_avg_tokens_per_parse = 0;
+    cfg.min_grammar_states = 0;
     cfg.background_compile = false;
 
     jit_metrics_record_parse(&m, 1000000, 500);
@@ -457,10 +465,12 @@ static int test_should_compile_in_progress(void) {
     JITMetrics m;
     jit_metrics_init(&m);
 
-    JITPolicyConfig cfg;
+    JITPolicyConfig cfg = jit_policy_default_config();
     cfg.min_parse_count = 1;
     cfg.min_total_parse_time_ns = 1;
     cfg.min_avg_lookups_per_parse = 1;
+    cfg.min_avg_tokens_per_parse = 0;
+    cfg.min_grammar_states = 0;
     cfg.background_compile = false;
 
     jit_metrics_record_parse(&m, 1000000, 500);
@@ -527,10 +537,12 @@ static int test_maybe_compile_sync(void) {
     jit_metrics_init(&m);
 
     /* Low thresholds, synchronous mode */
-    JITPolicyConfig cfg;
+    JITPolicyConfig cfg = jit_policy_default_config();
     cfg.min_parse_count = 2;
     cfg.min_total_parse_time_ns = 100;
     cfg.min_avg_lookups_per_parse = 5;
+    cfg.min_avg_tokens_per_parse = 0;
+    cfg.min_grammar_states = 0;
     cfg.background_compile = false;
 
     ParserSnapshot *snap = make_test_snapshot();

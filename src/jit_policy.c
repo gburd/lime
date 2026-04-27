@@ -24,10 +24,14 @@
 
 JITPolicyConfig jit_policy_default_config(void) {
     JITPolicyConfig cfg;
-    cfg.min_parse_count          = 50;
-    cfg.min_total_parse_time_ns  = 10000000;  /* 10 ms */
+    cfg.min_parse_count           = 200;
+    cfg.min_total_parse_time_ns   = 10000000;  /* 10 ms */
     cfg.min_avg_lookups_per_parse = 100;
-    cfg.background_compile       = true;
+    cfg.background_compile        = true;
+    cfg.min_grammar_states        = 500;
+    cfg.min_avg_tokens_per_parse  = 200;
+    cfg.enabled                   = true;
+    cfg.tokenizer_jit_enabled     = true;
     return cfg;
 }
 
@@ -40,6 +44,7 @@ void jit_metrics_init(JITMetrics *m) {
     atomic_init(&m->parse_count, 0);
     atomic_init(&m->total_parse_time_ns, 0);
     atomic_init(&m->action_lookup_count, 0);
+    atomic_init(&m->total_tokens_parsed, 0);
     atomic_init(&m->is_jitted, 0);
     atomic_init(&m->jit_in_progress, 0);
 }
@@ -55,12 +60,21 @@ void jit_metrics_record_parse(JITMetrics *m,
                               memory_order_relaxed);
 }
 
+void jit_metrics_record_tokens(JITMetrics *m, uint64_t token_count) {
+    if (m == NULL) return;
+    atomic_fetch_add_explicit(&m->total_tokens_parsed, token_count,
+                              memory_order_relaxed);
+}
+
 /* ------------------------------------------------------------------ */
 /*  Policy evaluation                                                  */
 /* ------------------------------------------------------------------ */
 
 bool jit_should_compile(const JITMetrics *m, const JITPolicyConfig *config) {
     if (m == NULL || config == NULL) return false;
+
+    /* Master switch */
+    if (!config->enabled) return false;
 
     /* Already compiled or compilation in progress */
     if (atomic_load_explicit(&m->is_jitted, memory_order_acquire)) return false;
@@ -81,6 +95,20 @@ bool jit_should_compile(const JITMetrics *m, const JITPolicyConfig *config) {
     /* Average lookups per parse */
     uint64_t avg_lookups = lookups / (parses > 0 ? parses : 1);
     if (avg_lookups < config->min_avg_lookups_per_parse) return false;
+
+    /* Average tokens per parse session */
+    uint64_t total_tokens = atomic_load_explicit(&m->total_tokens_parsed,
+                                                 memory_order_relaxed);
+    uint64_t avg_tokens = total_tokens / (parses > 0 ? parses : 1);
+    if (avg_tokens < config->min_avg_tokens_per_parse) return false;
+
+    /*
+    ** NOTE: min_grammar_states cannot be checked here because grammar
+    ** state count is not available in JITMetrics -- it lives in the
+    ** ParserSnapshot. Callers should verify that the snapshot's state
+    ** count meets config->min_grammar_states before calling
+    ** jit_should_compile() or jit_maybe_compile().
+    */
 
     return true;
 }

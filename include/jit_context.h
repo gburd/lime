@@ -1,10 +1,16 @@
 /*
-** LLVM Orc JIT compilation context for the extensible SQL parser.
+** LLVM OrcJIT compilation context for the extensible SQL parser.
 **
 ** Provides runtime compilation of parser hot paths (action table lookups)
-** using LLVM's Orc JIT infrastructure. When LLVM is available, the JIT
-** compiles specialized versions of find_shift_action for each parser state,
-** replacing table-driven lookups with direct branch sequences.
+** using LLVM's OrcJIT (LLJIT) infrastructure. The JIT compiles a
+** monolithic parse function that processes entire token sequences with
+** fully-inlined state dispatch, eliminating per-token function call
+** overhead.
+**
+** OrcJIT replaces the deprecated MCJIT engine and provides:
+**   - Thread-safe contexts for concurrent compilation
+**   - Lazy compilation support (for future tiered compilation)
+**   - Better resource management and error handling via LLVMErrorRef
 **
 ** When LLVM is not available at compile time (LIME_NO_JIT is defined),
 ** all JIT functions degrade to no-ops and the parser falls back to the
@@ -112,6 +118,25 @@ JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap);
 ** table-driven path).
 */
 JITShiftActionFn jit_get_shift_action(const JITContext *ctx, uint32_t state_id);
+
+/*
+** Pre-warm the JIT for a set of hot parser states.
+**
+** Records which states are frequently visited so that future tiered
+** compilation can apply extra optimization to those states. Currently
+** the monolithic JIT function covers all states equally, so this is
+** a no-op beyond bookkeeping, but the API is provided for forward
+** compatibility.
+**
+** Parameters:
+**   ctx - JIT context (must have compiled a snapshot)
+**   hot_states - Array of state IDs to mark as hot
+**   n - Number of entries in hot_states
+**
+** Returns JIT_OK on success, JIT_ERR_INVALID_ARG if ctx is NULL,
+** or JIT_ERR_NO_LLVM if compiled without LLVM.
+*/
+JITStatus jit_warmup(JITContext *ctx, const uint32_t *hot_states, uint32_t n);
 
 /*
 ** Get JIT compilation statistics.
