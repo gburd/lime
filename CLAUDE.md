@@ -60,7 +60,7 @@ lime.c is organized as a concatenation of multiple modules:
 
 ### Processing Pipeline
 
-The main() function (lime.c:1740) orchestrates the parser generation:
+The main() function (lime.c:2048) orchestrates the parser generation:
 
 1. **Parse** - Read and parse grammar file
 2. **FindRulePrecedences** - Determine precedence for each production

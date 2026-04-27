@@ -219,15 +219,23 @@ static void test_token_table_many_tokens(void) {
 /* ============================================================== */
 
 static void test_jit_policy_init(void) {
-    TEST("jit_policy_init");
+    TEST("jit_metrics_init and default_config");
 
-    JITPolicy *policy = jit_policy_init();
-    if (!policy) {
-        FAIL("Failed to initialize policy");
+    JITMetrics m;
+    jit_metrics_init(&m);
+
+    JITPolicyConfig cfg = jit_policy_default_config();
+
+    /* Verify defaults */
+    if (cfg.min_parse_count != 200) {
+        FAIL("Default min_parse_count should be 200");
+        return;
+    }
+    if (!cfg.enabled) {
+        FAIL("Default enabled should be true");
         return;
     }
 
-    jit_policy_destroy(policy);
     PASS();
 }
 
@@ -235,80 +243,84 @@ static void test_jit_policy_null_safety(void) {
     TEST("jit_policy NULL safety");
 
     /* These should not crash */
-    jit_policy_destroy(NULL);
+    jit_metrics_init(NULL);
+    jit_metrics_record_parse(NULL, 100, 50);
+    jit_metrics_record_tokens(NULL, 10);
 
-    bool result = jit_policy_should_compile(NULL, NULL);
+    bool result = jit_should_compile(NULL, NULL);
     if (result) {
-        FAIL("should_compile on NULL should return false");
+        FAIL("jit_should_compile on NULL should return false");
         return;
     }
 
-    jit_policy_record_parse(NULL, NULL, 100);
+    JITMetrics m;
+    jit_metrics_init(&m);
+    result = jit_should_compile(&m, NULL);
+    if (result) {
+        FAIL("jit_should_compile with NULL config should return false");
+        return;
+    }
+
+    JITPolicyConfig cfg = jit_policy_default_config();
+    result = jit_should_compile(NULL, &cfg);
+    if (result) {
+        FAIL("jit_should_compile with NULL metrics should return false");
+        return;
+    }
 
     PASS();
 }
 
 static void test_jit_policy_record_and_decide(void) {
-    TEST("jit_policy record parse and decide");
+    TEST("jit_metrics record parse and decide");
 
-    JITPolicy *policy = jit_policy_init();
-    if (!policy) {
-        FAIL("Failed to initialize policy");
-        return;
+    JITMetrics m;
+    jit_metrics_init(&m);
+
+    JITPolicyConfig cfg = jit_policy_default_config();
+
+    /* Record many parses to attempt triggering compilation decision */
+    for (int i = 0; i < 250; i++) {
+        jit_metrics_record_parse(&m, 100000, 200);  /* 100us, 200 lookups */
+        jit_metrics_record_tokens(&m, 300);
     }
 
-    ParserSnapshot *snap = make_minimal_snapshot();
-    if (!snap) {
-        jit_policy_destroy(policy);
-        FAIL("Failed to create snapshot");
-        return;
-    }
+    /* Evaluate policy - result depends on JIT availability */
+    bool should_compile = jit_should_compile(&m, &cfg);
 
-    /* Record many parses to trigger compilation decision */
-    for (int i = 0; i < 150; i++) {
-        jit_policy_record_parse(policy, snap, 1000);  /* 1000ns per parse */
-    }
+    /* Whether or not JIT is available, verify no crash */
+    (void)should_compile;
 
-    /* Now it should recommend compilation */
-    bool should_compile = jit_policy_should_compile(policy, snap);
-
-    snapshot_release(snap);
-    jit_policy_destroy(policy);
-
-    /* May or may not compile depending on policy, just verify no crash */
     PASS();
 }
 
 static void test_jit_policy_thresholds(void) {
     TEST("jit_policy respects thresholds");
 
-    JITPolicy *policy = jit_policy_init();
-    if (!policy) {
-        FAIL("Failed to initialize policy");
-        return;
-    }
+    JITMetrics m;
+    jit_metrics_init(&m);
 
-    ParserSnapshot *snap = make_minimal_snapshot();
-    if (!snap) {
-        jit_policy_destroy(policy);
-        FAIL("Failed to create snapshot");
-        return;
-    }
+    JITPolicyConfig cfg = jit_policy_default_config();
 
-    /* With only a few parses, should not compile */
-    jit_policy_record_parse(policy, snap, 1000);
-    jit_policy_record_parse(policy, snap, 1000);
+    /* With only a few parses, should not compile regardless of JIT availability */
+    jit_metrics_record_parse(&m, 1000, 50);
+    jit_metrics_record_parse(&m, 1000, 50);
+    jit_metrics_record_tokens(&m, 10);
 
-    bool should_compile = jit_policy_should_compile(policy, snap);
+    bool should_compile = jit_should_compile(&m, &cfg);
     if (should_compile) {
-        snapshot_release(snap);
-        jit_policy_destroy(policy);
         FAIL("Should not compile with only 2 parses");
         return;
     }
 
-    snapshot_release(snap);
-    jit_policy_destroy(policy);
+    /* With enabled=false, should never compile */
+    cfg.enabled = false;
+    should_compile = jit_should_compile(&m, &cfg);
+    if (should_compile) {
+        FAIL("Should not compile when disabled");
+        return;
+    }
+
     PASS();
 }
 
@@ -335,15 +347,15 @@ static void test_conflict_set_null_safety(void) {
     /* Should not crash */
     conflict_set_destroy(NULL);
 
-    uint32_t count = conflict_set_count(NULL);
+    uint32_t count = conflict_set_unresolved_count(NULL);
     if (count != 0) {
-        FAIL("count on NULL should return 0");
+        FAIL("unresolved_count on NULL should return 0");
         return;
     }
 
-    bool has = conflict_set_has_conflicts(NULL);
-    if (has) {
-        FAIL("has_conflicts on NULL should return false");
+    bool added = conflict_set_add(NULL, CONFLICT_TOKEN_COLLISION, 0, 1, 0, 0, "test");
+    if (added) {
+        FAIL("add on NULL should return false");
         return;
     }
 
@@ -360,28 +372,28 @@ static void test_conflict_set_add_and_query(void) {
     }
 
     /* Initially empty */
-    if (conflict_set_has_conflicts(cs)) {
+    if (conflict_set_unresolved_count(cs) > 0) {
         conflict_set_destroy(cs);
         FAIL("New conflict set should be empty");
         return;
     }
 
-    if (conflict_set_count(cs) != 0) {
+    if (conflict_set_unresolved_count(cs) != 0) {
         conflict_set_destroy(cs);
         FAIL("New conflict set should have count 0");
         return;
     }
 
     /* Add a token collision conflict */
-    conflict_set_add_token_collision(cs, 1, 2, "SELECT");
+    conflict_set_add(cs, CONFLICT_TOKEN_COLLISION, 0, 1, 0, 0, "SELECT");
 
-    if (!conflict_set_has_conflicts(cs)) {
+    if (conflict_set_unresolved_count(cs) == 0) {
         conflict_set_destroy(cs);
         FAIL("Should have conflicts after adding");
         return;
     }
 
-    if (conflict_set_count(cs) != 1) {
+    if (conflict_set_unresolved_count(cs) != 1) {
         conflict_set_destroy(cs);
         FAIL("Should have count 1");
         return;
@@ -401,11 +413,11 @@ static void test_conflict_set_multiple_types(void) {
     }
 
     /* Add various types of conflicts */
-    conflict_set_add_token_collision(cs, 1, 2, "SELECT");
-    conflict_set_add_shift_reduce(cs, 5, 10, "FROM");
-    conflict_set_add_reduce_reduce(cs, 3, 7, 8, "WHERE");
+    conflict_set_add(cs, CONFLICT_TOKEN_COLLISION, 0, 1, 0, 0, "SELECT");
+    conflict_set_add(cs, CONFLICT_SHIFT_REDUCE, 2, 3, 0, 0, "FROM");
+    conflict_set_add(cs, CONFLICT_REDUCE_REDUCE, 4, 5, 0, 0, "WHERE");
 
-    if (conflict_set_count(cs) != 3) {
+    if (conflict_set_unresolved_count(cs) != 3) {
         conflict_set_destroy(cs);
         FAIL("Should have 3 conflicts");
         return;
@@ -418,29 +430,41 @@ static void test_conflict_set_multiple_types(void) {
 static void test_conflict_detection_no_conflicts(void) {
     TEST("detect_conflicts with no conflicts");
 
-    ParserSnapshot *snap = make_minimal_snapshot();
-    if (!snap) {
-        FAIL("Failed to create snapshot");
-        return;
-    }
-
-    ConflictSet *cs = detect_conflicts(snap, NULL);
+    ConflictSet *cs = conflict_set_create();
     if (!cs) {
-        snapshot_release(snap);
-        FAIL("detect_conflicts returned NULL");
+        FAIL("Failed to create conflict set");
         return;
     }
 
-    /* Minimal snapshot should have no conflicts */
-    if (conflict_set_has_conflicts(cs)) {
+    /* Call with NULL/empty mods - should return false (no conflicts) */
+    bool found = detect_conflicts(NULL, 0, cs);
+    if (found) {
         conflict_set_destroy(cs);
-        snapshot_release(snap);
-        FAIL("Minimal snapshot should have no conflicts");
+        FAIL("detect_conflicts on NULL mods should return false");
+        return;
+    }
+
+    /* Empty modifications array should find no conflicts */
+    GrammarModification mods[1];
+    memset(mods, 0, sizeof(mods));
+    mods[0].type = MOD_ADD_TOKEN;
+    mods[0].u.add_token.name = "SELECT";
+
+    /* Single mod can't conflict with itself */
+    found = detect_conflicts(mods, 1, cs);
+    if (found) {
+        conflict_set_destroy(cs);
+        FAIL("Single mod should have no conflicts");
+        return;
+    }
+
+    if (conflict_set_unresolved_count(cs) != 0) {
+        conflict_set_destroy(cs);
+        FAIL("Should have no unresolved conflicts");
         return;
     }
 
     conflict_set_destroy(cs);
-    snapshot_release(snap);
     PASS();
 }
 

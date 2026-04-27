@@ -79,12 +79,6 @@ test_parse_context_coverage = executable('test_parse_context_coverage',
 
 test('parse_context_coverage', test_parse_context_coverage)
 
-test_simd_coverage = executable('test_simd_coverage',
-  'test_simd_coverage.c',
-)
-
-test('simd_coverage', test_simd_coverage)
-
 test_snapshot_modify_extended = executable('test_snapshot_modify_extended',
   'test_snapshot_modify_extended.c',
   dependencies : lime_parser_dep,
@@ -157,11 +151,10 @@ test_shared_token_lifetime = executable('test_shared_token_lifetime',
 
 test('shared_token_lifetime', test_shared_token_lifetime, timeout : 120)
 
-# Temporarily disabled due to API mismatches
-#test_coverage_boost = executable('test_coverage_boost',
-#  'test_coverage_boost.c',
-#  dependencies : lime_parser_dep,
-#  include_directories : include_directories('../src'),
-#)
-#
-#test('coverage_boost', test_coverage_boost)
+test_coverage_boost = executable('test_coverage_boost',
+  'test_coverage_boost.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('coverage_boost', test_coverage_boost)

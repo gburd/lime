@@ -1,0 +1,17 @@
+# Build artifacts
+*.o
+*.out
+builddir/
+
+# Compiled example binaries
+examples/bootstrap/boot_parser
+examples/datalog/datalog_parser
+examples/isolation/isol_parser
+examples/jsonpath/jsonpath_parser
+examples/mongodb/mongodb_parser
+examples/pg/pg_tokenize
+examples/pgbench/pgbench_parse
+examples/replication/repl_parser
+examples/syncrep/syncrep_parser
+examples/xpath/xpath_parser
+examples/xquery/xquery_parser
