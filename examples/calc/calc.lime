@@ -1,0 +1,60 @@
+/*
+** Base calculator grammar — four arithmetic operations.
+**
+** Token codes are assigned sequentially starting from 1 in declaration order:
+**   PLUS=1, MINUS=2, TIMES=3, DIVIDE=4, LPAREN=5, RPAREN=6, INTEGER=7
+**
+** The extended grammar (calc_power.lime) appends CARET=8.  When the
+** tokenizer produces code 8 and this parser receives it, the syntax_error
+** handler fires because CARET is not in this grammar's token table.
+*/
+
+%name Calc
+%token_type {int}
+%type expr {int}
+%extra_argument {int *result}
+
+%include {
+#include <stdio.h>
+#include <assert.h>
+}
+
+%syntax_error {
+    (void)yymajor;
+    (void)yyminor;
+    fprintf(stderr, "syntax error\n");
+    *result = 0;
+}
+
+/* Tokens — declaration order determines integer codes */
+%token PLUS.
+%token MINUS.
+%token TIMES.
+%token DIVIDE.
+%token LPAREN.
+%token RPAREN.
+%token INTEGER.
+
+/* Precedence (lowest to highest) */
+%left PLUS MINUS.
+%left TIMES DIVIDE.
+%right UMINUS.
+
+%start_symbol program
+
+program ::= expr(A). { *result = A; }
+
+expr(A) ::= expr(B) PLUS expr(C).     { A = B + C; }
+expr(A) ::= expr(B) MINUS expr(C).    { A = B - C; }
+expr(A) ::= expr(B) TIMES expr(C).    { A = B * C; }
+expr(A) ::= expr(B) DIVIDE expr(C).   {
+    if (C == 0) {
+        fprintf(stderr, "division by zero\n");
+        A = 0;
+    } else {
+        A = B / C;
+    }
+}
+expr(A) ::= MINUS expr(B). [UMINUS]   { A = -B; }
+expr(A) ::= LPAREN expr(B) RPAREN.    { A = B; }
+expr(A) ::= INTEGER(B).               { A = B; }

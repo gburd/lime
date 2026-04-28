@@ -1,0 +1,74 @@
+/*
+** Extended calculator grammar — adds exponentiation (^) to the base four
+** operations.
+**
+** Token codes match the base grammar (calc.lime) exactly for the first
+** seven tokens.  CARET is appended as token code 8.
+*/
+
+%name CalcPower
+%token_type {int}
+%type expr {int}
+%extra_argument {int *result}
+
+%include {
+#include <stdio.h>
+#include <assert.h>
+
+/*
+** Integer exponentiation by repeated squaring.
+*/
+static int int_pow(int base, int exp) {
+    if (exp < 0) return 0;
+    int result = 1;
+    while (exp > 0) {
+        if (exp & 1) result *= base;
+        base *= base;
+        exp >>= 1;
+    }
+    return result;
+}
+}
+
+%syntax_error {
+    (void)yymajor;
+    (void)yyminor;
+    fprintf(stderr, "syntax error\n");
+    *result = 0;
+}
+
+/* Tokens — same order as calc.lime, with CARET appended */
+%token PLUS.
+%token MINUS.
+%token TIMES.
+%token DIVIDE.
+%token LPAREN.
+%token RPAREN.
+%token INTEGER.
+%token CARET.
+
+/* Precedence (lowest to highest) */
+%left PLUS MINUS.
+%left TIMES DIVIDE.
+%right CARET.
+%right UMINUS.
+
+%start_symbol program
+
+program ::= expr(A). { *result = A; }
+
+expr(A) ::= expr(B) PLUS expr(C).     { A = B + C; }
+expr(A) ::= expr(B) MINUS expr(C).    { A = B - C; }
+expr(A) ::= expr(B) TIMES expr(C).    { A = B * C; }
+expr(A) ::= expr(B) DIVIDE expr(C).   {
+    if (C == 0) {
+        fprintf(stderr, "division by zero\n");
+        A = 0;
+    } else {
+        A = B / C;
+    }
+}
+expr(A) ::= expr(B) CARET expr(C).    { A = int_pow(B, C); }
+expr(A) ::= MINUS expr(B). [UMINUS]   { A = -B; }
+expr(A) ::= LPAREN expr(B) RPAREN.    { A = B; }
+expr(A) ::= INTEGER(B).               { A = B; }

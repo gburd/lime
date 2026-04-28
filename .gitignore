@@ -15,3 +15,5 @@ examples/replication/repl_parser
 examples/syncrep/syncrep_parser
 examples/xpath/xpath_parser
 examples/xquery/xquery_parser
+examples/calc/calc
+examples/calc/libcalc_power.so
