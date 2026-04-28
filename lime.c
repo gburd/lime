@@ -5846,18 +5846,28 @@ void ReportTable(
   i = lemp->minReduce + lemp->nrule;
   fprintf(out,"#define YY_MAX_REDUCE        %d\n", i-1); lineno++;
 
-  /* Minimum and maximum token values that have a destructor */
+  /* Minimum and maximum symbol values that have a destructor.
+  ** When no destructors are defined, set mn > mx so comparisons like
+  ** "yytos->major >= YY_MIN_DSTRCTR" are always false, avoiding
+  ** "comparison is always true" warnings with unsigned YYCODETYPE. */
   mn = mx = 0;
-  for(i=0; i<lemp->nsymbol; i++){
-    struct symbol *sp = lemp->symbols[i];
+  { int have_dstrctr = 0;
+    for(i=0; i<lemp->nsymbol; i++){
+      struct symbol *sp = lemp->symbols[i];
 
-    if( sp && sp->type!=TERMINAL && sp->destructor ){
-      if( mn==0 || sp->index<mn ) mn = sp->index;
-      if( sp->index>mx ) mx = sp->index;
+      if( sp && sp->type!=TERMINAL && sp->destructor ){
+        if( !have_dstrctr || sp->index<mn ) mn = sp->index;
+        if( sp->index>mx ) mx = sp->index;
+        have_dstrctr = 1;
+      }
+    }
+    if( lemp->tokendest ){ mn = 0; have_dstrctr = 1; }
+    if( lemp->vardest ){ mx = lemp->nsymbol-1; have_dstrctr = 1; }
+    if( !have_dstrctr ){
+      mn = lemp->nsymbol;  /* Empty range: min > max */
+      mx = 0;
     }
   }
-  if( lemp->tokendest ) mn = 0;
-  if( lemp->vardest ) mx = lemp->nsymbol-1;
   fprintf(out,"#define YY_MIN_DSTRCTR       %d\n", mn);  lineno++;
   fprintf(out,"#define YY_MAX_DSTRCTR       %d\n", mx);  lineno++;    
 
