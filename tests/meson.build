@@ -158,3 +158,57 @@ test_coverage_boost = executable('test_coverage_boost',
 )
 
 test('coverage_boost', test_coverage_boost)
+
+# Multi-grammar conflict detection tests
+test_conflict_detector = executable('test_conflict_detector',
+  'test_conflict_detector.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('conflict_detector', test_conflict_detector)
+
+# Disambiguation strategy tests
+test_disambiguation = executable('test_disambiguation',
+  'test_disambiguation.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('disambiguation', test_disambiguation)
+
+# Multi-extension integration tests
+test_multi_extension = executable('test_multi_extension',
+  'test_multi_extension.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('multi_extension', test_multi_extension)
+
+# Execution policy engine tests
+test_execution_policy = executable('test_execution_policy',
+  'test_execution_policy.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('execution_policy', test_execution_policy)
+
+# Parser fork cloning tests
+test_parser_fork = executable('test_parser_fork',
+  'test_parser_fork.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('parser_fork', test_parser_fork)
+
+# Fork-resolve disambiguation strategy tests
+test_fork_resolve = executable('test_fork_resolve',
+  'test_fork_resolve.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('fork_resolve', test_fork_resolve)

@@ -2,20 +2,25 @@
 ** Shared tokenizer for the calculator example.
 **
 ** Token constants match the %token declaration order in the Lime grammars.
-** Both calc.lime and calc_power.lime share codes 1–7; the extension
-** appends CARET as code 8.
+** Both calc.lime and calc_power.lime share codes 1–7; the power extension
+** appends CARET as code 8; the bitwise extension adds AMPERSAND through
+** RSHIFT as codes 9–12.
 */
 #ifndef CALC_TOKENIZE_H
 #define CALC_TOKENIZE_H
 
-#define TOK_PLUS    1
-#define TOK_MINUS   2
-#define TOK_TIMES   3
-#define TOK_DIVIDE  4
-#define TOK_LPAREN  5
-#define TOK_RPAREN  6
-#define TOK_INTEGER 7
-#define TOK_CARET   8
+#define TOK_PLUS      1
+#define TOK_MINUS     2
+#define TOK_TIMES     3
+#define TOK_DIVIDE    4
+#define TOK_LPAREN    5
+#define TOK_RPAREN    6
+#define TOK_INTEGER   7
+#define TOK_CARET     8
+#define TOK_AMPERSAND 9
+#define TOK_PIPE      10
+#define TOK_LSHIFT    11
+#define TOK_RSHIFT    12
 
 /*
 ** Scan the next token from input starting at *pos.

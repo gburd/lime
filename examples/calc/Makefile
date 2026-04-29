@@ -1,8 +1,10 @@
 # Makefile for Calculator example with runtime extension loading.
 #
 # Builds:
-#   calc             — host executable (base 4-operation calculator)
-#   libcalc_power.so — extension shared library (adds ^ operator)
+#   calc               -- host executable (base 4-operation calculator)
+#   libcalc_power.so   -- extension shared library (adds ^ as exponentiation)
+#   libcalc_bitwise.so -- extension shared library (adds &, |, ^, <<, >>)
+#   calc_conflicts     -- conflict demonstration (loads both extensions)
 
 # Paths
 LIME      ?= ../../lime
@@ -11,9 +13,9 @@ CFLAGS    ?= -std=c11 -Wall -Wextra -Wno-unused-parameter -g -O2
 LDFLAGS   ?=
 TEMPLATE  ?= ../../limpar.c
 
-.PHONY: all test clean distclean
+.PHONY: all test test-conflicts clean distclean
 
-all: calc libcalc_power.so
+all: calc libcalc_power.so libcalc_bitwise.so calc_conflicts
 
 # Build the lime tool if it doesn't exist
 $(LIME):
@@ -31,6 +33,11 @@ calc_power.c calc_power.h: calc_power.lime $(LIME) $(TEMPLATE)
 	$(LIME) -T$(TEMPLATE) calc_power.lime
 	@test -f calc_power.c || { echo "ERROR: Lime failed to generate calc_power.c"; exit 1; }
 
+# Lime generates calc_bitwise.c / calc_bitwise.h from calc_bitwise.lime
+calc_bitwise.c calc_bitwise.h: calc_bitwise.lime $(LIME) $(TEMPLATE)
+	$(LIME) -T$(TEMPLATE) calc_bitwise.lime
+	@test -f calc_bitwise.c || { echo "ERROR: Lime failed to generate calc_bitwise.c"; exit 1; }
+
 # --- Host executable ---------------------------------------------------
 
 calc: main.o calc_parser.o tokenize.o
@@ -45,9 +52,17 @@ calc_parser.o: calc.c calc.h
 tokenize.o: tokenize.c tokenize.h
 	$(CC) $(CFLAGS) -c -o $@ tokenize.c
 
-# --- Extension shared library ------------------------------------------
+# --- Conflict demonstration executable --------------------------------
 
-libcalc_power.so: calc_power_ext.o calc_power_parser.o tokenize_ext.o
+calc_conflicts: main_conflicts.o calc_parser.o tokenize.o
+	$(CC) $(LDFLAGS) -o $@ $^ -ldl
+
+main_conflicts.o: main_conflicts.c tokenize.h calc.h
+	$(CC) $(CFLAGS) -c -o $@ main_conflicts.c
+
+# --- Power extension shared library -----------------------------------
+
+libcalc_power.so: calc_power_ext.o calc_power_parser.o tokenize_power.o
 	$(CC) -shared -o $@ $^
 
 calc_power_ext.o: calc_power_ext.c tokenize.h calc_power.h
@@ -56,7 +71,21 @@ calc_power_ext.o: calc_power_ext.c tokenize.h calc_power.h
 calc_power_parser.o: calc_power.c calc_power.h
 	$(CC) $(CFLAGS) -fPIC -c -o $@ calc_power.c
 
-tokenize_ext.o: tokenize.c tokenize.h
+tokenize_power.o: tokenize.c tokenize.h
+	$(CC) $(CFLAGS) -fPIC -c -o $@ tokenize.c
+
+# --- Bitwise extension shared library ---------------------------------
+
+libcalc_bitwise.so: calc_bitwise_ext.o calc_bitwise_parser.o tokenize_bitwise.o
+	$(CC) -shared -o $@ $^
+
+calc_bitwise_ext.o: calc_bitwise_ext.c tokenize.h calc_bitwise.h
+	$(CC) $(CFLAGS) -fPIC -c -o $@ calc_bitwise_ext.c
+
+calc_bitwise_parser.o: calc_bitwise.c calc_bitwise.h
+	$(CC) $(CFLAGS) -fPIC -c -o $@ calc_bitwise.c
+
+tokenize_bitwise.o: tokenize.c tokenize.h
 	$(CC) $(CFLAGS) -fPIC -c -o $@ tokenize.c
 
 # --- Test / run --------------------------------------------------------
@@ -64,11 +93,15 @@ tokenize_ext.o: tokenize.c tokenize.h
 test: calc libcalc_power.so
 	./calc
 
+test-conflicts: calc_conflicts libcalc_power.so libcalc_bitwise.so
+	./calc_conflicts
+
 # --- Clean up ----------------------------------------------------------
 
 clean:
-	rm -f *.o calc libcalc_power.so
+	rm -f *.o calc calc_conflicts libcalc_power.so libcalc_bitwise.so
 
 distclean: clean
 	rm -f calc.c calc.h calc.out
 	rm -f calc_power.c calc_power.h calc_power.out
+	rm -f calc_bitwise.c calc_bitwise.h calc_bitwise.out

@@ -2,6 +2,38 @@
 
 Runtime-extensible LALR(1) parser based on the Lemon parser generator with SIMD tokenization and LLVM JIT compilation.
 
+## Why Lime?
+
+Lime is the only LALR(1) parser generator that supports **runtime grammar
+modification**. Traditional tools like Yacc and Bison require regenerating
+and recompiling the parser whenever the grammar changes. Lime lets you add
+tokens, production rules, and precedence changes to a live parser through
+its extension API -- no restart required.
+
+**Key differentiators over Yacc/Bison:**
+
+- **Runtime extensibility** -- Load and unload grammar extensions
+  dynamically via a C API, with conflict detection and resolution callbacks.
+  No other parser generator offers this.
+- **Performance** -- SIMD-accelerated tokenization (AVX2/NEON) delivers
+  5-10x faster lexing. Optional LLVM JIT compilation provides 2.5-4.2x
+  faster action table lookups.
+- **Thread-safe by design** -- Copy-on-write snapshots with atomic reference
+  counting allow concurrent parsing with zero shared mutable state. Parsers
+  are reentrant by default, unlike Yacc.
+- **Modern memory safety** -- `%destructor` directives prevent semantic
+  value leaks during error recovery. All allocations tracked; zero leaks
+  under Valgrind and ASan.
+- **Zero licensing friction** -- Public Domain. No GPL, no exceptions to
+  read, no attribution clauses. Use it anywhere.
+- **Single-file build** -- The generator compiles from one C file with no
+  dependencies. Embed it directly in your build system.
+
+For a detailed feature-by-feature comparison with Yacc, Bison, ANTLR, and
+Menhir, see **[docs/COMPARISON.md](docs/COMPARISON.md)**. Migration guides
+are available for **[Bison](docs/MIGRATION_FROM_BISON.md)** and
+**[Yacc](docs/MIGRATION_FROM_YACC.md)**.
+
 ## Features
 
 - **Zero-overhead static parsing**: Same performance as PostgreSQL when no extensions loaded
@@ -55,9 +87,38 @@ Expected: 8/8 test suites pass (200+ assertions)
 | **[PROJECT_SUMMARY.md](PROJECT_SUMMARY.md)** | Complete project overview and statistics |
 | **[INTEGRATION_TESTING.md](INTEGRATION_TESTING.md)** | Integration test procedures |
 | **[docs/API.md](docs/API.md)** | Complete API reference (943 lines) |
+| **[docs/ALGORITHM.md](docs/ALGORITHM.md)** | LALR(1) parsing algorithm theory and Lime's implementation |
 | **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** | System design and architecture (407 lines) |
 | **[docs/EXTENSIONS.md](docs/EXTENSIONS.md)** | Extension development guide (642 lines) |
 | **[docs/PERFORMANCE.md](docs/PERFORMANCE.md)** | Performance characteristics |
+| **[docs/EXTENSION_PERFORMANCE.md](docs/EXTENSION_PERFORMANCE.md)** | Extension framework performance analysis |
+| **[docs/COMPARISON.md](docs/COMPARISON.md)** | Feature comparison with Yacc, Bison, ANTLR, Menhir |
+| **[docs/MIGRATION_FROM_BISON.md](docs/MIGRATION_FROM_BISON.md)** | Bison-to-Lime migration guide |
+| **[docs/MIGRATION_FROM_YACC.md](docs/MIGRATION_FROM_YACC.md)** | Yacc-to-Lime migration guide |
+
+### API Documentation (Doxygen)
+
+Searchable HTML API documentation can be generated from the annotated headers:
+
+```bash
+# Generate docs (requires doxygen)
+ninja -C builddir doxygen
+
+# Or run doxygen directly
+doxygen Doxyfile
+```
+
+Output is written to `docs/api/html/`. Open `docs/api/html/index.html` in a browser.
+
+Documented headers include:
+- `include/parser.h` -- Core snapshot and parse session API
+- `include/parser_manager.h` -- Plugin management and hot-swap
+- `include/extension_registry.h` -- Extension metadata and dependency resolution
+- `include/disambiguation.h` -- Pluggable conflict resolution strategies
+- `include/execution_policy.h` -- Semantic action dispatch policies
+- `include/grammar_context.h` -- Embedded grammar language switching
+- `include/parser_fork.h` -- Parser state cloning for fork-resolve
+- `include/conflict.h` -- Multi-grammar conflict detection
 
 ## Performance
 
@@ -81,6 +142,19 @@ Based on `jit_comparison` benchmark with LLVM 17:
 | Test coverage | 85%+ | 85-90% | ✓ Achieved |
 | Memory leaks | 0 | 0 | ✓ Clean |
 | Data races | 0 | 0 | ✓ Clean |
+
+### Extension Overhead
+
+The extension framework is designed for zero overhead when no extensions are loaded. With extensions active:
+
+| Scenario | Per-Token Overhead | Notes |
+|----------|-------------------|-------|
+| No extensions | 0 | Identical to standard Lime parser |
+| Extensions loaded, no conflicts | < 1 ns | Snapshot-based; same table format |
+| Priority disambiguation | ~2-6 ns (amortized) | Linear priority scan |
+| Fork-resolve disambiguation | ~40-1000 ns (amortized) | Parser state cloning + evaluation |
+
+Extension loading costs (one-time): conflict detection ~50-650 us, dependency resolution ~5-60 us, JIT recompilation ~10-80 ms. See **[docs/EXTENSION_PERFORMANCE.md](docs/EXTENSION_PERFORMANCE.md)** for detailed analysis including scaling behavior, memory budgets, and tuning recommendations.
 
 ## Project Structure
 

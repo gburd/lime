@@ -7,6 +7,10 @@ lib_sources = files(
   'parse_context.c',
   'extension.c',
   'conflict.c',
+  'conflict_detector.c',
+  'disambiguation.c',
+  'strategy_priority.c',
+  'strategy_fork_resolve.c',
   'snapshot_modify.c',
   'dependency_resolver.c',
   'parser_manager.c',
@@ -14,9 +18,14 @@ lib_sources = files(
   'parser_operations.c',
   'merkle_tree.c',
   'parser_composition.c',
+  'parser_fork.c',
   'utf8.c',
   'lime_ast.c',
   'glr.c',
+  'execution_policy.c',
+  'extension_registry.c',
+  'grammar_context.c',
+  'context_switch.c',
 )
 
 thread_dep = dependency('threads')

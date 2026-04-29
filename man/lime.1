@@ -1,0 +1,339 @@
+.\" lime.1 - manual page for the Lime parser generator
+.\" Copyright (c) 2024-2026 Lime Parser Generator Project
+.\" Public Domain
+.\"
+.TH LIME 1 "April 2026" "Lime 1.0" "User Commands"
+.SH NAME
+lime \- LALR(1) parser generator
+.SH SYNOPSIS
+.B lime
+.RI [ options ]
+.I grammar-file
+.SH DESCRIPTION
+.B lime
+is an LALR(1) parser generator that reads a grammar specification from
+.I grammar-file
+and produces C source code implementing a parser for that grammar.
+It is derived from the Lemon parser generator and generates
+reentrant, thread-safe parsers with a push-model interface.
+.PP
+Unlike yacc and bison which use a pull model (the parser calls the lexer),
+Lime generates push parsers where the caller feeds tokens to the parser
+one at a time.
+The generated parser is contained in a single C source file with no
+external dependencies beyond the C standard library.
+.PP
+The input grammar file uses the
+.B .lime
+file extension by convention.
+Lime produces up to four output files based on the input filename:
+.TP
+.IB basename .c
+The generated C parser source code.
+.TP
+.IB basename .h
+A header file containing token number definitions (\fB#define\fR
+constants) for use by the lexer.
+.TP
+.IB basename .out
+A report file describing the parser states, conflicts, and actions.
+Useful for debugging grammar issues.
+.TP
+.IB basename .sql
+An SQL file describing the parser tables (only with
+.BR \-S ).
+.SH OPTIONS
+.TP
+.B \-b
+Print only the basis configurations in the report file, omitting
+derived configurations.
+This makes the
+.B .out
+file shorter and easier to read for large grammars.
+.TP
+.B \-c
+Do not compress the action table.
+By default, Lime compresses the action table to reduce generated
+code size.
+This option disables compression, which may improve parser speed
+at the cost of larger tables.
+.TP
+.BI \-d " directory"
+Write output files to
+.I directory
+instead of the current working directory.
+.TP
+.BI \-D " macro"
+Define a preprocessor macro for use with
+.B %ifdef
+directives in the grammar file.
+Multiple
+.B \-D
+options may be given.
+.TP
+.B \-E
+Print the input file after preprocessing
+.RB ( %ifdef / %ifndef / %endif
+expansion) and exit.
+Useful for debugging conditional grammar sections.
+.TP
+.B \-F
+Format the grammar file consistently and write the result to a new
+file.
+The formatted file should be reviewed and manually renamed to
+replace the original.
+.TP
+.BI \-f " value"
+Ignored.
+Placeholder for passing
+.B \-f
+compiler options through build systems.
+.TP
+.B \-g
+Print the grammar without semantic actions and exit.
+This produces a clean listing of all production rules.
+.TP
+.BI \-I " value"
+Ignored.
+Placeholder for passing
+.B \-I
+compiler options through build systems.
+.TP
+.B \-j
+Generate an AOT-compiled (ahead-of-time) action table in a
+separate
+.IB basename _aot.c
+file.
+.TP
+.B \-L
+Lint mode.
+Validate grammar and module directives, report errors, and exit
+with the number of errors found.
+No output files are generated.
+.TP
+.B \-l
+Do not generate
+.B #line
+directives in the output C file.
+By default, Lime inserts
+.B #line
+directives so that compiler error messages refer to line numbers
+in the original grammar file.
+.TP
+.B \-m
+Generate a makeheaders-compatible output file.
+When this option is given, a separate
+.B .h
+header file is not produced; the token definitions are included
+in the
+.B .c
+file in a format compatible with the makeheaders utility.
+.TP
+.B \-n
+Generate snapshot initialization code in a separate
+.IB basename _snapshot.c
+file.
+.TP
+.BI \-O " value"
+Ignored.
+Placeholder for passing
+.B \-O
+compiler options through build systems.
+.TP
+.B \-p
+Show conflicts that were resolved by precedence rules.
+Normally, resolved conflicts are not reported.
+This option is useful for verifying that precedence declarations
+have the intended effect.
+.TP
+.B \-q
+Quiet mode.
+Do not generate the
+.B .out
+report file.
+.TP
+.B \-r
+Do not sort or renumber states.
+By default, Lime reorders states so that states with fewer
+choices appear at the end, which helps reduce table size.
+.TP
+.B \-s
+Print parser statistics to standard output after generation.
+The statistics include the number of terminal and non-terminal
+symbols, rules, states, conflicts, and action table size.
+.TP
+.B \-S
+Generate an
+.B .sql
+file describing the parser tables in SQL format.
+.TP
+.BI \-T " template-file"
+Use
+.I template-file
+as the parser template instead of the built-in
+.BR limpar.c .
+The template contains the runtime parser code with
+.B %%
+markers where Lime inserts generated content.
+.TP
+.BI \-U " macro"
+Undefine a preprocessor macro, counteracting a previous
+.B \-D
+option or an
+.B %ifdef
+that would otherwise match.
+.TP
+.B \-V
+Enable verbose conflict diagnostics with derivation paths.
+When a conflict is reported, this option shows the chain of
+productions that leads to the conflict.
+.TP
+.BI \-W " value"
+Ignored.
+Placeholder for passing
+.B \-W
+compiler options through build systems.
+.TP
+.B \-x
+Print the version number and exit.
+.SH GRAMMAR FILE FORMAT
+A grammar file consists of a sequence of production rules and
+directives.
+Rules define the grammar; directives configure parser behavior.
+.PP
+Production rules have the form:
+.PP
+.RS
+.EX
+nonterminal(alias) ::= symbol1(A) symbol2(B). { C code; }
+.EE
+.RE
+.PP
+The parenthesized aliases are optional and provide names for
+referencing semantic values in the action code.
+Each rule is terminated by a period.
+.PP
+See
+.BR lime_grammar (5)
+for a complete description of the grammar file syntax and all
+supported directives.
+.SH EXAMPLES
+Generate a parser from a grammar file:
+.PP
+.RS
+.EX
+lime calc.lime
+.EE
+.RE
+.PP
+This produces
+.BR calc.c ,
+.BR calc.h ,
+and
+.BR calc.out .
+.PP
+Generate with statistics and no report file:
+.PP
+.RS
+.EX
+lime -s -q calc.lime
+.EE
+.RE
+.PP
+Define a macro and specify an output directory:
+.PP
+.RS
+.EX
+lime -DENABLE_JSON -d build/ grammar.lime
+.EE
+.RE
+.PP
+Validate a modular grammar without generating output:
+.PP
+.RS
+.EX
+lime -L grammar.lime
+.EE
+.RE
+.PP
+Preprocess and display the grammar after macro expansion:
+.PP
+.RS
+.EX
+lime -E grammar.lime
+.EE
+.RE
+.SH "EXIT STATUS"
+.TP
+.B 0
+Successful parser generation with no errors or unresolved conflicts.
+If
+.B %expect
+.I N
+is declared, the exit status is 0 when exactly
+.I N
+conflicts are found.
+.TP
+.B 1
+One or more errors occurred during parsing or code generation,
+or there are unresolved shift/reduce or reduce/reduce conflicts
+(unless suppressed by
+.BR %expect ).
+.SH ENVIRONMENT
+.B lime
+does not use any environment variables.
+.SH FILES
+.TP
+.I limpar.c
+The default parser template file.
+Lime searches for this file in the same directory as the
+.B lime
+executable unless overridden with
+.BR \-T .
+.SH "GENERATED PARSER API"
+The generated parser provides the following C functions (where
+.I Parse
+is replaced by the
+.B %name
+directive value, defaulting to \(lqParse\(rq):
+.TP
+.BI "void *" Parse "Alloc(void *(*)(size_t));"
+Allocate and return a new parser instance.
+The argument is a memory allocation function (typically
+.BR malloc (3)).
+.TP
+.BI "void " Parse "Free(void *, void (*)(void *));"
+Deallocate a parser instance.
+The second argument is a deallocation function (typically
+.BR free (3)).
+.TP
+.BI "void " Parse "(void *, int, " TokenType ", " ExtraArg ");"
+Feed a token to the parser.
+The second argument is the token code (from the generated
+.B .h
+file), and the third is the token's semantic value.
+The fourth argument is the extra argument declared by
+.BR %extra_argument .
+Feed token code 0 to signal end of input.
+.TP
+.BI "void " Parse "Trace(FILE *, char *);"
+Enable parser tracing for debugging.
+Each trace line is prefixed with the given string.
+Pass
+.B NULL
+to disable tracing.
+.SH "SEE ALSO"
+.BR lime_grammar (5),
+.BR yacc (1),
+.BR bison (1)
+.SH AUTHORS
+The Lemon parser generator was originally written by D. Richard Hipp
+for the SQLite project.
+Lime is an extended version of Lemon with support for modular
+grammars, runtime extensions, and additional code generation features.
+.SH LICENSE
+Public Domain.
+.SH BUGS
+Report bugs at:
+.UR https://github.com/anthropics/lime/issues
+.UE

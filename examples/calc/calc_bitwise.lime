@@ -1,0 +1,77 @@
+/*
+** Extended calculator grammar -- adds bitwise operators to the base four
+** arithmetic operations.
+**
+** Token codes match the base grammar (calc.lime) exactly for the first
+** seven tokens.  CARET is token code 8 (used here for bitwise XOR),
+** followed by AMPERSAND=9, PIPE=10, LSHIFT=11, RSHIFT=12.
+**
+** Note: CARET (^) is interpreted as bitwise XOR in this grammar, which
+** conflicts with the power extension (calc_power.lime) where CARET means
+** exponentiation.  This intentional overlap demonstrates grammar extension
+** conflicts and their resolution.
+*/
+
+%name CalcBitwise
+%token_type {int}
+%type expr {int}
+%extra_argument {int *result}
+
+%include {
+#include <stdio.h>
+#include <assert.h>
+}
+
+%syntax_error {
+    (void)yymajor;
+    (void)yyminor;
+    fprintf(stderr, "syntax error\n");
+    *result = 0;
+}
+
+/* Tokens -- same order as calc.lime, with bitwise operators appended */
+%token PLUS.
+%token MINUS.
+%token TIMES.
+%token DIVIDE.
+%token LPAREN.
+%token RPAREN.
+%token INTEGER.
+%token CARET.       /* bitwise XOR -- conflicts with power extension */
+%token AMPERSAND.   /* bitwise AND */
+%token PIPE.        /* bitwise OR  */
+%token LSHIFT.      /* left shift  */
+%token RSHIFT.      /* right shift */
+
+/* Precedence (lowest to highest) */
+%left PIPE.
+%left CARET.
+%left AMPERSAND.
+%left LSHIFT RSHIFT.
+%left PLUS MINUS.
+%left TIMES DIVIDE.
+%right UMINUS.
+
+%start_symbol program
+
+program ::= expr(A). { *result = A; }
+
+expr(A) ::= expr(B) PLUS expr(C).       { A = B + C; }
+expr(A) ::= expr(B) MINUS expr(C).      { A = B - C; }
+expr(A) ::= expr(B) TIMES expr(C).      { A = B * C; }
+expr(A) ::= expr(B) DIVIDE expr(C).     {
+    if (C == 0) {
+        fprintf(stderr, "division by zero\n");
+        A = 0;
+    } else {
+        A = B / C;
+    }
+}
+expr(A) ::= expr(B) AMPERSAND expr(C).  { A = B & C; }
+expr(A) ::= expr(B) PIPE expr(C).       { A = B | C; }
+expr(A) ::= expr(B) CARET expr(C).      { A = B ^ C; }
+expr(A) ::= expr(B) LSHIFT expr(C).     { A = B << C; }
+expr(A) ::= expr(B) RSHIFT expr(C).     { A = B >> C; }
+expr(A) ::= MINUS expr(B). [UMINUS]     { A = -B; }
+expr(A) ::= LPAREN expr(B) RPAREN.      { A = B; }
+expr(A) ::= INTEGER(B).                 { A = B; }

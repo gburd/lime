@@ -158,24 +158,66 @@ evaluation is a handful of atomic loads and integer comparisons.
 ## Extension Overhead
 
 Extensions modify the grammar at runtime by adding tokens, rules, or
-precedence changes. The overhead comes from:
+precedence changes. The overhead comes from several components:
 
-1. **Snapshot cloning**: Deep-copy of action tables (~296 KB for a typical
-   grammar). This is a one-time cost when an extension is loaded.
-2. **Table rebuilding**: Recomputing LALR tables after grammar modification.
-   Cost is proportional to grammar complexity.
-3. **Token table updates**: Adding extension tokens to the hash table requires
-   a write lock but is O(1) per token.
-4. **JIT invalidation**: Loading an extension produces a new snapshot, so
-   any existing JIT code is specific to the old snapshot. The new snapshot
-   must accumulate its own metrics before JIT triggers again.
+### Loading Costs (One-Time)
+
+| Cost Category         | Typical Range  | Trigger                          |
+|-----------------------|----------------|----------------------------------|
+| Snapshot cloning      | ~100-500 us    | Deep-copy of action tables (~296 KB) |
+| Table rebuilding      | ~500 us - 5 ms | Recomputing LALR tables post-modification |
+| Token table updates   | ~50-200 ns/token | Adding extension tokens (O(1) per token) |
+| Conflict detection    | ~50-650 us     | Scanning for token/rule/semantic conflicts |
+| Dependency resolution | ~5-60 us       | Topological sort of extension graph |
+| JIT invalidation      | ~10-80 ms      | Recompilation for the new snapshot |
+
+### Per-Token Runtime Costs
+
+| Scenario                        | Per-Token Overhead | Notes                     |
+|---------------------------------|-------------------|---------------------------|
+| No extensions loaded            | 0                 | Zero overhead by design   |
+| Extensions loaded, no conflicts | < 1 ns            | Same table format         |
+| Priority disambiguation         | ~2-6 ns (amortized) | Invoked only on conflict states |
+| Fork-resolve disambiguation     | ~40-1000 ns (amortized) | Parser state cloning |
+
+The amortized per-token numbers assume conflicts occur on ~5% of tokens
+in a typical extension-heavy workload. Most tokens pass through the
+standard action table lookup with no extension overhead.
+
+### Disambiguation Strategies
+
+Two built-in strategies resolve conflicts between extensions:
+
+- **Priority** (`STRAT_PRIORITY`): Compares numeric priority values.
+  Cost: ~100-300 ns per conflict. Deterministic, always confidence 1.0.
+  Best when you know which extension should win.
+
+- **Fork-resolve** (`STRAT_FORK_RESOLVE`): Clones parser state for each
+  candidate interpretation, feeds lookahead tokens, picks the survivor.
+  Cost: ~2-50 us per conflict (depends on fork count and stack depth).
+  Creates up to 16 forks (configurable), default 3-token lookahead.
+
+### Memory Overhead Per Extension
+
+| Component                    | Per-Extension   | Notes                      |
+|------------------------------|-----------------|----------------------------|
+| Registry entry + metadata    | ~350-700 B      | Deep-copied strings        |
+| Action table growth          | ~2-10 KB        | Additional states/terminals|
+| Fork set (peak, transient)   | ~4-640 KB       | Up to 16 forks * 40 KB    |
+
+For comprehensive analysis including scaling behavior (1-50 extensions),
+JIT interaction, conflict type performance comparison, and tuning
+recommendations, see **[EXTENSION_PERFORMANCE.md](EXTENSION_PERFORMANCE.md)**.
 
 ### Recommendations
 
 - Load all extensions at startup before parsing begins, to avoid mid-stream
-  snapshot transitions.
+  snapshot transitions and repeated JIT invalidation.
+- Use priority strategy for known conflicts (100-1000x faster than fork-resolve).
 - If an extension is loaded rarely, synchronous JIT compilation of the new
   snapshot may be worthwhile to avoid the warmup period.
+- Declare `conflicts_with` in extension metadata to reject incompatible
+  combinations early, before expensive conflict detection runs.
 
 ## Scaling Behavior
 
@@ -197,7 +239,16 @@ registration/unregistration (write lock) serializes. In practice, extensions
 are loaded at startup and the read lock path dominates.
 
 Each loaded extension adds its modifications to a new snapshot. The cost
-scales linearly with the number of extensions.
+scales linearly with the number of extensions for most operations.
+Semantic conflict detection is O(N^2) in the number of extensions but
+is a one-time cost at load time.
+
+| Extensions | Registry Memory | Conflict Detection | Snapshot Growth |
+|-----------|-----------------|-------------------|-----------------|
+| 1         | ~700 B          | ~5 us             | ~0%             |
+| 5         | ~3.5 KB         | ~50-200 us        | +3-15%          |
+| 10        | ~7 KB           | ~100-500 us       | +7-30%          |
+| 50        | ~35 KB          | ~1-5 ms           | +30-100%        |
 
 ## Memory Budget Guide
 

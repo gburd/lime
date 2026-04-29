@@ -16,3 +16,10 @@ jit_comparison = executable('jit_comparison',
   include_directories : include_directories('../src'),
   link_args : ['-lm'],  # Link math library for sqrt()
 )
+
+extension_overhead = executable('extension_overhead',
+  'extension_overhead.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+  link_args : ['-lm'],
+)

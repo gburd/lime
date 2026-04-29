@@ -23,6 +23,9 @@ lime_exe = executable('lime',
   install : true,
 )
 
+# Install man pages
+install_man('man/lime.1', 'man/lime_grammar.5')
+
 # Build the library components from src/
 subdir('src')
 
@@ -31,3 +34,13 @@ subdir('tests')
 
 # Build benchmarks
 subdir('bench')
+
+# API documentation via Doxygen
+doxygen = find_program('doxygen', required : false)
+if doxygen.found()
+  custom_target('doxygen',
+    output : 'html',
+    command : [doxygen, meson.project_source_root() / 'Doxyfile'],
+    build_by_default : false,
+  )
+endif

@@ -21,6 +21,18 @@ int calc_next_token(const char *input, int *pos, int len, int *value) {
     case '(': (*pos)++; return TOK_LPAREN;
     case ')': (*pos)++; return TOK_RPAREN;
     case '^': (*pos)++; return TOK_CARET;
+    case '&': (*pos)++; return TOK_AMPERSAND;
+    case '|': (*pos)++; return TOK_PIPE;
+    case '<':
+        if (*pos + 1 < len && input[*pos + 1] == '<') {
+            *pos += 2; return TOK_LSHIFT;
+        }
+        break;
+    case '>':
+        if (*pos + 1 < len && input[*pos + 1] == '>') {
+            *pos += 2; return TOK_RSHIFT;
+        }
+        break;
     default:
         break;
     }

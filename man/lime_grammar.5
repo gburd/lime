@@ -1,0 +1,462 @@
+.\" lime_grammar.5 - manual page for the Lime grammar file format
+.\" Copyright (c) 2024-2026 Lime Parser Generator Project
+.\" Public Domain
+.\"
+.TH LIME_GRAMMAR 5 "April 2026" "Lime 1.0" "File Formats"
+.SH NAME
+lime_grammar \- Lime parser generator grammar file format
+.SH DESCRIPTION
+A Lime grammar file defines the syntax of a language using production
+rules and configuration directives.
+Lime reads this file and generates an LALR(1) parser in C.
+.PP
+Grammar files conventionally use the
+.B .lime
+file extension.
+A grammar file consists of:
+.IP \(bu 2
+Directive declarations (lines beginning with
+.BR % )
+.IP \(bu 2
+Production rules
+.IP \(bu 2
+C\-language comments
+.RB ( "/* ... */" )
+.SH "PRODUCTION RULES"
+A production rule defines how a non-terminal symbol is constructed
+from a sequence of terminal and non-terminal symbols.
+The general form is:
+.PP
+.RS
+.EX
+lhs(A) ::= sym1(B) sym2(C) sym3. { A = f(B, C); }
+.EE
+.RE
+.PP
+.TP
+.I lhs
+The non-terminal being defined (left-hand side).
+Non-terminal names begin with a lowercase letter.
+.TP
+.I sym1, sym2, sym3
+The right-hand side symbols.
+Terminal symbols begin with an uppercase letter.
+Non-terminal symbols begin with a lowercase letter.
+.TP
+.I (A), (B), (C)
+Optional aliases that name the semantic value of each symbol
+for use in the action code.
+.TP
+.BI "{ " "C code" " }"
+An optional semantic action executed when the rule is reduced.
+Inside the action, aliases refer to the semantic values of the
+corresponding symbols.
+.PP
+Every rule must be terminated by a period
+.RB ( . ).
+.PP
+A rule may specify an explicit precedence by appending a
+bracket-enclosed terminal symbol before the action:
+.PP
+.RS
+.EX
+expr(A) ::= MINUS expr(B). [UMINUS] { A = -B; }
+.EE
+.RE
+.PP
+This assigns the rule the precedence of
+.B UMINUS
+instead of the default (rightmost terminal).
+.SH DIRECTIVES
+All directives begin with a
+.B %
+character.
+.SS "Parser Configuration"
+.TP
+.BI %name " identifier"
+Set the prefix for generated parser functions.
+The default is
+.BR Parse ,
+so the generated functions are named
+.BR ParseAlloc ,
+.BR ParseFree ,
+.BR Parse ,
+and
+.BR ParseTrace .
+With
+.BR "%name Calc" ,
+they become
+.BR CalcAlloc ,
+.BR CalcFree ,
+etc.
+.TP
+.BI %token_type " {C-type}"
+Declare the C data type for terminal symbol values (tokens).
+This is the type of the third argument to the parser function.
+Example:
+.BR "%token_type {int}" .
+.TP
+.BI %default_type " {C-type}"
+Declare the default C data type for non-terminal symbol values.
+Non-terminals without an explicit
+.B %type
+declaration use this type.
+.TP
+.BI %type " symbol {C-type}"
+Declare the C data type for a specific non-terminal's semantic
+value.
+Example:
+.BR "%type expr {int}" .
+.TP
+.BI %extra_argument " {C-declaration}"
+Declare an extra argument passed to the parser function on each
+call.
+This is commonly a pointer to an application context structure.
+Example:
+.BR "%extra_argument {ParseState *state}" .
+.TP
+.BI %extra_context " {C-declaration}"
+Declare an extra context stored in the parser object, set once
+during allocation.
+Unlike
+.BR %extra_argument ,
+this value persists across calls.
+.TP
+.BI %start_symbol " symbol"
+Declare the start symbol of the grammar.
+By default, the left-hand side of the first production rule is
+the start symbol.
+.TP
+.BI %token_prefix " prefix"
+Prepend
+.I prefix
+to all token
+.B #define
+names in the generated header file.
+Useful to avoid name collisions.
+For example,
+.B "%token_prefix TK_"
+causes the token
+.B INTEGER
+to be defined as
+.BR TK_INTEGER .
+.TP
+.BI %stack_size " N"
+Set the initial parser stack depth to
+.IR N .
+The stack grows automatically if needed.
+The default is typically sufficient for most grammars.
+.TP
+.BI %stack_size_limit " N"
+Set the maximum parser stack depth to
+.IR N .
+If the stack reaches this limit, a stack overflow error is triggered.
+.SS "Include and Code Blocks"
+.TP
+.B %include
+.BI { " C code " }
+Insert C code at the top of the generated parser source file.
+Typically used for
+.B #include
+directives and type definitions.
+.TP
+.B %code
+.BI { " C code " }
+Insert C code into the generated parser source, after the
+include section.
+.SS "Precedence and Associativity"
+Precedence is declared from lowest to highest.
+Each directive defines a new precedence level.
+Symbols listed on the same directive share the same level and
+associativity.
+.TP
+.BI %left " sym1 sym2 " ...
+Declare
+.IR sym1 , " sym2" , " ..."
+as left-associative at a new precedence level.
+.TP
+.BI %right " sym1 sym2 " ...
+Declare
+.IR sym1 , " sym2" , " ..."
+as right-associative at a new precedence level.
+.TP
+.BI %nonassoc " sym1 sym2 " ...
+Declare
+.IR sym1 , " sym2" , " ..."
+as non-associative at a new precedence level.
+Non-associative operators cause a parse error when two appear
+at the same level without explicit grouping.
+.SS "Token Declarations"
+.TP
+.BI %token " name" .
+Declare a terminal symbol.
+Token declarations are optional but influence the order of
+token code assignment in the generated header.
+.TP
+.BI %token_class " name sym1 sym2 " ...
+Define a token class: a named group of terminal symbols that
+can be used as a single symbol in production rules.
+.TP
+.BI %fallback " first_token token1 token2 " ...
+Declare that if
+.IR token1 , " token2" , " ..."
+cause a syntax error, the parser should retry with
+.I first_token
+instead.
+This is useful for handling context-sensitive keywords.
+.TP
+.BI %wildcard " token" .
+Declare
+.I token
+as a wildcard that matches any token not otherwise handled
+by the parser in the current state.
+.SS "Error Handling"
+.TP
+.B %syntax_error
+.BI { " C code " }
+C code to execute when a syntax error is detected.
+Inside the block,
+.B yymajor
+and
+.B yyminor
+refer to the token that caused the error.
+.TP
+.B %parse_failure
+.BI { " C code " }
+C code to execute when the parser fails completely (cannot
+recover from a syntax error).
+.TP
+.B %parse_accept
+.BI { " C code " }
+C code to execute when the input is successfully parsed.
+.TP
+.B %stack_overflow
+.BI { " C code " }
+C code to execute if the parser stack overflows.
+.TP
+.BI %error_sync " N"
+Configure error recovery behavior.
+.BI %expect " N"
+Declare the expected number of parsing conflicts.
+If exactly
+.I N
+conflicts are found,
+.B lime
+exits with status 0.
+This suppresses conflict warnings when conflicts are intentional.
+.SS Destructors
+.TP
+.BI %destructor " symbol { C code }"
+Declare C code to execute when a value of type
+.I symbol
+is popped from the parser stack without being used in a
+reduction action.
+This is essential for freeing dynamically allocated semantic
+values to prevent memory leaks.
+.TP
+.B %token_destructor
+.BI { " C code " }
+Declare a default destructor for all terminal symbols.
+.TP
+.B %default_destructor
+.BI { " C code " }
+Declare a default destructor for all non-terminal symbols that
+do not have a specific
+.B %destructor
+declaration.
+.SS "Memory Management"
+.TP
+.BI %realloc " function"
+Specify the memory reallocation function used by the generated
+parser for stack growth.
+The default is
+.BR realloc (3).
+.TP
+.BI %free " function"
+Specify the memory deallocation function used by the generated
+parser.
+The default is
+.BR free (3).
+.SS "Location Tracking"
+.TP
+.B %locations
+Enable source location tracking in the parser.
+When enabled, each token and non-terminal carries location
+information that can be used for error reporting.
+.SS "Preprocessor Directives"
+.TP
+.BI %ifdef " macro"
+Begin a conditional section.
+The enclosed grammar text is included only if
+.I macro
+was defined with the
+.B \-D
+command-line option.
+.TP
+.BI %ifndef " macro"
+Begin a conditional section that is included only if
+.I macro
+is
+.I not
+defined.
+.TP
+.B %endif
+End a conditional section started by
+.B %ifdef
+or
+.BR %ifndef .
+.SS "AST Generation"
+.TP
+.BI %ast_prefix " prefix"
+Set the prefix for automatically generated AST node types.
+.TP
+.BI %ast_node " symbol { members }"
+Define an AST node type for a non-terminal.
+.TP
+.BI %ast_list " symbol { member-type }"
+Define an AST list node type for a non-terminal.
+.TP
+.B %ast_auto
+Enable automatic generation of AST construction code in
+reduction actions.
+.SS "Module Directives"
+These directives support modular grammar development, where a
+large grammar is split into multiple files that are composed
+together.
+.TP
+.BI %module_name " identifier"
+Declare the module name for this grammar file.
+Must be alphanumeric with underscores.
+If present,
+.B %module_version
+is required.
+.TP
+.BI %module_version " \(dqmajor.minor.patch\(dq"
+Declare the module version using semantic versioning.
+.TP
+.BI %module_description " \(dqdescription\(dq"
+Optional human-readable description of the module.
+.TP
+.BI %require " module" " " \fR[\fIversion-constraint\fR]\fB.
+Declare a dependency on another module.
+The version constraint is optional and supports operators:
+.BR >= ", " <= ", " > ", " < ", " == .
+Example:
+.BR "%require base \(dq>= 1.0.0\(dq." .
+.TP
+.BI %export " sym1 sym2 " ...\fB.\fR
+Declare non-terminal symbols exported by this module for use
+by other modules.
+.TP
+.BI %import " sym1 sym2 " ... " from " module\fB.\fR
+Import symbols (terminal or non-terminal) from another module.
+.SH SYMBOL NAMING
+.IP \(bu 2
+Terminal symbols (tokens) must start with an uppercase letter.
+.IP \(bu 2
+Non-terminal symbols must start with a lowercase letter.
+.IP \(bu 2
+The special symbol
+.B error
+is a non-terminal used for error recovery.
+When the parser encounters a syntax error, it pops states until
+it finds one where
+.B error
+is a valid lookahead, then shifts the
+.B error
+symbol and continues parsing.
+.SH COMMENTS
+C-style comments
+.RB ( "/* ... */" )
+and C++-style line comments
+.RB ( "// ..." )
+may appear anywhere in the grammar file outside of action code blocks.
+.SH EXAMPLES
+A minimal calculator grammar:
+.PP
+.RS
+.EX
+%name Calc
+%token_type {int}
+%type expr {int}
+%extra_argument {int *result}
+
+%include {
+#include <stdio.h>
+}
+
+%syntax_error {
+    fprintf(stderr, "syntax error\\n");
+}
+
+%token PLUS MINUS TIMES DIVIDE INTEGER.
+
+%left PLUS MINUS.
+%left TIMES DIVIDE.
+
+%start_symbol program
+
+program ::= expr(A). { *result = A; }
+
+expr(A) ::= expr(B) PLUS expr(C).   { A = B + C; }
+expr(A) ::= expr(B) MINUS expr(C).  { A = B \- C; }
+expr(A) ::= expr(B) TIMES expr(C).  { A = B * C; }
+expr(A) ::= expr(B) DIVIDE expr(C). { A = B / C; }
+expr(A) ::= INTEGER(B).             { A = B; }
+.EE
+.RE
+.PP
+Using fallback tokens for context-sensitive keywords:
+.PP
+.RS
+.EX
+%fallback ID ABORT ACTION AFTER ANALYZE.
+.EE
+.RE
+.PP
+This means that if ABORT, ACTION, AFTER, or ANALYZE cause a
+syntax error in context, the parser retries with ID.
+.PP
+Using preprocessor conditionals:
+.PP
+.RS
+.EX
+%ifdef ENABLE_JSON
+json_expr(A) ::= expr(B) ARROW expr(C). { A = json_get(B, C); }
+%endif
+.EE
+.RE
+.PP
+A modular grammar file:
+.PP
+.RS
+.EX
+%module_name expr
+%module_version "1.0.0"
+%module_description "Expression grammar"
+
+%require base ">= 1.0.0".
+%export a_expr b_expr.
+%import IDENT INTEGER from base.
+
+%type a_expr {Node*}
+
+a_expr(A) ::= a_expr(B) PLUS a_expr(C). {
+    A = make_binop('+', B, C);
+}
+a_expr(A) ::= INTEGER(B). {
+    A = make_int(B);
+}
+.EE
+.RE
+.SH "SEE ALSO"
+.BR lime (1),
+.BR yacc (1),
+.BR bison (1)
+.SH AUTHORS
+The Lemon parser generator was originally written by D. Richard Hipp
+for the SQLite project.
+Lime is an extended version of Lemon with support for modular
+grammars, runtime extensions, and additional code generation features.
+.SH LICENSE
+Public Domain.

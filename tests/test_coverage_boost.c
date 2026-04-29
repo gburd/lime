@@ -19,7 +19,7 @@
 
 #include "../src/snapshot.h"
 #include "../src/snapshot_modify.h"
-#include "../src/conflict.h"
+#include "conflict.h"
 #include "../src/extension.h"
 
 #define TEST(name) printf("  %-60s", name); fflush(stdout)

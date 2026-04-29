@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../src/extension.h"
-#include "../src/conflict.h"
+#include "conflict.h"
 
 #define TEST(name) printf("  %-60s", name); fflush(stdout)
 #define PASS() do { printf("PASS\n"); tests_passed++; } while(0)

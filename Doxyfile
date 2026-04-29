@@ -1,0 +1,103 @@
+# Doxyfile for the Lime Parser Generator
+# Generated for API documentation of the runtime extension framework
+
+# -- Project settings --
+PROJECT_NAME           = "Lime Parser Generator"
+PROJECT_NUMBER         = "0.1.0"
+PROJECT_BRIEF          = "Runtime-extensible LALR(1) parser with SIMD tokenization and LLVM JIT"
+PROJECT_LOGO           =
+OUTPUT_DIRECTORY       = docs/api
+
+# -- Build settings --
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = NO
+EXTRACT_LOCAL_CLASSES  = NO
+
+# -- Input files --
+INPUT                  = include/ src/snapshot.h
+FILE_PATTERNS          = *.h *.c
+RECURSIVE              = NO
+EXCLUDE_PATTERNS       = */test_* */bench/*
+
+# -- Source browser --
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+STRIP_CODE_COMMENTS    = YES
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+
+# -- Output format --
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+HTML_FILE_EXTENSION    = .html
+HTML_COLORSTYLE_HUE    = 220
+HTML_COLORSTYLE_SAT    = 100
+HTML_COLORSTYLE_GAMMA  = 80
+HTML_DYNAMIC_SECTIONS  = YES
+HTML_INDEX_NUM_ENTRIES = 100
+GENERATE_TREEVIEW      = YES
+SEARCHENGINE           = YES
+SERVER_BASED_SEARCH    = NO
+
+# -- Other output formats (disabled) --
+GENERATE_LATEX         = NO
+GENERATE_RTF           = NO
+GENERATE_MAN           = NO
+GENERATE_XML           = NO
+
+# -- Diagrams --
+HAVE_DOT               = NO
+CLASS_DIAGRAMS         = NO
+COLLABORATION_GRAPH    = NO
+INCLUDE_GRAPH          = YES
+INCLUDED_BY_GRAPH      = YES
+GRAPHICAL_HIERARCHY    = NO
+
+# -- Preprocessing --
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = NO
+PREDEFINED             = __cplusplus \
+                         _WIN32
+
+# -- Warnings --
+QUIET                  = NO
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = YES
+WARN_FORMAT            = "$file:$line: $text"
+
+# -- Grouping and navigation --
+OPTIMIZE_OUTPUT_FOR_C  = YES
+TYPEDEF_HIDES_STRUCT   = YES
+SORT_MEMBER_DOCS       = YES
+SORT_BRIEF_DOCS        = YES
+
+# -- Markdown and styling --
+MARKDOWN_SUPPORT       = YES
+AUTOLINK_SUPPORT       = YES
+TAB_SIZE               = 4
+ALIASES                = "thread_safe=\par Thread Safety:\n" \
+                         "ownership=\par Ownership:\n"
+
+# -- Dot graphs (when available) --
+DOT_NUM_THREADS        = 0
+DOT_FONTNAME           = Helvetica
+DOT_FONTSIZE           = 10
+
+# -- Layout --
+FULL_PATH_NAMES        = YES
+STRIP_FROM_PATH        = .
+STRIP_FROM_INC_PATH    = include/ src/
+SHOW_INCLUDE_FILES     = YES
+SHOW_GROUPED_MEMB_INC = YES
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = NO
+MULTILINE_CPP_IS_BRIEF = NO
+
+# -- Example paths --
+EXAMPLE_PATH           = examples/
+EXAMPLE_PATTERNS       = *.c *.h
+EXAMPLE_RECURSIVE      = NO

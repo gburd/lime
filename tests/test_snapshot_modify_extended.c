@@ -8,7 +8,7 @@
 #include <stdatomic.h>
 #include "../src/snapshot.h"
 #include "../src/snapshot_modify.h"
-#include "../src/conflict.h"
+#include "conflict.h"
 
 #define TEST(name) printf("  %-60s", name); fflush(stdout)
 #define PASS() do { printf("PASS\n"); tests_passed++; } while(0)
