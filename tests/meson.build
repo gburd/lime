@@ -212,3 +212,30 @@ test_fork_resolve = executable('test_fork_resolve',
 )
 
 test('fork_resolve', test_fork_resolve)
+
+# Extended strategy priority tests (improved coverage)
+test_strategy_priority_extended = executable('test_strategy_priority_extended',
+  'test_strategy_priority_extended.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('strategy_priority_extended', test_strategy_priority_extended)
+
+# Grammar context stack tests
+test_grammar_context = executable('test_grammar_context',
+  'test_grammar_context.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('grammar_context', test_grammar_context)
+
+# Extension registry comprehensive tests
+test_extension_registry = executable('test_extension_registry',
+  'test_extension_registry.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('extension_registry', test_extension_registry)
