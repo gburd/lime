@@ -1,0 +1,657 @@
+/*
+** DuckDB Features Grammar Extension
+**
+** Adds DuckDB-specific SQL syntax extensions for analytics workloads.
+** DuckDB is an in-process analytical database with a rich SQL dialect
+** that extends standard SQL with:
+**
+**   - LIST types: [1, 2, 3] and list comprehension functions
+**   - STRUCT types: {'name': 'Alice', 'age': 30}
+**   - Lambda functions: x -> x * 2  (used with list operations)
+**   - PIVOT / UNPIVOT table transformations
+**   - ASOF joins for time-series data
+**   - EXCLUDE / REPLACE in SELECT * expressions
+**   - QUALIFY clause for window function filtering
+**   - SAMPLE clause for data sampling
+**   - COLUMNS expression for dynamic column selection
+**
+** This extension is designed to work alongside the base SQL grammar
+** through the Lime extension registry.  DuckDB syntax is largely
+** additive -- it introduces new expressions and clauses that do not
+** conflict with standard SQL.
+**
+** Reference: https://duckdb.org/docs/sql/introduction
+*/
+
+%name DuckdbFeatures
+%token_type {DuckdbToken}
+%type expr {DuckdbExpr*}
+%type list_literal {DuckdbExpr*}
+%type list_elements {DuckdbExprList*}
+%type struct_literal {DuckdbExpr*}
+%type struct_fields {DuckdbStruct*}
+%type struct_field {DuckdbStruct*}
+%type lambda_expr {DuckdbExpr*}
+%type lambda_params {DuckdbLambdaParams*}
+%type exclude_clause {DuckdbExcludeList*}
+%type exclude_list {DuckdbExcludeList*}
+%type replace_clause {DuckdbReplaceList*}
+%type replace_list {DuckdbReplaceList*}
+%type replace_item {DuckdbReplaceList*}
+%type qualify_clause {DuckdbQualifyClause*}
+%type sample_clause {DuckdbSampleClause*}
+%type pivot_stmt {DuckdbPivotClause*}
+%type unpivot_stmt {DuckdbPivotClause*}
+%type pivot_col_list {DuckdbPivotColumn*}
+%type pivot_value_list {DuckdbPivotValue*}
+%type arg_list {DuckdbExprList*}
+%extra_argument {DuckdbParseState *pstate}
+
+%include {
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "duckdb_semantics.h"
+}
+
+%syntax_error {
+    (void)yymajor;
+    (void)yyminor;
+    duckdb_parse_error(pstate, "DuckDB SQL syntax error");
+}
+
+/* ======================================================================
+ * DUCKDB-SPECIFIC TOKENS
+ * ====================================================================== */
+
+/* Delimiters */
+%token LBRACKET.        /* [ -- list start                         */
+%token RBRACKET.        /* ] -- list end                           */
+%token LBRACE.          /* { -- struct start                       */
+%token RBRACE.          /* } -- struct end                         */
+%token ARROW.           /* -> -- lambda arrow                      */
+%token COLON.           /* : -- struct field separator             */
+%token DOUBLE_COLON.    /* :: -- type cast                         */
+%token CONCAT.          /* || -- concatenation                     */
+
+/* Keywords */
+%token PIVOT.
+%token UNPIVOT.
+%token FOR.
+%token QUALIFY.
+%token EXCLUDE.
+%token REPLACE_KW.
+%token SAMPLE.
+%token USING.
+%token PERCENT.
+%token ROWS.
+%token BERNOULLI.
+%token SYSTEM.
+%token RESERVOIR.
+%token REPEATABLE.
+%token SEED.
+%token COLUMNS.
+%token ASOF.
+%token POSITIONAL.
+%token STRUCT_KW.
+%token LIST_KW.
+%token FLATTEN.
+
+/* List function keywords */
+%token LIST_TRANSFORM.
+%token LIST_FILTER.
+%token LIST_REDUCE.
+%token LIST_CONTAINS.
+%token LIST_EXTRACT.
+%token LIST_SORT.
+%token LIST_DISTINCT.
+%token LIST_AGG.
+
+/* Standard SQL tokens referenced */
+%token SELECT.
+%token FROM.
+%token WHERE.
+%token JOIN.
+%token ON.
+%token IN.
+%token AS.
+%token BY.
+%token AND.
+%token OR.
+%token NOT.
+%token IS.
+%token NULL_KW.
+%token TRUE_KW.
+%token FALSE_KW.
+%token COMMA.
+%token LPAREN.
+%token RPAREN.
+%token DOT.
+%token STAR.
+%token EQUALS.
+%token NOT_EQUALS.
+%token LESS_THAN.
+%token GREATER_THAN.
+%token LESS_EQUALS.
+%token GREATER_EQUALS.
+%token PLUS.
+%token MINUS.
+%token DIVIDE.
+%token MODULO.
+%token IDENT.
+%token SCONST.
+%token ICONST.
+%token FCONST.
+%token SEMICOLON.
+
+/* ======================================================================
+ * PRECEDENCE
+ * ====================================================================== */
+
+%left OR.
+%left AND.
+%right NOT.
+%left EQUALS NOT_EQUALS LESS_THAN GREATER_THAN LESS_EQUALS GREATER_EQUALS.
+%left CONCAT.
+%left PLUS MINUS.
+%left STAR DIVIDE MODULO.
+%right ARROW.
+%left LBRACKET.
+%left DOT.
+
+%start_symbol duckdb_input
+
+/* ======================================================================
+ * TOP-LEVEL
+ * ====================================================================== */
+
+duckdb_input ::= expr(E) SEMICOLON. {
+    DuckdbStmt *s = (DuckdbStmt *)malloc(sizeof(DuckdbStmt));
+    if (s) { s->type = DUCK_STMT_SELECT; s->u.select.targets = duckdb_expr_list_new(pstate, E); }
+    duckdb_emit_stmt(pstate, s);
+}
+
+duckdb_input ::= expr(E). {
+    DuckdbStmt *s = (DuckdbStmt *)malloc(sizeof(DuckdbStmt));
+    if (s) { s->type = DUCK_STMT_SELECT; s->u.select.targets = duckdb_expr_list_new(pstate, E); }
+    duckdb_emit_stmt(pstate, s);
+}
+
+/* ======================================================================
+ * LIST LITERALS  [elem1, elem2, ...]
+ *
+ * DuckDB LIST type is an ordered sequence.  Unlike PostgreSQL arrays,
+ * DuckDB lists use bracket syntax with commas.
+ *
+ * Examples:
+ *   [1, 2, 3]
+ *   ['hello', 'world']
+ *   [[1, 2], [3, 4]]    -- nested lists
+ *   []                   -- empty list
+ * ====================================================================== */
+
+expr(A) ::= list_literal(L). {
+    A = L;
+}
+
+list_literal(A) ::= LBRACKET list_elements(E) RBRACKET. {
+    A = duckdb_make_list(pstate, E);
+}
+
+list_literal(A) ::= LBRACKET RBRACKET. {
+    A = duckdb_make_list(pstate, NULL);
+}
+
+list_elements(A) ::= expr(E). {
+    A = duckdb_expr_list_new(pstate, E);
+}
+
+list_elements(A) ::= list_elements(L) COMMA expr(E). {
+    A = duckdb_expr_list_append(pstate, L, E);
+}
+
+/* ======================================================================
+ * STRUCT LITERALS  {'key': value, 'key2': value2}
+ *
+ * DuckDB STRUCTs are typed named tuples.  Fields are accessed by
+ * name using dot notation.
+ *
+ * Examples:
+ *   {'name': 'Alice', 'age': 30}
+ *   {'x': 1, 'y': 2, 'z': 3}
+ *   {'nested': {'a': 1}}
+ * ====================================================================== */
+
+expr(A) ::= struct_literal(S). {
+    A = S;
+}
+
+struct_literal(A) ::= LBRACE struct_fields(F) RBRACE. {
+    A = duckdb_make_struct(pstate, F);
+}
+
+struct_literal(A) ::= LBRACE RBRACE. {
+    A = duckdb_make_struct(pstate, NULL);
+}
+
+struct_fields(A) ::= struct_field(F). {
+    A = F;
+}
+
+struct_fields(A) ::= struct_fields(L) COMMA struct_field(F). {
+    A = duckdb_struct_append(pstate, L, F->head->name, F->head->value);
+}
+
+struct_field(A) ::= SCONST(K) COLON expr(V). {
+    A = duckdb_struct_new(pstate, K.sval, V);
+}
+
+struct_field(A) ::= IDENT(K) COLON expr(V). {
+    A = duckdb_struct_new(pstate, K.sval, V);
+}
+
+/* ======================================================================
+ * LAMBDA EXPRESSIONS   param -> body
+ *
+ * DuckDB supports lambda functions in list operations.  A lambda has
+ * one or two parameters and an expression body.
+ *
+ * Examples:
+ *   x -> x * 2
+ *   x -> x > 10
+ *   (x, y) -> x + y
+ * ====================================================================== */
+
+expr(A) ::= lambda_expr(L). {
+    A = L;
+}
+
+lambda_expr(A) ::= IDENT(P) ARROW expr(B). {
+    DuckdbLambdaParams *params = duckdb_lambda_params_new(pstate, P.sval);
+    A = duckdb_make_lambda(pstate, params, B);
+}
+
+lambda_expr(A) ::= LPAREN lambda_params(P) RPAREN ARROW expr(B). {
+    A = duckdb_make_lambda(pstate, P, B);
+}
+
+lambda_params(A) ::= IDENT(P1). {
+    A = duckdb_lambda_params_new(pstate, P1.sval);
+}
+
+lambda_params(A) ::= lambda_params(L) COMMA IDENT(P2). {
+    A = duckdb_lambda_params_add(pstate, L, P2.sval);
+}
+
+/* ======================================================================
+ * LIST FUNCTIONS
+ *
+ * DuckDB provides a rich set of list manipulation functions that
+ * accept lambda expressions.
+ *
+ * Examples:
+ *   list_transform([1, 2, 3], x -> x * 2)          -- [2, 4, 6]
+ *   list_filter([1, 2, 3, 4, 5], x -> x > 2)       -- [3, 4, 5]
+ *   list_reduce([1, 2, 3], (x, y) -> x + y)         -- 6
+ *   list_contains([1, 2, 3], 2)                      -- true
+ *   list_extract([10, 20, 30], 2)                    -- 20
+ *   list_sort([3, 1, 2])                             -- [1, 2, 3]
+ *   list_distinct([1, 1, 2, 2, 3])                   -- [1, 2, 3]
+ *   list([col]) or list_agg(col)                     -- aggregate
+ *   flatten([[1, 2], [3, 4]])                        -- [1, 2, 3, 4]
+ * ====================================================================== */
+
+expr(A) ::= LIST_TRANSFORM LPAREN expr(L) COMMA expr(Lam) RPAREN. {
+    A = duckdb_make_list_transform(pstate, L, Lam);
+}
+
+expr(A) ::= LIST_FILTER LPAREN expr(L) COMMA expr(Lam) RPAREN. {
+    A = duckdb_make_list_filter(pstate, L, Lam);
+}
+
+expr(A) ::= LIST_REDUCE LPAREN expr(L) COMMA expr(Lam) RPAREN. {
+    A = duckdb_make_list_reduce(pstate, L, Lam);
+}
+
+expr(A) ::= LIST_CONTAINS LPAREN expr(L) COMMA expr(E) RPAREN. {
+    A = duckdb_make_list_contains(pstate, L, E);
+}
+
+expr(A) ::= LIST_EXTRACT LPAREN expr(L) COMMA expr(I) RPAREN. {
+    A = duckdb_make_list_extract(pstate, L, I);
+}
+
+expr(A) ::= LIST_SORT LPAREN expr(L) RPAREN. {
+    A = duckdb_make_list_sort(pstate, L);
+}
+
+expr(A) ::= LIST_DISTINCT LPAREN expr(L) RPAREN. {
+    A = duckdb_make_list_distinct(pstate, L);
+}
+
+expr(A) ::= LIST_AGG LPAREN expr(E) RPAREN. {
+    A = duckdb_make_list_agg(pstate, E);
+}
+
+expr(A) ::= FLATTEN LPAREN expr(L) RPAREN. {
+    A = duckdb_make_flatten(pstate, L);
+}
+
+/* ======================================================================
+ * STRUCT ACCESS  expr.field_name
+ *
+ * DuckDB struct fields are accessed with dot notation.
+ * List elements are accessed with bracket subscript.
+ *
+ * Examples:
+ *   s.name
+ *   person.address.city
+ *   my_list[1]
+ *   data['key']
+ * ====================================================================== */
+
+expr(A) ::= expr(B) DOT IDENT(F). {
+    A = duckdb_make_struct_access(pstate, B, F.sval);
+}
+
+expr(A) ::= expr(B) LBRACKET expr(I) RBRACKET. {
+    A = duckdb_make_subscript(pstate, B, I);
+}
+
+/* ======================================================================
+ * EXCLUDE / REPLACE
+ *
+ * DuckDB extends SELECT * with EXCLUDE and REPLACE clauses.
+ *
+ * Examples:
+ *   SELECT * EXCLUDE (col1, col2) FROM t;
+ *   SELECT * REPLACE (col1 * 2 AS col1) FROM t;
+ *   SELECT * EXCLUDE (secret) REPLACE (upper(name) AS name) FROM t;
+ * ====================================================================== */
+
+exclude_clause(A) ::= EXCLUDE LPAREN exclude_list(L) RPAREN. {
+    A = L;
+}
+
+exclude_list(A) ::= IDENT(C). {
+    A = duckdb_exclude_new(pstate, C.sval);
+}
+
+exclude_list(A) ::= exclude_list(L) COMMA IDENT(C). {
+    A = duckdb_exclude_append(pstate, L, C.sval);
+}
+
+replace_clause(A) ::= REPLACE_KW LPAREN replace_list(L) RPAREN. {
+    A = L;
+}
+
+replace_list(A) ::= replace_item(I). {
+    A = I;
+}
+
+replace_list(A) ::= replace_list(L) COMMA replace_item(I). {
+    A = duckdb_replace_append(pstate, L, I->head->expr, I->head->column);
+}
+
+replace_item(A) ::= expr(E) AS IDENT(C). {
+    A = duckdb_replace_new(pstate, E, C.sval);
+}
+
+/* ======================================================================
+ * QUALIFY clause
+ *
+ * DuckDB's QUALIFY filters rows after window functions are computed,
+ * similar to HAVING but for window expressions.
+ *
+ * Example:
+ *   SELECT *, row_number() OVER (PARTITION BY dept ORDER BY salary DESC) AS rn
+ *   FROM employees
+ *   QUALIFY rn = 1;
+ * ====================================================================== */
+
+qualify_clause(A) ::= QUALIFY expr(E). {
+    A = duckdb_make_qualify(pstate, E);
+}
+
+/* ======================================================================
+ * SAMPLE clause
+ *
+ * DuckDB supports data sampling directly in queries.
+ *
+ * Examples:
+ *   SELECT * FROM t USING SAMPLE 10%;
+ *   SELECT * FROM t USING SAMPLE 1000 ROWS;
+ *   SELECT * FROM t USING SAMPLE 10% (bernoulli);
+ *   SELECT * FROM t USING SAMPLE 10% (system, 42);
+ *   SELECT * FROM t TABLESAMPLE RESERVOIR(5%);
+ * ====================================================================== */
+
+sample_clause(A) ::= USING SAMPLE FCONST(N) PERCENT. {
+    A = duckdb_make_sample(pstate, N.fval, DUCK_SAMPLE_PERCENT);
+}
+
+sample_clause(A) ::= USING SAMPLE ICONST(N) PERCENT. {
+    A = duckdb_make_sample(pstate, (double)N.ival, DUCK_SAMPLE_PERCENT);
+}
+
+sample_clause(A) ::= USING SAMPLE ICONST(N) ROWS. {
+    A = duckdb_make_sample(pstate, (double)N.ival, DUCK_SAMPLE_ROWS);
+}
+
+sample_clause(A) ::= USING SAMPLE FCONST(N) PERCENT
+                      LPAREN BERNOULLI RPAREN. {
+    A = duckdb_make_sample(pstate, N.fval, DUCK_SAMPLE_BERNOULLI);
+}
+
+sample_clause(A) ::= USING SAMPLE FCONST(N) PERCENT
+                      LPAREN SYSTEM RPAREN. {
+    A = duckdb_make_sample(pstate, N.fval, DUCK_SAMPLE_SYSTEM);
+}
+
+sample_clause(A) ::= USING SAMPLE ICONST(N) ROWS
+                      LPAREN RESERVOIR RPAREN. {
+    A = duckdb_make_sample(pstate, (double)N.ival, DUCK_SAMPLE_RESERVOIR);
+}
+
+/* ======================================================================
+ * PIVOT / UNPIVOT
+ *
+ * DuckDB supports PIVOT (rows to columns) and UNPIVOT (columns to
+ * rows) as first-class SQL constructs.
+ *
+ * Examples:
+ *   PIVOT cities ON year IN (2000, 2010, 2020) USING sum(population);
+ *
+ *   UNPIVOT monthly_sales
+ *     ON jan, feb, mar, apr, may, jun
+ *     INTO NAME month VALUE amount;
+ * ====================================================================== */
+
+pivot_stmt(A) ::= PIVOT IDENT(T) ON pivot_col_list(C)
+                   IN LPAREN pivot_value_list(V) RPAREN
+                   USING IDENT(F) LPAREN expr(E) RPAREN. {
+    (void)T;
+    A = duckdb_make_pivot(pstate, F.sval, E, C, V);
+}
+
+unpivot_stmt(A) ::= UNPIVOT IDENT(T) ON pivot_col_list(C)
+                     IN LPAREN pivot_value_list(V) RPAREN. {
+    (void)T;
+    A = duckdb_make_unpivot(pstate, C, V);
+}
+
+pivot_col_list(A) ::= IDENT(C). {
+    A = duckdb_pivot_col_new(pstate, C.sval);
+}
+
+pivot_col_list(A) ::= pivot_col_list(L) COMMA IDENT(C). {
+    A = duckdb_pivot_col_append(pstate, L, C.sval);
+}
+
+pivot_value_list(A) ::= expr(V). {
+    A = duckdb_pivot_value_new(pstate, V, NULL);
+}
+
+pivot_value_list(A) ::= expr(V) AS IDENT(Alias). {
+    A = duckdb_pivot_value_new(pstate, V, Alias.sval);
+}
+
+pivot_value_list(A) ::= pivot_value_list(L) COMMA expr(V). {
+    A = duckdb_pivot_value_append(pstate, L, V, NULL);
+}
+
+pivot_value_list(A) ::= pivot_value_list(L) COMMA expr(V) AS IDENT(Alias). {
+    A = duckdb_pivot_value_append(pstate, L, V, Alias.sval);
+}
+
+/* ======================================================================
+ * COLUMNS EXPRESSION
+ *
+ * DuckDB's COLUMNS() selects columns dynamically by name or regex.
+ *
+ * Examples:
+ *   SELECT COLUMNS('price_.*') FROM products;
+ *   SELECT min(COLUMNS(*)) FROM t;
+ * ====================================================================== */
+
+expr(A) ::= COLUMNS LPAREN SCONST(P) RPAREN. {
+    A = duckdb_make_columns_regex(pstate, P.sval);
+}
+
+expr(A) ::= COLUMNS LPAREN STAR RPAREN. {
+    A = duckdb_make_columns(pstate, "*");
+}
+
+/* ======================================================================
+ * STANDARD EXPRESSIONS
+ *
+ * Base expression rules needed by the DuckDB-specific constructs.
+ * ====================================================================== */
+
+/* Identifiers */
+expr(A) ::= IDENT(I). {
+    A = duckdb_make_ident(pstate, I.sval);
+}
+
+expr(A) ::= IDENT(T) DOT IDENT(C). [DOT] {
+    A = duckdb_make_qualified_ident(pstate, T.sval, C.sval);
+}
+
+/* Literals */
+expr(A) ::= ICONST(V). {
+    A = duckdb_make_iconst(pstate, V.ival);
+}
+
+expr(A) ::= FCONST(V). {
+    A = duckdb_make_fconst(pstate, V.fval);
+}
+
+expr(A) ::= SCONST(V). {
+    A = duckdb_make_sconst(pstate, V.sval);
+}
+
+expr(A) ::= NULL_KW. {
+    A = duckdb_make_null(pstate);
+}
+
+expr(A) ::= TRUE_KW. {
+    A = duckdb_make_bool(pstate, true);
+}
+
+expr(A) ::= FALSE_KW. {
+    A = duckdb_make_bool(pstate, false);
+}
+
+expr(A) ::= LPAREN expr(E) RPAREN. {
+    A = E;
+}
+
+/* Arithmetic */
+expr(A) ::= expr(L) PLUS expr(R). {
+    A = duckdb_make_binop(pstate, DUCK_OP_ADD, L, R);
+}
+
+expr(A) ::= expr(L) MINUS expr(R). {
+    A = duckdb_make_binop(pstate, DUCK_OP_SUB, L, R);
+}
+
+expr(A) ::= expr(L) STAR expr(R). {
+    A = duckdb_make_binop(pstate, DUCK_OP_MUL, L, R);
+}
+
+expr(A) ::= expr(L) DIVIDE expr(R). {
+    A = duckdb_make_binop(pstate, DUCK_OP_DIV, L, R);
+}
+
+expr(A) ::= expr(L) MODULO expr(R). {
+    A = duckdb_make_binop(pstate, DUCK_OP_MOD, L, R);
+}
+
+/* Concatenation */
+expr(A) ::= expr(L) CONCAT expr(R). {
+    A = duckdb_make_binop(pstate, DUCK_OP_CONCAT, L, R);
+}
+
+/* Comparison */
+expr(A) ::= expr(L) EQUALS expr(R). {
+    A = duckdb_make_binop(pstate, DUCK_OP_EQ, L, R);
+}
+
+expr(A) ::= expr(L) NOT_EQUALS expr(R). {
+    A = duckdb_make_binop(pstate, DUCK_OP_NE, L, R);
+}
+
+expr(A) ::= expr(L) LESS_THAN expr(R). {
+    A = duckdb_make_binop(pstate, DUCK_OP_LT, L, R);
+}
+
+expr(A) ::= expr(L) GREATER_THAN expr(R). {
+    A = duckdb_make_binop(pstate, DUCK_OP_GT, L, R);
+}
+
+expr(A) ::= expr(L) LESS_EQUALS expr(R). {
+    A = duckdb_make_binop(pstate, DUCK_OP_LE, L, R);
+}
+
+expr(A) ::= expr(L) GREATER_EQUALS expr(R). {
+    A = duckdb_make_binop(pstate, DUCK_OP_GE, L, R);
+}
+
+/* Boolean */
+expr(A) ::= expr(L) AND expr(R). {
+    A = duckdb_make_binop(pstate, DUCK_OP_AND, L, R);
+}
+
+expr(A) ::= expr(L) OR expr(R). {
+    A = duckdb_make_binop(pstate, DUCK_OP_OR, L, R);
+}
+
+expr(A) ::= NOT expr(E). {
+    A = duckdb_make_unaryop(pstate, DUCK_OP_NOT, E);
+}
+
+/* IS NULL / IS NOT NULL */
+expr(A) ::= expr(E) IS NULL_KW. {
+    A = duckdb_make_is_null(pstate, E, false);
+}
+
+expr(A) ::= expr(E) IS NOT NULL_KW. {
+    A = duckdb_make_is_null(pstate, E, true);
+}
+
+/* General function call */
+expr(A) ::= IDENT(F) LPAREN RPAREN. {
+    A = duckdb_make_func_call(pstate, F.sval, NULL);
+}
+
+expr(A) ::= IDENT(F) LPAREN arg_list(Args) RPAREN. {
+    A = duckdb_make_func_call(pstate, F.sval, Args);
+}
+
+arg_list(A) ::= expr(E). {
+    A = duckdb_expr_list_new(pstate, E);
+}
+
+arg_list(A) ::= arg_list(L) COMMA expr(E). {
+    A = duckdb_expr_list_append(pstate, L, E);
+}

@@ -1,0 +1,315 @@
+/*
+** XPath 1.0 Selector Grammar
+**
+** This grammar defines XPath 1.0 path expressions for use as an
+** embedded language within SQL via the xpath() function.
+**
+** Usage in SQL:
+**   SELECT xpath(
+**     '//book[@lang="en"]/title/text()',
+**     xml_column
+**   ) FROM documents;
+**
+** This is a Lime grammar specification.
+*/
+
+/* Parser configuration */
+%name xpathParse
+%token_prefix TK_XP_
+
+%include {
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+
+/* AST node types */
+typedef enum {
+    XP_PATH_ABS,      /* Absolute path starting with /          */
+    XP_PATH_REL,      /* Relative path                          */
+    XP_PATH_DSLASH,   /* Descendant-or-self (//)                */
+    XP_STEP,          /* A single location step                 */
+    XP_AXIS,          /* Axis specifier (child::, descendant::) */
+    XP_NAME_TEST,     /* Name test (element name or *)          */
+    XP_NODE_TYPE,     /* Node type test: node(), text(), etc.   */
+    XP_PREDICATE,     /* Predicate expression [...]             */
+    XP_FUNC_CALL,     /* Function call: name(args)              */
+    XP_VAR_REF,       /* Variable reference: $name              */
+    XP_STRING_LIT,    /* String literal: 'text' or "text"       */
+    XP_NUMBER_LIT,    /* Numeric literal                        */
+    XP_OR,            /* Boolean or                             */
+    XP_AND,           /* Boolean and                            */
+    XP_COMPARE,       /* Comparison: =, !=, <, >, <=, >=       */
+    XP_ARITH,         /* Arithmetic: +, -, *, div, mod          */
+    XP_UNION,         /* Union: path | path                     */
+    XP_NEGATE,        /* Unary minus                            */
+} XPathNodeKind;
+
+typedef struct XPathASTNode XPathASTNode;
+struct XPathASTNode {
+    XPathNodeKind kind;
+    const char *value;
+    XPathASTNode *left;
+    XPathASTNode *right;
+    XPathASTNode *next;   /* for lists */
+};
+
+typedef struct {
+    XPathASTNode *result;
+    int error;
+    char *error_msg;
+} XPathParseState;
+
+static XPathASTNode *xp_node(XPathNodeKind kind, const char *val,
+                             XPathASTNode *left, XPathASTNode *right) {
+    XPathASTNode *n = malloc(sizeof(XPathASTNode));
+    if (n == NULL) return NULL;
+    n->kind = kind;
+    n->value = val;
+    n->left = left;
+    n->right = right;
+    n->next = NULL;
+    return n;
+}
+}
+
+/* Token type */
+%token_type { const char * }
+
+/* Extra argument */
+%extra_argument { XPathParseState *pstate }
+
+/* Error handling */
+%syntax_error {
+    pstate->error = 1;
+    pstate->error_msg = "XPath syntax error";
+}
+
+/* Precedence (lowest to highest) */
+%left PIPE.
+%left OR.
+%left AND.
+%left EQ NE.
+%left LT GT LE GE.
+%left PLUS MINUS.
+%left STAR DIV MOD.
+%right UMINUS.
+
+/* Non-terminal types */
+%type expr { XPathASTNode* }
+%type or_expr { XPathASTNode* }
+%type and_expr { XPathASTNode* }
+%type equality_expr { XPathASTNode* }
+%type relational_expr { XPathASTNode* }
+%type additive_expr { XPathASTNode* }
+%type multiplicative_expr { XPathASTNode* }
+%type unary_expr { XPathASTNode* }
+%type union_expr { XPathASTNode* }
+%type path_expr { XPathASTNode* }
+%type location_path { XPathASTNode* }
+%type relative_path { XPathASTNode* }
+%type step { XPathASTNode* }
+%type node_test { XPathASTNode* }
+%type predicate_list { XPathASTNode* }
+%type predicate { XPathASTNode* }
+%type primary_expr { XPathASTNode* }
+%type func_call { XPathASTNode* }
+%type arg_list { XPathASTNode* }
+
+/* Start symbol */
+input ::= expr(E). { pstate->result = E; }
+
+/* ------------------------------------------------------------------ */
+/*  Expressions                                                        */
+/* ------------------------------------------------------------------ */
+
+expr(R) ::= or_expr(E). { R = E; }
+
+/* Or */
+or_expr(R) ::= and_expr(E). { R = E; }
+or_expr(R) ::= or_expr(L) OR and_expr(Ri). {
+    R = xp_node(XP_OR, "or", L, Ri);
+}
+
+/* And */
+and_expr(R) ::= equality_expr(E). { R = E; }
+and_expr(R) ::= and_expr(L) AND equality_expr(Ri). {
+    R = xp_node(XP_AND, "and", L, Ri);
+}
+
+/* Equality */
+equality_expr(R) ::= relational_expr(E). { R = E; }
+equality_expr(R) ::= equality_expr(L) EQ relational_expr(Ri). {
+    R = xp_node(XP_COMPARE, "=", L, Ri);
+}
+equality_expr(R) ::= equality_expr(L) NE relational_expr(Ri). {
+    R = xp_node(XP_COMPARE, "!=", L, Ri);
+}
+
+/* Relational */
+relational_expr(R) ::= additive_expr(E). { R = E; }
+relational_expr(R) ::= relational_expr(L) LT additive_expr(Ri). {
+    R = xp_node(XP_COMPARE, "<", L, Ri);
+}
+relational_expr(R) ::= relational_expr(L) GT additive_expr(Ri). {
+    R = xp_node(XP_COMPARE, ">", L, Ri);
+}
+relational_expr(R) ::= relational_expr(L) LE additive_expr(Ri). {
+    R = xp_node(XP_COMPARE, "<=", L, Ri);
+}
+relational_expr(R) ::= relational_expr(L) GE additive_expr(Ri). {
+    R = xp_node(XP_COMPARE, ">=", L, Ri);
+}
+
+/* Additive */
+additive_expr(R) ::= multiplicative_expr(E). { R = E; }
+additive_expr(R) ::= additive_expr(L) PLUS multiplicative_expr(Ri). {
+    R = xp_node(XP_ARITH, "+", L, Ri);
+}
+additive_expr(R) ::= additive_expr(L) MINUS multiplicative_expr(Ri). {
+    R = xp_node(XP_ARITH, "-", L, Ri);
+}
+
+/* Multiplicative */
+multiplicative_expr(R) ::= unary_expr(E). { R = E; }
+multiplicative_expr(R) ::= multiplicative_expr(L) STAR unary_expr(Ri). {
+    R = xp_node(XP_ARITH, "*", L, Ri);
+}
+multiplicative_expr(R) ::= multiplicative_expr(L) DIV unary_expr(Ri). {
+    R = xp_node(XP_ARITH, "div", L, Ri);
+}
+multiplicative_expr(R) ::= multiplicative_expr(L) MOD unary_expr(Ri). {
+    R = xp_node(XP_ARITH, "mod", L, Ri);
+}
+
+/* Unary */
+unary_expr(R) ::= union_expr(E). { R = E; }
+unary_expr(R) ::= MINUS unary_expr(E). [UMINUS] {
+    R = xp_node(XP_NEGATE, "-", E, NULL);
+}
+
+/* Union */
+union_expr(R) ::= path_expr(E). { R = E; }
+union_expr(R) ::= union_expr(L) PIPE path_expr(Ri). {
+    R = xp_node(XP_UNION, "|", L, Ri);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Path expressions                                                   */
+/* ------------------------------------------------------------------ */
+
+path_expr(R) ::= location_path(P). { R = P; }
+path_expr(R) ::= primary_expr(E). { R = E; }
+
+/* Location paths */
+location_path(R) ::= relative_path(P). { R = P; }
+location_path(R) ::= SLASH. {
+    R = xp_node(XP_PATH_ABS, "/", NULL, NULL);
+}
+location_path(R) ::= SLASH relative_path(P). {
+    R = xp_node(XP_PATH_ABS, "/", P, NULL);
+}
+location_path(R) ::= DSLASH relative_path(P). {
+    R = xp_node(XP_PATH_DSLASH, "//", P, NULL);
+}
+
+/* Relative paths */
+relative_path(R) ::= step(S). { R = S; }
+relative_path(R) ::= relative_path(P) SLASH step(S). {
+    R = xp_node(XP_PATH_REL, "/", P, S);
+}
+relative_path(R) ::= relative_path(P) DSLASH step(S). {
+    R = xp_node(XP_PATH_DSLASH, "//", P, S);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Location steps                                                     */
+/* ------------------------------------------------------------------ */
+
+step(R) ::= node_test(N). {
+    R = xp_node(XP_STEP, NULL, N, NULL);
+}
+step(R) ::= node_test(N) predicate_list(P). {
+    R = xp_node(XP_STEP, NULL, N, P);
+}
+step(R) ::= NAME(A) DCOLON node_test(N). {
+    R = xp_node(XP_STEP, A, N, NULL);  /* A is axis name */
+}
+step(R) ::= NAME(A) DCOLON node_test(N) predicate_list(P). {
+    R = xp_node(XP_STEP, A, N, P);
+}
+step(R) ::= AT node_test(N). {
+    R = xp_node(XP_STEP, "attribute", N, NULL);
+}
+step(R) ::= AT node_test(N) predicate_list(P). {
+    R = xp_node(XP_STEP, "attribute", N, P);
+}
+step(R) ::= DOT. {
+    R = xp_node(XP_STEP, "self", xp_node(XP_NODE_TYPE, "node", NULL, NULL), NULL);
+}
+step(R) ::= DOTDOT. {
+    R = xp_node(XP_STEP, "parent", xp_node(XP_NODE_TYPE, "node", NULL, NULL), NULL);
+}
+
+/* Node tests */
+node_test(R) ::= NAME(N). {
+    R = xp_node(XP_NAME_TEST, N, NULL, NULL);
+}
+node_test(R) ::= STAR. {
+    R = xp_node(XP_NAME_TEST, "*", NULL, NULL);
+}
+node_test(R) ::= NODE LPAREN RPAREN. {
+    R = xp_node(XP_NODE_TYPE, "node", NULL, NULL);
+}
+node_test(R) ::= TEXT LPAREN RPAREN. {
+    R = xp_node(XP_NODE_TYPE, "text", NULL, NULL);
+}
+node_test(R) ::= COMMENT LPAREN RPAREN. {
+    R = xp_node(XP_NODE_TYPE, "comment", NULL, NULL);
+}
+node_test(R) ::= PI LPAREN RPAREN. {
+    R = xp_node(XP_NODE_TYPE, "processing-instruction", NULL, NULL);
+}
+node_test(R) ::= PI LPAREN STRING(S) RPAREN. {
+    R = xp_node(XP_NODE_TYPE, "processing-instruction", xp_node(XP_STRING_LIT, S, NULL, NULL), NULL);
+}
+
+/* Predicates */
+predicate_list(R) ::= predicate(P). { R = P; }
+predicate_list(R) ::= predicate_list(L) predicate(P). {
+    if (L) { XPathASTNode *last = L; while (last->next) last = last->next; last->next = P; }
+    R = L;
+}
+
+predicate(R) ::= LBRACKET expr(E) RBRACKET. {
+    R = xp_node(XP_PREDICATE, NULL, E, NULL);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Primary expressions                                                */
+/* ------------------------------------------------------------------ */
+
+primary_expr(R) ::= VARIABLE(V). {
+    R = xp_node(XP_VAR_REF, V, NULL, NULL);
+}
+primary_expr(R) ::= STRING(S). {
+    R = xp_node(XP_STRING_LIT, S, NULL, NULL);
+}
+primary_expr(R) ::= NUMBER(N). {
+    R = xp_node(XP_NUMBER_LIT, N, NULL, NULL);
+}
+primary_expr(R) ::= func_call(F). { R = F; }
+primary_expr(R) ::= LPAREN expr(E) RPAREN. { R = E; }
+
+/* Function calls */
+func_call(R) ::= NAME(N) LPAREN RPAREN. {
+    R = xp_node(XP_FUNC_CALL, N, NULL, NULL);
+}
+func_call(R) ::= NAME(N) LPAREN arg_list(A) RPAREN. {
+    R = xp_node(XP_FUNC_CALL, N, A, NULL);
+}
+
+arg_list(R) ::= expr(E). { R = E; }
+arg_list(R) ::= arg_list(L) COMMA expr(E). {
+    if (L) { XPathASTNode *last = L; while (last->next) last = last->next; last->next = E; }
+    R = L;
+}

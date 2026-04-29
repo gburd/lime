@@ -1,0 +1,393 @@
+/*
+** XQuery FLWOR Expression Grammar
+**
+** This grammar defines a subset of XQuery 3.1 focused on the FLWOR
+** (for/let/where/order by/return) expressions commonly used when
+** XQuery is embedded in SQL via xmlquery().
+**
+** Usage in SQL:
+**   SELECT xmlquery(
+**     'for $x in /books/book
+**      where $x/price > 10
+**      return $x/title'
+**     PASSING xml_column
+**   ) FROM documents;
+**
+** This is a Lime grammar specification.  Run through the Lime parser
+** generator to produce a C parser:
+**
+**   ../../lime xquery_grammar.lime
+*/
+
+/* Parser configuration */
+%name xqueryParse
+%token_prefix TK_XQ_
+
+%include {
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+
+/* Forward declaration of AST node type */
+typedef struct XQueryNode XQueryNode;
+
+/* AST node types */
+typedef enum {
+    XQ_FLWOR,
+    XQ_FOR_CLAUSE,
+    XQ_LET_CLAUSE,
+    XQ_WHERE_CLAUSE,
+    XQ_ORDER_CLAUSE,
+    XQ_RETURN_CLAUSE,
+    XQ_PATH_EXPR,
+    XQ_STEP_EXPR,
+    XQ_PREDICATE,
+    XQ_FUNC_CALL,
+    XQ_VAR_REF,
+    XQ_STRING_LIT,
+    XQ_INTEGER_LIT,
+    XQ_DECIMAL_LIT,
+    XQ_COMPARE,
+    XQ_ARITH,
+    XQ_AND_EXPR,
+    XQ_OR_EXPR,
+    XQ_IF_EXPR,
+    XQ_SEQUENCE,
+    XQ_ELEMENT_CONSTR,
+    XQ_ATTR_CONSTR,
+    XQ_TEXT_CONSTR,
+} XQueryNodeType;
+
+struct XQueryNode {
+    XQueryNodeType type;
+    const char *value;
+    XQueryNode *left;
+    XQueryNode *right;
+    XQueryNode *next;     /* for lists */
+};
+
+/* Parse state passed as 4th argument */
+typedef struct {
+    XQueryNode *result;
+    int error;
+    char *error_msg;
+} XQueryParseState;
+
+static XQueryNode *xq_node(XQueryNodeType type, const char *val,
+                           XQueryNode *left, XQueryNode *right) {
+    XQueryNode *n = malloc(sizeof(XQueryNode));
+    if (n == NULL) return NULL;
+    n->type = type;
+    n->value = val;
+    n->left = left;
+    n->right = right;
+    n->next = NULL;
+    return n;
+}
+}
+
+/* Token type */
+%token_type { const char * }
+
+/* Extra argument to Parse() */
+%extra_argument { XQueryParseState *pstate }
+
+/* Error handling */
+%syntax_error {
+    pstate->error = 1;
+    pstate->error_msg = "XQuery syntax error";
+}
+
+/* Precedence (lowest to highest) */
+%left OR.
+%left AND.
+%left EQ NE LT GT LE GE.
+%left PLUS MINUS.
+%left STAR DIV MOD.
+%right UMINUS.
+
+/* Non-terminal types */
+%type expr { XQueryNode* }
+%type flwor_expr { XQueryNode* }
+%type for_clause { XQueryNode* }
+%type let_clause { XQueryNode* }
+%type where_clause { XQueryNode* }
+%type order_clause { XQueryNode* }
+%type return_clause { XQueryNode* }
+%type path_expr { XQueryNode* }
+%type step_expr { XQueryNode* }
+%type predicate { XQueryNode* }
+%type primary_expr { XQueryNode* }
+%type func_call { XQueryNode* }
+%type arg_list { XQueryNode* }
+%type compare_expr { XQueryNode* }
+%type arith_expr { XQueryNode* }
+%type or_expr { XQueryNode* }
+%type and_expr { XQueryNode* }
+%type if_expr { XQueryNode* }
+%type for_bindings { XQueryNode* }
+%type let_bindings { XQueryNode* }
+%type order_specs { XQueryNode* }
+
+/* Start symbol */
+input ::= expr(E). { pstate->result = E; }
+
+/* ------------------------------------------------------------------ */
+/*  FLWOR expressions                                                  */
+/* ------------------------------------------------------------------ */
+
+expr(R) ::= flwor_expr(F). { R = F; }
+
+flwor_expr(R) ::= for_clause(F) return_clause(T). {
+    R = xq_node(XQ_FLWOR, NULL, F, T);
+}
+
+flwor_expr(R) ::= for_clause(F) where_clause(W) return_clause(T). {
+    XQueryNode *fw = xq_node(XQ_FLWOR, NULL, F, T);
+    if (fw) fw->next = W;
+    R = fw;
+}
+
+flwor_expr(R) ::= for_clause(F) where_clause(W) order_clause(O) return_clause(T). {
+    XQueryNode *fw = xq_node(XQ_FLWOR, NULL, F, T);
+    if (fw) { fw->next = W; if (W) W->next = O; }
+    R = fw;
+}
+
+flwor_expr(R) ::= let_clause(L) return_clause(T). {
+    R = xq_node(XQ_FLWOR, NULL, L, T);
+}
+
+flwor_expr(R) ::= let_clause(L) where_clause(W) return_clause(T). {
+    XQueryNode *fw = xq_node(XQ_FLWOR, NULL, L, T);
+    if (fw) fw->next = W;
+    R = fw;
+}
+
+flwor_expr(R) ::= for_clause(F) let_clause(L) return_clause(T). {
+    XQueryNode *fw = xq_node(XQ_FLWOR, NULL, F, T);
+    if (fw && F) F->next = L;
+    R = fw;
+}
+
+/* For clause */
+for_clause(R) ::= FOR for_bindings(B). {
+    R = xq_node(XQ_FOR_CLAUSE, NULL, B, NULL);
+}
+
+for_bindings(R) ::= VARIABLE(V) IN expr(E). {
+    R = xq_node(XQ_VAR_REF, V, E, NULL);
+}
+
+for_bindings(R) ::= for_bindings(B) COMMA VARIABLE(V) IN expr(E). {
+    XQueryNode *bind = xq_node(XQ_VAR_REF, V, E, NULL);
+    if (B) { XQueryNode *last = B; while (last->next) last = last->next; last->next = bind; }
+    R = B;
+}
+
+/* Let clause */
+let_clause(R) ::= LET let_bindings(B). {
+    R = xq_node(XQ_LET_CLAUSE, NULL, B, NULL);
+}
+
+let_bindings(R) ::= VARIABLE(V) ASSIGN expr(E). {
+    R = xq_node(XQ_VAR_REF, V, E, NULL);
+}
+
+let_bindings(R) ::= let_bindings(B) COMMA VARIABLE(V) ASSIGN expr(E). {
+    XQueryNode *bind = xq_node(XQ_VAR_REF, V, E, NULL);
+    if (B) { XQueryNode *last = B; while (last->next) last = last->next; last->next = bind; }
+    R = B;
+}
+
+/* Where clause */
+where_clause(R) ::= WHERE expr(E). {
+    R = xq_node(XQ_WHERE_CLAUSE, NULL, E, NULL);
+}
+
+/* Order by clause */
+order_clause(R) ::= ORDER BY order_specs(S). {
+    R = xq_node(XQ_ORDER_CLAUSE, NULL, S, NULL);
+}
+
+order_specs(R) ::= expr(E). { R = E; }
+order_specs(R) ::= expr(E) ASCENDING. { R = xq_node(XQ_ORDER_CLAUSE, "asc", E, NULL); }
+order_specs(R) ::= expr(E) DESCENDING. { R = xq_node(XQ_ORDER_CLAUSE, "desc", E, NULL); }
+order_specs(R) ::= order_specs(S) COMMA expr(E). {
+    if (S) { XQueryNode *last = S; while (last->next) last = last->next; last->next = E; }
+    R = S;
+}
+
+/* Return clause */
+return_clause(R) ::= RETURN expr(E). {
+    R = xq_node(XQ_RETURN_CLAUSE, NULL, E, NULL);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Expressions                                                        */
+/* ------------------------------------------------------------------ */
+
+expr(R) ::= or_expr(E). { R = E; }
+expr(R) ::= if_expr(E). { R = E; }
+
+/* If expression */
+if_expr(R) ::= IF LPAREN expr(C) RPAREN THEN expr(T) ELSE expr(E). {
+    R = xq_node(XQ_IF_EXPR, NULL, C, xq_node(XQ_IF_EXPR, "branches", T, E));
+}
+
+/* Or expression */
+or_expr(R) ::= and_expr(E). { R = E; }
+or_expr(R) ::= or_expr(L) OR and_expr(Ri). {
+    R = xq_node(XQ_OR_EXPR, "or", L, Ri);
+}
+
+/* And expression */
+and_expr(R) ::= compare_expr(E). { R = E; }
+and_expr(R) ::= and_expr(L) AND compare_expr(Ri). {
+    R = xq_node(XQ_AND_EXPR, "and", L, Ri);
+}
+
+/* Comparison */
+compare_expr(R) ::= arith_expr(E). { R = E; }
+compare_expr(R) ::= arith_expr(L) EQ arith_expr(Ri). {
+    R = xq_node(XQ_COMPARE, "eq", L, Ri);
+}
+compare_expr(R) ::= arith_expr(L) NE arith_expr(Ri). {
+    R = xq_node(XQ_COMPARE, "ne", L, Ri);
+}
+compare_expr(R) ::= arith_expr(L) LT arith_expr(Ri). {
+    R = xq_node(XQ_COMPARE, "lt", L, Ri);
+}
+compare_expr(R) ::= arith_expr(L) GT arith_expr(Ri). {
+    R = xq_node(XQ_COMPARE, "gt", L, Ri);
+}
+compare_expr(R) ::= arith_expr(L) LE arith_expr(Ri). {
+    R = xq_node(XQ_COMPARE, "le", L, Ri);
+}
+compare_expr(R) ::= arith_expr(L) GE arith_expr(Ri). {
+    R = xq_node(XQ_COMPARE, "ge", L, Ri);
+}
+
+/* Arithmetic */
+arith_expr(R) ::= path_expr(E). { R = E; }
+arith_expr(R) ::= arith_expr(L) PLUS path_expr(Ri). {
+    R = xq_node(XQ_ARITH, "+", L, Ri);
+}
+arith_expr(R) ::= arith_expr(L) MINUS path_expr(Ri). {
+    R = xq_node(XQ_ARITH, "-", L, Ri);
+}
+arith_expr(R) ::= arith_expr(L) STAR path_expr(Ri). {
+    R = xq_node(XQ_ARITH, "*", L, Ri);
+}
+arith_expr(R) ::= arith_expr(L) DIV path_expr(Ri). {
+    R = xq_node(XQ_ARITH, "div", L, Ri);
+}
+arith_expr(R) ::= arith_expr(L) MOD path_expr(Ri). {
+    R = xq_node(XQ_ARITH, "mod", L, Ri);
+}
+arith_expr(R) ::= MINUS path_expr(E). [UMINUS] {
+    R = xq_node(XQ_ARITH, "neg", E, NULL);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Path expressions                                                   */
+/* ------------------------------------------------------------------ */
+
+path_expr(R) ::= SLASH step_expr(S). {
+    R = xq_node(XQ_PATH_EXPR, "/", S, NULL);
+}
+path_expr(R) ::= DSLASH step_expr(S). {
+    R = xq_node(XQ_PATH_EXPR, "//", S, NULL);
+}
+path_expr(R) ::= path_expr(P) SLASH step_expr(S). {
+    R = xq_node(XQ_PATH_EXPR, "/", P, S);
+}
+path_expr(R) ::= path_expr(P) DSLASH step_expr(S). {
+    R = xq_node(XQ_PATH_EXPR, "//", P, S);
+}
+path_expr(R) ::= primary_expr(E). { R = E; }
+
+/* Step expressions */
+step_expr(R) ::= NAME(N). {
+    R = xq_node(XQ_STEP_EXPR, N, NULL, NULL);
+}
+step_expr(R) ::= NAME(N) predicate(P). {
+    R = xq_node(XQ_STEP_EXPR, N, P, NULL);
+}
+step_expr(R) ::= AT NAME(N). {
+    R = xq_node(XQ_STEP_EXPR, N, NULL, NULL);
+    if (R) R->value = N; /* mark as attribute */
+}
+step_expr(R) ::= STAR. {
+    R = xq_node(XQ_STEP_EXPR, "*", NULL, NULL);
+}
+step_expr(R) ::= DOTDOT. {
+    R = xq_node(XQ_STEP_EXPR, "..", NULL, NULL);
+}
+step_expr(R) ::= DOT. {
+    R = xq_node(XQ_STEP_EXPR, ".", NULL, NULL);
+}
+
+/* Predicates */
+predicate(R) ::= LBRACKET expr(E) RBRACKET. {
+    R = xq_node(XQ_PREDICATE, NULL, E, NULL);
+}
+predicate(R) ::= predicate(P) LBRACKET expr(E) RBRACKET. {
+    XQueryNode *pred = xq_node(XQ_PREDICATE, NULL, E, NULL);
+    if (P) { XQueryNode *last = P; while (last->next) last = last->next; last->next = pred; }
+    R = P;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Primary expressions                                                */
+/* ------------------------------------------------------------------ */
+
+primary_expr(R) ::= VARIABLE(V). {
+    R = xq_node(XQ_VAR_REF, V, NULL, NULL);
+}
+primary_expr(R) ::= STRING(S). {
+    R = xq_node(XQ_STRING_LIT, S, NULL, NULL);
+}
+primary_expr(R) ::= INTEGER(I). {
+    R = xq_node(XQ_INTEGER_LIT, I, NULL, NULL);
+}
+primary_expr(R) ::= DECIMAL(D). {
+    R = xq_node(XQ_DECIMAL_LIT, D, NULL, NULL);
+}
+primary_expr(R) ::= func_call(F). { R = F; }
+primary_expr(R) ::= LPAREN expr(E) RPAREN. { R = E; }
+
+/* Function calls */
+func_call(R) ::= NAME(N) LPAREN RPAREN. {
+    R = xq_node(XQ_FUNC_CALL, N, NULL, NULL);
+}
+func_call(R) ::= NAME(N) LPAREN arg_list(A) RPAREN. {
+    R = xq_node(XQ_FUNC_CALL, N, A, NULL);
+}
+
+arg_list(R) ::= expr(E). { R = E; }
+arg_list(R) ::= arg_list(L) COMMA expr(E). {
+    if (L) { XQueryNode *last = L; while (last->next) last = last->next; last->next = E; }
+    R = L;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Element/Attribute constructors                                     */
+/* ------------------------------------------------------------------ */
+
+expr(R) ::= ELEMENT NAME(N) LBRACE expr(E) RBRACE. {
+    R = xq_node(XQ_ELEMENT_CONSTR, N, E, NULL);
+}
+
+expr(R) ::= ATTRIBUTE NAME(N) LBRACE expr(E) RBRACE. {
+    R = xq_node(XQ_ATTR_CONSTR, N, E, NULL);
+}
+
+expr(R) ::= TEXT LBRACE expr(E) RBRACE. {
+    R = xq_node(XQ_TEXT_CONSTR, NULL, E, NULL);
+}
+
+/* Sequence (comma-separated expressions) */
+expr(R) ::= expr(L) COMMA expr(Ri). {
+    R = xq_node(XQ_SEQUENCE, NULL, L, Ri);
+}

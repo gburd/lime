@@ -1,0 +1,574 @@
+/*
+ * SQLite Compatibility Grammar Extension for Lime Parser Generator
+ *
+ * This grammar defines SQLite-specific SQL syntax that extends a base SQL
+ * grammar.  It covers the major SQLite dialect features:
+ *
+ *   - WITHOUT ROWID tables
+ *   - AUTOINCREMENT on INTEGER PRIMARY KEY
+ *   - ON CONFLICT / UPSERT (INSERT ... ON CONFLICT DO UPDATE)
+ *   - PRAGMA statements
+ *   - SQLite type affinity (flexible typing)
+ *   - JSON functions (json_extract, json_array, etc.)
+ *   - ATTACH / DETACH database
+ *   - VACUUM
+ *   - EXPLAIN / EXPLAIN QUERY PLAN
+ *   - GLOB operator
+ *   - INDEXED BY / NOT INDEXED hints
+ *
+ * This file is not compiled directly by Lime.  Instead, the modifications
+ * are expressed as GrammarModification entries in sqlite_compat.c and
+ * registered through the extension system.  This file serves as the
+ * canonical reference for the grammar rules.
+ *
+ * Reference: https://www.sqlite.org/lang.html
+ */
+
+%name sqlite
+%token_type {SqliteToken}
+%extra_argument {SqliteParseState *pstate}
+
+/* ======================================================================
+ * SQLite-specific tokens
+ * ====================================================================== */
+
+/* Keywords */
+%token AUTOINCREMENT.
+%token WITHOUT.
+%token ROWID.
+%token PRAGMA.
+%token VACUUM.
+%token ATTACH.
+%token DETACH.
+%token EXPLAIN.
+%token QUERY.
+%token PLAN.
+%token GLOB.
+%token INDEXED.
+%token REINDEX.
+%token CONFLICT.
+%token DO.
+%token NOTHING.
+%token EXCLUDED.
+%token REPLACE.
+%token ABORT_KW.
+%token FAIL.
+%token IGNORE.
+%token ROLLBACK.
+%token STRICT.
+%token RETURNING.
+%token ISNULL.
+%token NOTNULL.
+%token VIRTUAL.
+%token USING.
+%token IF_P.
+%token EXISTS.
+%token DATABASE.
+%token CURRENT_TIMESTAMP.
+%token CURRENT_DATE.
+%token CURRENT_TIME.
+
+/* JSON function tokens */
+%token JSON_EXTRACT.
+%token JSON_ARRAY.
+%token JSON_OBJECT.
+%token JSON_TYPE.
+%token JSON_VALID.
+%token JSON_QUOTE.
+%token JSON_GROUP_ARRAY.
+%token JSON_GROUP_OBJECT.
+%token JSON_EACH.
+%token JSON_TREE.
+%token JSON_INSERT.
+%token JSON_REPLACE.
+%token JSON_SET.
+%token JSON_REMOVE.
+%token JSON_PATCH.
+%token ARROW.           /* -> (JSON extract shorthand) */
+%token DARROW.          /* ->> (JSON extract-as-text shorthand) */
+
+/* Standard tokens referenced in rules */
+%token INTEGER.
+%token PRIMARY.
+%token KEY.
+%token CREATE.
+%token TABLE.
+%token INSERT.
+%token INTO.
+%token VALUES.
+%token ON.
+%token SET.
+%token UPDATE.
+%token SELECT.
+%token FROM.
+%token WHERE.
+%token NOT.
+%token NULL_KW.
+%token DEFAULT.
+%token CHECK.
+%token UNIQUE.
+%token REFERENCES.
+%token TEXT.
+%token REAL.
+%token BLOB.
+%token NUMERIC.
+%token LPAREN.
+%token RPAREN.
+%token COMMA.
+%token DOT.
+%token SEMICOLON.
+%token EQ.
+%token STAR.
+%token SCONST.
+%token ICONST.
+%token FCONST.
+%token IDENT.
+%token AS.
+%token AND.
+%token OR.
+%token LIKE.
+%token IN.
+%token BETWEEN.
+%token IS.
+%token CAST.
+
+/* ======================================================================
+ * Precedence declarations
+ *
+ * SQLite operator precedence follows standard SQL with a few additions.
+ * The GLOB operator has the same precedence as LIKE.
+ * JSON arrow operators bind tighter than comparison.
+ * ====================================================================== */
+
+%left OR.
+%left AND.
+%right NOT.
+%left EQ GLOB LIKE IN BETWEEN IS ISNULL NOTNULL.
+%left ARROW DARROW.
+
+/* ======================================================================
+ * CREATE TABLE ... WITHOUT ROWID / STRICT
+ *
+ * SQLite allows WITHOUT ROWID and STRICT as table options after the
+ * closing parenthesis of the column definition list.
+ *
+ * Syntax:
+ *   CREATE TABLE t (col1 TYPE, col2 TYPE, ...) WITHOUT ROWID;
+ *   CREATE TABLE t (col1 TYPE, col2 TYPE, ...) STRICT;
+ *   CREATE TABLE t (col1 TYPE, col2 TYPE, ...) STRICT, WITHOUT ROWID;
+ * ====================================================================== */
+
+create_table_stmt ::= CREATE TABLE if_not_exists(E) table_name(T)
+    LPAREN column_def_list(C) RPAREN table_options(O) SEMICOLON. {
+    sqlite_create_table(pstate, E, T, C, O);
+}
+
+table_options(A) ::= . {
+    A = 0;  /* no special options */
+}
+
+table_options(A) ::= WITHOUT ROWID. {
+    A = SQLITE_TBL_WITHOUT_ROWID;
+}
+
+table_options(A) ::= STRICT. {
+    A = SQLITE_TBL_STRICT;
+}
+
+table_options(A) ::= STRICT COMMA WITHOUT ROWID. {
+    A = SQLITE_TBL_STRICT | SQLITE_TBL_WITHOUT_ROWID;
+}
+
+table_options(A) ::= WITHOUT ROWID COMMA STRICT. {
+    A = SQLITE_TBL_STRICT | SQLITE_TBL_WITHOUT_ROWID;
+}
+
+/* ======================================================================
+ * AUTOINCREMENT
+ *
+ * SQLite AUTOINCREMENT is only valid on INTEGER PRIMARY KEY columns.
+ * It guarantees monotonically increasing rowids (never reuses deleted
+ * rowid values), unlike the default rowid behavior.
+ *
+ * Syntax:
+ *   id INTEGER PRIMARY KEY AUTOINCREMENT
+ * ====================================================================== */
+
+column_constraint ::= PRIMARY KEY AUTOINCREMENT. {
+    sqlite_set_autoincrement(pstate);
+}
+
+column_constraint ::= PRIMARY KEY. {
+    sqlite_set_primary_key(pstate);
+}
+
+/* ======================================================================
+ * SQLite Type Affinity
+ *
+ * SQLite uses type affinity rather than strict types.  Any type name
+ * is accepted, but the affinity is determined by rules:
+ *   - Contains "INT"   -> INTEGER affinity
+ *   - Contains "CHAR", "CLOB", or "TEXT" -> TEXT affinity
+ *   - Contains "BLOB" or no type -> BLOB affinity (NONE)
+ *   - Contains "REAL", "FLOA", or "DOUB" -> REAL affinity
+ *   - Otherwise -> NUMERIC affinity
+ * ====================================================================== */
+
+type_name(A) ::= INTEGER. { A = SQLITE_AFF_INTEGER; }
+type_name(A) ::= TEXT.    { A = SQLITE_AFF_TEXT; }
+type_name(A) ::= REAL.    { A = SQLITE_AFF_REAL; }
+type_name(A) ::= BLOB.    { A = SQLITE_AFF_BLOB; }
+type_name(A) ::= NUMERIC. { A = SQLITE_AFF_NUMERIC; }
+
+/* Compound type names for affinity matching */
+type_name(A) ::= IDENT. {
+    A = sqlite_determine_affinity(pstate, &A);
+}
+
+type_name(A) ::= IDENT LPAREN ICONST RPAREN. {
+    /* e.g. VARCHAR(255) -> TEXT affinity */
+    A = sqlite_determine_affinity(pstate, &A);
+}
+
+type_name(A) ::= IDENT LPAREN ICONST COMMA ICONST RPAREN. {
+    /* e.g. DECIMAL(10,2) -> NUMERIC affinity */
+    A = sqlite_determine_affinity(pstate, &A);
+}
+
+/* ======================================================================
+ * ON CONFLICT clause (UPSERT)
+ *
+ * SQLite supports INSERT ... ON CONFLICT for upsert operations.
+ *
+ * Syntax:
+ *   INSERT INTO t (cols) VALUES (vals)
+ *     ON CONFLICT(col) DO UPDATE SET col = excluded.col;
+ *   INSERT INTO t (cols) VALUES (vals)
+ *     ON CONFLICT(col) DO NOTHING;
+ *   INSERT OR REPLACE INTO t ...
+ *   INSERT OR IGNORE INTO t ...
+ * ====================================================================== */
+
+insert_stmt ::= INSERT or_action(R) INTO table_name(T)
+    opt_column_list(C) VALUES value_list(V)
+    opt_upsert(U) SEMICOLON. {
+    sqlite_insert(pstate, R, T, C, V, U);
+}
+
+or_action(A) ::= . { A = SQLITE_CONFLICT_ABORT; }
+or_action(A) ::= OR REPLACE.  { A = SQLITE_CONFLICT_REPLACE; }
+or_action(A) ::= OR ROLLBACK. { A = SQLITE_CONFLICT_ROLLBACK; }
+or_action(A) ::= OR ABORT_KW. { A = SQLITE_CONFLICT_ABORT; }
+or_action(A) ::= OR FAIL.     { A = SQLITE_CONFLICT_FAIL; }
+or_action(A) ::= OR IGNORE.   { A = SQLITE_CONFLICT_IGNORE; }
+
+opt_upsert(A) ::= . { A = NULL; }
+
+opt_upsert(A) ::= ON CONFLICT conflict_target(T) DO UPDATE
+    SET update_set_list(S) opt_where(W). {
+    A = sqlite_make_upsert(pstate, T, S, W);
+}
+
+opt_upsert(A) ::= ON CONFLICT conflict_target(T) DO NOTHING. {
+    A = sqlite_make_upsert_nothing(pstate, T);
+}
+
+conflict_target(A) ::= LPAREN column_name_list(C) RPAREN. {
+    A = C;
+}
+
+conflict_target(A) ::= . {
+    A = NULL;  /* no specific conflict target */
+}
+
+/* ======================================================================
+ * PRAGMA statements
+ *
+ * PRAGMAs are SQLite-specific statements for database configuration.
+ * They are not queries and have their own distinct syntax.
+ *
+ * Syntax:
+ *   PRAGMA pragma_name;
+ *   PRAGMA pragma_name = value;
+ *   PRAGMA pragma_name(value);
+ *   PRAGMA schema.pragma_name;
+ * ====================================================================== */
+
+pragma_stmt ::= PRAGMA pragma_name(N) SEMICOLON. {
+    sqlite_pragma_get(pstate, N);
+}
+
+pragma_stmt ::= PRAGMA pragma_name(N) EQ pragma_value(V) SEMICOLON. {
+    sqlite_pragma_set(pstate, N, V);
+}
+
+pragma_stmt ::= PRAGMA pragma_name(N) LPAREN pragma_value(V) RPAREN SEMICOLON. {
+    sqlite_pragma_call(pstate, N, V);
+}
+
+pragma_name(A) ::= IDENT(X). { A = X; }
+pragma_name(A) ::= IDENT(S) DOT IDENT(N). {
+    /* schema-qualified pragma: e.g. main.cache_size */
+    A = sqlite_qualified_name(pstate, S, N);
+}
+
+pragma_value(A) ::= IDENT(X).  { A = X; }
+pragma_value(A) ::= SCONST(X). { A = X; }
+pragma_value(A) ::= ICONST(X). { A = X; }
+pragma_value(A) ::= ON.  { A = sqlite_make_ident(pstate, "ON"); }
+pragma_value(A) ::= IDENT(X). { A = X; }
+
+/* ======================================================================
+ * JSON functions (SQLite 3.38+)
+ *
+ * SQLite provides built-in JSON support through functions and the
+ * -> / ->> operators.
+ *
+ * Syntax:
+ *   json_extract(data, '$.name')
+ *   data -> '$.name'
+ *   data ->> '$.name'
+ *   json_array(1, 2, 3)
+ *   json_object('key', 'value')
+ *   json_each(data)
+ *   json_tree(data)
+ * ====================================================================== */
+
+/* Arrow operators for JSON extraction (SQLite 3.38+) */
+expr(A) ::= expr(X) ARROW expr(Y). {
+    A = sqlite_json_extract(pstate, X, Y);
+}
+
+expr(A) ::= expr(X) DARROW expr(Y). {
+    A = sqlite_json_extract_text(pstate, X, Y);
+}
+
+/* JSON scalar functions */
+expr(A) ::= JSON_EXTRACT LPAREN expr_list(L) RPAREN. {
+    A = sqlite_json_func(pstate, "json_extract", L);
+}
+
+expr(A) ::= JSON_ARRAY LPAREN opt_expr_list(L) RPAREN. {
+    A = sqlite_json_func(pstate, "json_array", L);
+}
+
+expr(A) ::= JSON_OBJECT LPAREN opt_expr_list(L) RPAREN. {
+    A = sqlite_json_func(pstate, "json_object", L);
+}
+
+expr(A) ::= JSON_TYPE LPAREN expr_list(L) RPAREN. {
+    A = sqlite_json_func(pstate, "json_type", L);
+}
+
+expr(A) ::= JSON_VALID LPAREN expr(X) RPAREN. {
+    A = sqlite_json_func(pstate, "json_valid", X);
+}
+
+expr(A) ::= JSON_QUOTE LPAREN expr(X) RPAREN. {
+    A = sqlite_json_func(pstate, "json_quote", X);
+}
+
+expr(A) ::= JSON_INSERT LPAREN expr_list(L) RPAREN. {
+    A = sqlite_json_func(pstate, "json_insert", L);
+}
+
+expr(A) ::= JSON_REPLACE LPAREN expr_list(L) RPAREN. {
+    A = sqlite_json_func(pstate, "json_replace", L);
+}
+
+expr(A) ::= JSON_SET LPAREN expr_list(L) RPAREN. {
+    A = sqlite_json_func(pstate, "json_set", L);
+}
+
+expr(A) ::= JSON_REMOVE LPAREN expr_list(L) RPAREN. {
+    A = sqlite_json_func(pstate, "json_remove", L);
+}
+
+expr(A) ::= JSON_PATCH LPAREN expr(X) COMMA expr(Y) RPAREN. {
+    A = sqlite_json_func2(pstate, "json_patch", X, Y);
+}
+
+/* JSON aggregate functions */
+expr(A) ::= JSON_GROUP_ARRAY LPAREN expr(X) RPAREN. {
+    A = sqlite_json_agg(pstate, "json_group_array", X);
+}
+
+expr(A) ::= JSON_GROUP_OBJECT LPAREN expr(X) COMMA expr(Y) RPAREN. {
+    A = sqlite_json_agg2(pstate, "json_group_object", X, Y);
+}
+
+/* JSON table-valued functions */
+from_item(A) ::= JSON_EACH LPAREN expr_list(L) RPAREN. {
+    A = sqlite_json_table_func(pstate, "json_each", L);
+}
+
+from_item(A) ::= JSON_TREE LPAREN expr_list(L) RPAREN. {
+    A = sqlite_json_table_func(pstate, "json_tree", L);
+}
+
+/* ======================================================================
+ * ATTACH / DETACH database
+ *
+ * Syntax:
+ *   ATTACH DATABASE 'file.db' AS schema_name;
+ *   ATTACH 'file.db' AS schema_name;
+ *   DETACH DATABASE schema_name;
+ *   DETACH schema_name;
+ * ====================================================================== */
+
+attach_stmt ::= ATTACH opt_database expr(F) AS IDENT(N) SEMICOLON. {
+    sqlite_attach(pstate, F, N);
+}
+
+detach_stmt ::= DETACH opt_database IDENT(N) SEMICOLON. {
+    sqlite_detach(pstate, N);
+}
+
+opt_database ::= DATABASE.
+opt_database ::= .
+
+/* ======================================================================
+ * VACUUM
+ *
+ * Syntax:
+ *   VACUUM;
+ *   VACUUM schema_name;
+ *   VACUUM INTO 'filename';
+ *   VACUUM schema_name INTO 'filename';
+ * ====================================================================== */
+
+vacuum_stmt ::= VACUUM SEMICOLON. {
+    sqlite_vacuum(pstate, NULL, NULL);
+}
+
+vacuum_stmt ::= VACUUM IDENT(S) SEMICOLON. {
+    sqlite_vacuum(pstate, S, NULL);
+}
+
+vacuum_stmt ::= VACUUM INTO SCONST(F) SEMICOLON. {
+    sqlite_vacuum(pstate, NULL, F);
+}
+
+vacuum_stmt ::= VACUUM IDENT(S) INTO SCONST(F) SEMICOLON. {
+    sqlite_vacuum(pstate, S, F);
+}
+
+/* ======================================================================
+ * EXPLAIN / EXPLAIN QUERY PLAN
+ *
+ * Syntax:
+ *   EXPLAIN stmt;
+ *   EXPLAIN QUERY PLAN stmt;
+ * ====================================================================== */
+
+explain_stmt ::= EXPLAIN sql_stmt(S). {
+    sqlite_explain(pstate, S, 0);
+}
+
+explain_stmt ::= EXPLAIN QUERY PLAN sql_stmt(S). {
+    sqlite_explain(pstate, S, 1);
+}
+
+/* ======================================================================
+ * GLOB operator
+ *
+ * SQLite GLOB is similar to LIKE but uses Unix file globbing syntax
+ * (case-sensitive, * and ? wildcards instead of % and _).
+ *
+ * Syntax:
+ *   expr GLOB pattern
+ * ====================================================================== */
+
+expr(A) ::= expr(X) GLOB expr(Y). {
+    A = sqlite_glob(pstate, X, Y);
+}
+
+expr(A) ::= expr(X) NOT GLOB expr(Y). {
+    A = sqlite_not_glob(pstate, X, Y);
+}
+
+/* ======================================================================
+ * INDEXED BY / NOT INDEXED hints
+ *
+ * SQLite allows specifying which index to use (or to not use any index)
+ * in FROM clauses.
+ *
+ * Syntax:
+ *   SELECT ... FROM t INDEXED BY idx_name WHERE ...
+ *   SELECT ... FROM t NOT INDEXED WHERE ...
+ * ====================================================================== */
+
+from_item(A) ::= table_name(T) INDEXED BY IDENT(I). {
+    A = sqlite_indexed_by(pstate, T, I);
+}
+
+from_item(A) ::= table_name(T) NOT INDEXED. {
+    A = sqlite_not_indexed(pstate, T);
+}
+
+/* ======================================================================
+ * REINDEX
+ *
+ * Syntax:
+ *   REINDEX;
+ *   REINDEX table_or_index_name;
+ *   REINDEX schema.table_or_index_name;
+ * ====================================================================== */
+
+reindex_stmt ::= REINDEX SEMICOLON. {
+    sqlite_reindex(pstate, NULL);
+}
+
+reindex_stmt ::= REINDEX IDENT(N) SEMICOLON. {
+    sqlite_reindex(pstate, N);
+}
+
+reindex_stmt ::= REINDEX IDENT(S) DOT IDENT(N) SEMICOLON. {
+    sqlite_reindex_qualified(pstate, S, N);
+}
+
+/* ======================================================================
+ * SQLite-specific expressions
+ *
+ * - CAST(expr AS type)  (standard SQL but very common in SQLite)
+ * - ISNULL / NOTNULL postfix operators
+ * - CURRENT_TIMESTAMP, CURRENT_DATE, CURRENT_TIME
+ * ====================================================================== */
+
+expr(A) ::= expr(X) ISNULL. {
+    A = sqlite_isnull(pstate, X);
+}
+
+expr(A) ::= expr(X) NOTNULL. {
+    A = sqlite_notnull(pstate, X);
+}
+
+expr(A) ::= expr(X) NOT NULL_KW. {
+    A = sqlite_notnull(pstate, X);
+}
+
+expr(A) ::= CAST LPAREN expr(X) AS type_name(T) RPAREN. {
+    A = sqlite_cast(pstate, X, T);
+}
+
+expr(A) ::= CURRENT_TIMESTAMP. {
+    A = sqlite_current_timestamp(pstate);
+}
+
+expr(A) ::= CURRENT_DATE. {
+    A = sqlite_current_date(pstate);
+}
+
+expr(A) ::= CURRENT_TIME. {
+    A = sqlite_current_time(pstate);
+}
+
+/* ======================================================================
+ * IF NOT EXISTS / IF EXISTS clauses
+ * ====================================================================== */
+
+if_not_exists(A) ::= . { A = 0; }
+if_not_exists(A) ::= IF_P NOT EXISTS. { A = 1; }
+
+if_exists(A) ::= . { A = 0; }
+if_exists(A) ::= IF_P EXISTS. { A = 1; }

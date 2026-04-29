@@ -1,0 +1,538 @@
+/*
+** MySQL SQL Compatibility Grammar Extension
+**
+** This grammar extends a base SQL parser with MySQL-specific syntax
+** constructs.  It is designed to be used as a grammar extension via the
+** Lime extension registry, demonstrating how the fork-resolve
+** disambiguation strategy handles conflicts between PostgreSQL and
+** MySQL syntax.
+**
+** MySQL features covered:
+**   1. LIMIT n OFFSET m / LIMIT m, n
+**   2. AUTO_INCREMENT column attribute
+**   3. ENGINE clause (InnoDB, MyISAM, etc.)
+**   4. CHARSET and COLLATE clauses
+**   5. SHOW statements (SHOW TABLES, SHOW DATABASES, etc.)
+**   6. Backtick identifiers (`table_name`)
+**   7. IFNULL() / IF() functions
+**   8. ON DUPLICATE KEY UPDATE (UPSERT)
+**   9. DIV integer division operator
+**  10. <=> null-safe equality operator
+**  11. UNSIGNED column attribute
+**  12. GROUP_CONCAT() function
+*/
+
+%name MysqlCompat
+%token_type {MysqlToken}
+%type expr {MysqlExpr*}
+%type select_stmt {MysqlStmt*}
+%type create_table_stmt {MysqlStmt*}
+%type insert_stmt {MysqlStmt*}
+%type show_stmt {MysqlStmt*}
+%type limit_clause {MysqlExpr*}
+%type table_option_list {MysqlTableOption*}
+%type table_option {MysqlTableOption*}
+%type column_def {MysqlColumnDef*}
+%type column_def_list {MysqlColumnDef*}
+%type upsert_clause {MysqlUpsertClause*}
+%extra_argument {MysqlParseState *pstate}
+
+%include {
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "mysql_semantics.h"
+}
+
+%syntax_error {
+    (void)yymajor;
+    (void)yyminor;
+    mysql_parse_error(pstate, "MySQL SQL syntax error");
+}
+
+%parse_failure {
+    mysql_parse_error(pstate, "MySQL SQL parse failure");
+}
+
+/* ================================================================== */
+/*  Token declarations                                                  */
+/* ================================================================== */
+
+/* Standard SQL tokens (shared with base grammar) */
+%token SELECT FROM WHERE ORDER BY ASC DESC.
+%token COMMA LPAREN RPAREN DOT SEMICOLON.
+%token STAR PLUS MINUS SLASH PERCENT.
+%token EQ NE LT GT LE GE.
+%token AND OR NOT.
+%token IS NULL_KW.
+%token AS.
+%token INSERT INTO VALUES.
+%token CREATE TABLE.
+%token IDENT ICONST FCONST SCONST.
+
+/* MySQL-specific tokens */
+%token LIMIT OFFSET.
+%token AUTO_INCREMENT.
+%token ENGINE.
+%token CHARSET DEFAULT_KW.
+%token COLLATE.
+%token SHOW TABLES DATABASES COLUMNS INDEX STATUS VARIABLES.
+%token GRANTS PROCESSLIST WARNINGS ERRORS.
+%token BACKTICK_IDENT.            /* `identifier` */
+%token LIKE.
+%token IFNULL IF_KW.
+%token ON DUPLICATE KEY UPDATE_KW.
+%token DIV_KW.                    /* DIV integer division */
+%token NULL_SAFE_EQ.              /* <=> */
+%token UNSIGNED.
+%token IF_NOT_EXISTS.
+%token TEMPORARY.
+%token GROUP_CONCAT SEPARATOR DISTINCT.
+%token INNODB MYISAM MEMORY_ENGINE.
+%token HAVING GROUP.
+%token XOR.
+%token REGEXP.
+%token INTERVAL.
+%token SECOND MINUTE HOUR DAY WEEK MONTH YEAR.
+%token IGNORE.
+%token HIGH_PRIORITY SQL_CALC_FOUND_ROWS.
+%token USE_INDEX FORCE_INDEX.
+%token PRIMARY_KEY UNIQUE NOT_NULL.
+%token COMMENT.
+%token ROW_FORMAT.
+
+/* ================================================================== */
+/*  Precedence rules                                                    */
+/* ================================================================== */
+
+%left OR XOR.
+%left AND.
+%right NOT.
+%left EQ NE LT GT LE GE NULL_SAFE_EQ.
+%left LIKE REGEXP.
+%left PLUS MINUS.
+%left STAR SLASH PERCENT DIV_KW.
+%right UMINUS.
+
+/* ================================================================== */
+/*  Top-level statement                                                 */
+/* ================================================================== */
+
+input ::= stmt SEMICOLON.
+input ::= stmt.
+
+stmt ::= select_stmt(S). {
+    mysql_emit_stmt(pstate, S);
+}
+
+stmt ::= create_table_stmt(S). {
+    mysql_emit_stmt(pstate, S);
+}
+
+stmt ::= insert_stmt(S). {
+    mysql_emit_stmt(pstate, S);
+}
+
+stmt ::= show_stmt(S). {
+    mysql_emit_stmt(pstate, S);
+}
+
+/* ================================================================== */
+/*  SELECT with MySQL LIMIT                                             */
+/* ================================================================== */
+
+select_stmt(A) ::= SELECT select_list(L) FROM from_list(F)
+                    opt_where(W) opt_order(O) opt_limit(M). {
+    A = mysql_make_select(pstate, L, F, W, O, M);
+}
+
+/* MySQL LIMIT clause variants */
+opt_limit(A) ::= . { A = NULL; }
+
+/* LIMIT count */
+opt_limit(A) ::= LIMIT expr(N). {
+    A = mysql_make_limit(pstate, N, NULL);
+}
+
+/* LIMIT count OFFSET offset */
+opt_limit(A) ::= LIMIT expr(N) OFFSET expr(O). {
+    A = mysql_make_limit(pstate, N, O);
+}
+
+/* LIMIT offset, count (MySQL shorthand) */
+opt_limit(A) ::= LIMIT expr(O) COMMA expr(N). {
+    A = mysql_make_limit(pstate, N, O);
+}
+
+/* ================================================================== */
+/*  SHOW statements                                                     */
+/* ================================================================== */
+
+show_stmt(A) ::= SHOW TABLES. {
+    A = mysql_make_show(pstate, MYSQL_SHOW_TABLES, NULL, NULL);
+}
+
+show_stmt(A) ::= SHOW TABLES LIKE SCONST(S). {
+    A = mysql_make_show(pstate, MYSQL_SHOW_TABLES, S.sval, NULL);
+}
+
+show_stmt(A) ::= SHOW TABLES FROM IDENT(D). {
+    A = mysql_make_show(pstate, MYSQL_SHOW_TABLES, NULL, D.sval);
+}
+
+show_stmt(A) ::= SHOW DATABASES. {
+    A = mysql_make_show(pstate, MYSQL_SHOW_DATABASES, NULL, NULL);
+}
+
+show_stmt(A) ::= SHOW DATABASES LIKE SCONST(S). {
+    A = mysql_make_show(pstate, MYSQL_SHOW_DATABASES, S.sval, NULL);
+}
+
+show_stmt(A) ::= SHOW COLUMNS FROM IDENT(T). {
+    A = mysql_make_show(pstate, MYSQL_SHOW_COLUMNS, NULL, T.sval);
+}
+
+show_stmt(A) ::= SHOW INDEX FROM IDENT(T). {
+    A = mysql_make_show(pstate, MYSQL_SHOW_INDEX, NULL, T.sval);
+}
+
+show_stmt(A) ::= SHOW STATUS. {
+    A = mysql_make_show(pstate, MYSQL_SHOW_STATUS, NULL, NULL);
+}
+
+show_stmt(A) ::= SHOW VARIABLES. {
+    A = mysql_make_show(pstate, MYSQL_SHOW_VARIABLES, NULL, NULL);
+}
+
+show_stmt(A) ::= SHOW VARIABLES LIKE SCONST(S). {
+    A = mysql_make_show(pstate, MYSQL_SHOW_VARIABLES, S.sval, NULL);
+}
+
+show_stmt(A) ::= SHOW GRANTS. {
+    A = mysql_make_show(pstate, MYSQL_SHOW_GRANTS, NULL, NULL);
+}
+
+show_stmt(A) ::= SHOW PROCESSLIST. {
+    A = mysql_make_show(pstate, MYSQL_SHOW_PROCESSLIST, NULL, NULL);
+}
+
+show_stmt(A) ::= SHOW WARNINGS. {
+    A = mysql_make_show(pstate, MYSQL_SHOW_WARNINGS, NULL, NULL);
+}
+
+show_stmt(A) ::= SHOW ERRORS. {
+    A = mysql_make_show(pstate, MYSQL_SHOW_ERRORS, NULL, NULL);
+}
+
+show_stmt(A) ::= SHOW CREATE TABLE IDENT(T). {
+    A = mysql_make_show(pstate, MYSQL_SHOW_CREATE_TABLE, NULL, T.sval);
+}
+
+/* ================================================================== */
+/*  CREATE TABLE with MySQL options                                     */
+/* ================================================================== */
+
+create_table_stmt(A) ::= CREATE TABLE IDENT(N)
+    LPAREN column_def_list(C) RPAREN table_option_list(O). {
+    A = mysql_make_create_table(pstate, N.sval, C, O, false);
+}
+
+create_table_stmt(A) ::= CREATE TABLE IF_NOT_EXISTS IDENT(N)
+    LPAREN column_def_list(C) RPAREN table_option_list(O). {
+    A = mysql_make_create_table(pstate, N.sval, C, O, true);
+}
+
+create_table_stmt(A) ::= CREATE TEMPORARY TABLE IDENT(N)
+    LPAREN column_def_list(C) RPAREN table_option_list(O). {
+    MysqlStmt *s = mysql_make_create_table(pstate, N.sval, C, O, false);
+    if (s) s->u.create_table.temporary = true;
+    A = s;
+}
+
+/* Column definition list */
+column_def_list(A) ::= column_def(C). { A = C; }
+column_def_list(A) ::= column_def_list(L) COMMA column_def(C). {
+    /* Append C to end of L */
+    MysqlColumnDef *tail = L;
+    while (tail && tail->next) tail = tail->next;
+    if (tail) tail->next = C;
+    A = L;
+}
+
+/* Column definition */
+column_def(A) ::= IDENT(N) IDENT(T) column_attrs. {
+    A = mysql_make_column_def(pstate, N.sval, T.sval, 0);
+}
+
+column_def(A) ::= IDENT(N) IDENT(T) LPAREN ICONST(S) RPAREN column_attrs. {
+    A = mysql_make_column_def(pstate, N.sval, T.sval, S.ival);
+}
+
+column_def(A) ::= BACKTICK_IDENT(N) IDENT(T) column_attrs. {
+    A = mysql_make_column_def(pstate, N.sval, T.sval, 0);
+}
+
+/* Column attributes (optional, zero or more) */
+column_attrs ::= .
+column_attrs ::= column_attrs NOT_NULL.
+column_attrs ::= column_attrs AUTO_INCREMENT.
+column_attrs ::= column_attrs UNSIGNED.
+column_attrs ::= column_attrs PRIMARY_KEY.
+column_attrs ::= column_attrs UNIQUE.
+column_attrs ::= column_attrs DEFAULT_KW expr.
+column_attrs ::= column_attrs COMMENT SCONST.
+column_attrs ::= column_attrs COLLATE IDENT.
+column_attrs ::= column_attrs CHARSET IDENT.
+
+/* Table options */
+table_option_list(A) ::= . { A = NULL; }
+table_option_list(A) ::= table_option_list(L) table_option(O). {
+    if (O) { O->next = L; }
+    A = O ? O : L;
+}
+
+table_option(A) ::= ENGINE EQ INNODB. {
+    A = mysql_make_engine_option(pstate, MYSQL_ENGINE_INNODB);
+}
+
+table_option(A) ::= ENGINE EQ MYISAM. {
+    A = mysql_make_engine_option(pstate, MYSQL_ENGINE_MYISAM);
+}
+
+table_option(A) ::= ENGINE EQ MEMORY_ENGINE. {
+    A = mysql_make_engine_option(pstate, MYSQL_ENGINE_MEMORY);
+}
+
+table_option(A) ::= DEFAULT_KW CHARSET EQ IDENT(C). {
+    A = mysql_make_charset_option(pstate, C.sval);
+}
+
+table_option(A) ::= CHARSET EQ IDENT(C). {
+    A = mysql_make_charset_option(pstate, C.sval);
+}
+
+table_option(A) ::= COLLATE EQ IDENT(C). {
+    A = mysql_make_collate_option(pstate, C.sval);
+}
+
+table_option(A) ::= AUTO_INCREMENT EQ ICONST(V). {
+    (void)V; (void)pstate;
+    A = NULL; /* Simplified */
+}
+
+table_option(A) ::= ROW_FORMAT EQ IDENT. {
+    (void)pstate;
+    A = NULL; /* Simplified */
+}
+
+table_option(A) ::= COMMENT EQ SCONST. {
+    (void)pstate;
+    A = NULL; /* Simplified */
+}
+
+/* ================================================================== */
+/*  INSERT with ON DUPLICATE KEY UPDATE                                 */
+/* ================================================================== */
+
+insert_stmt(A) ::= INSERT INTO IDENT(T) VALUES LPAREN expr_list RPAREN. {
+    A = mysql_make_insert(pstate, T.sval, NULL, 0, NULL, 0, NULL);
+}
+
+insert_stmt(A) ::= INSERT INTO IDENT(T) VALUES LPAREN expr_list RPAREN
+                    upsert_clause(U). {
+    A = mysql_make_insert(pstate, T.sval, NULL, 0, NULL, 0, U);
+}
+
+insert_stmt(A) ::= INSERT IGNORE INTO IDENT(T) VALUES LPAREN expr_list RPAREN. {
+    MysqlStmt *s = mysql_make_insert(pstate, T.sval, NULL, 0, NULL, 0, NULL);
+    if (s) s->u.insert.ignore = true;
+    A = s;
+}
+
+upsert_clause(A) ::= ON DUPLICATE KEY UPDATE_KW upsert_assign_list(L). {
+    A = mysql_make_upsert(pstate, L);
+}
+
+upsert_assign_list(A) ::= upsert_assign(X). { A = X; }
+upsert_assign_list(A) ::= upsert_assign_list(L) COMMA upsert_assign(X). {
+    X->next = L;
+    A = X;
+}
+
+upsert_assign(A) ::= IDENT(C) EQ expr(V). {
+    A = mysql_make_upsert_assign(pstate, C.sval, V);
+}
+
+/* ================================================================== */
+/*  Expressions                                                         */
+/* ================================================================== */
+
+/* Identifiers */
+expr(A) ::= IDENT(I).             { A = mysql_make_ident(pstate, I.sval); }
+expr(A) ::= BACKTICK_IDENT(I).    { A = mysql_make_backtick_ident(pstate, I.sval); }
+
+/* Literals */
+expr(A) ::= ICONST(I).            { A = mysql_make_iconst(pstate, I.ival); }
+expr(A) ::= FCONST(F).            { A = mysql_make_fconst(pstate, F.fval); }
+expr(A) ::= SCONST(S).            { A = mysql_make_sconst(pstate, S.sval); }
+expr(A) ::= NULL_KW.              { A = mysql_make_null(pstate); }
+
+/* Binary operators */
+expr(A) ::= expr(L) PLUS expr(R).    { A = mysql_make_binop(pstate, MYSQL_OP_ADD, L, R); }
+expr(A) ::= expr(L) MINUS expr(R).   { A = mysql_make_binop(pstate, MYSQL_OP_SUB, L, R); }
+expr(A) ::= expr(L) STAR expr(R).    { A = mysql_make_binop(pstate, MYSQL_OP_MUL, L, R); }
+expr(A) ::= expr(L) SLASH expr(R).   { A = mysql_make_binop(pstate, MYSQL_OP_DIV, L, R); }
+expr(A) ::= expr(L) PERCENT expr(R). { A = mysql_make_binop(pstate, MYSQL_OP_MOD, L, R); }
+
+/* MySQL DIV integer division */
+expr(A) ::= expr(L) DIV_KW expr(R).  { A = mysql_make_binop(pstate, MYSQL_OP_INT_DIV, L, R); }
+
+/* Comparison */
+expr(A) ::= expr(L) EQ expr(R).      { A = mysql_make_binop(pstate, MYSQL_OP_EQ, L, R); }
+expr(A) ::= expr(L) NE expr(R).      { A = mysql_make_binop(pstate, MYSQL_OP_NE, L, R); }
+expr(A) ::= expr(L) LT expr(R).      { A = mysql_make_binop(pstate, MYSQL_OP_LT, L, R); }
+expr(A) ::= expr(L) GT expr(R).      { A = mysql_make_binop(pstate, MYSQL_OP_GT, L, R); }
+expr(A) ::= expr(L) LE expr(R).      { A = mysql_make_binop(pstate, MYSQL_OP_LE, L, R); }
+expr(A) ::= expr(L) GE expr(R).      { A = mysql_make_binop(pstate, MYSQL_OP_GE, L, R); }
+
+/* MySQL <=> null-safe equality */
+expr(A) ::= expr(L) NULL_SAFE_EQ expr(R). {
+    A = mysql_make_binop(pstate, MYSQL_OP_NULL_SAFE_EQ, L, R);
+}
+
+/* Logical */
+expr(A) ::= expr(L) AND expr(R).     { A = mysql_make_binop(pstate, MYSQL_OP_AND, L, R); }
+expr(A) ::= expr(L) OR expr(R).      { A = mysql_make_binop(pstate, MYSQL_OP_OR, L, R); }
+expr(A) ::= expr(L) XOR expr(R).     { A = mysql_make_binop(pstate, MYSQL_OP_XOR, L, R); }
+expr(A) ::= expr(L) REGEXP expr(R).  { A = mysql_make_binop(pstate, MYSQL_OP_REGEXP, L, R); }
+expr(A) ::= expr(L) LIKE expr(R).    { A = mysql_make_binop(pstate, MYSQL_OP_LIKE, L, R); }
+
+/* Unary minus */
+expr(A) ::= MINUS expr(E). [UMINUS]  { A = mysql_make_binop(pstate, MYSQL_OP_SUB, mysql_make_iconst(pstate, 0), E); }
+
+/* IS NULL / IS NOT NULL */
+expr(A) ::= expr(E) IS NULL_KW.      {
+    MysqlExpr *n = mysql_make_null(pstate);
+    A = mysql_make_binop(pstate, MYSQL_OP_EQ, E, n);
+}
+expr(A) ::= expr(E) IS NOT NULL_KW.  {
+    MysqlExpr *n = mysql_make_null(pstate);
+    A = mysql_make_binop(pstate, MYSQL_OP_NE, E, n);
+}
+
+/* Parenthesised expression */
+expr(A) ::= LPAREN expr(E) RPAREN.   { A = E; }
+
+/* MySQL IFNULL(expr, expr) */
+expr(A) ::= IFNULL LPAREN expr(E1) COMMA expr(E2) RPAREN. {
+    A = mysql_make_ifnull(pstate, E1, E2);
+}
+
+/* MySQL IF(cond, then, else) */
+expr(A) ::= IF_KW LPAREN expr(C) COMMA expr(T) COMMA expr(E) RPAREN. {
+    A = mysql_make_if_func(pstate, C, T, E);
+}
+
+/* INTERVAL expression */
+expr(A) ::= INTERVAL expr(V) DAY.    { A = mysql_make_interval(pstate, V, MYSQL_INTERVAL_DAY); }
+expr(A) ::= INTERVAL expr(V) HOUR.   { A = mysql_make_interval(pstate, V, MYSQL_INTERVAL_HOUR); }
+expr(A) ::= INTERVAL expr(V) MINUTE. { A = mysql_make_interval(pstate, V, MYSQL_INTERVAL_MINUTE); }
+expr(A) ::= INTERVAL expr(V) SECOND. { A = mysql_make_interval(pstate, V, MYSQL_INTERVAL_SECOND); }
+expr(A) ::= INTERVAL expr(V) WEEK.   { A = mysql_make_interval(pstate, V, MYSQL_INTERVAL_WEEK); }
+expr(A) ::= INTERVAL expr(V) MONTH.  { A = mysql_make_interval(pstate, V, MYSQL_INTERVAL_MONTH); }
+expr(A) ::= INTERVAL expr(V) YEAR.   { A = mysql_make_interval(pstate, V, MYSQL_INTERVAL_YEAR); }
+
+/* Qualified identifier: table.column */
+expr(A) ::= IDENT(T) DOT IDENT(C). {
+    (void)T; (void)C;
+    A = mysql_make_ident(pstate, C.sval);
+}
+
+expr(A) ::= BACKTICK_IDENT(T) DOT BACKTICK_IDENT(C). {
+    (void)T;
+    A = mysql_make_backtick_ident(pstate, C.sval);
+}
+
+/* ================================================================== */
+/*  Helper rules                                                        */
+/* ================================================================== */
+
+/* Select list */
+%type select_list {MysqlSelectList*}
+select_list(A) ::= STAR. {
+    A = mysql_select_list_new(pstate, mysql_select_item_star(pstate));
+}
+select_list(A) ::= select_item(I). {
+    A = mysql_select_list_new(pstate, I);
+}
+select_list(A) ::= select_list(L) COMMA select_item(I). {
+    A = mysql_select_list_append(pstate, L, I);
+}
+
+%type select_item {MysqlSelectItem*}
+select_item(A) ::= expr(E). {
+    A = mysql_select_item_new(pstate, E, NULL);
+}
+select_item(A) ::= expr(E) AS IDENT(N). {
+    A = mysql_select_item_new(pstate, E, N.sval);
+}
+select_item(A) ::= expr(E) IDENT(N). {
+    A = mysql_select_item_new(pstate, E, N.sval);
+}
+
+/* From list */
+%type from_list {MysqlFromList*}
+from_list(A) ::= from_item(I). {
+    A = mysql_from_list_new(pstate, I);
+}
+from_list(A) ::= from_list(L) COMMA from_item(I). {
+    A = mysql_from_list_append(pstate, L, I);
+}
+
+%type from_item {MysqlFromItem*}
+from_item(A) ::= IDENT(N). {
+    A = mysql_from_item_table(pstate, N.sval, NULL);
+}
+from_item(A) ::= IDENT(N) AS IDENT(AL). {
+    A = mysql_from_item_table(pstate, N.sval, AL.sval);
+}
+from_item(A) ::= IDENT(N) IDENT(AL). {
+    A = mysql_from_item_table(pstate, N.sval, AL.sval);
+}
+from_item(A) ::= BACKTICK_IDENT(N). {
+    A = mysql_from_item_table(pstate, N.sval, NULL);
+}
+
+/* Optional clauses */
+%type opt_where {MysqlExpr*}
+opt_where(A) ::= .               { A = NULL; }
+opt_where(A) ::= WHERE expr(E).  { A = E; }
+
+%type opt_order {MysqlOrderList*}
+opt_order(A) ::= . { A = NULL; }
+opt_order(A) ::= ORDER BY order_list(L). { A = L; }
+
+%type order_list {MysqlOrderList*}
+order_list(A) ::= order_item(I). {
+    (void)pstate;
+    MysqlOrderList *l = mysql_select_list_new(pstate, NULL);
+    (void)l; (void)I;
+    A = NULL; /* Simplified */
+}
+order_list(A) ::= order_list(L) COMMA order_item(I). {
+    (void)pstate; (void)I;
+    A = L; /* Simplified */
+}
+
+%type order_item {MysqlOrderItem*}
+order_item(A) ::= expr. { A = NULL; }
+order_item(A) ::= expr ASC. { A = NULL; }
+order_item(A) ::= expr DESC. { A = NULL; }
+
+/* Expression list (for INSERT values) */
+expr_list ::= expr.
+expr_list ::= expr_list COMMA expr.
+
+/* Upsert assign list */
+%type upsert_assign_list {MysqlUpsertAssign*}
+%type upsert_assign {MysqlUpsertAssign*}

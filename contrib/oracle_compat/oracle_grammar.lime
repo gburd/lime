@@ -1,0 +1,585 @@
+/*
+** Oracle SQL Compatibility Grammar Extension
+**
+** This grammar extends a base PostgreSQL-style SQL parser with Oracle-specific
+** syntax constructs.  It is designed to be used as a grammar extension via the
+** Lime extension registry, demonstrating how the fork-resolve disambiguation
+** strategy handles conflicts between PostgreSQL and Oracle syntax.
+**
+** Oracle features covered:
+**   1. ROWNUM pseudo-column
+**   2. SYSDATE / SYSTIMESTAMP functions
+**   3. CONNECT BY hierarchical queries
+**   4. DECODE() function
+**   5. NVL() / NVL2() null-handling functions
+**   6. (+) outer join syntax
+**   7. Oracle-style sequences (CURRVAL / NEXTVAL)
+**   8. MINUS set operator (Oracle's EXCEPT)
+**   9. DUAL pseudo-table
+**  10. ROWID pseudo-column
+**
+** Token type and parser name match the base PostgreSQL grammar so that
+** the extension's rules integrate into the same parse tree.
+*/
+
+%name OracleCompat
+%token_type {OracleToken}
+%type expr {OracleExpr*}
+%type select_stmt {OracleStmt*}
+%type hierarchical_query_clause {OracleHierClause*}
+%type connect_by_clause {OracleConnectBy*}
+%type start_with_clause {OracleExpr*}
+%type decode_args {OracleDecodeArgs*}
+%type decode_pair_list {OracleDecodePairList*}
+%type decode_pair {OracleDecodePair*}
+%type outer_join_expr {OracleExpr*}
+%type sequence_ref {OracleExpr*}
+%type function_call {OracleExpr*}
+%extra_argument {OracleParseState *pstate}
+
+%include {
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "oracle_semantics.h"
+}
+
+%syntax_error {
+    (void)yymajor;
+    (void)yyminor;
+    oracle_parse_error(pstate, "Oracle SQL syntax error");
+}
+
+/* ======================================================================
+ * ORACLE-SPECIFIC TOKENS
+ *
+ * These tokens are added by the extension and do not exist in the base
+ * PostgreSQL grammar.  They extend the token space.
+ * ====================================================================== */
+
+%token ROWNUM.
+%token ROWID.
+%token SYSDATE.
+%token SYSTIMESTAMP.
+%token CONNECT.
+%token BY.
+%token START.
+%token WITH.
+%token PRIOR.
+%token LEVEL.
+%token NOCYCLE.
+%token SIBLINGS.
+%token DECODE.
+%token NVL.
+%token NVL2.
+%token MINUS_SET.          /* MINUS as set operator (not arithmetic) */
+%token DUAL.
+%token CURRVAL.
+%token NEXTVAL.
+%token OUTER_JOIN_OP.      /* (+) operator */
+
+/* Standard SQL tokens referenced by Oracle rules */
+%token SELECT.
+%token FROM.
+%token WHERE.
+%token AND.
+%token OR.
+%token NOT.
+%token IS.
+%token NULL_KW.
+%token AS.
+%token ORDER.
+%token ASC.
+%token DESC.
+%token COMMA.
+%token LPAREN.
+%token RPAREN.
+%token DOT.
+%token STAR.
+%token EQUALS.
+%token NOT_EQUALS.
+%token LESS_THAN.
+%token GREATER_THAN.
+%token LESS_EQUALS.
+%token GREATER_EQUALS.
+%token PLUS.
+%token MINUS.
+%token DIVIDE.
+%token IDENT.
+%token SCONST.
+%token ICONST.
+%token FCONST.
+%token SEMICOLON.
+
+/* ======================================================================
+ * PRECEDENCE DECLARATIONS
+ *
+ * Oracle-specific precedence rules.  PRIOR binds tightly in CONNECT BY
+ * clauses.  OUTER_JOIN_OP (+) binds at comparison level.
+ * ====================================================================== */
+
+%left OR.
+%left AND.
+%right NOT.
+%left EQUALS NOT_EQUALS LESS_THAN GREATER_THAN LESS_EQUALS GREATER_EQUALS.
+%left PLUS MINUS.
+%left STAR DIVIDE.
+%right PRIOR.
+%left OUTER_JOIN_OP.
+
+%start_symbol oracle_stmt
+
+/* ======================================================================
+ * TOP-LEVEL STATEMENT
+ * ====================================================================== */
+
+oracle_stmt ::= select_stmt(S) SEMICOLON. {
+    oracle_emit_stmt(pstate, S);
+}
+
+oracle_stmt ::= select_stmt(S). {
+    oracle_emit_stmt(pstate, S);
+}
+
+/* ======================================================================
+ * SELECT STATEMENT WITH ORACLE EXTENSIONS
+ *
+ * Oracle SELECT adds:
+ *   - CONNECT BY ... START WITH hierarchical queries
+ *   - ROWNUM in select list and WHERE clause
+ *   - (+) outer join syntax in WHERE clause
+ *   - MINUS set operator
+ * ====================================================================== */
+
+select_stmt(A) ::= SELECT select_list(L) FROM from_list(F)
+                    where_clause(W)
+                    hierarchical_query_clause(H)
+                    order_clause(O). {
+    A = oracle_make_select(pstate, L, F, W, H, O);
+}
+
+select_stmt(A) ::= SELECT select_list(L) FROM from_list(F)
+                    where_clause(W)
+                    order_clause(O). {
+    A = oracle_make_select(pstate, L, F, W, NULL, O);
+}
+
+select_stmt(A) ::= SELECT select_list(L) FROM DUAL. {
+    A = oracle_make_select_dual(pstate, L);
+}
+
+/* MINUS set operator (Oracle's EXCEPT) */
+select_stmt(A) ::= select_stmt(L) MINUS_SET select_stmt(R). {
+    A = oracle_make_minus(pstate, L, R);
+}
+
+/* ======================================================================
+ * SELECT LIST
+ * ====================================================================== */
+
+%type select_list {OracleSelectList*}
+%type select_item {OracleSelectItem*}
+
+select_list(A) ::= select_item(I). {
+    A = oracle_select_list_new(pstate, I);
+}
+
+select_list(A) ::= select_list(L) COMMA select_item(I). {
+    A = oracle_select_list_append(pstate, L, I);
+}
+
+select_item(A) ::= expr(E). {
+    A = oracle_select_item_new(pstate, E, NULL);
+}
+
+select_item(A) ::= expr(E) AS IDENT(N). {
+    A = oracle_select_item_new(pstate, E, N.sval);
+}
+
+select_item(A) ::= expr(E) IDENT(N). {
+    A = oracle_select_item_new(pstate, E, N.sval);
+}
+
+select_item(A) ::= STAR. {
+    A = oracle_select_item_star(pstate);
+}
+
+/* ROWNUM in select list */
+select_item(A) ::= ROWNUM. {
+    A = oracle_select_item_new(pstate, oracle_make_rownum(pstate), NULL);
+}
+
+select_item(A) ::= ROWNUM AS IDENT(N). {
+    A = oracle_select_item_new(pstate, oracle_make_rownum(pstate), N.sval);
+}
+
+/* ======================================================================
+ * FROM CLAUSE
+ * ====================================================================== */
+
+%type from_list {OracleFromList*}
+%type from_item {OracleFromItem*}
+
+from_list(A) ::= from_item(I). {
+    A = oracle_from_list_new(pstate, I);
+}
+
+from_list(A) ::= from_list(L) COMMA from_item(I). {
+    A = oracle_from_list_append(pstate, L, I);
+}
+
+from_item(A) ::= IDENT(T). {
+    A = oracle_from_item_table(pstate, T.sval, NULL);
+}
+
+from_item(A) ::= IDENT(T) IDENT(Alias). {
+    A = oracle_from_item_table(pstate, T.sval, Alias.sval);
+}
+
+from_item(A) ::= IDENT(T) AS IDENT(Alias). {
+    A = oracle_from_item_table(pstate, T.sval, Alias.sval);
+}
+
+/* DUAL pseudo-table */
+from_item(A) ::= DUAL. {
+    A = oracle_from_item_dual(pstate);
+}
+
+/* ======================================================================
+ * WHERE CLAUSE
+ * ====================================================================== */
+
+%type where_clause {OracleExpr*}
+
+where_clause(A) ::= . {
+    A = NULL;
+}
+
+where_clause(A) ::= WHERE expr(E). {
+    A = E;
+}
+
+/* ======================================================================
+ * HIERARCHICAL QUERY (CONNECT BY / START WITH)
+ *
+ * Oracle's hierarchical query syntax:
+ *   SELECT ... FROM ...
+ *   START WITH condition
+ *   CONNECT BY [NOCYCLE] PRIOR col1 = col2
+ *
+ * The START WITH and CONNECT BY clauses can appear in either order.
+ * ====================================================================== */
+
+hierarchical_query_clause(A) ::= connect_by_clause(C)
+                                  start_with_clause(S). {
+    A = oracle_make_hier_clause(pstate, C, S);
+}
+
+hierarchical_query_clause(A) ::= start_with_clause(S)
+                                  connect_by_clause(C). {
+    A = oracle_make_hier_clause(pstate, C, S);
+}
+
+hierarchical_query_clause(A) ::= connect_by_clause(C). {
+    A = oracle_make_hier_clause(pstate, C, NULL);
+}
+
+connect_by_clause(A) ::= CONNECT BY expr(E). {
+    A = oracle_make_connect_by(pstate, E, false);
+}
+
+connect_by_clause(A) ::= CONNECT BY NOCYCLE expr(E). {
+    A = oracle_make_connect_by(pstate, E, true);
+}
+
+start_with_clause(A) ::= START WITH expr(E). {
+    A = E;
+}
+
+/* ======================================================================
+ * ORDER BY CLAUSE (with Oracle SIBLINGS extension)
+ * ====================================================================== */
+
+%type order_clause {OracleOrderClause*}
+%type order_list {OracleOrderList*}
+%type order_item {OracleOrderItem*}
+
+order_clause(A) ::= . {
+    A = NULL;
+}
+
+order_clause(A) ::= ORDER BY order_list(L). {
+    A = oracle_make_order_clause(pstate, L, false);
+}
+
+/* ORDER SIBLINGS BY -- preserves hierarchy within each parent */
+order_clause(A) ::= ORDER SIBLINGS BY order_list(L). {
+    A = oracle_make_order_clause(pstate, L, true);
+}
+
+order_list(A) ::= order_item(I). {
+    A = oracle_order_list_new(pstate, I);
+}
+
+order_list(A) ::= order_list(L) COMMA order_item(I). {
+    A = oracle_order_list_append(pstate, L, I);
+}
+
+order_item(A) ::= expr(E). {
+    A = oracle_make_order_item(pstate, E, true);
+}
+
+order_item(A) ::= expr(E) ASC. {
+    A = oracle_make_order_item(pstate, E, true);
+}
+
+order_item(A) ::= expr(E) DESC. {
+    A = oracle_make_order_item(pstate, E, false);
+}
+
+/* ======================================================================
+ * EXPRESSIONS
+ *
+ * The expression grammar is extended with Oracle-specific constructs:
+ *   - ROWNUM pseudo-column
+ *   - ROWID pseudo-column
+ *   - LEVEL pseudo-column (for CONNECT BY)
+ *   - SYSDATE / SYSTIMESTAMP
+ *   - PRIOR expression (for CONNECT BY)
+ *   - DECODE() function
+ *   - NVL() / NVL2() functions
+ *   - (+) outer join operator
+ *   - sequence.CURRVAL / sequence.NEXTVAL
+ * ====================================================================== */
+
+/* --- Pseudo-columns --- */
+
+expr(A) ::= ROWNUM. {
+    A = oracle_make_rownum(pstate);
+}
+
+expr(A) ::= ROWID. {
+    A = oracle_make_rowid(pstate);
+}
+
+expr(A) ::= LEVEL. {
+    A = oracle_make_level(pstate);
+}
+
+/* --- Date/time functions --- */
+
+expr(A) ::= SYSDATE. {
+    A = oracle_make_sysdate(pstate);
+}
+
+expr(A) ::= SYSTIMESTAMP. {
+    A = oracle_make_systimestamp(pstate);
+}
+
+/* --- PRIOR operator (hierarchical queries) --- */
+
+expr(A) ::= PRIOR expr(E). {
+    A = oracle_make_prior(pstate, E);
+}
+
+/* --- Standard expressions --- */
+
+expr(A) ::= IDENT(I). {
+    A = oracle_make_ident(pstate, I.sval);
+}
+
+expr(A) ::= IDENT(T) DOT IDENT(C). {
+    A = oracle_make_qualified_ident(pstate, T.sval, C.sval);
+}
+
+expr(A) ::= ICONST(V). {
+    A = oracle_make_iconst(pstate, V.ival);
+}
+
+expr(A) ::= FCONST(V). {
+    A = oracle_make_fconst(pstate, V.fval);
+}
+
+expr(A) ::= SCONST(V). {
+    A = oracle_make_sconst(pstate, V.sval);
+}
+
+expr(A) ::= NULL_KW. {
+    A = oracle_make_null(pstate);
+}
+
+expr(A) ::= LPAREN expr(E) RPAREN. {
+    A = E;
+}
+
+/* --- Arithmetic --- */
+
+expr(A) ::= expr(L) PLUS expr(R). {
+    A = oracle_make_binop(pstate, ORACLE_OP_ADD, L, R);
+}
+
+expr(A) ::= expr(L) MINUS expr(R). {
+    A = oracle_make_binop(pstate, ORACLE_OP_SUB, L, R);
+}
+
+expr(A) ::= expr(L) STAR expr(R). {
+    A = oracle_make_binop(pstate, ORACLE_OP_MUL, L, R);
+}
+
+expr(A) ::= expr(L) DIVIDE expr(R). {
+    A = oracle_make_binop(pstate, ORACLE_OP_DIV, L, R);
+}
+
+/* --- Comparison --- */
+
+expr(A) ::= expr(L) EQUALS expr(R). {
+    A = oracle_make_binop(pstate, ORACLE_OP_EQ, L, R);
+}
+
+expr(A) ::= expr(L) NOT_EQUALS expr(R). {
+    A = oracle_make_binop(pstate, ORACLE_OP_NE, L, R);
+}
+
+expr(A) ::= expr(L) LESS_THAN expr(R). {
+    A = oracle_make_binop(pstate, ORACLE_OP_LT, L, R);
+}
+
+expr(A) ::= expr(L) GREATER_THAN expr(R). {
+    A = oracle_make_binop(pstate, ORACLE_OP_GT, L, R);
+}
+
+expr(A) ::= expr(L) LESS_EQUALS expr(R). {
+    A = oracle_make_binop(pstate, ORACLE_OP_LE, L, R);
+}
+
+expr(A) ::= expr(L) GREATER_EQUALS expr(R). {
+    A = oracle_make_binop(pstate, ORACLE_OP_GE, L, R);
+}
+
+/* --- Boolean operators --- */
+
+expr(A) ::= expr(L) AND expr(R). {
+    A = oracle_make_binop(pstate, ORACLE_OP_AND, L, R);
+}
+
+expr(A) ::= expr(L) OR expr(R). {
+    A = oracle_make_binop(pstate, ORACLE_OP_OR, L, R);
+}
+
+expr(A) ::= NOT expr(E). {
+    A = oracle_make_unaryop(pstate, ORACLE_OP_NOT, E);
+}
+
+/* --- IS NULL / IS NOT NULL --- */
+
+expr(A) ::= expr(E) IS NULL_KW. {
+    A = oracle_make_is_null(pstate, E, false);
+}
+
+expr(A) ::= expr(E) IS NOT NULL_KW. {
+    A = oracle_make_is_null(pstate, E, true);
+}
+
+/* --- DECODE function (Oracle's CASE expression) ---
+**
+** DECODE(expr, search1, result1, search2, result2, ..., default)
+**
+** Equivalent to:
+**   CASE expr
+**     WHEN search1 THEN result1
+**     WHEN search2 THEN result2
+**     ...
+**     ELSE default
+**   END
+*/
+
+expr(A) ::= DECODE LPAREN expr(E) COMMA decode_args(Args) RPAREN. {
+    A = oracle_make_decode(pstate, E, Args);
+}
+
+decode_args(A) ::= decode_pair_list(L). {
+    A = oracle_decode_args_new(pstate, L, NULL);
+}
+
+decode_args(A) ::= decode_pair_list(L) COMMA expr(Default). {
+    A = oracle_decode_args_new(pstate, L, Default);
+}
+
+decode_pair_list(A) ::= decode_pair(P). {
+    A = oracle_decode_pair_list_new(pstate, P);
+}
+
+decode_pair_list(A) ::= decode_pair_list(L) COMMA decode_pair(P). {
+    A = oracle_decode_pair_list_append(pstate, L, P);
+}
+
+decode_pair(A) ::= expr(Search) COMMA expr(Result). {
+    A = oracle_make_decode_pair(pstate, Search, Result);
+}
+
+/* --- NVL function ---
+**
+** NVL(expr1, expr2) - returns expr2 if expr1 is NULL, else expr1
+** Equivalent to PostgreSQL's COALESCE(expr1, expr2)
+*/
+
+expr(A) ::= NVL LPAREN expr(E1) COMMA expr(E2) RPAREN. {
+    A = oracle_make_nvl(pstate, E1, E2);
+}
+
+/* --- NVL2 function ---
+**
+** NVL2(expr1, expr2, expr3) - returns expr2 if expr1 is not NULL, else expr3
+*/
+
+expr(A) ::= NVL2 LPAREN expr(E1) COMMA expr(E2) COMMA expr(E3) RPAREN. {
+    A = oracle_make_nvl2(pstate, E1, E2, E3);
+}
+
+/* --- (+) outer join operator ---
+**
+** Oracle's old-style outer join syntax:
+**   SELECT ... FROM a, b WHERE a.id = b.id(+)
+** means LEFT OUTER JOIN.
+*/
+
+outer_join_expr(A) ::= expr(E) OUTER_JOIN_OP. {
+    A = oracle_make_outer_join(pstate, E);
+}
+
+expr(A) ::= expr(L) EQUALS outer_join_expr(R). {
+    A = oracle_make_outer_join_cond(pstate, L, R);
+}
+
+/* --- Sequence references ---
+**
+** Oracle sequences: sequence_name.CURRVAL / sequence_name.NEXTVAL
+*/
+
+expr(A) ::= IDENT(S) DOT CURRVAL. {
+    A = oracle_make_seq_currval(pstate, S.sval);
+}
+
+expr(A) ::= IDENT(S) DOT NEXTVAL. {
+    A = oracle_make_seq_nextval(pstate, S.sval);
+}
+
+/* --- General function call --- */
+
+%type arg_list {OracleArgList*}
+
+expr(A) ::= IDENT(F) LPAREN RPAREN. {
+    A = oracle_make_func_call(pstate, F.sval, NULL);
+}
+
+expr(A) ::= IDENT(F) LPAREN arg_list(Args) RPAREN. {
+    A = oracle_make_func_call(pstate, F.sval, Args);
+}
+
+arg_list(A) ::= expr(E). {
+    A = oracle_arg_list_new(pstate, E);
+}
+
+arg_list(A) ::= arg_list(L) COMMA expr(E). {
+    A = oracle_arg_list_append(pstate, L, E);
+}

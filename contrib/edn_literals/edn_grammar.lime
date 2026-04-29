@@ -1,0 +1,274 @@
+/*
+** EDN Literals Grammar Extension
+**
+** Adds first-class EDN (Extensible Data Notation) literal support to SQL
+** queries.  EDN is Clojure's data notation format, and this extension
+** allows EDN values to appear directly in SQL expressions without quoting
+** them as strings.
+**
+** This grammar supports:
+**   - Keywords:   :active, :theme, :db/id
+**   - Maps:       {:key val :key2 val2}
+**   - Vectors:    [1 2 3]
+**   - Sets:       #{:read :write :delete}
+**   - Primitives: integers, floats, strings, booleans, nil
+**   - Nesting:    {:display {:theme "dark"} :tags [:a :b]}
+**
+** Grammar context switching (MODE_EDN) is used to enter EDN parsing
+** when the lexer detects EDN boundary tokens ({:, [, #{).  The context
+** is popped when the matching closing delimiter is consumed.
+**
+** EDN values are converted to PostgreSQL-compatible types:
+**   - Maps     -> jsonb
+**   - Vectors  -> arrays or jsonb arrays
+**   - Sets     -> arrays (deduplicated)
+**   - Keywords -> text (the keyword name as a string)
+*/
+
+%name EdnLiterals
+%token_type {EdnToken}
+%type edn_value {EdnValue*}
+%type edn_map {EdnMap*}
+%type edn_map_entries {EdnMap*}
+%type edn_map_entry {EdnMap*}
+%type edn_vector {EdnValue*}
+%type edn_vector_elements {EdnValueList*}
+%type edn_set {EdnValue*}
+%type edn_set_elements {EdnValueList*}
+%type edn_keyword {EdnValue*}
+%type edn_literal_expr {EdnExpr*}
+%extra_argument {EdnParseState *pstate}
+
+%include {
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "edn_semantics.h"
+}
+
+%syntax_error {
+    (void)yymajor;
+    (void)yyminor;
+    edn_parse_error(pstate, "EDN literal syntax error");
+}
+
+/* ======================================================================
+ * EDN-SPECIFIC TOKENS
+ *
+ * These tokens are recognized by the lexer when EDN mode is active.
+ * The grammar context system switches to MODE_EDN when it detects
+ * EDN boundary tokens.
+ * ====================================================================== */
+
+/* Delimiters */
+%token LBRACE.          /* { -- opening brace (map start)         */
+%token RBRACE.          /* } -- closing brace (map end)           */
+%token LBRACKET.        /* [ -- opening bracket (vector start)    */
+%token RBRACKET.        /* ] -- closing bracket (vector end)      */
+%token HASH_LBRACE.     /* #{ -- hash-brace (set start)           */
+
+/* EDN value tokens */
+%token KEYWORD.         /* :name or :ns/name                      */
+%token SYMBOL.          /* unquoted identifier in EDN context      */
+%token EDN_STRING.      /* "string" in EDN context                 */
+%token EDN_INTEGER.     /* integer literal in EDN context           */
+%token EDN_FLOAT.       /* float literal in EDN context             */
+%token EDN_TRUE.        /* true                                    */
+%token EDN_FALSE.       /* false                                   */
+%token EDN_NIL.         /* nil                                     */
+
+/* SQL integration tokens (used when EDN appears in SQL expressions) */
+%token CONTAINS_OP.     /* @> containment operator                 */
+%token OVERLAP_OP.      /* && overlap operator                     */
+%token EQUALS.          /* = comparison                            */
+%token IN_KW.           /* IN keyword                              */
+%token LPAREN.          /* ( for IN lists                          */
+%token RPAREN.          /* ) for IN lists                          */
+
+%start_symbol edn_input
+
+/* ======================================================================
+ * TOP-LEVEL INPUT
+ *
+ * An EDN input is a single EDN value.  When embedded in SQL, the SQL
+ * grammar's expression rules delegate to edn_value when MODE_EDN is
+ * entered.
+ * ====================================================================== */
+
+edn_input ::= edn_value(V). {
+    edn_emit_value(pstate, V);
+}
+
+/* ======================================================================
+ * EDN VALUES
+ *
+ * An EDN value is one of: nil, boolean, integer, float, string,
+ * keyword, symbol, vector, map, or set.
+ * ====================================================================== */
+
+edn_value(A) ::= EDN_NIL. {
+    A = edn_make_nil(pstate);
+}
+
+edn_value(A) ::= EDN_TRUE. {
+    A = edn_make_bool(pstate, true);
+}
+
+edn_value(A) ::= EDN_FALSE. {
+    A = edn_make_bool(pstate, false);
+}
+
+edn_value(A) ::= EDN_INTEGER(V). {
+    A = edn_make_integer(pstate, V.ival);
+}
+
+edn_value(A) ::= EDN_FLOAT(V). {
+    A = edn_make_float(pstate, V.fval);
+}
+
+edn_value(A) ::= EDN_STRING(V). {
+    A = edn_make_string(pstate, V.sval);
+}
+
+edn_value(A) ::= edn_keyword(K). {
+    A = K;
+}
+
+edn_value(A) ::= SYMBOL(V). {
+    A = edn_make_symbol(pstate, V.sval);
+}
+
+edn_value(A) ::= edn_vector(V). {
+    A = V;
+}
+
+edn_value(A) ::= edn_map(M). {
+    A = M;
+}
+
+edn_value(A) ::= edn_set(S). {
+    A = S;
+}
+
+/* ======================================================================
+ * KEYWORDS
+ *
+ * EDN keywords begin with a colon.  They may be namespace-qualified:
+ *   :name          - simple keyword
+ *   :db/id         - namespaced keyword
+ *
+ * The KEYWORD token's sval includes the colon prefix.
+ * ====================================================================== */
+
+edn_keyword(A) ::= KEYWORD(K). {
+    A = edn_make_keyword(pstate, K.sval);
+}
+
+/* ======================================================================
+ * VECTORS  [elem1 elem2 ...]
+ *
+ * EDN vectors are ordered sequences delimited by brackets.
+ * Elements are separated by whitespace (no commas needed, though
+ * commas are treated as whitespace in EDN).
+ *
+ * Examples:
+ *   [1 2 3]
+ *   [:postgres :sql :database]
+ *   ["hello" 42 true nil]
+ * ====================================================================== */
+
+edn_vector(A) ::= LBRACKET edn_vector_elements(E) RBRACKET. {
+    A = edn_make_vector(pstate, E);
+}
+
+edn_vector(A) ::= LBRACKET RBRACKET. {
+    A = edn_make_vector(pstate, NULL);
+}
+
+edn_vector_elements(A) ::= edn_value(V). {
+    A = edn_value_list_new(pstate, V);
+}
+
+edn_vector_elements(A) ::= edn_vector_elements(L) edn_value(V). {
+    A = edn_value_list_append(pstate, L, V);
+}
+
+/* ======================================================================
+ * MAPS  {:key1 val1 :key2 val2 ...}
+ *
+ * EDN maps are collections of key-value pairs delimited by braces.
+ * Keys are typically keywords but can be any EDN value.  Values
+ * follow their keys, separated by whitespace.
+ *
+ * Examples:
+ *   {:theme "dark" :lang "en"}
+ *   {:timeout 30 :retries 3}
+ *   {:display {:theme "dark" :font-size 14}}
+ * ====================================================================== */
+
+edn_map(A) ::= LBRACE edn_map_entries(E) RBRACE. {
+    A = edn_make_map(pstate, E);
+}
+
+edn_map(A) ::= LBRACE RBRACE. {
+    A = edn_make_map(pstate, NULL);
+}
+
+edn_map_entries(A) ::= edn_map_entry(E). {
+    A = E;
+}
+
+edn_map_entries(A) ::= edn_map_entries(L) edn_map_entry(E). {
+    A = edn_map_append(pstate, L, E->head->key, E->head->value);
+}
+
+edn_map_entry(A) ::= edn_value(K) edn_value(V). {
+    A = edn_map_new(pstate, K, V);
+}
+
+/* ======================================================================
+ * SETS  #{elem1 elem2 ...}
+ *
+ * EDN sets are unordered collections of unique values, delimited by
+ * #{ and }.  In SQL, they map naturally to array types with unique
+ * constraints or can be used with overlap operators.
+ *
+ * Examples:
+ *   #{:read :write :delete}
+ *   #{1 2 3 4 5}
+ *   #{"admin" "editor" "viewer"}
+ * ====================================================================== */
+
+edn_set(A) ::= HASH_LBRACE edn_set_elements(E) RBRACE. {
+    A = edn_make_set(pstate, E);
+}
+
+edn_set(A) ::= HASH_LBRACE RBRACE. {
+    A = edn_make_set(pstate, NULL);
+}
+
+edn_set_elements(A) ::= edn_value(V). {
+    A = edn_value_list_new(pstate, V);
+}
+
+edn_set_elements(A) ::= edn_set_elements(L) edn_value(V). {
+    A = edn_value_list_append(pstate, L, V);
+}
+
+/* ======================================================================
+ * SQL INTEGRATION EXPRESSIONS
+ *
+ * These rules define how EDN values integrate with SQL operators.
+ * They are used when the SQL grammar delegates to EDN mode for the
+ * right-hand side of certain operators.
+ *
+ * Examples:
+ *   WHERE status = :active
+ *   WHERE tags @> [:postgres :sql]
+ *   WHERE permissions && #{:read :write}
+ *   WHERE key IN (:debug :verbose :trace)
+ * ====================================================================== */
+
+edn_literal_expr(A) ::= edn_value(V). {
+    A = edn_make_literal_expr(pstate, V);
+}

@@ -1,7 +1,18 @@
 # Build artifacts
 *.o
 *.out
+*.so
 builddir/
+lime
+core.*
+
+# Generated parser files (from .lime sources)
+examples/*/*.c
+examples/*/*.h
+!examples/*/*.lime
+!examples/*/main.c
+!examples/*/main_conflicts.c
+!examples/*/*_ext.c
 
 # Compiled example binaries
 examples/bootstrap/boot_parser
@@ -16,4 +27,9 @@ examples/syncrep/syncrep_parser
 examples/xpath/xpath_parser
 examples/xquery/xquery_parser
 examples/calc/calc
+examples/calc/calc_conflicts
 examples/calc/libcalc_power.so
+examples/calc/libcalc_bitwise.so
+
+# Backup files
+*.old
