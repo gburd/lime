@@ -4,7 +4,7 @@
 
 - A C11 compiler: GCC 13+ or Clang 15+
 - Meson 0.60+ and Ninja (for the extension framework)
-- Optional: LLVM 17+ (for JIT), Valgrind (for memory checking)
+- Optional: LLVM 17+ (for JIT, tested with 17-21), Valgrind (for memory checking)
 
 All dependencies are provided by `nix develop` if you use Nix.
 

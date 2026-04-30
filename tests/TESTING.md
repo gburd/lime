@@ -323,7 +323,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y meson ninja-build lcov \
-            libllvm17-dev
+            llvm-dev
 
       - name: Build and test
         run: |

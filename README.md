@@ -155,7 +155,7 @@ See **[docs/EXTENSIONS.md](docs/EXTENSIONS.md)** and
 
 ## Performance
 
-JIT comparison benchmark (LLVM 17):
+JIT comparison benchmark (LLVM 21):
 
 | Grammar Size | Interpreted | JIT | Speedup |
 |--------------|-------------|-----|---------|
@@ -187,7 +187,7 @@ meson setup builddir-ubsan -Db_sanitize=undefined && ninja -C builddir-ubsan tes
 ## Dependencies
 
 **Build:** GCC 13+ or Clang 15+, Meson 0.60+, Ninja, pkg-config.
-**Optional:** LLVM 17+ (JIT), lcov/gcovr (coverage), Valgrind, perf.
+**Optional:** LLVM 17+ (JIT; tested with 17-21), lcov/gcovr (coverage), Valgrind, perf.
 **Runtime:** pthreads, C11 standard library.  LLVM if JIT enabled.
 
 All provided by `nix develop` via `flake.nix`.

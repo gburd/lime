@@ -37,7 +37,7 @@
         #   lcov/gcovr: portable, but gcovr is Python so more portable
         #   llvm:       available on most platforms; gate on meta.available
         #               in case a specific platform combo isn't supported
-        llvmPkgs = pkgs.llvmPackages_20;
+        llvmPkgs = pkgs.llvmPackages_21;
         hasLLVM = llvmPkgs.libllvm.meta.available or false;
 
         commonTools = with pkgs; [

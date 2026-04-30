@@ -44,7 +44,7 @@ ninja -C builddir
 ninja -C builddir test
 
 # Nix users
-nix develop    # provides GCC 13, LLVM 17, Meson, coverage tools
+nix develop    # provides a working toolchain: cc, LLVM 21, Meson, coverage tools
 ```
 
 The Makefile in the project root wraps meson commands: `make build`,
@@ -224,7 +224,7 @@ Both run on push to main and on pull requests.
 ## Dependencies
 
 **Build:** GCC 13+ or Clang 15+, Meson 0.60+, Ninja, pkg-config.
-**Optional:** LLVM 17+ (JIT), lcov/gcovr (coverage), Valgrind, perf.
+**Optional:** LLVM 17+ (JIT; tested with 17-21), lcov/gcovr (coverage), Valgrind, perf.
 **Runtime:** pthreads, C11 standard library.
 
 All provided by `nix develop` via `flake.nix`.

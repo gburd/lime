@@ -43,6 +43,7 @@
 
 struct JITTokenizer {
     LLVMOrcLLJITRef lljit;
+    LLVMContextRef llvm_ctx;          /* Bare LLVM context (for IR gen)  */
     LLVMOrcThreadSafeContextRef ts_ctx;
 
     /* Compiled classifier: int32_t (*)(const char *input, uint32_t len) */
@@ -352,9 +353,16 @@ JITTokenizer *jit_tokenizer_create(const TokenTable *table) {
         return NULL;
     }
 
-    /* Create thread-safe context */
-    tok->ts_ctx = LLVMOrcCreateNewThreadSafeContext();
+    /* Create a bare LLVM context and wrap it in a thread-safe context */
+    tok->llvm_ctx = LLVMContextCreate();
+    if (tok->llvm_ctx == NULL) {
+        free(tok);
+        free_keywords(entries, nkeywords);
+        return NULL;
+    }
+    tok->ts_ctx = LLVMOrcCreateNewThreadSafeContextFromLLVMContext(tok->llvm_ctx);
     if (tok->ts_ctx == NULL) {
+        LLVMContextDispose(tok->llvm_ctx);
         free(tok);
         free_keywords(entries, nkeywords);
         return NULL;
@@ -372,8 +380,8 @@ JITTokenizer *jit_tokenizer_create(const TokenTable *table) {
         return NULL;
     }
 
-    /* Generate LLVM IR */
-    LLVMContextRef llvm_ctx = LLVMOrcThreadSafeContextGetContext(tok->ts_ctx);
+    /* Generate LLVM IR using the bare context stored at creation */
+    LLVMContextRef llvm_ctx = tok->llvm_ctx;
     LLVMModuleRef module = LLVMModuleCreateWithNameInContext("lime_tokenizer", llvm_ctx);
     if (module == NULL) {
         LLVMOrcDisposeLLJIT(tok->lljit);

@@ -52,9 +52,12 @@ tokenize_simd_lib = static_library('tokenize_simd',
 # LLVM JIT compilation support (optional).
 # When LLVM is available, the JIT subsystem compiles parser hot paths
 # into native code. Without LLVM, stub implementations are used.
+# Prefer llvm-config over CMake so environment-provided LLVM (e.g. Nix)
+# takes precedence over system/Homebrew installs.
 llvm_dep = dependency('llvm', modules : ['core', 'executionengine', 'mcjit',
                                           'native', 'analysis', 'passes',
                                           'orcjit'],
+                      method : 'config-tool',
                       required : false)
 
 jit_sources = files('jit_context.c', 'jit_codegen.c', 'jit_policy.c', 'jit_tokenizer.c')

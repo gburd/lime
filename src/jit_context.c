@@ -35,7 +35,8 @@
 
 struct JITContext {
     LLVMOrcLLJITRef lljit;            /* OrcJIT LLJIT instance           */
-    LLVMOrcThreadSafeContextRef ts_ctx; /* Thread-safe LLVM context      */
+    LLVMContextRef llvm_ctx;          /* Bare LLVM context (for IR gen)  */
+    LLVMOrcThreadSafeContextRef ts_ctx; /* Thread-safe wrapper of llvm_ctx */
 
     void *parse_sequence_fn;          /* Monolithic jit_parse_sequence fn */
     uint32_t nstates;                 /* Number of states                 */
@@ -82,9 +83,17 @@ JITStatus jit_create(JITContext **ctx_out) {
     JITContext *ctx = calloc(1, sizeof(JITContext));
     if (ctx == NULL) return JIT_ERR_INIT_FAILED;
 
-    /* Create a thread-safe context for OrcJIT */
-    ctx->ts_ctx = LLVMOrcCreateNewThreadSafeContext();
+    /* Create a bare LLVM context, then wrap it in a thread-safe context
+    ** for OrcJIT. We keep both handles so we can hand the bare context
+    ** to IR-generation code without needing a (since-removed) getter. */
+    ctx->llvm_ctx = LLVMContextCreate();
+    if (ctx->llvm_ctx == NULL) {
+        free(ctx);
+        return JIT_ERR_INIT_FAILED;
+    }
+    ctx->ts_ctx = LLVMOrcCreateNewThreadSafeContextFromLLVMContext(ctx->llvm_ctx);
     if (ctx->ts_ctx == NULL) {
+        LLVMContextDispose(ctx->llvm_ctx);
         free(ctx);
         return JIT_ERR_INIT_FAILED;
     }
@@ -151,9 +160,8 @@ JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap) {
     if (ctx == NULL || snap == NULL) return JIT_ERR_INVALID_ARG;
     if (snap->yy_action == NULL || snap->nstate == 0) return JIT_ERR_INVALID_ARG;
 
-    /* Get a bare LLVM context from the thread-safe wrapper for IR generation */
-    LLVMOrcThreadSafeContextRef ts_ctx = ctx->ts_ctx;
-    LLVMContextRef llvm_ctx = LLVMOrcThreadSafeContextGetContext(ts_ctx);
+    /* Use the bare LLVM context (stored alongside ts_ctx) for IR generation */
+    LLVMContextRef llvm_ctx = ctx->llvm_ctx;
 
     /* Create a module in the thread-safe context */
     LLVMModuleRef module = LLVMModuleCreateWithNameInContext("lime_jit", llvm_ctx);
@@ -187,7 +195,7 @@ JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap) {
 
     /* Wrap module in a thread-safe module for OrcJIT submission */
     LLVMOrcThreadSafeModuleRef ts_mod =
-        LLVMOrcCreateNewThreadSafeModule(module, ts_ctx);
+        LLVMOrcCreateNewThreadSafeModule(module, ctx->ts_ctx);
     /* Note: ts_mod now owns module; do not dispose module separately */
 
     /* Add the module to the LLJIT main JITDylib */

@@ -419,7 +419,7 @@ int main(int argc, char **argv) {
         printf("\n");
         printf("WARNING: LLVM JIT is not available. This benchmark will only\n");
         printf("measure interpreted performance. To enable JIT:\n");
-        printf("  1. Ensure LLVM 17+ development libraries are installed\n");
+        printf("  1. Ensure LLVM development libraries are installed\n");
         printf("  2. Rebuild with: meson setup builddir && ninja -C builddir\n");
         printf("  3. Verify with: pkg-config --modversion llvm\n");
         printf("\n");

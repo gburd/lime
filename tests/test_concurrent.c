@@ -361,7 +361,7 @@ typedef struct {
     ExtensionRegistry *reg;
     atomic_int errors;
     ExtensionID ids[EXT_REG_THREADS][EXT_REG_PER_THREAD];
-    int thread_idx;
+    atomic_int thread_idx;
 } ExtRegTestCtx;
 
 static void *ext_register_thread(void *arg) {

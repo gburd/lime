@@ -13,7 +13,7 @@ nix develop
 
 This provides:
 - GCC 13
-- LLVM 17 with development libraries
+- LLVM 17+ (tested with 17-21) with development libraries
 - Meson and Ninja build tools
 - Code coverage tools (lcov, gcovr)
 
@@ -242,11 +242,11 @@ JIT available: NO (stub mode)
    # On NixOS (from flake.nix)
    nix develop --rebuild
 
-   # On Ubuntu/Debian
-   apt install llvm-17-dev libllvm17
+   # On Ubuntu/Debian (any LLVM 17+ works)
+   apt install llvm-dev libllvm21
 
    # On macOS
-   brew install llvm@17
+   brew install llvm
    ```
 
 4. **Check build log:**
