@@ -146,6 +146,23 @@ Normally, resolved conflicts are not reported.
 This option is useful for verifying that precedence declarations
 have the intended effect.
 .TP
+.BI \-P PREFIX
+Override the parser symbol prefix.
+By default, the generated parser exports identifiers starting with
+.B Parse
+(or the value of the
+.B %name
+directive if set in the grammar).
+.B \-P
+replaces this prefix at the command line, which is useful when
+linking multiple generated parsers into the same binary without
+editing the grammar files.
+For example,
+.B "\-PSqlParser"
+produces
+.BR SqlParserAlloc() ", " SqlParser() ", " SqlParserFree() ", "
+and so on.
+.TP
 .B \-q
 Quiet mode.
 Do not generate the

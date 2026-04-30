@@ -62,14 +62,20 @@ struct ParseContext;
 
 /**
  * @brief Enumeration of available disambiguation strategies.
+ *
+ * Note: this is the runtime-side strategy selector used by
+ * disambiguation_create().  The user-facing extension metadata in
+ * extension_registry.h uses a separate enum (DisambiguationStrategy
+ * with DISAMBIG_* values) that describes an extension's preference
+ * rather than the actual runtime strategy.
  */
-typedef enum DisambiguationStrategy {
+typedef enum LimeStrategy {
     STRAT_PRIORITY      = 0,  /**< Resolve by extension priority metadata */
     STRAT_FORK_RESOLVE  = 1,  /**< Fork parse, try each, pick survivor */
     STRAT_BAYESIAN      = 2,  /**< Evidence accumulation (posterior probs) */
     STRAT_LLM           = 3,  /**< Query LLM oracle for resolution advice */
     STRAT_CUSTOM        = 4,  /**< User-provided vtable */
-} DisambiguationStrategy;
+} LimeStrategy;
 
 /** @} */ /* end strat_ids */
 
@@ -216,7 +222,7 @@ typedef struct DisambiguationContext DisambiguationContext;
  * @see disambiguation_destroy()
  */
 DisambiguationContext *disambiguation_create(
-    DisambiguationStrategy strategy,
+    LimeStrategy strategy,
     struct ExtensionRegistry *reg);
 
 /**
@@ -263,9 +269,9 @@ void disambiguation_update(
  * @brief Get the strategy type used by this context.
  *
  * @param ctx The disambiguation context.
- * @return The DisambiguationStrategy enum value.
+ * @return The LimeStrategy enum value.
  */
-DisambiguationStrategy disambiguation_get_strategy(
+LimeStrategy disambiguation_get_strategy(
     const DisambiguationContext *ctx);
 
 /**
@@ -274,7 +280,7 @@ DisambiguationStrategy disambiguation_get_strategy(
  * @param strategy Strategy to name.
  * @return Static string like "priority", "fork-resolve", etc.
  */
-const char *disambiguation_strategy_name(DisambiguationStrategy strategy);
+const char *disambiguation_strategy_name(LimeStrategy strategy);
 
 /**
  * @brief Destroy a disambiguation context and free all resources.

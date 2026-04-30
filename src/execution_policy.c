@@ -370,7 +370,7 @@ void execution_results_free(ExecutionResult *results, int nresults) {
     free(results);
 }
 
-const char *execution_policy_name(ExecutionPolicy policy) {
+const char *execution_policy_name(LimeExecMode policy) {
     switch (policy) {
     case EXEC_FIRST_ONLY:   return "first_only";
     case EXEC_ALL:          return "all";

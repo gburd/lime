@@ -99,13 +99,19 @@ typedef struct GrammarExtensionMetadata {
 
 /**
  * @brief Available execution policies.
+ *
+ * Note: this is the runtime-side execution mode.  The user-facing
+ * extension metadata in extension_registry.h uses a separate enum
+ * (ExecutionPolicy with EXEC_SEQUENTIAL/PARALLEL/... values) that
+ * describes scheduling preferences rather than the actual dispatch
+ * mode.
  */
-typedef enum ExecutionPolicy {
+typedef enum LimeExecMode {
     EXEC_FIRST_ONLY = 0,   /**< Only highest-priority winner executes */
     EXEC_ALL,              /**< All winners execute independently */
     EXEC_CHAIN,            /**< Winners execute in sequence, output chained */
     EXEC_CONDITIONAL,      /**< Extension-provided callback decides */
-} ExecutionPolicy;
+} LimeExecMode;
 
 /** @} */ /* end exec_policy_enum */
 
@@ -184,7 +190,7 @@ typedef bool (*ParserExecuteFn)(LimeParserHandle *parser,
  * @brief Configuration for the execution policy engine.
  */
 typedef struct ExecutionPolicyConfig {
-    ExecutionPolicy policy;        /**< Which policy to use */
+    LimeExecMode policy;           /**< Which policy to use */
     ParserExecuteFn execute_fn;    /**< Callback to run a parser */
 
     /**
@@ -267,7 +273,7 @@ void execution_results_free(ExecutionResult *results, int nresults);
  * @param policy Policy to name.
  * @return Static string like "first_only", "all", "chain", etc.
  */
-const char *execution_policy_name(ExecutionPolicy policy);
+const char *execution_policy_name(LimeExecMode policy);
 
 /**
  * @brief Convenience: execute with EXEC_FIRST_ONLY policy.

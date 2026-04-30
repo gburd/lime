@@ -179,6 +179,91 @@ memory allocation), use `-T`:
 ./lime -T my_template.c grammar.y
 ```
 
+## Avoiding Symbol Collisions
+
+### Generated parser symbols
+
+A generated parser exports functions like `ParseAlloc`, `ParseFree`,
+`Parse`, `ParseTrace`, plus macros like `ParseARG_STORE` and
+`ParseCTX_FETCH`.  If you link multiple generated parsers into one
+binary, or your project already defines a symbol called `Parse`, you
+need to rename these.
+
+Two options:
+
+**Per-grammar, via the `%name` directive:**
+
+```
+%name SqlParser.
+```
+
+This renames every exported symbol to the prefix `SqlParser`:
+`SqlParserAlloc`, `SqlParserFree`, `SqlParser`, etc.
+
+**Per-invocation, via the `-P` command-line flag:**
+
+```bash
+./lime -PSqlParser grammar.y
+```
+
+The `-P` flag overrides `%name` without editing the grammar, which is
+useful when you don't control the grammar file or want to generate the
+same grammar under several names.
+
+The two mechanisms are equivalent; pick whichever fits your build
+better.  For example, in a Makefile:
+
+```makefile
+sql_parser.c: sql_grammar.y
+	./lime -PSqlParser $<
+
+json_parser.c: json_grammar.y
+	./lime -PJsonParser $<
+```
+
+### Library (extension framework) symbols
+
+The runtime extension library exports symbols in three naming schemes:
+
+| Prefix | Scope | Examples |
+|--------|-------|----------|
+| `lime_*`, `Lime*`, `LIME_*` | Preferred modern API | `lime_arena_create`, `LimePluginHandle`, `LIME_PLUGIN_ABI_VERSION` |
+| `lemon_*` | Legacy (snapshot/registry) | `lemon_snapshot_create`, `lemon_parser_version` |
+| Unprefixed | Internal/runtime API | `parse_begin`, `Token`, `Tokenizer`, `ExtensionRegistry`, `snapshot_acquire` |
+
+If you embed the library directly in your project (Option 3), the
+unprefixed symbols may collide with existing identifiers in your
+codebase.  Mitigations:
+
+- **Link the library as a shared object** (`liblime_parser.so` /
+  `.dylib`) so symbol resolution happens at load time rather than
+  link time.  Conflicts become local to the library.
+- **Use a separate translation unit per concern.**  Most unprefixed
+  symbols are concentrated in `include/parse_context.h`,
+  `include/token_table.h`, `include/conflict.h`, etc.  You typically
+  only need `#include "parser.h"` in most of your code and can isolate
+  the lower-level headers to one file.
+- **Namespace via preprocessor** (advanced).  Before including any
+  Lime header, add:
+
+  ```c
+  #define Token          LimeToken
+  #define Tokenizer      LimeTokenizer
+  #define ParseContext   LimeParseContext
+  /* etc. */
+  ```
+
+  This is awkward, but works if you have a hard collision you cannot
+  resolve otherwise.
+
+The `STRAT_*` and `EXEC_*` enum values in `include/disambiguation.h`
+and `include/execution_policy.h` are distinct from the `DISAMBIG_*`
+and `EXEC_SEQUENTIAL`/`EXEC_PARALLEL` values in
+`include/extension_registry.h`.  The runtime enums are typed
+`LimeStrategy` and `LimeExecMode`; the metadata enums retain the
+names `DisambiguationStrategy` and `ExecutionPolicy`.  Both sets
+coexist without conflict in the same translation unit.
+
 ## Thread Safety Checklist
 
 - ✓ Snapshots are safe to share across threads (atomic refcount)

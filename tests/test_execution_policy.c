@@ -173,7 +173,7 @@ static void test_policy_name(void) {
     const char *n4 = execution_policy_name(EXEC_CONDITIONAL);
     ASSERT(n4 != NULL && strcmp(n4, "conditional") == 0, "CONDITIONAL name");
 
-    const char *n5 = execution_policy_name((ExecutionPolicy)99);
+    const char *n5 = execution_policy_name((LimeExecMode)99);
     ASSERT(n5 != NULL && strcmp(n5, "unknown") == 0, "unknown policy name");
 }
 
@@ -939,7 +939,7 @@ static void test_unknown_policy_fallback(void) {
 
     ExecutionPolicyConfig config;
     execution_policy_config_init(&config);
-    config.policy = (ExecutionPolicy)999;  /* Invalid policy */
+    config.policy = (LimeExecMode)999;  /* Invalid policy */
     config.execute_fn = mock_execute;
 
     int n = 0;

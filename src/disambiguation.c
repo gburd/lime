@@ -19,7 +19,7 @@
 /* ------------------------------------------------------------------ */
 
 struct DisambiguationContext {
-    DisambiguationStrategy strategy_type;
+    LimeStrategy strategy_type;
     DisambiguationStrategyVTable vtable;
     void *strategy_context;             /* Opaque state from vtable.init() */
     struct ExtensionRegistry *registry; /* Borrowed reference              */
@@ -98,7 +98,7 @@ void strategy_result_cleanup(StrategyResult *result) {
 /* ------------------------------------------------------------------ */
 
 static const DisambiguationStrategyVTable *get_builtin_vtable(
-    DisambiguationStrategy strategy)
+    LimeStrategy strategy)
 {
     switch (strategy) {
     case STRAT_PRIORITY:
@@ -156,7 +156,7 @@ static const Extension **gather_loaded_extensions(
 /* ------------------------------------------------------------------ */
 
 DisambiguationContext *disambiguation_create(
-    DisambiguationStrategy strategy,
+    LimeStrategy strategy,
     ExtensionRegistry *reg)
 {
     const DisambiguationStrategyVTable *vt = get_builtin_vtable(strategy);
@@ -247,14 +247,14 @@ void disambiguation_update(DisambiguationContext *ctx, bool success) {
 /*  Public API: introspection                                          */
 /* ------------------------------------------------------------------ */
 
-DisambiguationStrategy disambiguation_get_strategy(
+LimeStrategy disambiguation_get_strategy(
     const DisambiguationContext *ctx)
 {
     if (ctx == NULL) return STRAT_PRIORITY;
     return ctx->strategy_type;
 }
 
-const char *disambiguation_strategy_name(DisambiguationStrategy strategy) {
+const char *disambiguation_strategy_name(LimeStrategy strategy) {
     switch (strategy) {
     case STRAT_PRIORITY:     return "priority";
     case STRAT_FORK_RESOLVE: return "fork-resolve";

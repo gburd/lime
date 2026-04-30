@@ -119,7 +119,7 @@ static void test_create_priority_strategy(void) {
     DisambiguationContext *ctx = disambiguation_create(STRAT_PRIORITY, reg);
     ASSERT(ctx != NULL, "create STRAT_PRIORITY should succeed");
 
-    DisambiguationStrategy s = disambiguation_get_strategy(ctx);
+    LimeStrategy s = disambiguation_get_strategy(ctx);
     ASSERT(s == STRAT_PRIORITY, "strategy should be STRAT_PRIORITY");
 
     disambiguation_destroy(ctx);
@@ -216,7 +216,7 @@ static void test_create_custom(void) {
     ASSERT(ctx != NULL, "custom create should succeed");
     ASSERT(custom_init_called == 1, "init should be called once");
 
-    DisambiguationStrategy s = disambiguation_get_strategy(ctx);
+    LimeStrategy s = disambiguation_get_strategy(ctx);
     ASSERT(s == STRAT_CUSTOM, "strategy should be STRAT_CUSTOM");
 
     disambiguation_destroy(ctx);

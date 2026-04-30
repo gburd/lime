@@ -1727,6 +1727,15 @@ static void handle_T_option(char *z){
   lemon_strcpy(user_templatename, z);
 }
 
+static char *prefix_override = NULL;
+static void handle_P_option(char *z){
+  prefix_override = (char *) lime_malloc( lemonStrlen(z)+1 );
+  if( prefix_override==0 ){
+    memory_error();
+  }
+  lemon_strcpy(prefix_override, z);
+}
+
 /* Merge together to lists of rules ordered by rule.iRule */
 static struct rule *Rule_merge(struct rule *pA, struct rule *pB){
   struct rule *pFirst = 0;
@@ -2063,6 +2072,7 @@ int main(int argc, char **argv){
   static int verboseConflict = 0;
   static int aotFlag = 0;
 
+
   static struct s_options options[] = {
     {OPT_FLAG, "b", (char*)&basisflag, "Print only the basis in report."},
     {OPT_FLAG, "c", (char*)&compress, "Don't compress the action table."},
@@ -2083,6 +2093,8 @@ int main(int argc, char **argv){
     {OPT_FSTR, "O", 0, "Ignored.  (Placeholder for '-O' compiler options.)"},
     {OPT_FLAG, "p", (char*)&showPrecedenceConflict,
                     "Show conflicts resolved by precedence rules"},
+    {OPT_FSTR, "P", (char*)handle_P_option,
+                    "Prefix for generated parser symbols (overrides %name)."},
     {OPT_FLAG, "q", (char*)&quiet, "(Quiet) Don't print the report file."},
     {OPT_FLAG, "r", (char*)&noResort, "Do not sort or renumber states"},
     {OPT_FLAG, "s", (char*)&statistics,
@@ -2131,6 +2143,12 @@ int main(int argc, char **argv){
   /* Parse the input file */
   Parse(&lem);
   if( lem.printPreprocessed || lem.errorcnt ) exit(lem.errorcnt);
+
+  /* Command-line -P overrides %name from the grammar file. Useful for
+  ** linking multiple generated parsers without symbol collisions. */
+  if( prefix_override ){
+    lem.name = prefix_override;
+  }
 
   if( lem.nrule==0 ){
     fprintf(stderr,"Empty grammar.\n");

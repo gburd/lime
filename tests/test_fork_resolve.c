@@ -90,7 +90,7 @@ static void test_create_fork_resolve_context(void) {
     DisambiguationContext *ctx = disambiguation_create(STRAT_FORK_RESOLVE, reg);
     ASSERT(ctx != NULL, "fork-resolve context should be created");
 
-    DisambiguationStrategy strat = disambiguation_get_strategy(ctx);
+    LimeStrategy strat = disambiguation_get_strategy(ctx);
     ASSERT(strat == STRAT_FORK_RESOLVE,
            "strategy should be STRAT_FORK_RESOLVE");
 
