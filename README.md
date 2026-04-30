@@ -103,6 +103,10 @@ See **[docs/README.md](docs/README.md)** for the full index.  Key documents:
 
 | Document | Description |
 |----------|-------------|
+| [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | Build Lime, write your first grammar |
+| [docs/CONCEPTS.md](docs/CONCEPTS.md) | Snapshots, extensions, conflicts, JIT |
+| [docs/INTEGRATION.md](docs/INTEGRATION.md) | Embed Lime in your project |
+| [docs/EXAMPLES.md](docs/EXAMPLES.md) | All examples explained |
 | [docs/API.md](docs/API.md) | C API reference |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design |
 | [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Writing runtime extensions |

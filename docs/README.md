@@ -1,5 +1,14 @@
 # Lime Documentation
 
+## Getting Started
+
+| Document | Description |
+|----------|-------------|
+| [GETTING_STARTED.md](GETTING_STARTED.md) | Build Lime, write your first grammar, generate a parser |
+| [CONCEPTS.md](CONCEPTS.md) | Snapshots, extensions, conflicts, disambiguation, JIT |
+| [INTEGRATION.md](INTEGRATION.md) | Embed Lime in your project (Meson, Make, CMake) |
+| [EXAMPLES.md](EXAMPLES.md) | All examples: calculators, PostgreSQL, query languages |
+
 ## Reference
 
 | Document | Description |
