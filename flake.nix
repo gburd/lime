@@ -1,58 +1,103 @@
 {
-  description = "Extensible SQL Parser - Lemon-based parser generator with extensions";
+  description = "Lime - runtime-extensible LALR(1) parser generator";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
   outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+    let
+      # Supported systems. flake-utils' eachDefaultSystem only covers
+      # Linux/Darwin x86_64+aarch64; extend explicitly for FreeBSD and
+      # RISC-V. Package availability varies per system and is handled
+      # via lib.optionals below.
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "riscv64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+        "x86_64-freebsd"
+        "aarch64-freebsd"
+      ];
+    in
+    flake-utils.lib.eachSystem systems (system:
       let
         pkgs = import nixpkgs { inherit system; };
+        inherit (pkgs) lib stdenv;
+
+        # Platform capability flags
+        isLinux = stdenv.hostPlatform.isLinux;
+        isDarwin = stdenv.hostPlatform.isDarwin;
+
+        # Tools that don't build on every platform:
+        #   valgrind:   Linux only (+ FreeBSD, but flaky)
+        #   gdb:        Linux; not reliably available on Darwin
+        #   lcov/gcovr: portable, but gcovr is Python so more portable
+        #   llvm:       available on most platforms; gate on meta.available
+        #               in case a specific platform combo isn't supported
+        llvmPkgs = pkgs.llvmPackages_20;
+        hasLLVM = llvmPkgs.libllvm.meta.available or false;
+
+        commonTools = with pkgs; [
+          meson
+          ninja
+          pkg-config
+          python3
+          doxygen
+        ];
+
+        linuxTools = with pkgs; lib.optionals isLinux [
+          valgrind
+          gdb
+          lcov
+        ];
+
+        coverageTools = with pkgs; [ gcovr ];
+
+        llvmInputs = lib.optionals hasLLVM [
+          llvmPkgs.libllvm
+        ];
       in
       {
         devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            gcc13
-            meson
-            ninja
-            python311
-            llvm_17
-            libllvm
-            llvmPackages_17.libllvm
-            pkg-config
-            valgrind
-            gdb
-            lcov  # For code coverage
-            gcovr # Alternative coverage tool
-          ];
+          # stdenv provides a working C/C++ compiler for every platform:
+          #   Linux        -> gcc
+          #   Darwin       -> clang
+          #   FreeBSD      -> clang
+          #   riscv64-linux -> gcc (cross or native)
+          packages = commonTools ++ linuxTools ++ coverageTools ++ llvmInputs;
 
           shellHook = ''
-            echo "Extensible SQL Parser development environment"
-            echo "  gcc:    $(gcc --version | head -1)"
+            echo "Lime development environment (${system})"
+            echo "  cc:     $(${stdenv.cc}/bin/cc --version | head -1)"
             echo "  meson:  $(meson --version)"
-            echo "  ninja:  $(ninja --version)"
-            echo "  python: $(python3 --version)"
+            echo "  ninja:  $(ninja --version 2>/dev/null || echo missing)"
+          '' + lib.optionalString hasLLVM ''
             echo "  llvm:   $(llvm-config --version 2>/dev/null || echo 'not in PATH')"
-            export PKG_CONFIG_PATH="${pkgs.llvmPackages_17.libllvm.dev}/lib/pkgconfig:$PKG_CONFIG_PATH"
+            export PKG_CONFIG_PATH="${llvmPkgs.libllvm.dev}/lib/pkgconfig:''${PKG_CONFIG_PATH:-}"
+          '' + lib.optionalString (!hasLLVM) ''
+            echo "  llvm:   not available on ${system} (JIT disabled)"
           '';
         };
 
-        packages.default = pkgs.stdenv.mkDerivation {
-          pname = "lemon-parser";
+        packages.default = stdenv.mkDerivation {
+          pname = "lime";
           version = "0.1.0";
           src = ./.;
 
-          nativeBuildInputs = with pkgs; [
-            meson
-            ninja
-            pkg-config
-          ];
+          nativeBuildInputs = with pkgs; [ meson ninja pkg-config ];
+          buildInputs = llvmInputs;
 
-          buildInputs = with pkgs; [
-            llvm_17
-          ];
+          mesonFlags = lib.optionals (!hasLLVM) [ "-Dllvm=disabled" ];
+
+          meta = with lib; {
+            description = "Runtime-extensible LALR(1) parser generator";
+            homepage = "https://codeberg.org/gregburd/lime";
+            license = licenses.publicDomain;
+            platforms = systems;
+          };
         };
       }
     );
