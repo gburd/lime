@@ -1,3 +1,0 @@
-CREATE TEXT SEARCH CONFIGURATION evttrig_tscfg (COPY = pg_catalog.simple);
-ALTER TEXT SEARCH CONFIGURATION evttrig_tscfg
-    DROP MAPPING FOR word;
