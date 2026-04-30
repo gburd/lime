@@ -190,50 +190,62 @@ CharClassVector classify_simd_neon(const char *input, size_t offset) {
     CharClassVector result;
     const uint8_t *p = (const uint8_t *)(input + offset);
 
-    /* Load 16 bytes */
-    uint8x16_t chunk = vld1q_u8(p);
-
     /*
-    ** Alphabetic: uppercase || lowercase || underscore
+    ** NEON registers are 128 bits (16 bytes) wide, but the
+    ** CharClassVector contract covers 32 bytes so that it matches
+    ** the scalar and AVX2 paths.  Process two 16-byte chunks and
+    ** merge the per-chunk 16-bit masks into 32-bit masks.
     */
-    uint8x16_t ge_A = vcgeq_u8(chunk, vdupq_n_u8('A'));
-    uint8x16_t le_Z = vcleq_u8(chunk, vdupq_n_u8('Z'));
-    uint8x16_t is_upper = vandq_u8(ge_A, le_Z);
+    uint32_t alpha_mask = 0;
+    uint32_t digit_mask = 0;
+    uint32_t space_mask = 0;
+    uint32_t high_mask  = 0;
 
-    uint8x16_t ge_a = vcgeq_u8(chunk, vdupq_n_u8('a'));
-    uint8x16_t le_z = vcleq_u8(chunk, vdupq_n_u8('z'));
-    uint8x16_t is_lower = vandq_u8(ge_a, le_z);
+    for (int chunk_idx = 0; chunk_idx < 2; chunk_idx++) {
+        uint8x16_t chunk = vld1q_u8(p + (size_t)chunk_idx * 16);
 
-    uint8x16_t is_underscore = vceqq_u8(chunk, vdupq_n_u8('_'));
+        /* Alphabetic: uppercase || lowercase || underscore */
+        uint8x16_t ge_A = vcgeq_u8(chunk, vdupq_n_u8('A'));
+        uint8x16_t le_Z = vcleq_u8(chunk, vdupq_n_u8('Z'));
+        uint8x16_t is_upper = vandq_u8(ge_A, le_Z);
 
-    uint8x16_t is_alpha = vorrq_u8(is_upper, vorrq_u8(is_lower, is_underscore));
+        uint8x16_t ge_a = vcgeq_u8(chunk, vdupq_n_u8('a'));
+        uint8x16_t le_z = vcleq_u8(chunk, vdupq_n_u8('z'));
+        uint8x16_t is_lower = vandq_u8(ge_a, le_z);
 
-    /*
-    ** Digit: '0' .. '9'
-    */
-    uint8x16_t ge_0 = vcgeq_u8(chunk, vdupq_n_u8('0'));
-    uint8x16_t le_9 = vcleq_u8(chunk, vdupq_n_u8('9'));
-    uint8x16_t is_digit = vandq_u8(ge_0, le_9);
+        uint8x16_t is_underscore = vceqq_u8(chunk, vdupq_n_u8('_'));
 
-    /*
-    ** Whitespace: space, tab, newline, carriage-return
-    */
-    uint8x16_t eq_space   = vceqq_u8(chunk, vdupq_n_u8(' '));
-    uint8x16_t eq_tab     = vceqq_u8(chunk, vdupq_n_u8('\t'));
-    uint8x16_t eq_newline = vceqq_u8(chunk, vdupq_n_u8('\n'));
-    uint8x16_t eq_cr      = vceqq_u8(chunk, vdupq_n_u8('\r'));
-    uint8x16_t is_space   = vorrq_u8(eq_space,
-                              vorrq_u8(eq_tab,
-                                vorrq_u8(eq_newline, eq_cr)));
+        uint8x16_t is_alpha = vorrq_u8(is_upper,
+                                vorrq_u8(is_lower, is_underscore));
 
-    /* High bytes: c >= 0x80 */
-    uint8x16_t is_high = vcgeq_u8(chunk, vdupq_n_u8(0x80));
+        /* Digit: '0' .. '9' */
+        uint8x16_t ge_0 = vcgeq_u8(chunk, vdupq_n_u8('0'));
+        uint8x16_t le_9 = vcleq_u8(chunk, vdupq_n_u8('9'));
+        uint8x16_t is_digit = vandq_u8(ge_0, le_9);
 
-    /* Convert to bitmasks -- only lower 16 bits are meaningful */
-    result.is_alpha_mask = (uint32_t)neon_movemask(is_alpha);
-    result.is_digit_mask = (uint32_t)neon_movemask(is_digit);
-    result.is_space_mask = (uint32_t)neon_movemask(is_space);
-    result.is_high_byte_mask = (uint32_t)neon_movemask(is_high);
+        /* Whitespace: space, tab, newline, carriage-return */
+        uint8x16_t eq_space   = vceqq_u8(chunk, vdupq_n_u8(' '));
+        uint8x16_t eq_tab     = vceqq_u8(chunk, vdupq_n_u8('\t'));
+        uint8x16_t eq_newline = vceqq_u8(chunk, vdupq_n_u8('\n'));
+        uint8x16_t eq_cr      = vceqq_u8(chunk, vdupq_n_u8('\r'));
+        uint8x16_t is_space   = vorrq_u8(eq_space,
+                                  vorrq_u8(eq_tab,
+                                    vorrq_u8(eq_newline, eq_cr)));
+
+        /* High bytes: c >= 0x80 */
+        uint8x16_t is_high = vcgeq_u8(chunk, vdupq_n_u8(0x80));
+
+        unsigned shift = (unsigned)chunk_idx * 16;
+        alpha_mask |= (uint32_t)neon_movemask(is_alpha) << shift;
+        digit_mask |= (uint32_t)neon_movemask(is_digit) << shift;
+        space_mask |= (uint32_t)neon_movemask(is_space) << shift;
+        high_mask  |= (uint32_t)neon_movemask(is_high)  << shift;
+    }
+
+    result.is_alpha_mask     = alpha_mask;
+    result.is_digit_mask     = digit_mask;
+    result.is_space_mask     = space_mask;
+    result.is_high_byte_mask = high_mask;
 
     return result;
 }
