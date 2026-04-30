@@ -40,7 +40,7 @@ doxygen = find_program('doxygen', required : false)
 if doxygen.found()
   custom_target('doxygen',
     output : 'html',
-    command : [doxygen, meson.project_source_root() / 'Doxyfile'],
+    command : [doxygen, meson.project_source_root() / 'docs' / 'Doxyfile'],
     build_by_default : false,
   )
 endif

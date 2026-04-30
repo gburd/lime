@@ -1,0 +1,37 @@
+# Lime Documentation
+
+## Reference
+
+| Document | Description |
+|----------|-------------|
+| [API.md](API.md) | C API reference for the extension framework |
+| [ALGORITHM.md](ALGORITHM.md) | LALR(1) parsing theory and Lime's implementation |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | System design and component overview |
+| [EXTENSIONS.md](EXTENSIONS.md) | Writing runtime grammar extensions |
+| [PERFORMANCE.md](PERFORMANCE.md) | Performance characteristics and tuning |
+| [EXTENSION_PERFORMANCE.md](EXTENSION_PERFORMANCE.md) | Extension overhead analysis |
+| [COMPARISON.md](COMPARISON.md) | Feature comparison with Yacc, Bison, ANTLR, Menhir |
+| [MIGRATION_FROM_BISON.md](MIGRATION_FROM_BISON.md) | Porting Bison grammars to Lime |
+| [MIGRATION_FROM_YACC.md](MIGRATION_FROM_YACC.md) | Porting Yacc grammars to Lime |
+| [JIT_ANALYSIS.md](JIT_ANALYSIS.md) | JIT compilation cost-benefit analysis |
+| [PARSER_PLUGIN_DESIGN.md](PARSER_PLUGIN_DESIGN.md) | Plugin system design |
+| [MODULE_FORMAT.md](MODULE_FORMAT.md) | Modular grammar file format |
+| [LITERATE_FORMAT.md](LITERATE_FORMAT.md) | Literate grammar format |
+
+## Man Pages
+
+Installed by `meson install` or readable directly:
+
+- `man/lime.1` — command-line reference
+- `man/lime_grammar.5` — grammar file format
+
+## API Documentation (Doxygen)
+
+Generate searchable HTML docs from annotated headers:
+
+```bash
+cd docs && make doxygen
+open api/html/index.html
+```
+
+Requires `doxygen`. The Doxyfile lives in this directory.

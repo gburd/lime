@@ -2,7 +2,7 @@
 *.o
 *.out
 *.so
-builddir/
+builddir*/
 lime
 core.*
 
@@ -31,15 +31,23 @@ examples/calc/calc_conflicts
 examples/calc/libcalc_power.so
 examples/calc/libcalc_bitwise.so
 
+# Generated documentation
+docs/api/
+
 # Backup files
 *.old
 
 # Underscore directory (PostgreSQL test data)
 _/
 
-# Agent/summary documentation (temporary)
-agent/
-*SUMMARY.md
+# Python bytecache
+__pycache__/
+*.pyc
 
-# Claude Code user settings
+# Coverage reports
+coverage-report/
+
+# Agent tool working directories
 .claude/
+.kiro/
+.cursor/

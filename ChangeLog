@@ -1,0 +1,129 @@
+ChangeLog for Lime Parser Generator
+====================================
+
+2026-04-30  Greg Burd  <greg@burd.me>
+
+	* Project restructuring: move shell scripts into scripts/, move
+	Doxyfile into docs/, add docs/Makefile and docs/README.md, add
+	ChangeLog, add CI configurations, clean up agent artifacts.
+
+	* Remove agent-generated report files (VALIDATION_RESULTS.md,
+	VALIDATION.md, README_VALIDATION.md, PERFORMANCE_REPORT.md,
+	LINT_FORMAT_GUIDE.md, CLAUDE.md) and stray test artifacts.
+
+	* Add .agent/README.md for tool-agnostic AI assistant context.
+
+2026-04-29  Greg Burd  <greg@burd.me>
+
+	* tests/test_strategy_priority_extended.c,
+	tests/test_grammar_context.c, tests/test_extension_registry.c:
+	New test files covering priority disambiguation, grammar context
+	stack management, and extension registry operations.  499 new
+	assertions bringing extension framework coverage above 90%.
+
+	* contrib/oracle_compat/, contrib/sqlite_compat/,
+	contrib/duckdb_features/, contrib/mysql_compat/,
+	contrib/edn_literals/, contrib/xml_query/: SQL dialect extension
+	examples demonstrating the runtime grammar extension API.
+
+	* examples/llm_oracle/: LLM-based disambiguation oracle example.
+
+	* docs/EXTENSION_PERFORMANCE.md, docs/ALGORITHM.md,
+	docs/COMPARISON.md, docs/MIGRATION_FROM_BISON.md,
+	docs/MIGRATION_FROM_YACC.md: Reference documentation for the
+	extension framework, LALR(1) algorithm, and migration guides.
+
+	* man/lime.1, man/lime_grammar.5: Man pages for the lime command
+	and grammar file format.
+
+	* bench/extension_overhead.c, bench/BENCHMARK_RESULTS.md:
+	Extension overhead microbenchmarks (25 benchmarks, fast-path
+	119 ns, worst-case 1.4 us).
+
+	* include/conflict.h: Moved from src/ to include/ (public API).
+
+	* Doxyfile: Added with 120+ function annotations across 8 headers.
+
+2026-04-28  Greg Burd  <greg@burd.me>
+
+	* limpar.c: Fix unused-variable warning in yy_destructor when no
+	%destructor directives defined.  Fix "comparison is always true"
+	warning in ParseFinalize by setting YY_MIN_DSTRCTR to nsymbol.
+
+	* examples/calc/: Calculator example with runtime extension
+	loading via dlopen.  Base 4-operation calculator plus a shared
+	library (libcalc_power.so) for the ^ operator.
+
+2026-04-27  Greg Burd  <greg@burd.me>
+
+	* tests/test_coverage_boost.c: Rewrite JIT policy and conflict
+	tests to use current API (JITMetrics/JITPolicyConfig).
+
+	* src/parse_context.c: Implement parse_begin, parse_end,
+	parse_get_snapshot, parse_token, snap_find_shift_action,
+	snap_find_reduce_action.
+
+	* src/jit_tokenizer.c: Fix missing #include <stdio.h>.
+
+	* src/glr.c, src/utf8.c, src/lime_ast.c, src/jit_tokenizer.c:
+	New modules for GLR parsing, UTF-8 handling, AST directives,
+	and JIT-compiled tokenization.
+
+	* lime.c, limpar.c: Add location tracking, error recovery, and
+	AST directive support.
+
+	* bench/bench_grammar.lime, bench/bench_grammar.y: Benchmark
+	grammars for Lime vs Bison performance comparison.
+
+2026-04-24  Greg Burd  <greg@burd.me>
+
+	* lime.c: Add -L (lint) and -F (format) flags for grammar
+	validation and consistent formatting.  Lint checks module
+	metadata, symbol exports, unused symbols.  Format generates
+	consistently styled output.
+
+	* lime.c: Add %module_name, %module_version, %module_description,
+	%require, %export, %import directives for Bison-style module
+	metadata.
+
+	* tools/lime-compose: Complete rewrite for directive-based module
+	format with topological dependency resolution.
+
+	* tools/convert_format.py: Migration tool from Markdown+YAML
+	format to directive format.
+
+	* docs/MODULE_FORMAT.md: Module format specification.
+
+	* src/merkle_tree.{h,c}, src/dependency_resolver.{h,c},
+	src/parser_composition.{h,c}: Merkle-tree-based modular parser
+	composition system with SHA-256 content addressing, SemVer
+	dependency tracking, and topological sort.
+
+	* examples/datalog/, examples/xpath/, examples/xquery/,
+	examples/mongodb/: New language parser examples in literate
+	format.
+
+	* examples/pg_modular/: PostgreSQL grammar split into 35 literate
+	modules with dependency graph.
+
+	* tests/test_merkle_tree.c, tests/test_dependency_resolver.c,
+	tests/test_parser_composition.c, tests/test_random_composition.c:
+	106 tests for composition infrastructure.
+
+2026-04-23  Greg Burd  <greg@burd.me>
+
+	* examples/pg/gram.lime: Complete PostgreSQL grammar conversion
+	from Bison format.  782 non-terminals, 3584 production rules,
+	2406 semantic actions, 0 conflicts.
+
+	* examples/pg/tokens.lime, examples/pg/types.lime: Token
+	definitions and type declarations extracted from gram.y.
+
+	* examples/pg/tokenize.c, examples/pg/tokenize.h: PostgreSQL-
+	compatible tokenizer with all 6 string types and keyword lookup.
+
+	* examples/pg/pg_gram_helpers.c, examples/pg/pg_gram_helpers.h:
+	41 helper functions ported from gram.y.
+
+	* test_harness/: Python test framework for parser comparison
+	(Lime vs Bison) with AST comparison support.

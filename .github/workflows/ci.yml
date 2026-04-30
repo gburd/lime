@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        compiler: [gcc, clang]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y meson ninja-build pkg-config valgrind
+        if [ "${{ matrix.compiler }}" = "clang" ]; then
+          sudo apt-get install -y clang
+        fi
+
+    - name: Build lime (standalone)
+      run: ${{ matrix.compiler }} -O2 -Wall -Wextra -o lime lime.c
+
+    - name: Setup meson
+      env:
+        CC: ${{ matrix.compiler }}
+      run: meson setup builddir
+
+    - name: Build
+      run: ninja -C builddir
+
+    - name: Test
+      run: meson test -C builddir --print-errorlogs
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        sanitizer: [address, thread, undefined]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y meson ninja-build pkg-config
+
+    - name: Build with ${{ matrix.sanitizer }} sanitizer
+      run: |
+        meson setup builddir-${{ matrix.sanitizer }} \
+          -Db_sanitize=${{ matrix.sanitizer }}
+        ninja -C builddir-${{ matrix.sanitizer }}
+
+    - name: Test
+      run: meson test -C builddir-${{ matrix.sanitizer }} --print-errorlogs
+
+  valgrind:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y meson ninja-build pkg-config valgrind
+
+    - name: Build
+      run: |
+        meson setup builddir
+        ninja -C builddir
+
+    - name: Valgrind check
+      run: scripts/check_memory.sh

@@ -6,7 +6,7 @@ PROJECT_NAME           = "Lime Parser Generator"
 PROJECT_NUMBER         = "0.1.0"
 PROJECT_BRIEF          = "Runtime-extensible LALR(1) parser with SIMD tokenization and LLVM JIT"
 PROJECT_LOGO           =
-OUTPUT_DIRECTORY       = docs/api
+OUTPUT_DIRECTORY       = api
 
 # -- Build settings --
 EXTRACT_ALL            = NO
@@ -15,7 +15,7 @@ EXTRACT_STATIC         = NO
 EXTRACT_LOCAL_CLASSES  = NO
 
 # -- Input files --
-INPUT                  = include/ src/snapshot.h
+INPUT                  = ../include/ ../src/snapshot.h
 FILE_PATTERNS          = *.h *.c
 RECURSIVE              = NO
 EXCLUDE_PATTERNS       = */test_* */bench/*
@@ -89,8 +89,8 @@ DOT_FONTSIZE           = 10
 
 # -- Layout --
 FULL_PATH_NAMES        = YES
-STRIP_FROM_PATH        = .
-STRIP_FROM_INC_PATH    = include/ src/
+STRIP_FROM_PATH        = ..
+STRIP_FROM_INC_PATH    = ../include/ ../src/
 SHOW_INCLUDE_FILES     = YES
 SHOW_GROUPED_MEMB_INC = YES
 JAVADOC_AUTOBRIEF      = YES
@@ -98,6 +98,6 @@ QT_AUTOBRIEF           = NO
 MULTILINE_CPP_IS_BRIEF = NO
 
 # -- Example paths --
-EXAMPLE_PATH           = examples/
+EXAMPLE_PATH           = ../examples/
 EXAMPLE_PATTERNS       = *.c *.h
 EXAMPLE_RECURSIVE      = NO

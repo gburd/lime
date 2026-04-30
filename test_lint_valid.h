@@ -1,1 +1,0 @@
-#define INTEGER                          1

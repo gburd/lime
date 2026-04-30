@@ -1,13 +1,13 @@
 # JIT Compilation Analysis for Lime Parser Generator
 
-## Executive Summary
+## Overview
 
 JIT (Just-In-Time) compilation in Lime targets action table lookups during
 parsing. While JIT can deliver a 2-5x speedup on the lookup step itself, action
 table lookups account for only 10-20% of total SQL parse time. The dominant
 bottleneck is tokenization, which consumes 40-60% of parse time. As a result,
 JIT compilation of action tables alone yields a modest 1.1-1.5x overall
-improvement. The highest-value JIT optimization is tokenizer JIT (Phase 5E),
+improvement. The highest-value JIT optimization is tokenizer JIT,
 which targets the actual bottleneck and can deliver 1.8-2.8x overall speedup.
 
 This document provides a detailed cost-benefit analysis to help users decide
@@ -91,7 +91,7 @@ JIT compilation provides meaningful value in the following scenarios:
   OrcJIT's lazy compilation naturally adapts to these patterns by only compiling
   frequently-visited states.
 
-- **When combined with tokenizer JIT (Phase 5E)**: The combined effect of action
+- **When combined with tokenizer JIT**: The combined effect of action
   table JIT and tokenizer JIT can yield 2-3x overall speedup, which is
   substantial enough to justify the added complexity.
 
@@ -231,7 +231,7 @@ Each parser state can be compiled independently, on demand.
 
 ---
 
-## Tokenizer JIT (Phase 5E) - Highest Value Optimization
+## Tokenizer JIT - Highest Value Optimization
 
 The tokenizer JIT targets the actual parsing bottleneck and represents the
 single highest-impact JIT optimization available in Lime.

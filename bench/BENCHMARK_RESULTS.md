@@ -9,7 +9,7 @@
 
 ---
 
-## Executive Summary
+## Overview
 
 The extension framework adds **negligible overhead** when no extensions are
 loaded (the common case). The fast-path check costs ~53-120 ns per token.
@@ -24,7 +24,7 @@ is comparable to a single action table lookup for 50 tokens (~337 ns).
 | Full pipeline (detect + resolve + execute) | 1,433 | ~1,104% |
 | Baseline action lookup (50 tokens) | 337 | reference |
 
-**Key finding:** The full extension pipeline is ~4.3x the cost of looking
+The full extension pipeline is ~4.3x the cost of looking
 up 50 action table entries, which represents a realistic parse step.
 Since conflict resolution only triggers on ambiguous tokens (not every
 token), the amortized per-parse overhead is a small fraction of total
@@ -78,7 +78,7 @@ framework involvement.
   common case) costs ~1.5 us with 2 conflicting extensions.
 - **No-conflict case**: Even with extensions loaded, a single-token check
   with no conflict is only ~121 ns.
-- **Full scan**: The comprehensive 3-level scan (token + rule + semantic)
+- **Full scan**: The full 3-level scan (token + rule + semantic)
   costs ~3 us for 2 extensions with 2 modifications each. This scales
   with O(n*m) where n = extensions and m = modifications per extension.
 

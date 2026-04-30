@@ -1,247 +1,140 @@
-# Extensible SQL Parser for PostgreSQL
+# Lime Parser Generator
 
-Runtime-extensible LALR(1) parser based on the Lemon parser generator with SIMD tokenization and LLVM JIT compilation.
+## Overview
 
-## Why Lime?
+Lime is a runtime-extensible LALR(1) parser generator.  It reads a
+context-free grammar and emits a C parser, like Yacc or Bison — but
+unlike those tools, the generated parser can load and unload grammar
+extensions at runtime without recompilation.
 
-Lime is the only LALR(1) parser generator that supports **runtime grammar
-modification**. Traditional tools like Yacc and Bison require regenerating
-and recompiling the parser whenever the grammar changes. Lime lets you add
-tokens, production rules, and precedence changes to a live parser through
-its extension API -- no restart required.
+The generator itself compiles from a single C file with no dependencies.
+Generated parsers optionally use SIMD-accelerated tokenization (AVX2/NEON)
+and LLVM JIT compilation for action table lookups.
 
-**Key differentiators over Yacc/Bison:**
+## Motivation
 
-- **Runtime extensibility** -- Load and unload grammar extensions
+Database engines, language servers, and extensible query processors need
+parsers that can evolve without downtime.  Adding a new operator, a custom
+type, or a dialect-specific clause traditionally means editing the grammar,
+regenerating the parser, and restarting the process.
+
+Lime eliminates that cycle.  Grammar extensions are shared libraries loaded
+at runtime.  Conflict detection and disambiguation happen live.  The base
+parser runs at full speed when no extensions are loaded — the extension
+machinery has zero overhead until activated.
+
+This design was motivated by PostgreSQL's need for pluggable SQL dialects
+and by the observation that no existing parser generator supports runtime
+grammar modification.
+
+## Why Lime over Yacc/Bison?
+
+- **Runtime extensibility** — Load and unload grammar extensions
   dynamically via a C API, with conflict detection and resolution callbacks.
   No other parser generator offers this.
-- **Performance** -- SIMD-accelerated tokenization (AVX2/NEON) delivers
-  5-10x faster lexing. Optional LLVM JIT compilation provides 2.5-4.2x
-  faster action table lookups.
-- **Thread-safe by design** -- Copy-on-write snapshots with atomic reference
-  counting allow concurrent parsing with zero shared mutable state. Parsers
-  are reentrant by default, unlike Yacc.
-- **Modern memory safety** -- `%destructor` directives prevent semantic
-  value leaks during error recovery. All allocations tracked; zero leaks
+- **Performance** — SIMD-accelerated tokenization delivers 5-10x faster
+  lexing.  Optional LLVM JIT provides 2.5-4.2x faster action table lookups.
+- **Thread-safe by design** — Copy-on-write snapshots with atomic reference
+  counting allow concurrent parsing with zero shared mutable state.
+- **Modern memory safety** — `%destructor` directives prevent semantic
+  value leaks during error recovery.  All allocations tracked; zero leaks
   under Valgrind and ASan.
-- **Zero licensing friction** -- Public Domain. No GPL, no exceptions to
-  read, no attribution clauses. Use it anywhere.
-- **Single-file build** -- The generator compiles from one C file with no
-  dependencies. Embed it directly in your build system.
+- **Public Domain** — No GPL, no attribution clauses.  Use it anywhere.
+- **Single-file build** — The generator compiles from one C file.  Embed it
+  directly in your build system.
 
-For a detailed feature-by-feature comparison with Yacc, Bison, ANTLR, and
-Menhir, see **[docs/COMPARISON.md](docs/COMPARISON.md)**. Migration guides
-are available for **[Bison](docs/MIGRATION_FROM_BISON.md)** and
-**[Yacc](docs/MIGRATION_FROM_YACC.md)**.
-
-## Features
-
-- **Zero-overhead static parsing**: Same performance as PostgreSQL when no extensions loaded
-- **Runtime extensibility**: Load/unload grammar extensions dynamically
-- **SIMD tokenization**: 3-10x faster lexing with AVX2/NEON
-- **LLVM JIT compilation**: 2-5x faster parsing with runtime optimization
-- **Thread-safe**: Concurrent parsing with atomic reference counting
-- **Comprehensive testing**: 200+ test assertions, 85-90% code coverage
+For a detailed comparison with Yacc, Bison, ANTLR, and Menhir, see
+**[docs/COMPARISON.md](docs/COMPARISON.md)**.  Migration guides:
+**[from Bison](docs/MIGRATION_FROM_BISON.md)** ·
+**[from Yacc](docs/MIGRATION_FROM_YACC.md)**.
 
 ## Quick Start
 
-### Development Environment
-
 ```bash
-cd /home/gburd/ws/lime
-nix develop  # Provides GCC 13, LLVM 17, Meson, coverage tools
-```
+# Development environment (optional)
+nix develop
 
-### Build
+# Build the generator
+cc -o lime lime.c
 
-```bash
+# Build everything (generator + extension library + tests + benchmarks)
 meson setup builddir
 ninja -C builddir
-```
-
-### Run Tests
-
-```bash
 ninja -C builddir test
 ```
 
-Expected: 8/8 test suites pass (200+ assertions)
+## Project Layout
 
-### Run Benchmarks
+The project root contains the parser generator itself — three files
+inherited from Lemon/SQLite.  The `src/` directory contains the runtime
+extension framework, which is a separate library.
 
-```bash
-# Quick benchmark
-./builddir/bench/parser_bench
-
-# JIT vs Interpreted comparison
-./builddir/bench/jit_comparison
+```
+lime/
+├── lime.c                  # Parser generator (single-file, from Lemon)
+├── limpar.c                # Parser driver template (filled by lime)
+├── tokenize.c              # SQL tokenizer (SQLite lineage)
+├── meson.build             # Build configuration
+├── Makefile                # Convenience wrapper for meson
+├── flake.nix               # Nix development environment
+│
+├── src/                    # Extension framework library
+│   ├── snapshot.{c,h}     #   Copy-on-write grammar snapshots
+│   ├── extension.{c,h}    #   Extension registry
+│   ├── conflict.{c,h}     #   Conflict detection
+│   ├── tokenize_simd.{c,h}#   SIMD tokenization (AVX2/NEON)
+│   ├── jit_context.{c,h}  #   LLVM JIT compilation
+│   └── ...                 #   (27 source files total)
+│
+├── include/                # Public API headers
+├── tests/                  # Test suites (27 files, 200+ assertions)
+├── bench/                  # Benchmarks (JIT comparison, overhead)
+├── examples/               # Example grammars and extensions
+├── contrib/                # SQL dialect extensions (Oracle, MySQL, ...)
+├── docs/                   # Reference documentation
+├── man/                    # Man pages: lime(1), lime_grammar(5)
+├── scripts/                # Validation and coverage scripts
+└── tools/                  # Composition and management utilities
 ```
 
 ## Documentation
 
+See **[docs/README.md](docs/README.md)** for the full index.  Key documents:
+
 | Document | Description |
 |----------|-------------|
-| **[PERFORMANCE_TESTING_GUIDE.md](PERFORMANCE_TESTING_GUIDE.md)** | Quick reference for benchmarking and testing |
-| **[BENCHMARKING.md](BENCHMARKING.md)** | Detailed performance benchmarking guide |
-| **[TESTING.md](TESTING.md)** | Test coverage and quality assurance |
-| **[PROJECT_SUMMARY.md](PROJECT_SUMMARY.md)** | Complete project overview and statistics |
-| **[INTEGRATION_TESTING.md](INTEGRATION_TESTING.md)** | Integration test procedures |
-| **[docs/API.md](docs/API.md)** | Complete API reference (943 lines) |
-| **[docs/ALGORITHM.md](docs/ALGORITHM.md)** | LALR(1) parsing algorithm theory and Lime's implementation |
-| **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** | System design and architecture (407 lines) |
-| **[docs/EXTENSIONS.md](docs/EXTENSIONS.md)** | Extension development guide (642 lines) |
-| **[docs/PERFORMANCE.md](docs/PERFORMANCE.md)** | Performance characteristics |
-| **[docs/EXTENSION_PERFORMANCE.md](docs/EXTENSION_PERFORMANCE.md)** | Extension framework performance analysis |
-| **[docs/COMPARISON.md](docs/COMPARISON.md)** | Feature comparison with Yacc, Bison, ANTLR, Menhir |
-| **[docs/MIGRATION_FROM_BISON.md](docs/MIGRATION_FROM_BISON.md)** | Bison-to-Lime migration guide |
-| **[docs/MIGRATION_FROM_YACC.md](docs/MIGRATION_FROM_YACC.md)** | Yacc-to-Lime migration guide |
+| [docs/API.md](docs/API.md) | C API reference |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design |
+| [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Writing runtime extensions |
+| [docs/ALGORITHM.md](docs/ALGORITHM.md) | LALR(1) theory and implementation |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Performance tuning |
+| [docs/COMPARISON.md](docs/COMPARISON.md) | Comparison with Yacc, Bison, ANTLR |
 
-### API Documentation (Doxygen)
-
-Searchable HTML API documentation can be generated from the annotated headers:
+### Doxygen
 
 ```bash
-# Generate docs (requires doxygen)
-ninja -C builddir doxygen
-
-# Or run doxygen directly
-doxygen Doxyfile
+cd docs && make doxygen
+open api/html/index.html
 ```
 
-Output is written to `docs/api/html/`. Open `docs/api/html/index.html` in a browser.
+## Usage
 
-Documented headers include:
-- `include/parser.h` -- Core snapshot and parse session API
-- `include/parser_manager.h` -- Plugin management and hot-swap
-- `include/extension_registry.h` -- Extension metadata and dependency resolution
-- `include/disambiguation.h` -- Pluggable conflict resolution strategies
-- `include/execution_policy.h` -- Semantic action dispatch policies
-- `include/grammar_context.h` -- Embedded grammar language switching
-- `include/parser_fork.h` -- Parser state cloning for fork-resolve
-- `include/conflict.h` -- Multi-grammar conflict detection
+Generate a parser from a grammar file:
 
-## Performance
-
-### Benchmarks
-
-Based on `jit_comparison` benchmark with LLVM 17:
-
-| Grammar Size | Interpreted | JIT | Speedup |
-|--------------|-------------|-----|---------|
-| Small (64 states) | 424 ns | 168 ns | 2.5x |
-| Medium (256 states) | 1,244 ns | 412 ns | 3.0x |
-| Large (512 states) | 2,890 ns | 689 ns | 4.2x |
-
-### Targets vs. Actual
-
-| Metric | Target | Actual | Status |
-|--------|--------|--------|--------|
-| JIT speedup | 2-5x | 2.5-4.2x | ✓ Achieved |
-| SIMD speedup | 3-10x | 5-10x (AVX2) | ✓ Exceeded |
-| Parse time | 1-10 µs | 0.2-3 µs | ✓ Exceeded |
-| Test coverage | 85%+ | 85-90% | ✓ Achieved |
-| Memory leaks | 0 | 0 | ✓ Clean |
-| Data races | 0 | 0 | ✓ Clean |
-
-### Extension Overhead
-
-The extension framework is designed for zero overhead when no extensions are loaded. With extensions active:
-
-| Scenario | Per-Token Overhead | Notes |
-|----------|-------------------|-------|
-| No extensions | 0 | Identical to standard Lime parser |
-| Extensions loaded, no conflicts | < 1 ns | Snapshot-based; same table format |
-| Priority disambiguation | ~2-6 ns (amortized) | Linear priority scan |
-| Fork-resolve disambiguation | ~40-1000 ns (amortized) | Parser state cloning + evaluation |
-
-Extension loading costs (one-time): conflict detection ~50-650 us, dependency resolution ~5-60 us, JIT recompilation ~10-80 ms. See **[docs/EXTENSION_PERFORMANCE.md](docs/EXTENSION_PERFORMANCE.md)** for detailed analysis including scaling behavior, memory budgets, and tuning recommendations.
-
-## Project Structure
-
-```
-lime/
-├── README.md                          # This file
-├── PERFORMANCE_TESTING_GUIDE.md       # Quick reference
-├── BENCHMARKING.md                    # Benchmark guide
-├── TESTING.md                         # Testing guide
-├── flake.nix                          # Nix environment
-├── meson.build                        # Build config
-│
-├── src/                               # Core implementation
-│   ├── snapshot.{c,h}                # Grammar snapshots
-│   ├── snapshot_modify.{c,h}         # Modification engine
-│   ├── extension.{c,h}               # Extension system
-│   ├── conflict.{c,h}                # Conflict detection
-│   ├── tokenize.{c,h}                # Tokenizer
-│   ├── tokenize_simd.{c,h}           # SIMD implementation
-│   ├── token_table.{c,h}             # Token registry
-│   ├── parse_context.{c,h}           # Parse state
-│   ├── jit_context.{c,h}             # JIT compiler
-│   ├── jit_codegen.c                 # Code generation
-│   └── jit_policy.{c,h}              # Compilation policy
-│
-├── include/                           # Public headers
-│   └── parser.h                      # Main API
-│
-├── tests/                             # Test suites
-│   ├── test_snapshot.c               # 11 tests
-│   ├── test_snapshot_modify.c        # 8 tests
-│   ├── test_extension.c              # 85 assertions
-│   ├── test_tokenize.c               # 26 tests
-│   ├── test_jit.c                    # 32 tests
-│   ├── test_concurrent.c             # 7 stress tests
-│   └── test_parse_context.c          # 10 tests
-│
-├── bench/                             # Benchmarks
-│   ├── parser_bench.c                # General benchmarks
-│   └── jit_comparison.c              # JIT vs Interpreted
-│
-├── examples/                          # Example code
-│   └── jsonb_extension.c             # JSONB operators
-│
-├── docs/                              # Documentation
-│   ├── API.md                        # API reference
-│   ├── ARCHITECTURE.md               # Architecture
-│   ├── EXTENSIONS.md                 # Extension guide
-│   └── PERFORMANCE.md                # Performance
-│
-└── scripts/                           # Utilities
-    └── measure_coverage.sh           # Coverage tool
+```bash
+./lime grammar.y
 ```
 
-## Usage Examples
-
-### Basic Parsing
-
-```c
-#include "parser.h"
-
-int main() {
-    const char *sql = "SELECT * FROM users WHERE id = 42;";
-
-    // Begin parse (acquires snapshot)
-    ParseContext *ctx = parse_begin();
-
-    // Parse SQL (placeholder - actual parser not implemented)
-    // AST *ast = parse_sql(ctx, sql);
-
-    // End parse (releases snapshot)
-    parse_end(ctx);
-
-    return 0;
-}
-```
+Key flags: `-d dir` (output directory), `-T template` (custom template),
+`-s` (statistics), `-L` (lint), `-F` (format).  See `man lime` or
+`lime -x` for the full list.
 
 ### Extension Development
-
-See **[docs/EXTENSIONS.md](docs/EXTENSIONS.md)** for complete guide.
 
 ```c
 #include "extension.h"
 
-// Register extension
 ExtensionRegistry *reg = global_extension_registry();
-
 ExtensionInfo info = {
     .name = "my-extension",
     .version = "1.0.0",
@@ -251,162 +144,67 @@ ExtensionInfo info = {
 ExtensionID id;
 register_extension(reg, &info, &id);
 load_extension(reg, id, NULL);
-
-// Extension now active
 ```
 
-See `examples/jsonb_extension.c` for a working example.
+See **[docs/EXTENSIONS.md](docs/EXTENSIONS.md)** and
+`examples/jsonb_extension.c` for working examples.
 
-## Testing and Coverage
+## Performance
 
-### Run All Tests
+JIT comparison benchmark (LLVM 17):
+
+| Grammar Size | Interpreted | JIT | Speedup |
+|--------------|-------------|-----|---------|
+| Small (64 states) | 424 ns | 168 ns | 2.5x |
+| Medium (256 states) | 1,244 ns | 412 ns | 3.0x |
+| Large (512 states) | 2,890 ns | 689 ns | 4.2x |
+
+Extension overhead with no extensions loaded: zero.  With extensions
+active: <1 ns per token when no conflicts; ~2-6 ns with priority
+disambiguation.  See [docs/EXTENSION_PERFORMANCE.md](docs/EXTENSION_PERFORMANCE.md)
+and [bench/BENCHMARK_RESULTS.md](bench/BENCHMARK_RESULTS.md).
+
+## Testing
 
 ```bash
-ninja -C builddir test
+ninja -C builddir test                # all tests
+./scripts/measure_coverage.sh         # coverage report
+./scripts/check_memory.sh             # valgrind
 ```
 
-### Measure Coverage
+Sanitizer builds:
 
 ```bash
-./scripts/measure_coverage.sh
+meson setup builddir-asan -Db_sanitize=address  && ninja -C builddir-asan test
+meson setup builddir-tsan -Db_sanitize=thread   && ninja -C builddir-tsan test
+meson setup builddir-ubsan -Db_sanitize=undefined && ninja -C builddir-ubsan test
 ```
-
-View HTML report: `coverage-report/index.html`
-
-### Sanitizers
-
-```bash
-# Memory errors
-meson setup builddir-asan -Db_sanitize=address
-ninja -C builddir-asan test
-
-# Data races
-meson setup builddir-tsan -Db_sanitize=thread
-ninja -C builddir-tsan test
-
-# Undefined behavior
-meson setup builddir-ubsan -Db_sanitize=undefined
-ninja -C builddir-ubsan test
-```
-
-**Status**: All sanitizers clean (0 errors)
-
-## Performance Testing
-
-### Quick Benchmark
-
-```bash
-./builddir/bench/parser_bench 1000 100
-```
-
-### Comprehensive JIT Comparison
-
-```bash
-./builddir/bench/jit_comparison
-```
-
-This tests multiple grammar sizes with statistical analysis, showing:
-- Mean/median/P95/P99 latencies
-- Speedup ratios
-- Break-even analysis
-- Consistency (coefficient of variation)
-
-See **[BENCHMARKING.md](BENCHMARKING.md)** for detailed guide.
-
-## Implementation Status
-
-✅ **Phase 1** - Core Infrastructure
-✅ **Phase 2** - Extension System
-✅ **Phase 3** - SIMD Tokenization
-✅ **Phase 4** - LLVM JIT Integration
-✅ **Phase 5** - Test Infrastructure
-✅ **Phase 6** - Documentation
-
-**Status**: 100% implementation complete, production-ready
-
-## Success Criteria
-
-All criteria from the original implementation plan have been met:
-
-✅ Parse 95%+ of PostgreSQL regression tests (framework ready)
-✅ Zero memory leaks (Valgrind + ASan clean)
-✅ Zero data races (TSan clean)
-✅ Static parsing ≤10µs per query (achieved: 1-5µs)
-✅ Extension overhead ≤2x (implementation complete)
-✅ JIT speedup 2-5x (achieved: 2.5-4.2x)
-✅ SIMD speedup 3-10x (achieved: 5-10x on AVX2)
-
-## Key Components
-
-### 1. Snapshot System
-
-Copy-on-write grammar snapshots with atomic reference counting. Zero overhead when no extensions loaded.
-
-**Files**: `src/snapshot.{c,h}`, `src/snapshot_modify.{c,h}`
-**Tests**: `tests/test_snapshot.c`, `tests/test_snapshot_modify.c`
-
-### 2. Extension System
-
-Runtime grammar modification with conflict detection. Thread-safe registry.
-
-**Files**: `src/extension.{c,h}`, `src/conflict.{c,h}`
-**Tests**: `tests/test_extension.c`
-**Example**: `examples/jsonb_extension.c`
-
-### 3. SIMD Tokenization
-
-Parallel character classification with AVX2/NEON/scalar implementations.
-
-**Files**: `src/tokenize_simd.{c,h}`, `src/tokenize.{c,h}`
-**Tests**: `tests/test_tokenize.c`
-
-### 4. LLVM JIT
-
-Runtime compilation of parser action tables for 2-5x speedup.
-
-**Files**: `src/jit_context.{c,h}`, `src/jit_codegen.c`, `src/jit_policy.{c,h}`
-**Tests**: `tests/test_jit.c`
-**Benchmark**: `bench/jit_comparison.c`
 
 ## Dependencies
 
-### Build Time
-- GCC 13+ or Clang 15+
-- Meson 0.60+
-- Ninja
-- LLVM 17+ (optional, for JIT)
-- pkg-config
-
-### Runtime
-- LLVM 17+ (optional, for JIT)
-- pthreads
-- Standard C11 library
-
-### Development
-- lcov or gcovr (for coverage)
-- Valgrind (for memory testing)
-- perf (for profiling)
+**Build:** GCC 13+ or Clang 15+, Meson 0.60+, Ninja, pkg-config.
+**Optional:** LLVM 17+ (JIT), lcov/gcovr (coverage), Valgrind, perf.
+**Runtime:** pthreads, C11 standard library.  LLVM if JIT enabled.
 
 All provided by `nix develop` via `flake.nix`.
 
 ## Contributing
 
-### Adding Tests
-
-1. Create `tests/test_<name>.c`
-2. Add to `tests/meson.build`
-3. Run: `ninja -C builddir && meson test -C builddir <name>`
+1. Create `tests/test_<name>.c`, add to `tests/meson.build`
+2. Build and test: `ninja -C builddir && meson test -C builddir`
+3. Run sanitizers before submitting
 4. Measure coverage: `./scripts/measure_coverage.sh`
 
-Target: 95%+ line coverage
+## Acknowledgements
 
-### Adding Benchmarks
+Lime is derived from the **Lemon** parser generator by
+[D. Richard Hipp](https://www.hwaci.com/drh/), originally developed as
+part of the [SQLite](https://www.sqlite.org/) project.  The `tokenize.c`
+file in the project root is also from SQLite.  Both Lemon and SQLite are
+released into the public domain.
 
-1. Create `bench/<name>.c`
-2. Add to `bench/meson.build`
-3. Run: `ninja -C builddir && ./builddir/bench/<name>`
-
-Include warmup, multiple iterations, and statistical analysis.
+We are grateful to Dr. Hipp and the SQLite team for creating and
+maintaining Lemon, and for their commitment to public domain software.
 
 ## License
 
@@ -414,14 +212,7 @@ Public Domain
 
 ## References
 
-- **Lime Parser Generator**: http://www.hwaci.com/sw/lime/
+- **Lemon Parser Generator**: http://www.hwaci.com/sw/lemon/
+- **SQLite**: https://www.sqlite.org/
 - **PostgreSQL**: https://www.postgresql.org/
 - **LLVM ORC JIT**: https://llvm.org/docs/ORCv2.html
-
-## Contact
-
-For questions or issues about this implementation, see the documentation guides listed above.
-
----
-
-**Status**: Production-ready, all performance targets met, comprehensive test coverage.

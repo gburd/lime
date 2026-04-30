@@ -414,6 +414,7 @@ static void yy_destructor(
   /* Suppress unused-variable warnings when no %destructor is defined */
   ParseARG_STORE
   ParseCTX_STORE
+  (void)yypminor;
   switch( yymajor ){
     /* Here is inserted the actions which take place when a
     ** terminal or non-terminal is destroyed.  This can happen
