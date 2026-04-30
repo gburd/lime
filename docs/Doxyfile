@@ -15,10 +15,33 @@ EXTRACT_STATIC         = NO
 EXTRACT_LOCAL_CLASSES  = NO
 
 # -- Input files --
-INPUT                  = ../include/ ../src/snapshot.h
-FILE_PATTERNS          = *.h *.c
+# Include the root README as the Doxygen main page, all docs/*.md guides,
+# and C headers for API extraction.
+INPUT                  = ../README.md \
+                         ./GETTING_STARTED.md \
+                         ./CONCEPTS.md \
+                         ./INTEGRATION.md \
+                         ./EXAMPLES.md \
+                         ./ARCHITECTURE.md \
+                         ./API.md \
+                         ./ALGORITHM.md \
+                         ./EXTENSIONS.md \
+                         ./PERFORMANCE.md \
+                         ./EXTENSION_PERFORMANCE.md \
+                         ./COMPARISON.md \
+                         ./MIGRATION_FROM_BISON.md \
+                         ./MIGRATION_FROM_YACC.md \
+                         ./JIT_ANALYSIS.md \
+                         ./PARSER_PLUGIN_DESIGN.md \
+                         ./MODULE_FORMAT.md \
+                         ./LITERATE_FORMAT.md \
+                         ../include/ \
+                         ../src/snapshot.h
+FILE_PATTERNS          = *.h *.c *.md
 RECURSIVE              = NO
 EXCLUDE_PATTERNS       = */test_* */bench/*
+
+USE_MDFILE_AS_MAINPAGE = ../README.md
 
 # -- Source browser --
 SOURCE_BROWSER         = YES
