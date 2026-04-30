@@ -1,0 +1,42 @@
+name: Deploy Codeberg Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'include/**'
+      - 'src/**'
+      - 'docs/**'
+      - 'README.md'
+      - '.forgejo/workflows/pages.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: docker
+    container:
+      image: debian:bookworm
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y doxygen git
+
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Generate Doxygen docs
+        working-directory: docs
+        run: doxygen Doxyfile
+
+      - name: Stage site directory
+        run: |
+          mkdir -p _site
+          cp -r docs/api/html/* _site/
+
+      - name: Deploy to Codeberg Pages
+        uses: https://codeberg.org/git-pages/action@v2
+        with:
+          site: 'https://${{ forge.repository_owner }}.codeberg.page/lime/'
+          token: ${{ forge.token }}
+          source: _site/

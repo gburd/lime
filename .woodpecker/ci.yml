@@ -31,20 +31,6 @@ steps:
       - ninja -C builddir-ubsan
       - meson test -C builddir-ubsan --print-errorlogs
 
-  deploy-pages:
-    image: debian:bookworm
-    when:
-      event: push
-      branch: main
-    commands:
-      - apt-get update && apt-get install -y doxygen git
-      - cd docs && doxygen Doxyfile
-      - git config user.name "CI"
-      - git config user.email "ci@codeberg.org"
-      - git checkout --orphan _pages_tmp
-      - git rm -rf .
-      - cp -r docs/api/html/* .
-      - echo "gregburd.codeberg.page" > .domains
-      - git add -A
-      - git commit -m "docs: update pages"
-      - git push -f origin _pages_tmp:pages
+# Docs deployment is handled by .forgejo/workflows/pages.yml (Forgejo
+# Actions + git-pages/action@v2). See Codeberg docs:
+#   https://docs.codeberg.org/codeberg-pages/forgejo-actions/
