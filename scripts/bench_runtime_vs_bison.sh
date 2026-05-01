@@ -31,7 +31,7 @@ mkdir -p "$TMPDIR/bison"
 awk '/^%%$/{n++; if(n==2) exit} {print}' "$BENCH/bench_grammar.y" > "$TMPDIR/bison/g.y"
 echo "%%" >> "$TMPDIR/bison/g.y"
 bison -d -o "$TMPDIR/bison/bison_out.c" "$TMPDIR/bison/g.y" 2>/dev/null
-cc -O2 -w -DUSE_BISON \
+cc -O2 -w -DNDEBUG -DUSE_BISON \
     -I"$TMPDIR/bison" \
     -o "$TMPDIR/bench_bison" \
     "$BENCH/bench_runtime.c" \
@@ -43,7 +43,7 @@ mkdir -p "$TMPDIR/lime"
 cp "$BENCH/bench_grammar.lime" "$TMPDIR/lime/lime_out.lime"
 (cd "$TMPDIR/lime" && "$LIME" -T"$ROOT/limpar.c" -PBenchParser -q lime_out.lime) 2>/dev/null
 # lime outputs lime_out.h with "#define SELECT 1" etc.
-cc -O2 -w -DUSE_LIME \
+cc -O2 -w -DNDEBUG -DUSE_LIME \
     -I"$TMPDIR/lime" \
     -o "$TMPDIR/bench_lime" \
     "$BENCH/bench_runtime.c" \

@@ -37,6 +37,10 @@ Lime. Same productions, same precedence table, same token set.
    pre-tokenized SQL stream (SELECT, INSERT, UPDATE, DELETE,
    WHERE/AND/OR predicates). 5000 iterations of 200-parse batches to
    defeat `clock_gettime` quantization. Same stream for both tools.
+   Compiled with `-O2 -DNDEBUG`. Lime uses the parser-reuse pattern
+   described in [INTEGRATION.md](INTEGRATION.md#parser-allocation-and-reuse)
+   (one `ParseAlloc`, `ParseInit` between parses) — the same model
+   Bison uses internally.
 
 Reproduce with:
 
@@ -62,18 +66,19 @@ larger because it includes Lime's runtime introspection helpers
 
 ### Runtime Parse Throughput
 
-On a 55-token SQL stream, `-O2` optimized builds:
+On a 55-token SQL stream, built with `-O2 -DNDEBUG` and the recommended
+reuse pattern (allocate parser once, `ParseInit` between parses):
 
 | Tool | Median (ns) | Mean (ns) | P95 (ns) | P99 (ns) |
 |------|------------:|----------:|---------:|---------:|
-| Bison | 540 | 543 | 590 | 635 |
-| Lime  | 760 | 775 | 840 | 1,045 |
+| Bison | 525 | 535 | 620 | 775 |
+| Lime  | 675 | 680 | 750 | 865 |
 
-**Bison is ~1.4× faster** at pure parse throughput on this workload.
+**Bison is ~1.29× faster** at pure parse throughput on this workload.
 
 Per-token cost:
-- Bison: ~10 ns/token
-- Lime: ~14 ns/token
+- Bison: ~9.5 ns/token
+- Lime: ~12.3 ns/token
 
 ### Why the Runtime Gap?
 

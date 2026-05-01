@@ -278,13 +278,12 @@ void ParseTrace(FILE *TraceFILE, char *zTracePrompt){
 }
 #endif /* NDEBUG */
 
-#if defined(YYCOVERAGE) || !defined(NDEBUG)
-/* For tracing shifts, the names of all terminals and nonterminals
-** are required.  The following table supplies these names */
+/* Terminal and nonterminal names.  Always emitted (required by
+** ParseTokenName, ParseExpectedTokens, ParseExpectedTokensString,
+** and optionally by trace/coverage code). */
 static const char *const yyTokenName[] = { 
 %%
 };
-#endif /* defined(YYCOVERAGE) || !defined(NDEBUG) */
 
 #ifndef NDEBUG
 /* For tracing reduce actions, the names of all rules are required.

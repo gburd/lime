@@ -43,6 +43,8 @@
 #  include "lime_out.h"
    void *BenchParserAlloc(void *(*f)(unsigned long));
    void  BenchParserFree(void *p, void (*f)(void *));
+   void  BenchParserInit(void *rawParser);
+   void  BenchParserFinalize(void *p);
    void  BenchParser(void *p, int major, int minor);
 #endif
 
@@ -79,6 +81,14 @@ int main(int argc, char **argv) {
     long long *samples = malloc((size_t)iterations * sizeof(*samples));
     if (!samples) return 1;
 
+    /* For Lime: allocate parser state once, reset with ParseInit
+     * between parses.  This matches the zero-alloc pattern most
+     * real applications should use. */
+#ifdef USE_LIME
+    void *parser = BenchParserAlloc((void *(*)(unsigned long))malloc);
+    if (!parser) return 2;
+#endif
+
     /* Warmup */
     for (int i = 0; i < warmup; i++) {
 #ifdef USE_BISON
@@ -88,10 +98,9 @@ int main(int argc, char **argv) {
         (void)yyparse();
 #endif
 #ifdef USE_LIME
-        void *p = BenchParserAlloc((void *(*)(unsigned long))malloc);
-        for (int j = 0; j < stream_len; j++) BenchParser(p, stream[j], 0);
-        BenchParser(p, 0, 0);
-        BenchParserFree(p, free);
+        BenchParserInit(parser);
+        for (int j = 0; j < stream_len; j++) BenchParser(parser, stream[j], 0);
+        BenchParser(parser, 0, 0);
 #endif
     }
 
@@ -108,14 +117,18 @@ int main(int argc, char **argv) {
             (void)yyparse();
 #endif
 #ifdef USE_LIME
-            void *p = BenchParserAlloc((void *(*)(unsigned long))malloc);
-            for (int j = 0; j < stream_len; j++) BenchParser(p, stream[j], 0);
-            BenchParser(p, 0, 0);
-            BenchParserFree(p, free);
+            BenchParserInit(parser);
+            for (int j = 0; j < stream_len; j++) BenchParser(parser, stream[j], 0);
+            BenchParser(parser, 0, 0);
 #endif
         }
         samples[i] = (now_ns() - t0) / BATCH;
     }
+
+#ifdef USE_LIME
+    BenchParserFinalize(parser);
+    free(parser);
+#endif
 
     qsort(samples, iterations, sizeof(*samples), cmp_ll);
     long long sum = 0;

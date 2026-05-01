@@ -4,6 +4,11 @@ project('lime-parser', 'c', 'cpp',
     'c_std=c11',
     'warning_level=2',
     'buildtype=debugoptimized',
+    # Define NDEBUG (stripping assert() in the hot path) for release and
+    # plain builds, but keep asserts live for debug/debugoptimized.
+    # Downstream consumers wanting max throughput should use
+    # buildtype=release.  See docs/PERFORMANCE.md.
+    'b_ndebug=if-release',
   ],
   license : 'Public Domain',
   meson_version : '>= 0.60.0',

@@ -264,6 +264,94 @@ and `EXEC_SEQUENTIAL`/`EXEC_PARALLEL` values in
 names `DisambiguationStrategy` and `ExecutionPolicy`.  Both sets
 coexist without conflict in the same translation unit.
 
+## Parser Allocation and Reuse
+
+By default, the generated parser is heap-allocated via `ParseAlloc`.
+For applications that parse repeatedly (database query engines,
+interactive REPLs, language servers), the malloc/free cycle per
+parse becomes a noticeable fraction of total time. Two patterns
+eliminate it:
+
+### Pattern A: Allocate once, reset between parses
+
+`ParseInit(void *rawParser)` resets parser state without freeing
+memory. The allocation covers the whole parser including its stack
+(`YYSTACKDEPTH` entries, default 100), so one `malloc` is enough
+unless the grammar needs deeper nesting for pathological input.
+
+```c
+void *parser = ParseAlloc(malloc);
+
+while (have_input()) {
+    ParseInit(parser);                      // reset to initial state
+    for (tok = next_token(); tok.type; tok = next_token()) {
+        Parse(parser, tok.type, tok.value);
+    }
+    Parse(parser, 0, 0);                    // EOF
+    /* consume result */
+}
+
+ParseFinalize(parser);                      // run destructors
+free(parser);
+```
+
+For a 55-token SQL parse this saves ~25 ns per parse (about 4% on
+Apple Silicon; more on systems with slower mallocs).
+
+### Pattern B: Stack-allocated parser (zero mallocs)
+
+If your grammar has a known maximum stack depth, define
+`%stack_size` accordingly and compile with
+`-DParse_ENGINEALWAYSONSTACK`. This removes `ParseAlloc` and
+`ParseFree` from the generated code — you provide the buffer:
+
+```c
+/* In your grammar file: */
+%stack_size 200.
+
+/* Compile with: -DParse_ENGINEALWAYSONSTACK */
+
+/* At call site: */
+struct yyParser parser;   /* or any buffer of sizeof(struct yyParser) */
+ParseInit(&parser);
+/* ... feed tokens ... */
+ParseFinalize(&parser);
+```
+
+Zero allocations during parsing. Suitable for embedded use, real-time
+systems, or any situation where you want to avoid malloc entirely.
+
+The `%destructor` directive may still allocate semantic values;
+control that separately by arena-allocating them in your reduction
+actions.
+
+## NDEBUG and Performance
+
+Lime's generated parser contains `assert()` calls in its hot path
+(the same as Lemon does; inherited from SQLite lineage). In
+production builds these should be stripped:
+
+```bash
+# Meson: use release buildtype (NDEBUG set automatically)
+meson setup builddir --buildtype=release
+
+# Or keep debugoptimized but force b_ndebug
+meson setup builddir -Db_ndebug=true
+
+# Direct compilation:
+cc -O2 -DNDEBUG -o parser parser.c
+```
+
+Without `-DNDEBUG`, asserts add ~20-35 ns per parse on this Apple
+Silicon machine (roughly 5-10% of parse time). With `-DNDEBUG` they
+vanish entirely.
+
+The project's `meson.build` sets `b_ndebug=if-release`, so NDEBUG
+is automatically defined for `--buildtype=release` and `plain`, but
+not for the `debug` or `debugoptimized` defaults. If you use Lime's
+meson build directly, pass `--buildtype=release` for benchmark-quality
+builds.
+
 ## Thread Safety Checklist
 
 - ✓ Snapshots are safe to share across threads (atomic refcount)
