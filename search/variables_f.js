@@ -1,0 +1,20 @@
+var searchData=
+[
+  ['semantic_5fconflicts_0',['semantic_conflicts',['../struct_multi_grammar_conflict_result.html#a176b8a87e8b8b7740b39fd1d34747079',1,'MultiGrammarConflictResult']]],
+  ['semantic_5fresult_1',['semantic_result',['../struct_parse_fork.html#a975362357eb2ea95166a7908f6c67570',1,'ParseFork']]],
+  ['serialize_5fsnapshot_2',['serialize_snapshot',['../struct_lime_parser_plugin.html#af2307e46ef565076f5812312ee6dbfa7',1,'LimeParserPlugin']]],
+  ['should_5fexecute_3',['should_execute',['../struct_grammar_extension_metadata.html#adeb45d60cc3d757e09179fda14fc7e36',1,'GrammarExtensionMetadata']]],
+  ['snapshot_4',['snapshot',['../struct_grammar_context_entry.html#a6ec8418e79e799c51afba652c313d241',1,'GrammarContextEntry::snapshot'],['../struct_grammar_mode_info.html#afc9dcbf7f7e34ef74cf49077de9e0beb',1,'GrammarModeInfo::snapshot'],['../struct_parse_fork.html#a16f50d0f4febc37f7062525b93b891c2',1,'ParseFork::snapshot']]],
+  ['stack_5fcapacity_5',['stack_capacity',['../struct_cloned_parser_state.html#a4b20e1a530817bc57c2f40f7bfa1380b',1,'ClonedParserState']]],
+  ['stack_5fdata_6',['stack_data',['../struct_cloned_parser_state.html#a92e75ea26f236a594830bcd37a6c1774',1,'ClonedParserState']]],
+  ['stack_5fdepth_7',['stack_depth',['../struct_cloned_parser_state.html#adcbd12fb59fe3accf2ea6f12324f6425',1,'ClonedParserState']]],
+  ['stack_5fis_5finline_8',['stack_is_inline',['../struct_cloned_parser_state.html#abce8e780e2489f889e61267e6567cd17',1,'ClonedParserState']]],
+  ['stack_5fsize_9',['stack_size',['../struct_cloned_parser_state.html#a492cb4718a1d424a39d45248dd46ab44',1,'ClonedParserState']]],
+  ['start_5foffset_10',['start_offset',['../struct_grammar_context_entry.html#aedbd279154b97ebef678856650bbf0a3',1,'GrammarContextEntry']]],
+  ['state_11',['state',['../struct_lime_context.html#ac53e6722bfc349b3ccb9cb427c4d1e51',1,'LimeContext::state'],['../struct_conflict_point.html#aa25ff9154c5d816996faafb4a74b000d',1,'ConflictPoint::state']]],
+  ['state_5fdata_12',['state_data',['../struct_cloned_parser_state.html#a7e4cfebd1546eafcaa0eda36c48f11c0',1,'ClonedParserState']]],
+  ['state_5fsize_13',['state_size',['../struct_cloned_parser_state.html#a00e7199579b4bfc621eead43d8fa164d',1,'ClonedParserState']]],
+  ['status_14',['status',['../struct_parse_fork.html#ad5bc33305aa2daddc7f706528b976ee8',1,'ParseFork']]],
+  ['stop_5fon_5ferror_15',['stop_on_error',['../struct_execution_policy_config.html#a49e668534f2f8aa22d7d9826cdfd3508',1,'ExecutionPolicyConfig']]],
+  ['strategy_16',['strategy',['../struct_grammar_extension_metadata.html#a10d90b2fb0673d0288d5afc01d0d260a',1,'GrammarExtensionMetadata']]]
+];

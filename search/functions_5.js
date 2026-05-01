@@ -1,0 +1,20 @@
+var searchData=
+[
+  ['lemon_5fextension_5fregistry_5fdestroy_0',['lemon_extension_registry_destroy',['../group__ext__init.html#ga16a3cff285fb1e26564cc85554335d49',1,'parser.h']]],
+  ['lemon_5fextension_5fregistry_5finit_1',['lemon_extension_registry_init',['../group__ext__init.html#ga7f74d7c48507cf0cf5f5d0a9905bcb52',1,'parser.h']]],
+  ['lemon_5fparser_5fversion_2',['lemon_parser_version',['../parser_8h.html#a46ecccfc4047269233f082ed08838aae',1,'parser.h']]],
+  ['lemon_5fsnapshot_5facquire_3',['lemon_snapshot_acquire',['../group__snapshot__api.html#ga775675b2d7dcf3def584985ae5780900',1,'parser.h']]],
+  ['lemon_5fsnapshot_5fcreate_4',['lemon_snapshot_create',['../group__snapshot__api.html#gaf986a3fcfe9c0ea2b57717f2cf50fe66',1,'parser.h']]],
+  ['lemon_5fsnapshot_5frelease_5',['lemon_snapshot_release',['../group__snapshot__api.html#ga795943085db2f78e67ca9a2687590d40',1,'parser.h']]],
+  ['lime_5fjit_5favailable_6',['lime_jit_available',['../group__jit__api.html#ga0c7f582bae6e1c9b48314bca4d4192f7',1,'parser.h']]],
+  ['lime_5fjit_5fcompile_7',['lime_jit_compile',['../group__jit__api.html#ga9b72323cebe30da5f13f4e403e58f5ab',1,'parser.h']]],
+  ['lime_5fplugin_5fcapabilities_5fstring_8',['lime_plugin_capabilities_string',['../group__plugin__validation.html#ga972926d838d6392c3ab768fcd71fb203',1,'parser_manager.h']]],
+  ['lime_5fplugin_5fcapability_5fname_9',['lime_plugin_capability_name',['../group__plugin__validation.html#ga78a74319820c1a3307147ab524b49258',1,'parser_manager.h']]],
+  ['lime_5fplugin_5fdump_10',['lime_plugin_dump',['../group__plugin__validation.html#ga1c8eed191afff006d05b8e8ac977adbd',1,'parser_manager.h']]],
+  ['lime_5fplugin_5fhas_5fall_5fcapabilities_11',['lime_plugin_has_all_capabilities',['../group__plugin__validation.html#ga4a7db96a371e4ef668f46ca397bd1cbb',1,'parser_manager.h']]],
+  ['lime_5fplugin_5fhas_5fcapability_12',['lime_plugin_has_capability',['../group__plugin__validation.html#ga18302a523c1fe7bea59c1fa936cf9012',1,'parser_manager.h']]],
+  ['lime_5fplugin_5fvalidate_13',['lime_plugin_validate',['../group__plugin__validation.html#ga6f3a5e42317e3b16896dff8eef3b3481',1,'parser_manager.h']]],
+  ['lime_5fplugin_5fversion_5fcompare_14',['lime_plugin_version_compare',['../group__version__utils.html#gad24ba1bafd17bb62df2eea2513ba59ec',1,'parser_manager.h']]],
+  ['lime_5fplugin_5fversion_5fsatisfies_15',['lime_plugin_version_satisfies',['../group__version__utils.html#ga3445bc87b7d939118d63e21830a0b28b',1,'parser_manager.h']]],
+  ['lime_5fplugin_5fversion_5fstring_16',['lime_plugin_version_string',['../group__version__utils.html#ga87d2573b1f6709e2a5ed894628d33c09',1,'parser_manager.h']]]
+];

@@ -1,0 +1,25 @@
+var searchData=
+[
+  ['validate_5fon_5fload_0',['validate_on_load',['../struct_parser_manager_config.html#a7cd6f52fccfd9029ae088db797320bb0',1,'ParserManagerConfig']]],
+  ['validate_5fsnapshot_1',['validate_snapshot',['../struct_lime_parser_plugin.html#a48c2b400e76211e9a85ece768d9c58f1',1,'LimeParserPlugin']]],
+  ['validation_2',['Validation',['../md_docs_2_m_o_d_u_l_e___f_o_r_m_a_t.html#autotoc_md544',1,'Composition Validation'],['../md_docs_2_m_o_d_u_l_e___f_o_r_m_a_t.html#autotoc_md543',1,'Module Metadata Validation'],['../md_docs_2_m_o_d_u_l_e___f_o_r_m_a_t.html#autotoc_md542',1,'Validation']]],
+  ['validation_20and_20introspection_20utilities_3',['Plugin Validation and Introspection Utilities',['../group__plugin__validation.html',1,'']]],
+  ['value_20optimization_4',['Tokenizer JIT - Highest Value Optimization',['../md_docs_2_j_i_t___a_n_a_l_y_s_i_s.html#autotoc_md477',1,'']]],
+  ['version_5',['Version',['../md_docs_2_a_p_i.html#autotoc_md119',1,'Library Version'],['../group__plugin__version.html',1,'Plugin Version']]],
+  ['version_6',['version',['../struct_grammar_extension_metadata.html#a1ba23cf7c862998153b2bad7115f6e1f',1,'GrammarExtensionMetadata::version'],['../struct_lime_plugin_info.html#ac23e14c9ed66099e58bfbd3bfe9e5c09',1,'LimePluginInfo::version']]],
+  ['version_20checks_7',['Plugin Version Checks',['../md_docs_2_p_a_r_s_e_r___p_l_u_g_i_n___d_e_s_i_g_n.html#autotoc_md508',1,'']]],
+  ['version_20compatibility_8',['Version Compatibility',['../md_docs_2_p_a_r_s_e_r___p_l_u_g_i_n___d_e_s_i_g_n.html#autotoc_md507',1,'']]],
+  ['version_20compatibility_20utilities_9',['Version Compatibility Utilities',['../group__version__utils.html',1,'']]],
+  ['version_20constraints_10',['Version Constraints',['../md_docs_2_m_o_d_u_l_e___f_o_r_m_a_t.html#autotoc_md551',1,'']]],
+  ['versionconstraint_11',['VersionConstraint',['../struct_version_constraint.html',1,'']]],
+  ['versioning_12',['ABI Versioning',['../md_docs_2_p_a_r_s_e_r___p_l_u_g_i_n___d_e_s_i_g_n.html#autotoc_md494',1,'']]],
+  ['vs_20action_20table_20jit_13',['Tokenizer JIT vs Action Table JIT',['../md_docs_2_j_i_t___a_n_a_l_y_s_i_s.html#autotoc_md481',1,'']]],
+  ['vs_20antlr_14',['Lime vs ANTLR',['../md_docs_2_c_o_m_p_a_r_i_s_o_n.html#autotoc_md411',1,'']]],
+  ['vs_20bison_15',['Lime vs Bison',['../md_docs_2_c_o_m_p_a_r_i_s_o_n.html#autotoc_md410',1,'']]],
+  ['vs_20ll_20k_20parsing_16',['LALR(1) vs LL(k) Parsing',['../md_docs_2_a_l_g_o_r_i_t_h_m.html#autotoc_md214',1,'']]],
+  ['vs_20menhir_17',['Lime vs Menhir',['../md_docs_2_c_o_m_p_a_r_i_s_o_n.html#autotoc_md412',1,'']]],
+  ['vs_20orcjit_20migration_18',['MCJIT vs OrcJIT Migration',['../md_docs_2_j_i_t___a_n_a_l_y_s_i_s.html#autotoc_md472',1,'']]],
+  ['vs_20runtime_20jit_19',['AOT vs Runtime JIT',['../md_docs_2_j_i_t___a_n_a_l_y_s_i_s.html#autotoc_md467',1,'']]],
+  ['vs_20yacc_20',['Lime vs Yacc',['../md_docs_2_c_o_m_p_a_r_i_s_o_n.html#autotoc_md409',1,'']]],
+  ['vtable_21',['Strategy VTable',['../group__strat__vtable.html',1,'']]]
+];
