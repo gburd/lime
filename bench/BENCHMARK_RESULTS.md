@@ -1,5 +1,10 @@
 # Extension Framework Overhead Benchmark Results
 
+> **See also:** [`docs/BENCHMARKS_VS_BISON.md`](../docs/BENCHMARKS_VS_BISON.md)
+> for a direct head-to-head comparison against GNU Bison on an
+> identical grammar.  This document covers Lime's extension-framework
+> overhead in isolation.
+
 **Date:** 2026-04-29
 **System:** Intel Xeon E5-2697 v2 @ 2.70GHz (12 cores / 24 threads), 125GB RAM
 **OS:** NixOS Linux 6.12.80 x86_64

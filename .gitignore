@@ -6,6 +6,10 @@ builddir*/
 lime
 core.*
 
+# Generated bench parser (from bench_grammar.lime)
+bench/bench_grammar.c
+bench/bench_grammar.h
+
 # Generated parser files (from .lime sources)
 examples/*/*.c
 examples/*/*.h

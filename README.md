@@ -113,6 +113,7 @@ See **[docs/README.md](docs/README.md)** for the full index.  Key documents:
 | [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Writing runtime extensions |
 | [docs/ALGORITHM.md](docs/ALGORITHM.md) | LALR(1) theory and implementation |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Performance tuning |
+| [docs/BENCHMARKS_VS_BISON.md](docs/BENCHMARKS_VS_BISON.md) | Head-to-head comparison with Bison |
 | [docs/COMPARISON.md](docs/COMPARISON.md) | Comparison with Yacc, Bison, ANTLR |
 
 ### Doxygen
@@ -158,15 +159,23 @@ See **[docs/EXTENSIONS.md](docs/EXTENSIONS.md)** and
 
 JIT comparison benchmark (LLVM 21):
 
+JIT comparison benchmark (LLVM 21, aarch64-darwin):
+
 | Grammar Size | Interpreted | JIT | Speedup |
 |--------------|-------------|-----|---------|
-| Small (64 states) | 424 ns | 168 ns | 2.5x |
-| Medium (256 states) | 1,244 ns | 412 ns | 3.0x |
-| Large (512 states) | 2,890 ns | 689 ns | 4.2x |
+| Small (64 states)   | 62 ns  | 24 ns | 2.59x |
+| Medium (256 states) | 91 ns  | 43 ns | 2.13x |
+| Large (512 states)  | 161 ns | 85 ns | 1.89x |
 
-Extension overhead with no extensions loaded: zero.  With extensions
-active: <1 ns per token when no conflicts; ~2-6 ns with priority
-disambiguation.  See [docs/EXTENSION_PERFORMANCE.md](docs/EXTENSION_PERFORMANCE.md)
+(Absolute numbers are lower than some published measurements because
+this is Apple Silicon; on x86_64 with AVX2 the speedup ratios tend to
+be larger. See [docs/BENCHMARKS_VS_BISON.md](docs/BENCHMARKS_VS_BISON.md)
+for head-to-head comparison methodology.)
+
+Extension overhead with no extensions loaded: 26 ns (a single atomic
+load).  With extensions active: ~232 ns for token-level conflict
+detection, ~222 ns for priority disambiguation, ~456 ns for the full
+detect-resolve-execute pipeline.  See [docs/EXTENSION_PERFORMANCE.md](docs/EXTENSION_PERFORMANCE.md)
 and [bench/BENCHMARK_RESULTS.md](bench/BENCHMARK_RESULTS.md).
 
 ## Testing

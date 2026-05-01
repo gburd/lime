@@ -20,6 +20,7 @@
 | [EXTENSIONS.md](EXTENSIONS.md) | Writing runtime grammar extensions |
 | [PERFORMANCE.md](PERFORMANCE.md) | Performance characteristics and tuning |
 | [EXTENSION_PERFORMANCE.md](EXTENSION_PERFORMANCE.md) | Extension overhead analysis |
+| [BENCHMARKS_VS_BISON.md](BENCHMARKS_VS_BISON.md) | Head-to-head comparison with GNU Bison |
 | [COMPARISON.md](COMPARISON.md) | Feature comparison with Yacc, Bison, ANTLR, Menhir |
 | [MIGRATION_FROM_BISON.md](MIGRATION_FROM_BISON.md) | Porting Bison grammars to Lime |
 | [MIGRATION_FROM_YACC.md](MIGRATION_FROM_YACC.md) | Porting Yacc grammars to Lime |
