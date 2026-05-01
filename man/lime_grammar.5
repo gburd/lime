@@ -214,12 +214,59 @@ by the parser in the current state.
 .TP
 .B %syntax_error
 .BI { " C code " }
-C code to execute when a syntax error is detected.
-Inside the block,
+C code to execute when a syntax error is detected.  The following
+identifiers are available inside the block:
+.RS
+.TP
 .B yymajor
-and
+Token code (int) of the offending lookahead token.
+.TP
 .B yyminor
-refer to the token that caused the error.
+The token's semantic value (type set by
+.BR %token_type ).
+The alias
+.B TOKEN
+also refers to this value.
+.TP
+.B TOKEN_LOC
+Source location of the token (type
+.BR YYLOCATIONTYPE ,
+typically
+.BR LimeLocation ).
+Only defined when
+.B %locations
+is in effect.
+.TP
+.B yypParser
+Opaque parser handle (void*) that can be passed to the
+introspection functions
+.BR Parse ,
+.BR ParseState ,
+and
+.BR ParseExpectedTokens
+to build rich diagnostics.  See the "Diagnostics API"
+section below.
+.RE
+.sp
+Example:
+.RS
+.nf
+%syntax_error {
+    fprintf(stderr, "error near %s\\n",
+            ParseTokenName(yymajor));
+    int s = ParseState(yypParser);
+    int n = ParseExpectedTokens(s, NULL, 0);
+    int *codes = malloc(n * sizeof(int));
+    ParseExpectedTokens(s, codes, n);
+    fprintf(stderr, "  expected one of:");
+    for (int i = 0; i < n; i++) {
+        fprintf(stderr, " %s", ParseTokenName(codes[i]));
+    }
+    fprintf(stderr, "\\n");
+    free(codes);
+}
+.fi
+.RE
 .TP
 .B %parse_failure
 .BI { " C code " }
@@ -449,6 +496,56 @@ a_expr(A) ::= INTEGER(B). {
 }
 .EE
 .RE
+.SH "DIAGNOSTICS API"
+.PP
+Every Lime-generated parser exports three functions that enable
+rich error reporting (Rust-compiler-style caret underlines and
+"expected one of ..." hints).  All three are renameable via the
+.B %name
+directive or the
+.B \-P
+command-line flag.
+.TP
+.BI "const char *" ParseTokenName( "int tokenCode" );
+Return the string name of a terminal token code, or
+.B NULL
+if the code is out of range.
+.TP
+.BI "int " ParseState( "void *parser" );
+Return the current parser state number, or
+.B \-1
+if the handle is invalid.  A freshly-initialized parser is in state 0.
+The return value is meaningful only as an input to
+.BR ParseExpectedTokens .
+.TP
+.BI "int " ParseExpectedTokens( "int stateno" ", int *" out ", int " max );
+Fill
+.I out
+with the token codes that are valid at
+.IR stateno
+and return the count written (up to
+.IR max ).
+If
+.I out
+is
+.B NULL
+or
+.I max
+is 0, returns the count that would have been written so the caller
+can size a buffer and call again.  Token codes are returned in
+ascending numeric order and can be passed to
+.B ParseTokenName
+to obtain human-readable names.
+.PP
+There is also a string-returning helper for quick use:
+.TP
+.BI "char *" ParseExpectedTokensString( "void *parser" );
+Return a heap-allocated comma-separated list of expected token
+names at the parser's current state (e.g.,
+.BR """SELECT,""\ INSERT,\ UPDATE"" ).
+The caller must
+.BR free (3)
+the result.
 .SH "SEE ALSO"
 .BR lime (1),
 .BR yacc (1),

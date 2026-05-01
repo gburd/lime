@@ -239,3 +239,24 @@ test_extension_registry = executable('test_extension_registry',
 )
 
 test('extension_registry', test_extension_registry)
+
+# RFC 0059 diagnostics API -- generate a tiny parser and test against it
+test_diag_gen = custom_target('test_diagnostics_parser',
+  input   : ['test_diagnostics_grammar.y'],
+  output  : ['test_diagnostics_grammar.c', 'test_diagnostics_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_diagnostics = executable('test_diagnostics',
+  'test_diagnostics.c',
+  test_diag_gen,
+  dependencies : lime_parser_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('diagnostics', test_diagnostics)

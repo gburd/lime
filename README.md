@@ -109,6 +109,7 @@ See **[docs/README.md](docs/README.md)** for the full index.  Key documents:
 | [docs/EXAMPLES.md](docs/EXAMPLES.md) | All examples explained |
 | [docs/API.md](docs/API.md) | C API reference |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design |
+| [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md) | Parser error messages and recovery |
 | [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Writing runtime extensions |
 | [docs/ALGORITHM.md](docs/ALGORITHM.md) | LALR(1) theory and implementation |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Performance tuning |

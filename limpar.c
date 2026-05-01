@@ -1185,8 +1185,11 @@ int ParseFallback(int iToken){
 **
 ** The output is a comma-separated list like: "SELECT, INSERT, UPDATE".
 ** This is useful for producing human-readable error messages.
+**
+** See also ParseExpectedTokens() for a structured (array) form and
+** ParseTokenName() for looking up individual token names.
 */
-char *ParseExpectedTokens(void *yyp){
+char *ParseExpectedTokensString(void *yyp){
   yyParser *yypParser = (yyParser*)yyp;
   if( yypParser==0 || yypParser->yytos==0 ) return 0;
 
@@ -1239,4 +1242,96 @@ char *ParseExpectedTokens(void *yyp){
     }
   }
   return buf;
+}
+
+
+/* ====================================================================
+**  RFC 0059 Diagnostics API
+**  --------------------------------------------------------------------
+**  These three functions let a host produce rich error messages:
+**
+**    ParseTokenName(code)      -> string name for a token code
+**    ParseState(parser)        -> current parser state number
+**    ParseExpectedTokens(...)  -> array of token codes valid at a state
+**
+**  Together with Token.length from the tokenizer, this is enough to
+**  build Rust-compiler-style diagnostics with caret underlines and
+**  "expected one of ..." hints.
+** ================================================================== */
+
+/*
+** Return the string name of a terminal token code, or NULL if the
+** code is out of range.  Names come from the yyTokenName[] table.
+*/
+const char *ParseTokenName(int tokenCode){
+  if( tokenCode < 0 || tokenCode >= (int)YYNTOKEN ) return 0;
+  return yyTokenName[tokenCode];
+}
+
+/*
+** Return the current parser state number, or -1 if the parser handle
+** is invalid.  For a freshly-initialized parser, returns 0 (the
+** initial/start state).
+**
+** The returned value is meaningful only as an input to
+** ParseExpectedTokens().  Host code should not attach semantic meaning
+** to the number itself -- it is an internal identifier and may change
+** whenever the grammar is regenerated.
+*/
+int ParseState(void *yyp){
+  yyParser *yypParser = (yyParser*)yyp;
+  if( yypParser==0 || yypParser->yytos==0 ) return -1;
+  return (int)yypParser->yytos->stateno;
+}
+
+/*
+** Fill `out` with the token codes that would be valid at state
+** `stateno` and return the count written (up to `max`).  If `out` is
+** NULL or `max` is 0, returns the count that would have been written,
+** which lets the caller size a buffer correctly on a second call.
+**
+** The returned codes can be passed to ParseTokenName() to obtain
+** human-readable names.  Codes are returned in ascending numeric
+** order.
+**
+** Typical usage from a %syntax_error callback:
+**
+**   int s = ParseState(yypParser);
+**   int n = ParseExpectedTokens(s, NULL, 0);
+**   int *codes = malloc(n * sizeof(int));
+**   ParseExpectedTokens(s, codes, n);
+**   for( int i = 0; i < n; i++ ){
+**       fprintf(stderr, "  expected: %s\n", ParseTokenName(codes[i]));
+**   }
+**   free(codes);
+*/
+int ParseExpectedTokens(int stateno, int *out, int max){
+  int count = 0;
+  int i;
+
+  if( stateno < 0 ) return 0;
+#if YY_SHIFT_COUNT >= 0
+  if( stateno > YY_SHIFT_COUNT ) return 0;
+#endif
+
+  for(i = 0; i < YYNTOKEN; i++){
+    YYACTIONTYPE act;
+#if YY_SHIFT_COUNT >= 0
+    int j = i + yy_shift_ofst[stateno];
+    if( j >= 0 && j < YY_ACTTAB_COUNT && yy_lookahead[j] == (YYCODETYPE)i ){
+      act = yy_action[j];
+    }else{
+      act = yy_default[stateno];
+    }
+#else
+    act = yy_default[stateno];
+#endif
+    if( act != YY_ERROR_ACTION && act != yy_default[stateno] ){
+      if( out && count < max ){
+        out[count] = i;
+      }
+      count++;
+    }
+  }
+  return count;
 }

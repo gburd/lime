@@ -26,6 +26,7 @@ lib_sources = files(
   'extension_registry.c',
   'grammar_context.c',
   'context_switch.c',
+  'lime_error.c',
 )
 
 thread_dep = dependency('threads')
