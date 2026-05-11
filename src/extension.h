@@ -27,6 +27,73 @@ typedef uint32_t ExtensionID;
 struct ParserSnapshot;
 
 /* ------------------------------------------------------------------ */
+/*  Reduce action callback                                             */
+/* ------------------------------------------------------------------ */
+
+/*
+** LimeReduceFn -- the callable an extension attaches to a MOD_ADD_RULE
+** so its rule's reduction runs real code at parse time.
+**
+** Invoked by the parser when the rule reduces.  The extension is
+** responsible for constructing the LHS value from the RHS slot values
+** and writing it into *lhs_out.  The extension also owns the lifetime
+** of any memory referenced from that LHS value; Lime treats `void *`
+** stack slots as opaque payloads.
+**
+** Arguments:
+**
+**   user_data   The `reduce_user` pointer set on the GrammarModification.
+**               Threaded through verbatim.
+**
+**   extra_arg   The parser's %extra_argument value, threaded through
+**               parse_begin()->parse_token()->reduce unchanged.  NULL
+**               when the grammar does not declare an %extra_argument.
+**
+**   nrhs        Number of right-hand-side symbols for this rule.  The
+**               matching MOD_ADD_RULE stored nrhs at registration.
+**
+**   rhs_values  Array of `nrhs` opaque slot payloads, one per RHS
+**               symbol in rule order (index 0 = leftmost).  The layout
+**               of each slot is the same as the grammar's
+**               %token_type; the extension must know its own types.
+**
+**   rhs_locs    Array of `nrhs` byte-offset locations, one per RHS
+**               symbol, or NULL if the grammar does not declare
+**               %locations.  When present, each element is either a
+**               non-negative byte offset or LIME_LOC_UNKNOWN (-1).
+**
+**   lhs_out     Writeback slot for the LHS value, laid out per the
+**               LHS symbol's declared %type.  The callback must fill
+**               this slot before returning; on failure the extension
+**               is responsible for zero-initialising it (Lime does
+**               not inspect it but the next rule that consumes this
+**               slot may).
+**
+** Contract:
+**
+**   - The callback runs on the parsing thread; it may not block or
+**     longjmp out of the parser unless the allocator contract already
+**     permits that.
+**   - All pointers are valid for the duration of the call only.
+**   - rhs_values and rhs_locs are read-only from the extension's
+**     perspective; Lime may free or overwrite the backing storage
+**     after the callback returns.
+**
+** NOTE: wiring from the parser template to this callback is not yet
+** in place -- it lands together with the runtime apply_add_rule()
+** implementation.  The type is declared here so extension code can be
+** written against the final shape today.
+*/
+typedef void (*LimeReduceFn)(
+    void       *user_data,
+    void       *extra_arg,
+    int         nrhs,
+    const void *rhs_values,
+    const int  *rhs_locs,
+    void       *lhs_out
+);
+
+/* ------------------------------------------------------------------ */
 /*  Grammar modification types                                         */
 /* ------------------------------------------------------------------ */
 
@@ -54,7 +121,32 @@ typedef struct GrammarModification {
             const char *lhs;         /* Left-hand side non-terminal  */
             const char **rhs;        /* NULL-terminated RHS symbols  */
             int nrhs;                /* Number of RHS symbols        */
-            const char *code;        /* Reduction action (C code)    */
+
+            /*
+            ** Reduce action, in order of precedence:
+            **
+            **   reduce != NULL
+            **       The parser invokes reduce(reduce_user, ...) when
+            **       this rule reduces.  See LimeReduceFn for the full
+            **       calling convention.  This is the preferred path
+            **       for runtime-loaded extensions because no runtime
+            **       C compilation is required.
+            **
+            **   reduce == NULL && code != NULL
+            **       `code` is a C statement block compiled into the
+            **       parser's generated reduce() switch at build time.
+            **       Applicable when the grammar is static (fed through
+            **       the `lime` generator); not usable from extensions
+            **       loaded at runtime, because the reduce() switch is
+            **       already compiled.
+            **
+            **   both NULL
+            **       No reduction action; the rule reduces but produces
+            **       no value.
+            */
+            LimeReduceFn reduce;     /* Callable action, or NULL     */
+            void *reduce_user;       /* Opaque ptr for `reduce`      */
+            const char *code;        /* Generator-time action text   */
             int precedence;          /* -1 if unset                  */
         } add_rule;
 

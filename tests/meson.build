@@ -282,3 +282,14 @@ test_alternation = executable('test_alternation',
 )
 
 test('alternation', test_alternation)
+
+# P0-2 scaffolding: compile-time check that LimeReduceFn and the
+# extended MOD_ADD_RULE shape build cleanly.  No runtime dispatch
+# (that lands with apply_add_rule, i.e. P0-1).
+test_reduce_fn_type = executable('test_reduce_fn_type',
+  'test_reduce_fn_type.c',
+  include_directories : include_directories('..'),
+  dependencies : lime_parser_dep,
+)
+
+test('reduce_fn_type', test_reduce_fn_type)
