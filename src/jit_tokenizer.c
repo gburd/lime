@@ -32,7 +32,7 @@
 #include <llvm-c/Orc.h>
 #include <llvm-c/Target.h>
 #include <llvm-c/Analysis.h>
-#include <llvm-c/Transforms/PassBuilder.h>
+#include "jit_llvm_compat.h"
 
 #include <stdio.h>
 #include <time.h>
@@ -353,16 +353,9 @@ JITTokenizer *jit_tokenizer_create(const TokenTable *table) {
         return NULL;
     }
 
-    /* Create a bare LLVM context and wrap it in a thread-safe context */
-    tok->llvm_ctx = LLVMContextCreate();
-    if (tok->llvm_ctx == NULL) {
-        free(tok);
-        free_keywords(entries, nkeywords);
-        return NULL;
-    }
-    tok->ts_ctx = LLVMOrcCreateNewThreadSafeContextFromLLVMContext(tok->llvm_ctx);
-    if (tok->ts_ctx == NULL) {
-        LLVMContextDispose(tok->llvm_ctx);
+    /* Create a ThreadSafeContext and fetch its internal LLVMContext
+    ** (see lime_jit_create_ts_ctx for the LLVM 14 vs 15+ split). */
+    if (!lime_jit_create_ts_ctx(&tok->ts_ctx, &tok->llvm_ctx)) {
         free(tok);
         free_keywords(entries, nkeywords);
         return NULL;
@@ -414,10 +407,9 @@ JITTokenizer *jit_tokenizer_create(const TokenTable *table) {
     }
     LLVMDisposeMessage(verify_err);
 
-    /* Optimize */
-    LLVMPassBuilderOptionsRef pass_opts = LLVMCreatePassBuilderOptions();
-    LLVMRunPasses(module, "default<O2>", NULL, pass_opts);
-    LLVMDisposePassBuilderOptions(pass_opts);
+    /* Optimize (compat shim picks PassBuilder on LLVM 16+ or legacy
+    ** PassManagerBuilder on LLVM 14-15). */
+    LIME_JIT_RUN_O2_PASSES(module);
 
     /* Submit to OrcJIT */
     LLVMOrcThreadSafeModuleRef ts_mod =
@@ -435,8 +427,10 @@ JITTokenizer *jit_tokenizer_create(const TokenTable *table) {
         return NULL;
     }
 
-    /* Look up the compiled function */
-    LLVMOrcExecutorAddress addr = 0;
+    /* Look up the compiled function.  LimeJitAddress resolves to
+    ** LLVMOrcExecutorAddress on LLVM 15+ and to
+    ** LLVMOrcJITTargetAddress on LLVM 14 (both uint64_t). */
+    LimeJitAddress addr = 0;
     err = LLVMOrcLLJITLookup(tok->lljit, &addr, "jit_classify_keyword");
     if (err != LLVMErrorSuccess || addr == 0) {
         if (err != LLVMErrorSuccess) {

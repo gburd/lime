@@ -27,7 +27,7 @@
 #include <llvm-c/Orc.h>
 #include <llvm-c/Target.h>
 #include <llvm-c/Analysis.h>
-#include <llvm-c/Transforms/PassBuilder.h>
+#include "jit_llvm_compat.h"
 
 /* ------------------------------------------------------------------ */
 /*  JIT context internal structure                                     */
@@ -83,17 +83,11 @@ JITStatus jit_create(JITContext **ctx_out) {
     JITContext *ctx = calloc(1, sizeof(JITContext));
     if (ctx == NULL) return JIT_ERR_INIT_FAILED;
 
-    /* Create a bare LLVM context, then wrap it in a thread-safe context
-    ** for OrcJIT. We keep both handles so we can hand the bare context
-    ** to IR-generation code without needing a (since-removed) getter. */
-    ctx->llvm_ctx = LLVMContextCreate();
-    if (ctx->llvm_ctx == NULL) {
-        free(ctx);
-        return JIT_ERR_INIT_FAILED;
-    }
-    ctx->ts_ctx = LLVMOrcCreateNewThreadSafeContextFromLLVMContext(ctx->llvm_ctx);
-    if (ctx->ts_ctx == NULL) {
-        LLVMContextDispose(ctx->llvm_ctx);
+    /* Create a ThreadSafeContext and fetch its internal LLVMContext.
+    ** The compat shim papers over the LLVM 14 (ts_ctx-first) vs
+    ** LLVM 15+ (externally-created context) API split; in both cases
+    ** ts_ctx owns llvm_ctx, so only ts_ctx is disposed at teardown. */
+    if (!lime_jit_create_ts_ctx(&ctx->ts_ctx, &ctx->llvm_ctx)) {
         free(ctx);
         return JIT_ERR_INIT_FAILED;
     }
@@ -188,10 +182,9 @@ JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap) {
     }
     LLVMDisposeMessage(error);
 
-    /* Run optimization passes */
-    LLVMPassBuilderOptionsRef pass_opts = LLVMCreatePassBuilderOptions();
-    LLVMRunPasses(module, "default<O2>", NULL, pass_opts);
-    LLVMDisposePassBuilderOptions(pass_opts);
+    /* Run optimization passes (compat shim picks PassBuilder on
+    ** LLVM 16+ or legacy PassManagerBuilder on LLVM 14-15). */
+    LIME_JIT_RUN_O2_PASSES(module);
 
     /* Wrap module in a thread-safe module for OrcJIT submission */
     LLVMOrcThreadSafeModuleRef ts_mod =
@@ -207,8 +200,10 @@ JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap) {
         return consume_llvm_error(err, JIT_ERR_COMPILE_FAILED);
     }
 
-    /* Look up the monolithic parse function via OrcJIT */
-    LLVMOrcExecutorAddress addr = 0;
+    /* Look up the monolithic parse function via OrcJIT.  LimeJitAddress
+    ** resolves to LLVMOrcExecutorAddress on LLVM 15+ and to
+    ** LLVMOrcJITTargetAddress on LLVM 14 -- both are uint64_t. */
+    LimeJitAddress addr = 0;
     err = LLVMOrcLLJITLookup(ctx->lljit, &addr, "jit_parse_sequence");
     if (err != LLVMErrorSuccess || addr == 0) {
         if (err != LLVMErrorSuccess) {
