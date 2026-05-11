@@ -88,14 +88,21 @@ bool clone_parser_state(
         return false;
     }
 
+    /* inline_stack_count describes the capacity of the source parser's
+    ** inline yystk0[] buffer.  inline_stack_offset points to that buffer
+    ** within the parser struct.  The clone always heap-allocates its
+    ** stack (see Step 2 below), so we don't consume these values here;
+    ** they remain part of the public API for symmetry with fork_parser()
+    ** and potential future use (e.g. sizing heuristics). */
+    (void)inline_stack_offset;
+    (void)inline_stack_count;
+
     memset(out, 0, sizeof(*out));
 
     /* Read the source parser's stack pointers. */
     const void *src_stack = read_ptr(parser, stack_field_offset);
     const void *src_tos = read_ptr(parser, tos_field_offset);
     const void *src_stack_end = read_ptr(parser, stack_end_offset);
-    const void *src_inline_stack =
-        (const char *)parser + inline_stack_offset;
 
     if (src_stack == NULL || src_tos == NULL || src_stack_end == NULL) {
         return false;
@@ -115,8 +122,6 @@ bool clone_parser_state(
 
     uint32_t depth = (uint32_t)(tos_index + 1);  /* entries 0..tos inclusive */
     uint32_t capacity = (uint32_t)total_capacity;
-
-    bool is_inline = (src_stack == src_inline_stack);
 
     /* Step 1: Deep copy the yyParser struct. */
     void *clone = malloc(parser_size);
