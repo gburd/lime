@@ -56,3 +56,10 @@ coverage-report/
 .kiro/
 .cursor/
 .memelord/
+.codex/
+.pi/
+config/
+
+# Agent / editor tool config dropped in the worktree
+.mcp.json
+opencode.json
