@@ -1,8 +1,15 @@
 /*
 ** Version information for the extensible SQL parser library.
+** This string is the single source of truth for the library's
+** version; lime.c mirrors it via LIME_VERSION_STRING and
+** meson.build via project(version: ...).  Keep the three in sync.
 */
 #include "parser.h"
 
+#ifndef LIME_VERSION_STRING
+#define LIME_VERSION_STRING "0.1.0"
+#endif
+
 const char *lemon_parser_version(void) {
-    return "0.1.0";
+    return LIME_VERSION_STRING;
 }

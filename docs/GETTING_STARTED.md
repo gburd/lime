@@ -21,7 +21,10 @@ That's it.  You now have a working parser generator.
 
 ## Your First Grammar
 
-Create `expr.y`:
+Create `expr.lime` (the recommended extension; `.y` also works for
+compatibility with existing tooling, but `.lime` avoids confusion when
+a project has both Bison and Lime grammars side by side during a
+migration):
 
 ```
 %token_type { int }
@@ -42,7 +45,7 @@ expr(A) ::= INTEGER(B).             { A = B; }
 Generate the parser:
 
 ```bash
-./lime expr.y
+./lime expr.lime
 ```
 
 This produces `expr.c` and `expr.h`.  The generated parser is a

@@ -777,6 +777,49 @@ The library uses the following conventions for error reporting:
 
 ---
 
+## Allocator Contract
+
+Lime's generated parsers accept a caller-supplied allocator via
+`XxxAlloc(void *(*mallocProc)(size_t))` (where `Xxx` is the
+parser-name prefix set by `%name` or `-P`).  The matching
+`XxxFree(void *, void (*freeProc)(void*))` uses the caller's `free`.
+This is strictly better than Bison's `YYMALLOC`/`YYFREE` macro hack:
+the allocator is passed as a first-class argument rather than baked
+in at compile time.
+
+The contract the generator relies on:
+
+1. **Error semantics are caller-chosen.**  `mallocProc` may return
+   `NULL` on failure, or it may never return (longjmp / throw).
+   If `mallocProc` returns `NULL`, the parser enters a failure
+   path and subsequent `Parse()` calls are no-ops.  If it longjmps
+   out, the parser's internal state is left in whatever condition
+   the jump leaves it; the caller must not reuse that parser
+   instance without calling `XxxFree` first.
+
+2. **Pairing is symmetric.**  `freeProc` is called exactly as many
+   times as `mallocProc` succeeded -- one call per successful
+   allocation -- and always on the pointers `mallocProc` returned.
+
+3. **No assumptions about alignment beyond `max_align_t`.**
+   Pointers returned by `mallocProc` must satisfy the alignment
+   requirements of any C type up to `max_align_t` (the guarantee
+   `malloc(3)` gives).  Lime never allocates over-aligned objects.
+
+4. **Allocation sites are stack growth, token buffer growth, and
+   the parser handle itself.**  Typical parsers allocate once at
+   `XxxAlloc` time and then occasionally as the shift stack grows
+   past `%stack_size`.  Callers embedding Lime in memory-constrained
+   contexts can set `%stack_size` to a static upper bound to avoid
+   runtime growth.
+
+This contract lets a Lime-driven parser hosted inside a language
+runtime (e.g. one with a memory-context-aware allocator and
+longjmp-based error handling) delegate allocation to that runtime
+without macro gymnastics.
+
+---
+
 ## Thread Safety
 
 | Component | Read | Write |

@@ -20,6 +20,15 @@
 #define ISUPPER(X) isupper((unsigned char)(X))
 #define ISLOWER(X) islower((unsigned char)(X))
 
+/*
+** Lime version string.  Must be kept in sync with the project()
+** version in meson.build.  Reported by `lime -x` and `lime -v`, and
+** mirrored by lemon_parser_version() in src/version.c.
+*/
+#ifndef LIME_VERSION_STRING
+#define LIME_VERSION_STRING "0.1.0"
+#endif
+
 
 #ifndef __WIN32__
 #   if defined(_WIN32) || defined(WIN32)
@@ -2101,6 +2110,7 @@ int main(int argc, char **argv){
     {OPT_FLAG, "S", (char*)&sqlFlag,
                     "Generate the *.sql file describing the parser tables."},
     {OPT_FLAG, "x", (char*)&version, "Print the version number."},
+    {OPT_FLAG, "v", (char*)&version, "Print the version number (alias of -x)."},
     {OPT_FSTR, "T", (char*)handle_T_option, "Specify a template file."},
     {OPT_FSTR, "U", (char*)handle_U_option, "Undefine a macro."},
     {OPT_FLAG, "V", (char*)&verboseConflict,
@@ -2115,7 +2125,7 @@ int main(int argc, char **argv){
 
   OptInit(argv,options,stderr);
   if( version ){
-     printf("Lemon version 1.0\n");
+     printf("lime %s\n", LIME_VERSION_STRING);
      exit(0);
   }
   if( OptNArgs()!=1 ){
@@ -2995,6 +3005,12 @@ static void parseonetoken(struct pstate *psp)
         if( strcmp(x,"name")==0 ){
           psp->declargslot = &(psp->gp->name);
           psp->insertLineMacro = 0;
+        }else if( strcmp(x,"name_prefix")==0 ){
+          /* Bison-compat alias for %name.  Bison spells this %name-prefix
+          ** with a dash, which Lime's directive tokenizer cannot accept;
+          ** a bison->lime converter translates the dash form to this. */
+          psp->declargslot = &(psp->gp->name);
+          psp->insertLineMacro = 0;
         }else if( strcmp(x,"include")==0 ){
           psp->declargslot = &(psp->gp->include);
         }else if( strcmp(x,"code")==0 ){
@@ -3039,6 +3055,10 @@ static void parseonetoken(struct pstate *psp)
           psp->declargslot = &(psp->gp->stacksize);
           psp->insertLineMacro = 0;
         }else if( strcmp(x,"start_symbol")==0 ){
+          psp->declargslot = &(psp->gp->start);
+          psp->insertLineMacro = 0;
+        }else if( strcmp(x,"start")==0 ){
+          /* Bison-compat alias for %start_symbol. */
           psp->declargslot = &(psp->gp->start);
           psp->insertLineMacro = 0;
         }else if( strcmp(x,"left")==0 ){

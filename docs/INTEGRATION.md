@@ -140,6 +140,33 @@ All public headers are in `include/`.  The main entry points:
 #include "parser_manager.h"      /* high-level plugin management */
 ```
 
+## Tokenizer Choice
+
+Lime ships two tokenizer options and supports a third:
+
+1. **`tokenize.c` at the repository root** -- a SQLite-flavoured lexer
+   that recognises SQL-ish tokens.  Provided as a runnable example and
+   as the default driver for Lime's own test and example grammars.
+
+2. **`src/tokenize.c` + `src/tokenize_simd.c`** -- the SIMD-accelerated
+   tokenizer used by the extension framework.  Same SQLite-flavoured
+   dialect; the SIMD classifier speeds up whitespace / identifier /
+   number runs on x86_64 (AVX2) and falls back to scalar on other ISAs.
+
+3. **Your own, driving the push parser directly** -- `parse_token(ctx,
+   token_code, token_value)` is a pure push interface.  No part of Lime
+   assumes the tokens came from Lime's built-in lexers.  Host languages
+   and embedded runtimes routinely ship a hand-written tokenizer that
+   understands their exact lexical rules (dollar-quoting, language-
+   specific escape syntax, multi-token lookahead, locale-aware case
+   folding, ...) and feed its output into Lime's push parser.  This is
+   a fully supported and expected integration pattern.
+
+If you use option 3 and need only the parser generator, you can drop
+`src/tokenize*.c` from the link line entirely -- the generator produces
+`Parse()` / `XxxAlloc()` symbols that have no dependency on any
+particular tokenizer.
+
 ## Runtime Extension Loading
 
 Extensions can be compiled as shared libraries and loaded at runtime:

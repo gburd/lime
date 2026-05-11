@@ -9,16 +9,16 @@ PostgreSQL bootstrap parser in `examples/bootstrap/`.
 
 | Bison Directive | Lime Equivalent | Notes |
 |----------------|-----------------|-------|
-| `%name-prefix "foo"` | `%name foo` | Sets parser function prefix |
+| `%name-prefix "foo"` | `%name_prefix foo` or `%name foo` | Both accepted.  Lime does not parse the dashed form `%name-prefix` (its directive tokenizer rejects the dash); the underscore form is a direct alias for `%name`. |
 | `%union { ... }` | Per-symbol `%type` | Lime has no union; each symbol declares its own C type |
 | `%token <type> TOK` | `%token TOK.` | Lime tokens have no inline type annotation; use `%token_type` for the default |
 | `%token_type` | (none) | Bison has no equivalent; uses `%union` instead |
 | `%type <type> sym` | `%type sym {CType}` | Curly braces instead of angle brackets |
-| `%start sym` | `%start_symbol sym` | Different keyword |
+| `%start sym` | `%start sym` or `%start_symbol sym` | Both accepted. |
 | `%parse-param { T *p }` | `%extra_argument {T *p}` | Passed as parameter to all parse calls |
 | `%lex-param { T *p }` | (none) | Lime uses push parsing; caller manages the lexer |
 | `%pure-parser` | (default) | Lime parsers are always reentrant |
-| `%expect N` | (none) | Lime does not suppress conflict warnings |
+| `%expect N` | `%expect N.` | Supported.  Lime treats the count as an **exact-match assertion** (unlike Bison's loose "at most N"): if the actual conflict count differs, `lime` exits non-zero.  Currently reports a combined shift/reduce + reduce/reduce total; distinct `%expect_shift_reduce` / `%expect_reduce_reduce` counters are not yet separated. |
 | `%destructor { ... } sym` | `%destructor sym { ... }` | Order is reversed |
 | `%left TOK1 TOK2` | `%left TOK1 TOK2.` | Terminating period required |
 | `%right TOK1 TOK2` | `%right TOK1 TOK2.` | Terminating period required |
@@ -320,9 +320,12 @@ boot_openStmt(A) ::= OPEN boot_ident(B). {
    write the token-feeding loop yourself. This is actually an advantage
    for integration but requires rethinking the control flow.
 
-6. **No `%expect`**: Lime reports all conflicts. You must resolve them
-   through precedence declarations or grammar restructuring. Use `lime -p`
-   to see which conflicts were resolved by precedence rules.
+6. **`%expect` is an exact-match assertion**: Unlike Bison's loose
+   "at most N" semantics, Lime's `%expect N.` fails the build when the
+   actual conflict count differs from N (in either direction).  Use
+   `lime -p` to see which conflicts were resolved by precedence rules.
+   Lime currently reports a single combined count rather than separate
+   shift/reduce and reduce/reduce totals.
 
 7. **Extra argument scope**: The `%extra_argument` value is available in
    all action blocks as the variable name you declared. In Bison,
@@ -345,6 +348,6 @@ boot_openStmt(A) ::= OPEN boot_ident(B). {
 | Non-terminal type | `%type <member> sym` | `%type sym {Type}` |
 | Parser param | `%parse-param {T *p}` | `%extra_argument {T *p}` |
 | Error callback | `yyerror()` function | `%syntax_error { ... }` |
-| Start symbol | `%start sym` | `%start_symbol sym` |
+| Start symbol | `%start sym` | `%start sym` or `%start_symbol sym` |
 | Generate parser | `bison -d gram.y` | `lime gram.lime` |
 | Invoke parser | `yyparse()` | `Parse(p, token, val, arg)` |
