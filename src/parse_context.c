@@ -64,11 +64,22 @@ ParserSnapshot *parse_get_snapshot(ParseContext *ctx) {
     return ctx->snapshot;
 }
 
-int parse_token(ParseContext *ctx, int token_code, void *token_value) {
+int parse_token(ParseContext *ctx,
+                int token_code,
+                void *token_value,
+                int location) {
     (void)ctx;
     (void)token_code;
     (void)token_value;
-    /* Stub: full implementation requires generated parser tables. */
+    (void)location;
+    /* Stub: full implementation requires reusing the generator's
+    ** parser-template stack logic against the pinned snapshot's
+    ** action tables.  When that lands, the location parameter will
+    ** be pushed alongside token_value onto the value stack and
+    ** propagated to reduce actions (alongside the aliased values
+    ** for each RHS symbol).  Today it is accepted and ignored so
+    ** callers can thread locations through their tokenisation loop
+    ** without waiting for the parser-plumbing work. */
     return 0;
 }
 

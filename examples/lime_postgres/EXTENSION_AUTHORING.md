@@ -330,8 +330,8 @@ load_extension(reg, id, snap, &error);
 
 /* Parse with the extended grammar */
 ParseContext *ctx = parse_begin(snap);
-parse_token(ctx, MY_TOKEN, &value);
-parse_token(ctx, 0, NULL);  /* end of input */
+parse_token(ctx, MY_TOKEN, &value, token_offset);
+parse_token(ctx, 0, NULL, LIME_LOC_UNKNOWN);  /* end of input */
 parse_end(ctx);
 
 /* Cleanup */

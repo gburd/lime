@@ -20,9 +20,9 @@
  *   ParseContext *ctx = parse_begin(snap);
  *
  *   // Feed tokens
- *   parse_token(ctx, TK_SELECT, NULL);
- *   parse_token(ctx, TK_STAR, NULL);
- *   parse_token(ctx, 0, NULL);  // end-of-input
+ *   parse_token(ctx, TK_SELECT, NULL, LIME_LOC_UNKNOWN);
+ *   parse_token(ctx, TK_STAR,   NULL, LIME_LOC_UNKNOWN);
+ *   parse_token(ctx, 0,         NULL, LIME_LOC_UNKNOWN);  // end-of-input
  *
  *   // End the session
  *   parse_end(ctx);
@@ -132,10 +132,20 @@ ParseContext *parse_begin(ParserSnapshot *snap);
  * @param ctx         Active parse context.
  * @param token_code  Token code (0 for end-of-input).
  * @param token_value Semantic value associated with the token (may be NULL).
+ * @param location    Byte offset of the token in the original source, or
+ *                    #LIME_LOC_UNKNOWN if the grammar does not declare
+ *                    %locations or the caller does not track positions.
+ *                    Currently stored but not yet propagated into reduce
+ *                    actions (that plumbing lands with the push-parser
+ *                    full implementation); callers should pass real
+ *                    locations anyway so they are ready for it.
  * @retval 0     Success.
  * @retval non-zero Parse error.
  */
-int parse_token(ParseContext *ctx, int token_code, void *token_value);
+int parse_token(ParseContext *ctx,
+                int token_code,
+                void *token_value,
+                int location);
 
 /**
  * @brief End the parse session.

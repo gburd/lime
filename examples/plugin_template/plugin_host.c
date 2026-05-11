@@ -190,9 +190,9 @@ int main(int argc, char **argv) {
     **   Tokenizer *tok = tokenizer_create(table, sql, strlen(sql));
     **   Token t;
     **   while (tokenizer_next(tok, &t)) {
-    **       parse_token(ctx, t.type, &t);
+    **       parse_token(ctx, t.type, &t, t.offset);
     **   }
-    **   parse_token(ctx, 0, NULL);  // end of input
+    **   parse_token(ctx, 0, NULL, LIME_LOC_UNKNOWN);  // end of input
     **   tokenizer_destroy(tok);
     */
     printf("Parse session active (would feed tokens here).\n");
