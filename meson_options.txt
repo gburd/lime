@@ -8,3 +8,13 @@ option('llvm',
                 'enabled: require LLVM (hard error if absent); ' +
                 'disabled: build stubs only (-DLIME_NO_JIT).',
 )
+
+option('llvm-static',
+  type        : 'boolean',
+  value       : false,
+  description : 'Link LLVM statically (llvm-config --link-static). ' +
+                'Produces a self-contained binary with no runtime ' +
+                'libLLVM.so dependency at the cost of a larger binary ' +
+                '(50-80 MB typical) and slower link. ' +
+                'Only effective when LLVM is enabled.',
+)

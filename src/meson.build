@@ -60,17 +60,32 @@ tokenize_simd_lib = static_library('tokenize_simd',
 #   enabled   -- require LLVM; hard error if it is absent
 #   disabled  -- skip the probe entirely; always build stubs
 #
+# The 'llvm-static' boolean option (default false) switches between
+# dynamic linking (libLLVM.so, runtime dep) and static linking
+# (component .a archives, self-contained but larger binary).  It has
+# effect only when LLVM is enabled.
+#
+# Minimum LLVM version floor is 14, aligned with PostgreSQL 19's JIT
+# requirement.  Note that the current OrcJIT code in src/jit_*.c uses
+# LLVMRunPasses (LLVM 16+) and LLVMOrcExecutorAddress (LLVM 15+);
+# builds against LLVM 14-15 will fail at compile time until those call
+# sites are gated behind LLVM_VERSION_MAJOR guards with legacy
+# PassManager fallbacks.  Declared range: tested 17-21.
+#
 # Passing the feature option as `required:` makes meson short-circuit
 # the llvm-config probe when the feature is disabled, and hard-error
 # (rather than silently falling back to stubs) when it is enabled.
 #
 # Prefer llvm-config over CMake so an environment-provided LLVM (e.g.
 # the one pinned in flake.nix) takes precedence over system installs.
-llvm_opt = get_option('llvm')
+llvm_opt    = get_option('llvm')
+llvm_static = get_option('llvm-static')
 llvm_dep = dependency('llvm',
+  version  : '>=14',
   modules  : ['core', 'executionengine', 'mcjit',
               'native', 'analysis', 'passes', 'orcjit'],
   method   : 'config-tool',
+  static   : llvm_static,
   required : llvm_opt,
 )
 
@@ -80,7 +95,8 @@ jit_deps = []
 
 if llvm_dep.found()
   jit_deps += llvm_dep
-  message('LLVM JIT compilation: enabled (' + llvm_dep.version() + ')')
+  link_kind = llvm_static ? 'static' : 'shared'
+  message('LLVM JIT compilation: enabled (' + llvm_dep.version() + ', ' + link_kind + ' link)')
 else
   jit_c_args += '-DLIME_NO_JIT'
   if llvm_opt.disabled()

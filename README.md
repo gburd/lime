@@ -69,12 +69,19 @@ Build options:
 # LLVM JIT feature: auto (default), enabled, or disabled
 meson setup builddir -Dllvm=enabled    # hard-require LLVM
 meson setup builddir -Dllvm=disabled   # force stub mode, no libLLVM link
+meson setup builddir -Dllvm-static=true -Dllvm=enabled  # statically link LLVM
 meson configure builddir -Dllvm=disabled   # toggle after the fact
 ```
 
 With `-Dllvm=disabled` the resulting binaries have zero references to
 `libLLVM.so`; `jit_is_available()` returns false and JIT call sites
 fall through to the interpreter.
+
+With `-Dllvm-static=true` meson invokes `llvm-config --link-static` and
+links the LLVM component archives directly into the final binary,
+removing the runtime dependency on `libLLVM.so`. Expect a 50-80 MB
+binary size increase and slower link; useful when shipping to hosts
+that do not have a matching LLVM SONAME installed.
 
 ## Project Layout
 
@@ -210,7 +217,11 @@ meson setup builddir-ubsan -Db_sanitize=undefined && ninja -C builddir-ubsan tes
 ## Dependencies
 
 **Build:** GCC 13+ or Clang 15+, Meson 0.60+, Ninja, pkg-config.
-**Optional:** LLVM 17+ (JIT; tested with 17-21), lcov/gcovr (coverage), Valgrind, perf.
+**Optional:** LLVM 14-21 (JIT; floor aligned with PostgreSQL 19. Note:
+the current OrcJIT code uses `LLVMRunPasses` (LLVM 16+) and
+`LLVMOrcExecutorAddress` (LLVM 15+), so builds against LLVM 14-15 need
+version-guarded fallbacks that aren't yet in place.  Tested 17-21.)
+lcov/gcovr (coverage), Valgrind, perf.
 **Runtime:** pthreads, C11 standard library.  LLVM if JIT enabled.
 
 All provided by `nix develop` via `flake.nix`.

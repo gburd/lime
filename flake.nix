@@ -58,6 +58,12 @@
 
         llvmInputs = lib.optionals hasLLVM [
           llvmPkgs.libllvm
+          # System libraries that llvm-config --system-libs --link-static
+          # reports as transitive dependencies.  Needed when building
+          # lime with -Dllvm-static=true; harmless otherwise.
+          pkgs.libxml2
+          pkgs.zlib
+          pkgs.libffi
         ];
       in
       {
