@@ -1,9 +1,9 @@
 /*
 ** jit_llvm_compat.h -- LLVM C API compatibility shims for Lime.
 **
-** Lime declares a minimum LLVM version of 14 (aligned with PostgreSQL
-** 19's JIT floor).  Two LLVM C APIs that Lime uses changed across that
-** range, so we hide the version split here:
+** Lime declares a minimum LLVM version of 14.  Three LLVM C APIs that
+** Lime uses changed across that range, so we hide the version split
+** here:
 **
 **   * New PassBuilder API (LLVMRunPasses, LLVMPassBuilderOptionsRef)
 **     is present from LLVM 16 onward.  On LLVM 14-15 we fall back to

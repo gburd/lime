@@ -281,7 +281,7 @@ code using LLVM's C API. It has three layers:
 
 ### Graceful Degradation
 
-When LLVM is not available (`LEMON_NO_JIT` defined at compile time),
+When LLVM is not available (`LIME_NO_JIT` defined at compile time),
 all JIT functions compile as stubs:
 - `jit_is_available()` returns `false`
 - `jit_create()` returns `JIT_ERR_NO_LLVM`
@@ -386,7 +386,7 @@ reproducible development environments.
 
 - **`_GNU_SOURCE`**: Defined project-wide for POSIX extensions
   (`pthread_rwlock_t`, `clock_gettime`, etc.)
-- **`LEMON_NO_JIT`**: Defined when LLVM is not available; activates stub
+- **`LIME_NO_JIT`**: Defined when LLVM is not available; activates stub
   implementations in the JIT library
 - **AVX2**: Uses `__attribute__((target("avx2")))` per-function, not
   global compiler flags

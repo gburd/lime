@@ -65,12 +65,9 @@ tokenize_simd_lib = static_library('tokenize_simd',
 # (component .a archives, self-contained but larger binary).  It has
 # effect only when LLVM is enabled.
 #
-# Minimum LLVM version floor is 14, aligned with PostgreSQL 19's JIT
-# requirement.  Note that the current OrcJIT code in src/jit_*.c uses
-# LLVMRunPasses (LLVM 16+) and LLVMOrcExecutorAddress (LLVM 15+);
-# builds against LLVM 14-15 will fail at compile time until those call
-# sites are gated behind LLVM_VERSION_MAJOR guards with legacy
-# PassManager fallbacks.  Declared range: tested 17-21.
+# Minimum LLVM version floor is 14.  The compat shim in
+# include/jit_llvm_compat.h hides API differences across 14-21,
+# so all targets from 14 onward build with the same call sites.
 #
 # Passing the feature option as `required:` makes meson short-circuit
 # the llvm-config probe when the feature is disabled, and hard-error

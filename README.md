@@ -23,9 +23,8 @@ at runtime.  Conflict detection and disambiguation happen live.  The base
 parser runs at full speed when no extensions are loaded — the extension
 machinery has zero overhead until activated.
 
-This design was motivated by PostgreSQL's need for pluggable SQL dialects
-and by the observation that no existing parser generator supports runtime
-grammar modification.
+This design is driven by a single observation: no existing parser
+generator supports runtime grammar modification.  Lime fills that gap.
 
 ## Why Lime over Yacc/Bison?
 
@@ -217,11 +216,10 @@ meson setup builddir-ubsan -Db_sanitize=undefined && ninja -C builddir-ubsan tes
 ## Dependencies
 
 **Build:** GCC 13+ or Clang 15+, Meson 0.60+, Ninja, pkg-config.
-**Optional:** LLVM 14-21 (JIT; floor aligned with PostgreSQL 19. Note:
-the current OrcJIT code uses `LLVMRunPasses` (LLVM 16+) and
-`LLVMOrcExecutorAddress` (LLVM 15+), so builds against LLVM 14-15 need
-version-guarded fallbacks that aren't yet in place.  Tested 17-21.)
-lcov/gcovr (coverage), Valgrind, perf.
+**Optional:** LLVM 14-21 (JIT; verified on 14.0.6 and 21.1.8, expected
+to build on every release in between via the compat shim in
+`include/jit_llvm_compat.h`).  lcov/gcovr (coverage), Valgrind, perf.
+**Runtime:** pthreads, C11 standard library.  LLVM if JIT enabled.
 **Runtime:** pthreads, C11 standard library.  LLVM if JIT enabled.
 
 All provided by `nix develop` via `flake.nix`.
@@ -252,5 +250,4 @@ Public Domain
 
 - **Lemon Parser Generator**: http://www.hwaci.com/sw/lemon/
 - **SQLite**: https://www.sqlite.org/
-- **PostgreSQL**: https://www.postgresql.org/
 - **LLVM ORC JIT**: https://llvm.org/docs/ORCv2.html

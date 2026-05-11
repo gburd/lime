@@ -13,7 +13,7 @@ nix develop
 
 This provides:
 - GCC 13
-- LLVM 17+ (tested with 17-21) with development libraries
+- LLVM 14-21 (verified on 14.0.6 and 21.1.8) with development libraries
 - Meson and Ninja build tools
 - Code coverage tools (lcov, gcovr)
 
@@ -33,13 +33,16 @@ ninja -C builddir reconfigure 2>&1 | grep -i llvm
 
 You should see:
 ```
-LLVM found -- JIT compilation enabled
+LLVM JIT compilation: enabled (<version>, shared link)
 ```
+
+(the older message `LLVM found -- JIT compilation enabled` was used
+before the `-Dllvm=`/`-Dllvm-static=` options landed.)
 
 If not, ensure pkg-config can find LLVM:
 ```bash
 pkg-config --modversion llvm
-# Should output: 17.x.x
+# Should output: 14.x.x or later
 ```
 
 ### 3. Run Benchmarks
@@ -242,7 +245,7 @@ JIT available: NO (stub mode)
    # On NixOS (from flake.nix)
    nix develop --rebuild
 
-   # On Ubuntu/Debian (any LLVM 17+ works)
+   # On Ubuntu/Debian (any LLVM 14+ works)
    apt install llvm-dev libllvm21
 
    # On macOS

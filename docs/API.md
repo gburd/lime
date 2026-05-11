@@ -556,7 +556,7 @@ Optional LLVM-based JIT compilation of parser action tables. When LLVM is
 available, the JIT compiles specialized lookup functions for each parser
 state, replacing table-driven lookups with direct branch sequences.
 
-When compiled without LLVM (`LEMON_NO_JIT`), all JIT functions degrade
+When compiled without LLVM (`LIME_NO_JIT`), all JIT functions degrade
 to no-ops.
 
 ### Types
