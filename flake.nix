@@ -77,6 +77,13 @@
           '' + lib.optionalString hasLLVM ''
             echo "  llvm:   $(llvm-config --version 2>/dev/null || echo 'not in PATH')"
             export PKG_CONFIG_PATH="${llvmPkgs.libllvm.dev}/lib/pkgconfig:''${PKG_CONFIG_PATH:-}"
+            # Pin meson's LLVM config-tool probe to the nix-provided
+            # llvm-config.  Without this, meson's dependency('llvm',
+            # method:'config-tool') scans for llvm-config-XX candidates
+            # and picks the highest version on PATH, which on distros
+            # like Fedora selects /usr/bin/llvm-config-22 instead of the
+            # nix LLVM and causes link failures against host /usr/lib64.
+            export LLVM_CONFIG="${llvmPkgs.libllvm.dev}/bin/llvm-config"
           '' + lib.optionalString (!hasLLVM) ''
             echo "  llvm:   not available on ${system} (JIT disabled)"
           '';
