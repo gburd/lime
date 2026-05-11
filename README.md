@@ -63,6 +63,19 @@ ninja -C builddir
 ninja -C builddir test
 ```
 
+Build options:
+
+```sh
+# LLVM JIT feature: auto (default), enabled, or disabled
+meson setup builddir -Dllvm=enabled    # hard-require LLVM
+meson setup builddir -Dllvm=disabled   # force stub mode, no libLLVM link
+meson configure builddir -Dllvm=disabled   # toggle after the fact
+```
+
+With `-Dllvm=disabled` the resulting binaries have zero references to
+`libLLVM.so`; `jit_is_available()` returns false and JIT call sites
+fall through to the interpreter.
+
 ## Project Layout
 
 The project root contains the parser generator itself — three files

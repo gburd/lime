@@ -1,0 +1,10 @@
+# Build-time project options for lime-parser.
+
+option('llvm',
+  type        : 'feature',
+  value       : 'auto',
+  description : 'LLVM JIT compilation support. ' +
+                'auto: enable if llvm-config is found; ' +
+                'enabled: require LLVM (hard error if absent); ' +
+                'disabled: build stubs only (-DLIME_NO_JIT).',
+)

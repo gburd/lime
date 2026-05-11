@@ -50,16 +50,29 @@ tokenize_simd_lib = static_library('tokenize_simd',
   link_args : coverage_link_args,
 )
 
-# LLVM JIT compilation support (optional).
-# When LLVM is available, the JIT subsystem compiles parser hot paths
-# into native code. Without LLVM, stub implementations are used.
-# Prefer llvm-config over CMake so environment-provided LLVM (e.g. Nix)
-# takes precedence over system/Homebrew installs.
-llvm_dep = dependency('llvm', modules : ['core', 'executionengine', 'mcjit',
-                                          'native', 'analysis', 'passes',
-                                          'orcjit'],
-                      method : 'config-tool',
-                      required : false)
+# LLVM JIT compilation support.
+# When LLVM is available and enabled, the JIT subsystem compiles parser
+# hot paths into native code. Otherwise stub implementations (guarded
+# by -DLIME_NO_JIT) are compiled and jit_is_available() returns false.
+#
+# Controlled by the 'llvm' feature option (see meson_options.txt):
+#   auto      -- enable if llvm-config is found on PATH / $LLVM_CONFIG
+#   enabled   -- require LLVM; hard error if it is absent
+#   disabled  -- skip the probe entirely; always build stubs
+#
+# Passing the feature option as `required:` makes meson short-circuit
+# the llvm-config probe when the feature is disabled, and hard-error
+# (rather than silently falling back to stubs) when it is enabled.
+#
+# Prefer llvm-config over CMake so an environment-provided LLVM (e.g.
+# the one pinned in flake.nix) takes precedence over system installs.
+llvm_opt = get_option('llvm')
+llvm_dep = dependency('llvm',
+  modules  : ['core', 'executionengine', 'mcjit',
+              'native', 'analysis', 'passes', 'orcjit'],
+  method   : 'config-tool',
+  required : llvm_opt,
+)
 
 jit_sources = files('jit_context.c', 'jit_codegen.c', 'jit_policy.c', 'jit_tokenizer.c')
 jit_c_args = []
@@ -67,10 +80,14 @@ jit_deps = []
 
 if llvm_dep.found()
   jit_deps += llvm_dep
-  message('LLVM found -- JIT compilation enabled')
+  message('LLVM JIT compilation: enabled (' + llvm_dep.version() + ')')
 else
   jit_c_args += '-DLIME_NO_JIT'
-  message('LLVM not found -- JIT compilation disabled (stub mode)')
+  if llvm_opt.disabled()
+    message('LLVM JIT compilation: disabled by -Dllvm=disabled (stub mode)')
+  else
+    message('LLVM JIT compilation: disabled, llvm-config not found (stub mode)')
+  endif
 endif
 
 jit_lib = static_library('lime_jit',
