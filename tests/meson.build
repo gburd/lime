@@ -260,3 +260,25 @@ test_diagnostics = executable('test_diagnostics',
 )
 
 test('diagnostics', test_diagnostics)
+
+# P1-1 | alternation smoke test -- generate a tiny parser using
+# rule alternation, then exercise each alternative at runtime.
+test_alt_gen = custom_target('test_alternation_parser',
+  input   : ['test_alternation_grammar.y'],
+  output  : ['test_alternation_grammar.c', 'test_alternation_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_alternation = executable('test_alternation',
+  'test_alternation.c',
+  test_alt_gen,
+  dependencies : lime_parser_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('alternation', test_alternation)

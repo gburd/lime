@@ -2764,8 +2764,101 @@ struct pstate {
   int preccounter;           /* Assign this precedence to decl arguments */
   struct rule *firstrule;    /* Pointer to first rule in the grammar */
   struct rule *lastrule;     /* Pointer to the most recently parsed rule */
+  struct rule *alt_group_head; /* First rule in an active `|` alternation
+                              ** group, or NULL when not in one.  Set by
+                              ** the `|` branch of IN_RHS; cleared when
+                              ** the next rule starts (or the group's
+                              ** trailing action has been propagated). */
   struct module_dependency *current_dependency; /* Current dependency being parsed */
 };
+
+/*
+** Commit the current accumulated rule (psp->lhs, psp->lhsalias,
+** psp->rhs[0..nrhs-1], psp->alias[0..nrhs-1]) to the grammar's rule
+** list.  Called from the IN_RHS state when a rule-terminator (`.`)
+** or an alternation (`|`) is seen.  Leaves psp->prevrule pointing at
+** the newly-committed rule (NULL on allocation failure), and does
+** not modify psp->state.
+*/
+static void commit_current_rule(struct pstate *psp)
+{
+  struct rule *rp;
+  rp = (struct rule *)lime_calloc( sizeof(struct rule) +
+       sizeof(struct symbol*)*psp->nrhs + sizeof(char*)*psp->nrhs, 1);
+  if( rp==0 ){
+    ErrorMsg(psp->filename,psp->tokenlineno,
+      "Can't allocate enough memory for this rule.");
+    psp->errorcnt++;
+    psp->prevrule = 0;
+  }else{
+    int i;
+    rp->ruleline = psp->tokenlineno;
+    rp->rhs = (struct symbol**)&rp[1];
+    rp->rhsalias = (const char**)&(rp->rhs[psp->nrhs]);
+    for(i=0; i<psp->nrhs; i++){
+      rp->rhs[i] = psp->rhs[i];
+      rp->rhsalias[i] = psp->alias[i];
+      if( rp->rhsalias[i]!=0 ){ rp->rhs[i]->bContent = 1; }
+    }
+    rp->lhs = psp->lhs;
+    rp->lhsalias = psp->lhsalias;
+    rp->nrhs = psp->nrhs;
+    rp->code = 0;
+    rp->noCode = 1;
+    rp->precsym = 0;
+    rp->index = psp->gp->nrule++;
+    rp->nextlhs = rp->lhs->rule;
+    rp->lhs->rule = rp;
+    rp->next = 0;
+    if( psp->firstrule==0 ){
+      psp->firstrule = psp->lastrule = rp;
+    }else{
+      psp->lastrule->next = rp;
+      psp->lastrule = rp;
+    }
+    psp->prevrule = rp;
+  }
+}
+
+/*
+** Propagate attributes that attach to the last rule of a `|`
+** alternation group (trailing action code, precedence mark,
+** NEVER-REDUCE flag) across every alternative in the group.
+**
+** psp->alt_group_head is the first rule in the group; psp->prevrule
+** is the last.  For each rule in the half-open range
+** [alt_group_head, prevrule), copy code / line / noCode / precsym /
+** neverReduce from prevrule.  After propagation the group is
+** considered consumed and alt_group_head is cleared, so subsequent
+** attaches (if any somehow arrive) do not re-propagate.
+**
+** Safe to call unconditionally; becomes a no-op when alt_group_head
+** is NULL or equal to prevrule (single-alternative case).
+*/
+static void propagate_alt_group_attach(struct pstate *psp)
+{
+  struct rule *head = psp->alt_group_head;
+  struct rule *last = psp->prevrule;
+  struct rule *rp;
+  if( head==0 || last==0 || head==last ) {
+    psp->alt_group_head = 0;
+    return;
+  }
+  for(rp=head; rp!=last && rp!=0; rp=rp->next){
+    if( rp->code==0 ){
+      rp->code      = last->code;
+      rp->line      = last->line;
+      rp->noCode    = last->noCode;
+    }
+    if( rp->precsym==0 ){
+      rp->precsym   = last->precsym;
+    }
+    if( !rp->neverReduce ){
+      rp->neverReduce = last->neverReduce;
+    }
+  }
+  psp->alt_group_head = 0;
+}
 
 /* Parse a single token */
 static void parseonetoken(struct pstate *psp)
@@ -2781,12 +2874,20 @@ static void parseonetoken(struct pstate *psp)
       psp->prevrule = 0;
       psp->preccounter = 0;
       psp->firstrule = psp->lastrule = 0;
+      psp->alt_group_head = 0;
       psp->gp->nrule = 0;
       /* fall through */
     case WAITING_FOR_DECL_OR_RULE:
       if( x[0]=='%' ){
+        /* Leaving the post-rule window without a trailing action or
+        ** precedence mark: the alternation group (if any) ends here
+        ** with no attributes to propagate. */
+        psp->alt_group_head = 0;
         psp->state = WAITING_FOR_DECL_KEYWORD;
       }else if( ISLOWER(x[0]) ){
+        /* New rule starts: same reasoning -- close out any dangling
+        ** alternation group. */
+        psp->alt_group_head = 0;
         psp->lhs = Symbol_new(x);
         psp->nrhs = 0;
         psp->lhsalias = 0;
@@ -2804,10 +2905,12 @@ static void parseonetoken(struct pstate *psp)
           psp->errorcnt++;
         }else if( strcmp(x, "{NEVER-REDUCE")==0 ){
           psp->prevrule->neverReduce = 1;
+          propagate_alt_group_attach(psp);
         }else{
           psp->prevrule->line = psp->tokenlineno;
           psp->prevrule->code = &x[1];
           psp->prevrule->noCode = 0;
+          propagate_alt_group_attach(psp);
         }
       }else if( x[0]=='[' ){
         psp->state = PRECEDENCE_MARK_1;
@@ -2843,6 +2946,10 @@ static void parseonetoken(struct pstate *psp)
           "Missing \"]\" on precedence mark.");
         psp->errorcnt++;
       }
+      /* Precedence mark (like a trailing action) attaches to the
+      ** last-committed rule; propagate to every alternative in the
+      ** group if we were in one. */
+      propagate_alt_group_attach(psp);
       psp->state = WAITING_FOR_DECL_OR_RULE;
       break;
     case WAITING_FOR_ARROW:
@@ -2893,43 +3000,31 @@ static void parseonetoken(struct pstate *psp)
       break;
     case IN_RHS:
       if( x[0]=='.' ){
-        struct rule *rp;
-        rp = (struct rule *)lime_calloc( sizeof(struct rule) +
-             sizeof(struct symbol*)*psp->nrhs + sizeof(char*)*psp->nrhs, 1);
-        if( rp==0 ){
-          ErrorMsg(psp->filename,psp->tokenlineno,
-            "Can't allocate enough memory for this rule.");
-          psp->errorcnt++;
-          psp->prevrule = 0;
-        }else{
-          int i;
-          rp->ruleline = psp->tokenlineno;
-          rp->rhs = (struct symbol**)&rp[1];
-          rp->rhsalias = (const char**)&(rp->rhs[psp->nrhs]);
-          for(i=0; i<psp->nrhs; i++){
-            rp->rhs[i] = psp->rhs[i];
-            rp->rhsalias[i] = psp->alias[i];
-            if( rp->rhsalias[i]!=0 ){ rp->rhs[i]->bContent = 1; }
-          }
-          rp->lhs = psp->lhs;
-          rp->lhsalias = psp->lhsalias;
-          rp->nrhs = psp->nrhs;
-          rp->code = 0;
-          rp->noCode = 1;
-          rp->precsym = 0;
-          rp->index = psp->gp->nrule++;
-          rp->nextlhs = rp->lhs->rule;
-          rp->lhs->rule = rp;
-          rp->next = 0;
-          if( psp->firstrule==0 ){
-            psp->firstrule = psp->lastrule = rp;
-          }else{
-            psp->lastrule->next = rp;
-            psp->lastrule = rp;
-          }
-          psp->prevrule = rp;
-        }
+        commit_current_rule(psp);
         psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else if( x[0]=='|' && x[1]==0 ){
+        /* Bison-compat rule alternation: `lhs ::= A B | C D | E.` is
+        ** sugar for three separate `lhs ::= ...` rules that share an
+        ** LHS (and, if present, a single trailing action block).
+        ** Commit what we have, then reset the RHS accumulator and
+        ** stay in IN_RHS with the same LHS and LHS alias so the next
+        ** alternative starts parsing immediately.  An empty RHS
+        ** between `::=` and `|` (epsilon alternative) is allowed.
+        **
+        ** Lime actions go *after* the rule's terminating `.`, not
+        ** inline per alternative.  We remember the first rule of the
+        ** alternation group here; when the trailing `{ ... }` block
+        ** arrives it is duplicated across every rule in the group so
+        ** all alternatives run the same action when they reduce.
+        ** (See the `{` branch of WAITING_FOR_DECL_OR_RULE.)
+        ** If you need *different* actions per alternative, expand to
+        ** separate `lhs ::= ...` rules by hand. */
+        commit_current_rule(psp);
+        if( psp->alt_group_head==0 && psp->prevrule!=0 ){
+          psp->alt_group_head = psp->prevrule;
+        }
+        psp->nrhs = 0;
+        /* psp->state stays IN_RHS; psp->lhs and psp->lhsalias stay. */
       }else if( ISALPHA(x[0]) ){
         if( psp->nrhs>=MAXRHS ){
           ErrorMsg(psp->filename,psp->tokenlineno,
