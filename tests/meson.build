@@ -293,3 +293,13 @@ test_reduce_fn_type = executable('test_reduce_fn_type',
 )
 
 test('reduce_fn_type', test_reduce_fn_type)
+
+# Serializer for grammar modifications -> .lime text (subprocess
+# fallback path for Phase 4 extension validation).
+test_mod_serialize = executable('test_mod_serialize',
+  'test_mod_serialize.c',
+  include_directories : include_directories('..'),
+  dependencies : lime_parser_dep,
+)
+
+test('mod_serialize', test_mod_serialize)

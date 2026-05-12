@@ -12,6 +12,7 @@ lib_sources = files(
   'strategy_priority.c',
   'strategy_fork_resolve.c',
   'snapshot_modify.c',
+  'mod_serialize.c',
   'dependency_resolver.c',
   'parser_manager.c',
   'parser_plugin.c',
