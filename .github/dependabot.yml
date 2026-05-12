@@ -1,0 +1,35 @@
+# Dependabot configuration.
+#
+# Lime is a C project with no language-ecosystem package dependencies
+# (no npm / pip / cargo / maven / go modules).  The only thing that
+# actually needs version management is the set of GitHub Actions we
+# pin with `uses: name@version` in .github/workflows/.
+#
+# Note: dependabot is a GitHub-only service.  The .forgejo/workflows/
+# side doesn't get equivalent coverage from this file; the Codeberg
+# ecosystem's closest equivalent is renovate via the community
+# renovate bot, which would need separate configuration if we decide
+# to enable it.  For now, Forgejo Actions pins are updated manually
+# (they track the same upstream actions/* versions on code.forgejo.org
+# most of the time).
+version: 2
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    groups:
+      # Batch all actions/* version bumps into a single PR so the
+      # review overhead stays proportional to the actual churn.
+      actions-core:
+        patterns:
+          - "actions/*"

@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: docker
+    container:
+      image: debian:bookworm
+    strategy:
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y git ${{ matrix.compiler }} meson ninja-build \
+                             pkg-config valgrind
+
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Build lime (standalone)
+        run: ${{ matrix.compiler }} -O2 -Wall -Wextra -o lime lime.c
+
+      - name: Setup meson
+        env:
+          CC: ${{ matrix.compiler }}
+        run: meson setup builddir
+
+      - name: Build
+        run: ninja -C builddir
+
+      - name: Test
+        run: meson test -C builddir --print-errorlogs
+
+  sanitizers:
+    runs-on: docker
+    container:
+      image: debian:bookworm
+    strategy:
+      matrix:
+        sanitizer: [address, thread, undefined]
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y git gcc meson ninja-build pkg-config
+
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Build with ${{ matrix.sanitizer }} sanitizer
+        run: |
+          meson setup builddir-${{ matrix.sanitizer }} \
+            -Db_sanitize=${{ matrix.sanitizer }}
+          ninja -C builddir-${{ matrix.sanitizer }}
+
+      - name: Test
+        run: meson test -C builddir-${{ matrix.sanitizer }} --print-errorlogs
+
+  valgrind:
+    runs-on: docker
+    container:
+      image: debian:bookworm
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y git gcc meson ninja-build pkg-config valgrind bash
+
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Build
+        run: |
+          meson setup builddir
+          ninja -C builddir
+
+      - name: Valgrind check
+        run: scripts/check_memory.sh
+
+  # Guards against the three-source-of-truth version string drifting:
+  # LIME_VERSION_STRING in lime.c, project(version: ...) in meson.build,
+  # and the literal in src/version.c's lemon_parser_version() must all
+  # match.  Cheap to run; fails loudly when anyone bumps one and
+  # forgets the others.
+  version-consistency:
+    runs-on: docker
+    container:
+      image: debian:bookworm
+    steps:
+      - name: Install dependencies
+        run: apt-get update && apt-get install -y git grep sed
+
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Check all three sources agree
+        run: scripts/check_version_consistency.sh

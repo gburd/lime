@@ -27,7 +27,18 @@ jobs:
 
       - name: Generate Doxygen docs
         working-directory: docs
-        run: doxygen Doxyfile
+        run: doxygen Doxyfile 2>../doxygen-warnings.txt
+
+      - name: Report doxygen warning count
+        # See .github/workflows/pages.yml for the rationale: we
+        # surface the count but don't fail on the existing backlog.
+        run: |
+          count=$(wc -l < doxygen-warnings.txt)
+          echo "Doxygen produced ${count} warning lines"
+          if [ "${count}" -gt 0 ]; then
+            echo "First 20:"
+            head -20 doxygen-warnings.txt
+          fi
 
       - name: Stage site directory
         run: |

@@ -30,7 +30,20 @@ jobs:
 
     - name: Generate API docs
       working-directory: docs
-      run: doxygen Doxyfile
+      run: doxygen Doxyfile 2>../doxygen-warnings.txt
+
+    - name: Report doxygen warning count
+      # Does not fail the build on existing warnings (there's a known
+      # backlog documented in TESTING.md / Doxyfile).  Surfaces the
+      # count so a sudden jump is visible in CI logs, and we can
+      # flip this to a hard fail once the backlog reaches zero.
+      run: |
+        count=$(wc -l < doxygen-warnings.txt)
+        echo "::notice::Doxygen produced ${count} warning lines"
+        if [ "${count}" -gt 0 ]; then
+          echo "First 20:"
+          head -20 doxygen-warnings.txt
+        fi
 
     - name: Build site
       run: |

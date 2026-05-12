@@ -78,3 +78,14 @@ jobs:
 
     - name: Valgrind check
       run: scripts/check_memory.sh
+
+  # Keep the three sources of the version string aligned:
+  # LIME_VERSION_STRING in lime.c, project(version: ...) in meson.build,
+  # and the mirror in src/version.c.  Fails loudly if a bump forgets
+  # one of them.
+  version-consistency:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Check all three version sources agree
+      run: scripts/check_version_consistency.sh
