@@ -114,11 +114,13 @@ GrammarModification mod = {
     .type = MOD_ADD_RULE,
     .description = "a_expr -> a_expr ARROW a_expr",
     .u.add_rule = {
-        .lhs        = "a_expr",      /* Left-hand side non-terminal */
-        .rhs        = rhs,           /* NULL-terminated RHS symbols */
-        .nrhs       = 3,             /* Number of RHS symbols */
-        .code       = "{ A = jsonb_arrow(B, C); }",  /* Reduction action */
-        .precedence = -1,            /* -1 = inherit from symbols */
+        .lhs         = "a_expr",     /* Left-hand side non-terminal */
+        .rhs         = rhs,          /* NULL-terminated RHS symbols */
+        .nrhs        = 3,            /* Number of RHS symbols */
+        .code        = "{ A = jsonb_arrow(B, C); }",  /* Reduction action */
+        .reduce      = NULL,         /* Or a LimeReduceFn -- see below */
+        .reduce_user = NULL,         /* Opaque pointer for .reduce    */
+        .precedence  = -1,           /* -1 = inherit from symbols     */
     },
 };
 ```
@@ -130,10 +132,49 @@ GrammarModification mod = {
   (uppercase) or non-terminals (lowercase) from the base grammar or from
   other modifications in the same extension.
 - `nrhs` -- Count of RHS symbols (not counting the NULL terminator).
-- `code` -- C code to execute when this rule is reduced. Use `A`, `B`,
-  `C`, etc. to refer to semantic values of RHS symbols.
+- `code` -- Generator-time C code string.  Used when the modification is
+  consumed by a static grammar compile (fed through `lime` as text).
+  Inside the code block, `A` refers to the LHS's value slot and `B`,
+  `C`, ... refer to the RHS symbols in order.
+- `reduce` -- Optional runtime reduce callback of type `LimeReduceFn`
+  (see below).  When set, the parser invokes this function at reduction
+  time instead of dispatching through the generated `reduce()` switch.
+  This is the mechanism for extensions loaded into an already-compiled
+  parser (where the switch is fixed).
+- `reduce_user` -- Opaque pointer passed through to `reduce` as its
+  first argument.  Useful for carrying extension-private context.
 - `precedence` -- Override precedence for the rule. Set to -1 to use
   the default behavior (inherit from the rightmost terminal).
+
+**Action-source precedence**: if `reduce` is non-NULL, the parser uses
+it (and `code` is treated as documentation / generator-time fallback).
+If both are NULL, the rule reduces with no action.
+
+#### LimeReduceFn -- runtime reduce callback
+
+```c
+typedef void (*LimeReduceFn)(
+    void       *user_data,    /* = .reduce_user                       */
+    void       *extra_arg,    /* grammar's %extra_argument, or NULL   */
+    int         nrhs,         /* count of RHS symbols                 */
+    const void *rhs_values,   /* array of nrhs %token_type payloads   */
+    const int  *rhs_locs,     /* array of nrhs byte offsets or NULL   */
+    void       *lhs_out       /* writeback slot for the LHS value     */
+);
+```
+
+The callback must write the LHS value into `*lhs_out` before returning.
+The extension owns any memory referenced from that value; Lime treats
+slot payloads as opaque.  See `docs/API.md` for the full contract.
+
+**Current status:** the `reduce` dispatch path is type-checked and
+accepted at registration time, but the parser does not yet invoke
+running callbacks at parse time -- the wiring lands with the runtime
+LALR rebuild (Task #3).  Writing extension code against `reduce` today
+still compiles and will light up transparently when dispatch lands.
+In the meantime, use the `subprocess fallback` pattern (see
+`lime_modifications_to_grammar_text()` in `docs/API.md`) to validate
+extension-grammar designs end to end.
 
 ### Modifying Precedence (`MOD_MODIFY_PRECEDENCE`)
 

@@ -119,7 +119,10 @@ allocation failure. `snap` must not be `NULL`.
 #### parse_token
 
 ```c
-int parse_token(ParseContext *ctx, int token_code, void *token_value);
+int parse_token(ParseContext *ctx,
+                int token_code,
+                void *token_value,
+                int location);
 ```
 
 Feed one token to the parser.
@@ -130,8 +133,17 @@ Feed one token to the parser.
   signal end-of-input.
 - `token_value` -- Opaque pointer to the semantic value. The layout is
   determined by the parser template's `TOKENTYPE`.
+- `location` -- Byte offset of the token in the original source, or
+  `LIME_LOC_UNKNOWN` (-1) if the grammar does not declare `%locations`
+  or the caller does not track positions (e.g. the synthetic
+  end-of-input token).  Currently accepted and stored; full propagation
+  into reduce actions lands with the push-parser implementation that
+  replaces the current `parse_token()` stub.  Callers should thread
+  real locations anyway so they are ready.
 
 **Returns:** `0` on success, non-zero on error (syntax error or OOM).
+
+**See also:** `LIME_LOC_UNKNOWN`.
 
 #### parse_end
 
@@ -150,6 +162,19 @@ ParserSnapshot *parse_get_snapshot(ParseContext *ctx);
 
 Return the snapshot pinned by this context. Valid as long as the context
 is alive.
+
+#### LIME_LOC_UNKNOWN
+
+```c
+#define LIME_LOC_UNKNOWN (-1)
+```
+
+Sentinel value for the `location` argument of `parse_token()`.  Pass
+this when the grammar does not declare `%locations`, or when no
+meaningful byte offset can be attributed to the token (the synthetic
+end-of-input marker, runtime-injected tokens, etc.).  Guaranteed to be
+`-1` so that integer byte offsets (always `>= 0`) never collide with
+it.
 
 ### Snapshot-Indirected Table Access
 
@@ -532,6 +557,41 @@ a tagged union `u` containing the type-specific payload.
 | `MOD_ADD_TYPE` | `u.add_type` | Add a non-terminal type |
 | `MOD_REMOVE_RULE` | `u.remove_rule` | Remove an existing rule |
 
+#### MOD_ADD_RULE reduce actions
+
+`u.add_rule` carries two fields for the rule's reduction action:
+
+```c
+typedef void (*LimeReduceFn)(
+    void       *user_data,    /* opaque, from .reduce_user           */
+    void       *extra_arg,    /* grammar's %extra_argument, or NULL  */
+    int         nrhs,         /* count of RHS symbols in this rule    */
+    const void *rhs_values,   /* array of nrhs %token_type payloads   */
+    const int  *rhs_locs,     /* array of nrhs byte offsets, or NULL  */
+    void       *lhs_out       /* writeback slot for the LHS value     */
+);
+
+struct {
+    /* ... lhs / rhs / nrhs / precedence fields ... */
+    LimeReduceFn  reduce;      /* runtime-dispatched action, or NULL */
+    void         *reduce_user; /* opaque pointer passed to reduce()   */
+    const char   *code;        /* generator-time C code, or NULL      */
+} add_rule;
+```
+
+Precedence of the two action-source fields:
+
+| `reduce` | `code`  | Behaviour |
+|----------|---------|-----------|
+| non-NULL | any     | Parser invokes `reduce(reduce_user, ...)` at reduce time. |
+| NULL     | non-NULL| `code` is compiled into the parser's generated `reduce()` switch at generator time.  Applicable to grammars fed through `lime`; not usable from extensions loaded into a pre-compiled parser. |
+| NULL     | NULL    | Rule reduces with no action. |
+
+Current implementation status: `reduce`-based dispatch is not yet wired
+through to the push-parser stack (blocks on the runtime rebuild work).
+The types are stable; extension code written against the contract today
+will not need changes when dispatch lights up.
+
 ### Conflict Resolution
 
 When two extensions modify the same grammar element, the `on_conflict`
@@ -544,6 +604,60 @@ typedef enum ConflictResolution {
     CONFLICT_USE_NEW,       /* Replace with new item */
     CONFLICT_MERGE,         /* Extension provides merged result */
 } ConflictResolution;
+```
+
+### Modification Serializer
+
+**Header:** `src/mod_serialize.h`
+
+```c
+char *lime_modifications_to_grammar_text(
+    const GrammarModification *mods,
+    uint32_t                   nmods,
+    uint32_t                  *skipped_out,  /* may be NULL */
+    char                     **error         /* may be NULL */
+);
+```
+
+Render an array of `GrammarModification`s as `.lime`-syntax text that,
+when concatenated after a base grammar and re-parsed by the `lime`
+generator, produces a parser equivalent to applying the modifications.
+This is the intended mechanism for the "subprocess fallback" pattern
+that unblocks runtime extension validation while real in-process
+`apply_add_rule()` (Task #3) is pending.
+
+**Returns:** malloc'd NUL-terminated buffer; `NULL` on allocation
+failure or bad arguments.  Caller owns the buffer.
+
+**Round-trip fidelity** -- not every modification serializes cleanly:
+
+| Case | Behaviour |
+|---|---|
+| `MOD_ADD_RULE` with `.reduce != NULL` and `.code == NULL` | Skipped; counted in `*skipped_out`.  A function pointer has no text form. |
+| `MOD_REMOVE_RULE` | Always skipped; concat cannot express removal.  Filter the base grammar text if removals must take effect. |
+| `MOD_MODIFY_PRECEDENCE` with `new_assoc == 0` | Emitted as a comment (no single `.lime` directive expresses "no associativity"). |
+| Integer `.precedence` on `MOD_ADD_RULE` | Emitted as a `/* NOTE */` comment; `.lime` uses `[SYMBOL]` markers, not numbers. |
+
+Typical subprocess-fallback usage:
+
+```c
+uint32_t skipped = 0;
+char *err = NULL;
+char *fragment = lime_modifications_to_grammar_text(
+    mods, nmods, &skipped, &err);
+if (fragment == NULL) {
+    fprintf(stderr, "serialization failed: %s\n", err);
+    free(err);
+    return -1;
+}
+
+/* concat base grammar text + fragment, write to tempfile,
+** spawn `lime`, compile the output, dlopen the result */
+FILE *tmp = fopen(tmpfile, "w");
+fputs(base_grammar_text, tmp);
+fputs(fragment, tmp);
+fclose(tmp);
+free(fragment);
 ```
 
 ---
@@ -913,13 +1027,13 @@ ParseContext *ctx = parse_begin(snap);
 Token t;
 while (tokenizer_next(tok, &t)) {
     if (t.type == TK_EOF) break;
-    int rc = parse_token(ctx, t.type, (void *)&t);
+    int rc = parse_token(ctx, t.type, (void *)&t, (int)t.offset);
     if (rc != 0) {
         fprintf(stderr, "Parse error at line %u col %u\n", t.line, t.column);
         break;
     }
 }
-parse_token(ctx, 0, NULL);  /* Signal end-of-input */
+parse_token(ctx, 0, NULL, LIME_LOC_UNKNOWN);  /* Signal end-of-input */
 
 parse_end(ctx);
 ```

@@ -13,18 +13,16 @@ meson setup builddir
 ninja -C builddir test
 ```
 
-Expected output:
-```
- 1/8 version           OK       0.02s
- 2/8 tokenize          OK       3.51s
- 3/8 jit               OK       0.02s
- 4/8 snapshot          OK       0.01s
- 5/8 extension         OK       0.01s
- 6/8 concurrent        OK      15.23s
- 7/8 parse_context     OK       0.01s
- 8/8 snapshot_modify   OK       0.01s
+Expected output (test count and ordering can shift as new tests
+are added; the `Fail: 0` / `Ok:` summary is what matters):
 
-Ok:                 8
+```
+ 1/33 version                    OK       0.02s
+ 2/33 tokenize                   OK       0.62s
+ ...
+33/33 alternation                OK       0.01s
+
+Ok:                33
 Expected Fail:      0
 Fail:               0
 Unexpected Pass:    0
@@ -84,20 +82,89 @@ open builddir-cov/meson-logs/coveragereport/index.html
 
 ## Test Suite Overview
 
-### Current Test Suites (8 suites, 200+ assertions)
+### Current Test Suites (33 executables)
 
-| Test Suite | Tests | Focus Area | Lines |
-|------------|-------|------------|-------|
-| test_version | 1 | Version string | 50 |
-| test_snapshot | 11 | Snapshot lifecycle, refcounting | 277 |
-| test_snapshot_modify | 8 | Clone operations, independence | 350 |
-| test_extension | 15 groups (85 assertions) | Extension registry, conflicts | 445 |
-| test_tokenize | 26 | SIMD tokenization, correctness | 677 |
-| test_jit | 32 | JIT compilation, policy | 512 |
-| test_concurrent | 7 | Thread safety, stress tests | 420 |
-| test_parse_context | 10 | Context lifecycle, action lookups | 320 |
+The suite has grown well past the original 8.  The canonical list is
+whatever `ls tests/test_*.c` returns; a grouped snapshot as of this
+document's last refresh:
 
-**Total: ~200+ test assertions across 3,050+ lines of test code**
+**Core parser / snapshot lifecycle**
+
+| Test | Focus |
+|------|-------|
+| `test_version` | Version string surface |
+| `test_snapshot` | Snapshot lifecycle, refcounting |
+| `test_snapshot_modify` | Clone operations, independence |
+| `test_snapshot_modify_extended` | Edge cases in clone / modify |
+| `test_parse_context` | Context lifecycle, action lookups |
+| `test_parse_context_coverage` | Coverage of rarely-exercised paths |
+
+**Tokenizer / token-table**
+
+| Test | Focus |
+|------|-------|
+| `test_tokenize` | SIMD tokenization, correctness |
+| `test_token_table_coverage` | Token table edge cases |
+| `test_shared_token_lifetime` | Token lifetime across snapshots |
+
+**Extension framework**
+
+| Test | Focus |
+|------|-------|
+| `test_extension` | Registry, conflicts |
+| `test_extension_coverage` | Rarer extension paths |
+| `test_extension_registry` | Registry data structures |
+| `test_multi_extension` | Interactions between extensions |
+| `test_dependency_resolver` | Load-order / requires graph |
+| `test_runtime_management` | Runtime registry operations |
+
+**Grammar modification & conflict resolution**
+
+| Test | Focus |
+|------|-------|
+| `test_conflict_detector` | Conflict classification |
+| `test_disambiguation` | Ambiguity resolution strategies |
+| `test_strategy_priority_extended` | Priority-based disambiguation |
+| `test_fork_resolve` | Fork-resolve disambiguation |
+| `test_parser_composition` | Module / composition semantics |
+| `test_parser_fork` | Parser state forking |
+| `test_random_composition` | Fuzz-style composition |
+| `test_execution_policy` | Execution-policy matrix |
+| `test_grammar_context` | Grammar context state |
+| `test_parser_manager` | Manager-level lifecycle |
+| `test_merkle_tree` | Merkle-tree snapshot identity |
+| `test_coverage_boost` | Additional coverage across modules |
+
+**JIT**
+
+| Test | Focus |
+|------|-------|
+| `test_jit` | JIT compilation, policy (runs against stubs when LLVM disabled) |
+
+**Concurrency**
+
+| Test | Focus |
+|------|-------|
+| `test_concurrent` | Thread safety, stress tests |
+
+**Diagnostics**
+
+| Test | Focus |
+|------|-------|
+| `test_diagnostics` | RFC 0059 diagnostics API (uses a tiny generated parser via `custom_target`) |
+
+**Recent additions** (documented here so PRs that add tests extend the
+table instead of shadowing these):
+
+| Test | Focus |
+|------|-------|
+| `test_alternation` | `\|` alternation in rule RHS (P1-1); action propagation across alternatives |
+| `test_reduce_fn_type` | Compile-time type check for `LimeReduceFn` + `MOD_ADD_RULE.reduce`/`reduce_user` fields (P0-2 scaffolding) |
+| `test_mod_serialize` | `lime_modifications_to_grammar_text()` -- subprocess-fallback serializer |
+
+The `test_diagnostics` suite additionally depends on a generated
+parser (see `tests/meson.build`'s `custom_target` invocations); the
+same pattern is used by `test_alternation`.
 
 ### Coverage by Component
 

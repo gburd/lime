@@ -42,18 +42,35 @@ result : symbol1 symbol2 { $$ = f($1, $2); }
        ;
 ```
 
-Lime:
+Lime (two supported forms):
+
+**Expanded** -- each alternative as a separate rule with its own action:
 ```
 result(A) ::= symbol1(B) symbol2(C). { A = f(B, C); }
 result(A) ::= symbol3(B).            { A = g(B); }
 ```
 
-Key differences:
+**`|`-alternated** -- alternatives share one trailing action:
+```
+result(A) ::= symbol1(B) symbol2(C)
+            | symbol3(B)              .
+            { A = B; /* same action for both */ }
+```
+
+Key differences from Bison:
 - `::=` instead of `:`
-- Each alternative is a separate rule (no `|` alternatives)
 - Every rule ends with a period (`.`) before the action
 - Semantic values use letter labels (A, B, C...) instead of `$$`, `$1`, `$2`
 - Labels are declared in parentheses after the symbol name
+- `|` is accepted in RHS for bison-compat: the trailing action,
+  precedence marker, and `{NEVER-REDUCE}` flag all propagate to every
+  alternative in the group.  **Per-alternative actions are not
+  supported** -- actions are always after the rule-terminating `.`, not
+  inline per alternative.  If the original Bison grammar's alternatives
+  each had different actions, expand them to separate rules (the
+  expanded form above).
+- Epsilon alternatives (`s ::= A | | B .`) are accepted; the empty
+  position between `|`s becomes a rule with zero RHS symbols.
 
 ### Token Declarations
 
