@@ -133,7 +133,7 @@ ParseContext *parse_begin(ParserSnapshot *snap);
  * @param token_code  Token code (0 for end-of-input).
  * @param token_value Semantic value associated with the token (may be NULL).
  * @param location    Byte offset of the token in the original source, or
- *                    #LIME_LOC_UNKNOWN if the grammar does not declare
+ *                    LIME_LOC_UNKNOWN if the grammar does not declare
  *                    %locations or the caller does not track positions.
  *                    Currently stored but not yet propagated into reduce
  *                    actions (that plumbing lands with the push-parser

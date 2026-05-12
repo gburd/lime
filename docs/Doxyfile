@@ -26,17 +26,24 @@ INPUT                  = ../README.md \
                          ./API.md \
                          ./ALGORITHM.md \
                          ./EXTENSIONS.md \
+                         ./DIAGNOSTICS.md \
                          ./PERFORMANCE.md \
                          ./EXTENSION_PERFORMANCE.md \
                          ./COMPARISON.md \
+                         ./BENCHMARKS_VS_BISON.md \
                          ./MIGRATION_FROM_BISON.md \
                          ./MIGRATION_FROM_YACC.md \
                          ./JIT_ANALYSIS.md \
                          ./PARSER_PLUGIN_DESIGN.md \
-                         ./MODULE_FORMAT.md \
                          ./LITERATE_FORMAT.md \
                          ../include/ \
                          ../src/snapshot.h
+# MODULE_FORMAT.md is intentionally excluded: its list-of-backticked-
+# directives near end-of-file triggers a doxygen markdown-parser bug
+# ("Reached end of file while still searching closing `") that we
+# could not isolate.  The file is a user-facing guide to the literate
+# module format; it is reachable from the repository's README and does
+# not need to appear in the Doxygen-generated API site.
 FILE_PATTERNS          = *.h *.c *.md
 RECURSIVE              = NO
 EXCLUDE_PATTERNS       = */test_* */bench/*
@@ -71,7 +78,6 @@ GENERATE_XML           = NO
 
 # -- Diagrams --
 HAVE_DOT               = NO
-CLASS_DIAGRAMS         = NO
 COLLABORATION_GRAPH    = NO
 INCLUDE_GRAPH          = YES
 INCLUDED_BY_GRAPH      = YES
@@ -87,10 +93,26 @@ PREDEFINED             = __cplusplus \
 # -- Warnings --
 QUIET                  = NO
 WARNINGS               = YES
-WARN_IF_UNDOCUMENTED   = YES
+# Accept the public-header docstring backlog as deferred work (tracked
+# separately from the CI gate).  Disabling undocumented-compound and
+# undocumented-member warnings lets us flip WARN_AS_ERROR=YES below
+# while the backlog is being worked down.  When it reaches zero this
+# line should flip back to YES.
+WARN_IF_UNDOCUMENTED   = NO
 WARN_IF_DOC_ERROR      = YES
 WARN_NO_PARAMDOC       = YES
 WARN_FORMAT            = "$file:$line: $text"
+# Fail the documentation build on doc errors (broken \ref, unclosed
+# verbatim, malformed grouping) so CI catches doc-rot.  Undocumented
+# items are still reported in the per-run log via the pages workflow
+# but do not fail the build.
+WARN_AS_ERROR          = YES
+
+# GitHub-flavoured markdown anchor IDs: a heading "## Library Version"
+# gets anchor "library-version" (lowercased, spaces-to-dashes).  The
+# default (DOXYGEN) uses a hash-based scheme that breaks links from
+# our own doc TOCs like `[Library Version](#library-version)`.
+MARKDOWN_ID_STYLE      = GITHUB
 
 # -- Grouping and navigation --
 OPTIMIZE_OUTPUT_FOR_C  = YES
@@ -100,15 +122,17 @@ SORT_BRIEF_DOCS        = YES
 
 # -- Markdown and styling --
 MARKDOWN_SUPPORT       = YES
+
+# Obsolete Doxyfile tags (CLASS_DIAGRAMS, DOT_FONTNAME, DOT_FONTSIZE)
+# from earlier Doxygen versions were removed -- the generator warns
+# on them and picks modern defaults.
 AUTOLINK_SUPPORT       = YES
 TAB_SIZE               = 4
-ALIASES                = "thread_safe=\par Thread Safety:\n" \
-                         "ownership=\par Ownership:\n"
+ALIASES                = "thread_safe=\par Thread Safety:^^" \
+                         "ownership=\par Ownership:^^"
 
 # -- Dot graphs (when available) --
 DOT_NUM_THREADS        = 0
-DOT_FONTNAME           = Helvetica
-DOT_FONTSIZE           = 10
 
 # -- Layout --
 FULL_PATH_NAMES        = YES

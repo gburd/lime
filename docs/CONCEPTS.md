@@ -147,7 +147,7 @@ Lime supports modular grammars via directives:
 
 Modules can be composed with the `lime-compose` tool, which resolves
 dependencies via topological sort and merges grammars.  See
-[MODULE_FORMAT.md](MODULE_FORMAT.md).
+<a href="MODULE_FORMAT.md">MODULE_FORMAT.md</a>.
 
 ## Further Reading
 

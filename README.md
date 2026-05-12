@@ -182,13 +182,13 @@ parser.
 | [`examples/replication/`](examples/replication/) | Streaming-replication protocol parser from `repl_gram.y` + `repl_scanner.l` (`IDENTIFY_SYSTEM`, `START_REPLICATION`, etc.). |
 | [`examples/syncrep/`](examples/syncrep/) | Synchronous-replication config-string parser (`synchronous_standby_names`). |
 | [`examples/isolation/`](examples/isolation/) | Parser for the `.spec` files driving PostgreSQL's isolation test framework. |
-| [`examples/lime_postgres/`](examples/lime_postgres/) | Integration notes specifically for embedding Lime inside PostgreSQL, including [`EXTENSION_AUTHORING.md`](examples/lime_postgres/EXTENSION_AUTHORING.md), [`DIALECT_SUPPORT.md`](examples/lime_postgres/DIALECT_SUPPORT.md), and [`EMBEDDED_LANGUAGES.md`](examples/lime_postgres/EMBEDDED_LANGUAGES.md).  Documentation, not shipped code. |
+| [`examples/lime_postgres/`](examples/lime_postgres/) | Integration notes specifically for embedding Lime inside PostgreSQL, including <a href="examples/lime_postgres/EXTENSION_AUTHORING.md"><code>EXTENSION_AUTHORING.md</code></a>, <a href="examples/lime_postgres/DIALECT_SUPPORT.md"><code>DIALECT_SUPPORT.md</code></a>, and <a href="examples/lime_postgres/EMBEDDED_LANGUAGES.md"><code>EMBEDDED_LANGUAGES.md</code></a>.  Documentation, not shipped code. |
 
 ### Literate grammar format
 
 | Example | What it shows |
 |---------|---------------|
-| [`examples/literate/`](examples/literate/) | Two-file literate grammar (`tokens.md` + `grammar.md`) showing the `%module_name` / `%require` system driving a calculator.  Companion reading: [docs/LITERATE_FORMAT.md](docs/LITERATE_FORMAT.md) and [docs/MODULE_FORMAT.md](docs/MODULE_FORMAT.md). |
+| [`examples/literate/`](examples/literate/) | Two-file literate grammar (`tokens.md` + `grammar.md`) showing the `%module_name` / `%require` system driving a calculator.  Companion reading: [docs/LITERATE_FORMAT.md](docs/LITERATE_FORMAT.md) and <a href="docs/MODULE_FORMAT.md">docs/MODULE_FORMAT.md</a>. |
 
 ## Usage
 
@@ -243,7 +243,7 @@ Extension overhead with no extensions loaded: 26 ns (a single atomic
 load).  With extensions active: ~232 ns for token-level conflict
 detection, ~222 ns for priority disambiguation, ~456 ns for the full
 detect-resolve-execute pipeline.  See [docs/EXTENSION_PERFORMANCE.md](docs/EXTENSION_PERFORMANCE.md)
-and [bench/BENCHMARK_RESULTS.md](bench/BENCHMARK_RESULTS.md).
+and <a href="bench/BENCHMARK_RESULTS.md">bench/BENCHMARK_RESULTS.md</a>.
 
 ## Testing
 
