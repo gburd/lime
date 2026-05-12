@@ -142,6 +142,54 @@ cd docs && make doxygen
 open api/html/index.html
 ```
 
+## Examples
+
+Every example lives under [`examples/`](examples/) and builds standalone
+(its own `Makefile` or `meson.build`).  See [docs/EXAMPLES.md](docs/EXAMPLES.md)
+for a longer walkthrough of each.  Grouped quick reference:
+
+### Tutorials and plugin demos
+
+| Example | What it shows |
+|---------|---------------|
+| [`examples/calc/`](examples/calc/) | A four-operation calculator extended at runtime with shared-library plugins.  The canonical "hello world" for Lime's extension framework. |
+| [`examples/plugin_template/`](examples/plugin_template/) | Minimal skeleton for packaging a Lime-generated parser as a runtime-loadable plugin (`sql_plugin.c`) and a host application that loads it via `ParserManager` (`plugin_host.c`). |
+| [`examples/jsonb_extension.c`](examples/jsonb_extension.c) | Single-file walkthrough of `MOD_ADD_TOKEN` + `MOD_ADD_RULE` + `MOD_MODIFY_PRECEDENCE` adding PostgreSQL-style JSONB operators (`->`, `->>`, `@>`, `<@`, `?`) to an existing SQL parser. |
+| [`examples/llm_oracle/`](examples/llm_oracle/) | Custom disambiguation strategy that consults an LLM when Lime's built-in strategies decline to resolve a conflict.  Illustrates the disambiguation callback API. |
+
+### Non-SQL query languages
+
+| Example | What it shows |
+|---------|---------------|
+| [`examples/datalog/`](examples/datalog/) | Datalog / EDN parser with a hand-rolled tokenizer driving Lime's push parser.  Demonstrates the "bring your own lexer" integration pattern. |
+| [`examples/jsonpath/`](examples/jsonpath/) | JSONPath parser converted from PostgreSQL's `jsonpath_gram.y` / `jsonpath_scan.l`.  Self-contained; does not link against PostgreSQL. |
+| [`examples/xpath/`](examples/xpath/), [`examples/xquery/`](examples/xquery/) | XPath 1.0 and XQuery parsers, each with a standalone driver that reads expressions from stdin or argv and prints the AST. |
+| [`examples/mongodb/`](examples/mongodb/) | MongoDB query-document parser for expressions like `{ "age": { "$gt": 25 } }`. |
+
+### PostgreSQL grammar conversions
+
+These demonstrate Lime's ability to handle real production grammars by
+porting PostgreSQL subsystem parsers.  They are **demos of Lime, not
+dependencies on PostgreSQL** -- each is a self-contained standalone
+parser.
+
+| Example | What it shows |
+|---------|---------------|
+| [`examples/pg/`](examples/pg/) | Full PostgreSQL SQL grammar from `gram.y` (~21,000 lines in upstream) as a single Lime grammar. |
+| [`examples/pg_modular/`](examples/pg_modular/) | The same PostgreSQL grammar decomposed into 35+ literate modules under `base/`, `ddl/`, `dml/`, `expr/`, `from_clause/`, `select_targets/`, `functions/`, `window/`, `cte/`, `transactions/`, `security/`, `utility/`.  Exercises Lime's `%module_name` / `%require` / `%import` composition directives. |
+| [`examples/bootstrap/`](examples/bootstrap/) | PostgreSQL BKI (bootstrap) parser from `bootparse.y` + `bootscanner.l` -- the small grammar used during `initdb`. |
+| [`examples/pgbench/`](examples/pgbench/) | `pgbench` expression-language parser. |
+| [`examples/replication/`](examples/replication/) | Streaming-replication protocol parser from `repl_gram.y` + `repl_scanner.l` (`IDENTIFY_SYSTEM`, `START_REPLICATION`, etc.). |
+| [`examples/syncrep/`](examples/syncrep/) | Synchronous-replication config-string parser (`synchronous_standby_names`). |
+| [`examples/isolation/`](examples/isolation/) | Parser for the `.spec` files driving PostgreSQL's isolation test framework. |
+| [`examples/lime_postgres/`](examples/lime_postgres/) | Integration notes specifically for embedding Lime inside PostgreSQL, including [`EXTENSION_AUTHORING.md`](examples/lime_postgres/EXTENSION_AUTHORING.md), [`DIALECT_SUPPORT.md`](examples/lime_postgres/DIALECT_SUPPORT.md), and [`EMBEDDED_LANGUAGES.md`](examples/lime_postgres/EMBEDDED_LANGUAGES.md).  Documentation, not shipped code. |
+
+### Literate grammar format
+
+| Example | What it shows |
+|---------|---------------|
+| [`examples/literate/`](examples/literate/) | Two-file literate grammar (`tokens.md` + `grammar.md`) showing the `%module_name` / `%require` system driving a calculator.  Companion reading: [docs/LITERATE_FORMAT.md](docs/LITERATE_FORMAT.md) and [docs/MODULE_FORMAT.md](docs/MODULE_FORMAT.md). |
+
 ## Usage
 
 Generate a parser from a grammar file:
