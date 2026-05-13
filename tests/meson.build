@@ -283,6 +283,30 @@ test_alternation = executable('test_alternation',
 
 test('alternation', test_alternation)
 
+# P0-NEW-1: %syntax_error must distinguish EOF lookahead from a
+# non-EOF unexpected token, and yyloc must reflect the offending
+# lookahead's location -- not the stack top.  Smoke grammar +
+# driver follow the same pattern as test_diagnostics.
+test_syn_err_gen = custom_target('test_syntax_error_parser',
+  input   : ['test_syntax_error_grammar.y'],
+  output  : ['test_syntax_error_grammar.c', 'test_syntax_error_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_syntax_error = executable('test_syntax_error',
+  'test_syntax_error.c',
+  test_syn_err_gen,
+  dependencies : lime_parser_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('syntax_error', test_syntax_error)
+
 # P0-2 scaffolding: compile-time check that LimeReduceFn and the
 # extended MOD_ADD_RULE shape build cleanly.  No runtime dispatch
 # (that lands with apply_add_rule, i.e. P0-1).

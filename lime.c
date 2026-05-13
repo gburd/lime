@@ -4420,6 +4420,46 @@ void ReportOutput(struct lime *lemp)
     for(ap=stp->ap; ap; ap=ap->next){
       if( PrintAction(ap,fp,30) ) fprintf(fp,"\n");
     }
+
+    /* Concise per-state audit summary, intended for mechanical diff
+    ** against another generator's report (e.g. bison's .output) when
+    ** error-position parity matters.  Lists exactly:
+    **   * which terminals shift / shift-reduce / reduce-by-rule from
+    **     this state (the "accept set");
+    **   * which non-terminals goto from this state;
+    **   * the default reduce rule, if any (-1 means there is none
+    **     and a lookahead not in the accept set fires %syntax_error). */
+    {
+      int n_terms = 0, n_nterms = 0;
+      fprintf(fp, "  Accept terminals:    ");
+      for(ap=stp->ap; ap; ap=ap->next){
+        if( ap->sp->type!=TERMINAL && ap->sp->type!=MULTITERMINAL ) continue;
+        if( ap->type==SHIFT || ap->type==SHIFTREDUCE
+            || ap->type==REDUCE || ap->type==ACCEPT ){
+          fprintf(fp, " %s", ap->sp->name);
+          n_terms++;
+        }
+      }
+      if( n_terms==0 ) fprintf(fp, " (none)");
+      fprintf(fp, "\n");
+      fprintf(fp, "  Goto non-terminals:  ");
+      for(ap=stp->ap; ap; ap=ap->next){
+        if( ap->sp->type!=NONTERMINAL ) continue;
+        if( ap->type==SHIFT || ap->type==SHIFTREDUCE
+            || ap->type==REDUCE || ap->type==ACCEPT ){
+          fprintf(fp, " %s", ap->sp->name);
+          n_nterms++;
+        }
+      }
+      if( n_nterms==0 ) fprintf(fp, " (none)");
+      fprintf(fp, "\n");
+      fprintf(fp, "  Default reduce rule: ");
+      if( stp->iDfltReduce<0 ){
+        fprintf(fp, "none (lookahead not in accept set fires %%syntax_error)\n");
+      }else{
+        fprintf(fp, "%d\n", stp->iDfltReduce);
+      }
+    }
     fprintf(fp,"\n");
   }
   fprintf(fp, "----------------------------------------------------\n");

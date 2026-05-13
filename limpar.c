@@ -235,6 +235,13 @@ struct yyParser {
 #ifndef YYNOERRORRECOVERY
   int yyerrcnt;                 /* Shifts left before out of the error */
 #endif
+#ifdef YYLOCATIONTYPE
+  /* Source location of the token currently being processed.  Updated
+  ** at each ParseLoc() entry so that %syntax_error sees the location
+  ** of the offending lookahead, not the location of the stack-top
+  ** symbol (which would be the previously-shifted token, off by one). */
+  YYLOCATIONTYPE yyLookaheadLoc;
+#endif
   ParseARG_SDECL                /* A place to hold %extra_argument */
   ParseCTX_SDECL                /* A place to hold %extra_context */
   yyStackEntry *yystackEnd;           /* Last entry in the stack */
@@ -365,6 +372,12 @@ void ParseInit(void *yypRawParser ParseCTX_PDECL){
   yypParser->yystackEnd = &yypParser->yystack[YYSTACKDEPTH-1];
 #ifndef YYNOERRORRECOVERY
   yypParser->yyerrcnt = -1;
+#endif
+#ifdef YYLOCATIONTYPE
+  /* Zero-initialise the lookahead-location stash so %syntax_error
+  ** sees a defined value if it fires before the first ParseLoc() call,
+  ** or in pull-parser mode (Parse() without ParseLoc()). */
+  memset(&yypParser->yyLookaheadLoc, 0, sizeof(yypParser->yyLookaheadLoc));
 #endif
   yypParser->yytos = yypParser->yystack;
   yypParser->yystack[0].stateno = 0;
@@ -834,6 +847,22 @@ static void yy_parse_failed(
 
 /*
 ** The following code executes when a syntax error first occurs.
+**
+** Inside the user-supplied %syntax_error block these locals are bound:
+**
+**   yymajor   -- token code of the offending lookahead.  0 for EOF.
+**   yyminor   -- token value (ParseTOKENTYPE) of the offending
+**                lookahead.  Also available as the macro TOKEN.
+**   yyloc     -- source location of the offending lookahead, when the
+**                grammar declares %locations and parsing is driven by
+**                ParseLoc().  Also available as the macro TOKEN_LOC.
+**                Zero-initialised when locations are not threaded.
+**   yypParser -- the parser handle (yyParser *).
+**
+** These bindings let %syntax_error implementations distinguish, for
+** example, "error at end of input" (yymajor==0) from "error at or
+** near <token>" (yymajor==some_terminal) the way bison's yyerror
+** does via *yychar / *yylloc.
 */
 static void yy_syntax_error(
   yyParser *yypParser,           /* The parser */
@@ -902,11 +931,22 @@ static void yy_accept(
 ** None.
 */
 
-/* Helper macro for calling yy_syntax_error with optional location argument */
+/* Helper macro for calling yy_syntax_error with optional location argument.
+**
+** The yyloc argument is the source location of the *offending lookahead*,
+** not of the stack-top symbol.  ParseLoc() stashes the lookahead's
+** location in yypParser->yyLookaheadLoc on each call; the macro reads it
+** from there.  This matches Bison's *yylloc semantics in yyerror() --
+** the location of the token that the parser couldn't accept -- and is
+** what callers writing PostgreSQL-compatible error messages need.
+**
+** When the pull-parser entry point Parse() is used (no location
+** threading), or when a syntax error fires before the first ParseLoc()
+** call, yyLookaheadLoc is zero-initialized -- callers should treat
+** that as "location unknown". */
 #ifdef YYLOCATIONTYPE
 # define YY_SYNTAX_ERROR(P,M,m) \
-    yy_syntax_error(P,M,m, (P)->yytos > (P)->yystack ? (P)->yytos->yyloc \
-      : (YYLOCATIONTYPE){0,0,0,0,0})
+    yy_syntax_error(P,M,m, (P)->yyLookaheadLoc)
 #else
 # define YY_SYNTAX_ERROR(P,M,m) yy_syntax_error(P,M,m)
 #endif
@@ -1153,7 +1193,11 @@ void ParseLoc(
   ParseARG_PDECL               /* Optional %extra_argument parameter */
 ){
   yyParser *yypParser = (yyParser*)yyp;
-  /* Store the location for the next shift */
+  /* Stash the lookahead's location so %syntax_error can see it via
+  ** yyLookaheadLoc / TOKEN_LOC even when the parser fails on this
+  ** token (no shift happens, so yytos->yyloc would still be the
+  ** previously-shifted token's location). */
+  yypParser->yyLookaheadLoc = yyloc;
   Parse(yyp, yymajor, yyminor ParseARG_PARAM);
   /* After Parse shifts the token, patch the location on top of stack */
   if( yypParser->yytos > yypParser->yystack ){

@@ -98,11 +98,55 @@ Inside a `%syntax_error { ... }` block, these identifiers are available:
 
 | Identifier   | Type                  | Meaning |
 |--------------|-----------------------|---------|
-| `yymajor`    | `int`                 | Token code of the offending lookahead |
-| `yyminor`    | `ParseTOKENTYPE`      | Semantic value of the token |
-| `TOKEN`      | `ParseTOKENTYPE`      | Alias for `yyminor` |
-| `TOKEN_LOC`  | `YYLOCATIONTYPE`      | Source location (only with `%locations`) |
+| `yymajor`    | `int`                 | Token code of the offending lookahead.  `0` means end-of-input. |
+| `yyminor`    | `ParseTOKENTYPE`      | Semantic value of the offending lookahead. |
+| `TOKEN`      | `ParseTOKENTYPE`      | Alias for `yyminor`. |
+| `yyloc`      | `YYLOCATIONTYPE`      | Source location of the offending lookahead.  See "Location semantics" below. |
+| `TOKEN_LOC`  | `YYLOCATIONTYPE`      | Alias for `yyloc`. |
 | `yypParser`  | `void *`              | Parser handle, for passing to `ParseState` etc. |
+
+### Location semantics (P0-NEW-1, since LIMETODO)
+
+When the grammar declares `%locations` and parsing is driven by
+`ParseLoc()` (or `parse_token()` with a non-`LIME_LOC_UNKNOWN`
+location), `yyloc` holds the source location of the **offending
+lookahead** -- the token that the parser could not accept -- not
+the location of the previously-shifted symbol on top of the stack.
+
+This matches Bison's `*yylloc` semantics in `yyerror()`: the
+location Bison passes is the location of the token that triggered
+the error.  Concretely, this distinguishes two cases that previous
+Lime versions could not:
+
+  * **Error at end of input** (`yymajor == 0`): the parser failed
+    on the EOF marker.  `yyloc` is whatever location the caller
+    passed for the EOF marker (typically `LIME_LOC_UNKNOWN` or a
+    sentinel like the byte offset just past the input's end).
+
+  * **Error at a specific token** (`yymajor != 0`): the parser
+    failed on a real token.  `yyloc` is that token's location.
+
+Without this distinction, an error message that said "at or near
+X" would print the wrong token name in one of the two cases.  PG-
+compatible callers can write:
+
+```c
+%syntax_error {
+    if (yymajor == 0) {
+        ereport(ERROR, errmsg("syntax error at end of input"),
+                       parser_errposition(yyloc.first_column));
+    } else {
+        ereport(ERROR, errmsg("syntax error at or near \"%s\"",
+                              parse_get_yytext(yypParser)),
+                       parser_errposition(yyloc.first_column));
+    }
+}
+```
+
+When the grammar does *not* declare `%locations`, or parsing is
+driven by the location-less `Parse()` entry point, `yyloc` is
+zero-initialised at `ParseInit()` time and remains so.  Treat
+zero as "location unknown" in that case.
 
 A complete handler looks like this:
 
