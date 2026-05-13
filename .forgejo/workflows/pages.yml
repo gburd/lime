@@ -13,7 +13,7 @@ on:
 
 jobs:
   deploy:
-    runs-on: docker
+    runs-on: codeberg-small
     container:
       image: debian:bookworm
     steps:

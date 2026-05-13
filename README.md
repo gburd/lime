@@ -1,5 +1,8 @@
 # Lime Parser Generator
 
+[![CI](https://codeberg.org/gregburd/lime/actions/workflows/ci.yml/badge.svg)](https://codeberg.org/gregburd/lime/actions)
+[![Pages](https://codeberg.org/gregburd/lime/actions/workflows/pages.yml/badge.svg)](https://gregburd.codeberg.page/lime/)
+
 ## Overview
 
 Lime is a runtime-extensible LALR(1) parser generator.  It reads a

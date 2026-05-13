@@ -6,9 +6,20 @@ on:
   pull_request:
     branches: [main]
 
+# Codeberg's hosted Forgejo Actions runners advertise three label
+# tiers: codeberg-tiny (1 CPU / 2G / 2 min), codeberg-small (2 / 4G /
+# 5 min), codeberg-medium (4 / 8G / 10 min).  See
+# https://codeberg.org/actions/meta for the canonical list.
+#
+# Job sizing rationale:
+#   build, sanitizers, valgrind, llvm-matrix     -> codeberg-medium
+#       compile + run all 34 tests, must complete in 10 min
+#   version-consistency                          -> codeberg-tiny
+#       single shell script over three small files
+
 jobs:
   build:
-    runs-on: docker
+    runs-on: codeberg-medium
     container:
       image: debian:bookworm
     strategy:
@@ -39,7 +50,7 @@ jobs:
         run: meson test -C builddir --print-errorlogs
 
   sanitizers:
-    runs-on: docker
+    runs-on: codeberg-medium
     container:
       image: debian:bookworm
     strategy:
@@ -64,7 +75,7 @@ jobs:
         run: meson test -C builddir-${{ matrix.sanitizer }} --print-errorlogs
 
   valgrind:
-    runs-on: docker
+    runs-on: codeberg-medium
     container:
       image: debian:bookworm
     steps:
@@ -88,9 +99,9 @@ jobs:
   # LIME_VERSION_STRING in lime.c, project(version: ...) in meson.build,
   # and the literal in src/version.c's lemon_parser_version() must all
   # match.  Cheap to run; fails loudly when anyone bumps one and
-  # forgets the others.
+  # forgets the others.  Tiny job, fits in the 2-min cap easily.
   version-consistency:
-    runs-on: docker
+    runs-on: codeberg-tiny
     container:
       image: debian:bookworm
     steps:
@@ -104,10 +115,11 @@ jobs:
         run: scripts/check_version_consistency.sh
 
   # Exercise the three LLVM/JIT linkage paths so the compat shim,
-  # static-link option, and stub mode all stay green on PRs.  See
-  # the matching job in .github/workflows/ci.yml for rationale.
+  # static-link option, and stub mode all stay green on PRs.  Each
+  # variant builds Lime + LLVM 14 (Debian apt) and runs the test
+  # suite, which is medium-tier.
   llvm-matrix:
-    runs-on: docker
+    runs-on: codeberg-medium
     container:
       image: debian:bookworm
     strategy:

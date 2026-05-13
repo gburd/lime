@@ -27,6 +27,7 @@ INPUT                  = ../README.md \
                          ./ALGORITHM.md \
                          ./EXTENSIONS.md \
                          ./DIAGNOSTICS.md \
+                         ./CI.md \
                          ./PERFORMANCE.md \
                          ./EXTENSION_PERFORMANCE.md \
                          ./COMPARISON.md \

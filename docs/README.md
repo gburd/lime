@@ -17,6 +17,7 @@
 | [ALGORITHM.md](ALGORITHM.md) | LALR(1) parsing theory and Lime's implementation |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design and component overview |
 | [DIAGNOSTICS.md](DIAGNOSTICS.md) | Producing rich parser error messages and error recovery |
+| [CI.md](CI.md) | Continuous integration setup, jobs, and runner tiers |
 | [EXTENSIONS.md](EXTENSIONS.md) | Writing runtime grammar extensions |
 | [PERFORMANCE.md](PERFORMANCE.md) | Performance characteristics and tuning |
 | [EXTENSION_PERFORMANCE.md](EXTENSION_PERFORMANCE.md) | Extension overhead analysis |
