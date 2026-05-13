@@ -11,26 +11,25 @@ on:
 # 5 min), codeberg-medium (4 / 8G / 10 min).  See
 # https://codeberg.org/actions/meta for the canonical list.
 #
-# Job sizing rationale:
-#   build, sanitizers, valgrind, llvm-matrix     -> codeberg-medium
-#       compile + run all 34 tests, must complete in 10 min
-#   version-consistency                          -> codeberg-tiny
-#       single shell script over three small files
+# We don't pin a `container:` -- Codeberg's runner uses
+# ghcr.io/catthehacker/ubuntu:act-latest by default, which is
+# GitHub-Actions-compatible and already has most build tools
+# preinstalled.  Pulling debian:bookworm explicitly works on
+# self-hosted runners but added latency / occasional failures on
+# Codeberg's pool, so we use the default.
 
 jobs:
   build:
     runs-on: codeberg-medium
-    container:
-      image: debian:bookworm
     strategy:
       matrix:
         compiler: [gcc, clang]
     steps:
       - name: Install dependencies
         run: |
-          apt-get update
-          apt-get install -y git ${{ matrix.compiler }} meson ninja-build \
-                             pkg-config valgrind
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.compiler }} meson ninja-build \
+                                  pkg-config valgrind
 
       - name: Checkout
         uses: https://code.forgejo.org/actions/checkout@v4
@@ -51,16 +50,14 @@ jobs:
 
   sanitizers:
     runs-on: codeberg-medium
-    container:
-      image: debian:bookworm
     strategy:
       matrix:
         sanitizer: [address, thread, undefined]
     steps:
       - name: Install dependencies
         run: |
-          apt-get update
-          apt-get install -y git gcc meson ninja-build pkg-config
+          sudo apt-get update
+          sudo apt-get install -y gcc meson ninja-build pkg-config
 
       - name: Checkout
         uses: https://code.forgejo.org/actions/checkout@v4
@@ -76,13 +73,11 @@ jobs:
 
   valgrind:
     runs-on: codeberg-medium
-    container:
-      image: debian:bookworm
     steps:
       - name: Install dependencies
         run: |
-          apt-get update
-          apt-get install -y git gcc meson ninja-build pkg-config valgrind bash
+          sudo apt-get update
+          sudo apt-get install -y gcc meson ninja-build pkg-config valgrind bash
 
       - name: Checkout
         uses: https://code.forgejo.org/actions/checkout@v4
@@ -98,16 +93,10 @@ jobs:
   # Guards against the three-source-of-truth version string drifting:
   # LIME_VERSION_STRING in lime.c, project(version: ...) in meson.build,
   # and the literal in src/version.c's lemon_parser_version() must all
-  # match.  Cheap to run; fails loudly when anyone bumps one and
-  # forgets the others.  Tiny job, fits in the 2-min cap easily.
+  # match.  Cheap to run; fits in the codeberg-tiny 2-min cap.
   version-consistency:
     runs-on: codeberg-tiny
-    container:
-      image: debian:bookworm
     steps:
-      - name: Install dependencies
-        run: apt-get update && apt-get install -y git grep sed
-
       - name: Checkout
         uses: https://code.forgejo.org/actions/checkout@v4
 
@@ -116,12 +105,10 @@ jobs:
 
   # Exercise the three LLVM/JIT linkage paths so the compat shim,
   # static-link option, and stub mode all stay green on PRs.  Each
-  # variant builds Lime + LLVM 14 (Debian apt) and runs the test
-  # suite, which is medium-tier.
+  # variant builds Lime + LLVM 14 (Ubuntu apt) and runs the test
+  # suite.
   llvm-matrix:
     runs-on: codeberg-medium
-    container:
-      image: debian:bookworm
     strategy:
       fail-fast: false
       matrix:
@@ -135,10 +122,10 @@ jobs:
     steps:
       - name: Install dependencies
         run: |
-          apt-get update
-          apt-get install -y git gcc meson ninja-build pkg-config \
-                             llvm-dev libllvm14 zlib1g-dev \
-                             libxml2-dev libffi-dev libtinfo-dev
+          sudo apt-get update
+          sudo apt-get install -y gcc meson ninja-build pkg-config \
+                                  llvm-dev libllvm14 zlib1g-dev \
+                                  libxml2-dev libffi-dev libtinfo-dev
 
       - name: Checkout
         uses: https://code.forgejo.org/actions/checkout@v4

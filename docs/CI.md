@@ -44,6 +44,13 @@ Codeberg's hosted runners advertise three labels:
 > tempfile allowance).  Docker daemon inside runners is not officially
 > supported.
 
+All Lime jobs run on the default runner image
+(`ghcr.io/catthehacker/ubuntu:act-latest`), an Ubuntu-based image
+with standard build tools preinstalled.  Workflows do **not** pin a
+`container:` -- pulling Debian explicitly added latency and
+occasional pull failures on Codeberg's pool.  Each job installs the
+additional packages it needs via `sudo apt-get install`.
+
 See [codeberg.org/actions/meta](https://codeberg.org/actions/meta) for
 the canonical list and Codeberg's hosted-Actions FAQ.
 

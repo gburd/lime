@@ -14,13 +14,11 @@ on:
 jobs:
   deploy:
     runs-on: codeberg-small
-    container:
-      image: debian:bookworm
     steps:
       - name: Install dependencies
         run: |
-          apt-get update
-          apt-get install -y doxygen git
+          sudo apt-get update
+          sudo apt-get install -y doxygen
 
       - name: Checkout
         uses: https://code.forgejo.org/actions/checkout@v4
