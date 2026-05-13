@@ -66,23 +66,28 @@ ParserSnapshot *snapshot_acquire(ParserSnapshot *snap) {
 ** Atomically decrement the reference count.  If it reaches zero the
 ** snapshot is destroyed.  Passing NULL is a safe no-op.
 **
-** The release uses acquire-release ordering: the decrement itself is
-** release so that all prior reads/writes in this thread are visible
-** before another thread might observe the zero count, and the final
-** destroy path uses an acquire fence so that it sees all writes made
-** by other threads that previously released their references.
+** The decrement uses acquire-release ordering: release so that all
+** prior reads/writes in this thread are visible before another
+** thread might observe the zero count, and acquire so that when we
+** are the last releaser we synchronize-with all prior releases by
+** other threads and can safely destroy the snapshot.
+**
+** memory_order_acq_rel on the atomic op is preferred over a
+** memory_order_release decrement followed by a separate acquire
+** fence in the prev==1 branch -- the combined ordering is more
+** idiomatic, equivalently correct, and avoids a known
+** ThreadSanitizer false-positive that the fence pattern can
+** trigger.  See discussion in tests/test_parser_manager.c's
+** test_concurrent_swap_and_read.
 */
 void snapshot_release(ParserSnapshot *snap) {
     if (snap == NULL) return;
 
     uint_fast32_t prev = atomic_fetch_sub_explicit(
-        &snap->refcount, 1, memory_order_release);
+        &snap->refcount, 1, memory_order_acq_rel);
 
     if (prev == 1) {
-        /* We were the last holder.  Ensure all prior writes from other
-        ** releasers are visible before we read any snapshot data in
-        ** destroy_snapshot(). */
-        atomic_thread_fence(memory_order_acquire);
+        /* We were the last holder; safe to destroy. */
         destroy_snapshot(snap);
     }
 }

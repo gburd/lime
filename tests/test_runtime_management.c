@@ -297,6 +297,7 @@ static void test_add_static_null_args(void) {
         parser_op_result_cleanup(&r);
         return;
     }
+    parser_op_result_cleanup(&r);
 
     ParserManager *mgr = parser_manager_create(NULL);
     r = parser_op_add_static(mgr, NULL, NULL, NULL);
@@ -320,6 +321,7 @@ static void test_add_dynamic_null_args(void) {
         parser_op_result_cleanup(&r);
         return;
     }
+    parser_op_result_cleanup(&r);
 
     ParserManager *mgr = parser_manager_create(NULL);
     r = parser_op_add_dynamic(mgr, NULL, NULL, NULL);
@@ -532,6 +534,7 @@ static void test_remove_invalid_args(void) {
         parser_op_result_cleanup(&r);
         return;
     }
+    parser_op_result_cleanup(&r);
 
     ParserManager *mgr = parser_manager_create(NULL);
     r = parser_op_remove(mgr, LIME_PLUGIN_HANDLE_INVALID,
@@ -624,6 +627,9 @@ static void test_reload_grammar_null_args(void) {
         parser_op_result_cleanup(&r);
         return;
     }
+    /* Cleanup the first result before reassigning -- otherwise the
+    ** malloc'd error message from the NULL-mgr call is leaked. */
+    parser_op_result_cleanup(&r);
 
     ParserManager *mgr = parser_manager_create(NULL);
     r = parser_op_reload_grammar(mgr, NULL);
@@ -804,6 +810,7 @@ static void test_get_stats_null_args(void) {
         parser_op_result_cleanup(&r);
         return;
     }
+    parser_op_result_cleanup(&r);
 
     ParserManager *mgr = parser_manager_create(NULL);
     r = parser_op_get_stats(mgr, NULL);
@@ -886,6 +893,7 @@ static void test_list_formatted_null_args(void) {
         parser_op_result_cleanup(&r);
         return;
     }
+    parser_op_result_cleanup(&r);
 
     ParserManager *mgr = parser_manager_create(NULL);
     r = parser_op_list_formatted(mgr, NULL);

@@ -23,6 +23,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Sanitizer detection -- GCC and clang both define one of these
+** when their respective sanitizers are active.  When the test is
+** compiled with -fsanitize=*, the instrumentation legitimately
+** changes timing characteristics by 2-10x; the strict performance
+** thresholds in this file would otherwise cause spurious failures
+** in CI sanitizer jobs.  When LIME_BUILT_WITH_SANITIZER is true,
+** the perf-bound tests print their measurements and skip the
+** assertion. */
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) || defined(__SANITIZE_UNDEFINED__)
+#  define LIME_BUILT_WITH_SANITIZER 1
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+#    define LIME_BUILT_WITH_SANITIZER 1
+#  endif
+#endif
+#ifndef LIME_BUILT_WITH_SANITIZER
+#  define LIME_BUILT_WITH_SANITIZER 0
+#endif
 #include <time.h>
 
 /* ------------------------------------------------------------------ */
@@ -579,6 +598,16 @@ static void test_merkle_overhead(void) {
 
     printf("[overhead=%.1f%% abs=%.1fus/op] ", overhead, merkle_cost_us);
 
+    /* Skip strict thresholds under sanitizer builds; instrumentation
+    ** legitimately changes timing by 2-10x and makes the assertion
+    ** noisy.  We still print the numbers so a regression in the
+    ** sanitizer-build trend is visible in CI logs. */
+    if (LIME_BUILT_WITH_SANITIZER) {
+        printf("[sanitized build, perf-target check skipped] ");
+        PASS();
+        return;
+    }
+
     /* The <5% target applies to realistic grammar sizes where
     ** composition itself is non-trivial.  When the base operation
     ** completes in microseconds, a fixed merkle cost dominates the
@@ -641,6 +670,11 @@ static void test_ten_module_performance(void) {
 
     double avg_time = TRIALS > 0 ? total_time / TRIALS : 0.0;
     printf("[avg=%.3fms max=%.3fms] ", avg_time * 1000.0, max_time * 1000.0);
+    if (LIME_BUILT_WITH_SANITIZER) {
+        printf("[sanitized build, perf-target check skipped] ");
+        PASS();
+        return;
+    }
     if (max_time < 1.0) {
         PASS();
     } else {

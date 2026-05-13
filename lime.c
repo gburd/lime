@@ -2135,7 +2135,12 @@ int main(int argc, char **argv){
   memset(&lem, 0, sizeof(lem));
   lem.errorcnt = 0;
   lem.nexpect = -1;
-  qsort(azDefine, nDefine, sizeof(azDefine[0]), defineCmp);
+  /* qsort(NULL, 0, ...) is undefined per POSIX (the first argument is
+  ** documented as "never null").  Skip the sort when the array is
+  ** empty -- caught by UBSan. */
+  if( nDefine > 0 ){
+    qsort(azDefine, nDefine, sizeof(azDefine[0]), defineCmp);
+  }
 
   /* Initialize the machine */
   Strsafe_init();
@@ -4756,14 +4761,22 @@ PRIVATE void tplt_linedir(FILE *out, int lineno, char *filename)
 /* Print a string to the file and keep the linenumber up to date */
 PRIVATE void tplt_print(FILE *out, struct lime *lemp, char *str, int *lineno)
 {
+  const char *start;
   if( str==0 ) return;
   fflush(out);
+  start = str;
   while( *str ){
     putc(*str,out);
     if( *str=='\n' ) (*lineno)++;
     str++;
   }
-  if( str[-1]!='\n' ){
+  /* Append a newline only if the string was non-empty AND the last
+  ** character we wrote was not already '\n'.  Reading str[-1] when
+  ** str==start would be an out-of-bounds read of the global string
+  ** literal, caught by AddressSanitizer.  See ASan report:
+  **   global-buffer-overflow ... 1 bytes before global variable '*.LC5'
+  ** when str is the empty string "". */
+  if( str>start && str[-1]!='\n' ){
     putc('\n',out);
     (*lineno)++;
   }
