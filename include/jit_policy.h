@@ -29,60 +29,63 @@ typedef struct ParserSnapshot ParserSnapshot;
 /*  JIT metrics                                                        */
 /* ------------------------------------------------------------------ */
 
-/*
-** Per-snapshot runtime metrics used by the JIT policy to decide
-** whether compilation is worthwhile. All counters are atomic so
-** they can be updated from any parser thread without locking.
-*/
+/**
+ * @brief Per-snapshot runtime metrics used by the JIT policy.
+ *
+ * All counters are atomic so they can be updated from any parser
+ * thread without locking.
+ */
 typedef struct JITMetrics {
-    atomic_uint_fast64_t parse_count;         /* Number of parse sessions    */
-    atomic_uint_fast64_t total_parse_time_ns; /* Cumulative parse wall-clock */
-    atomic_uint_fast64_t action_lookup_count; /* Total action table lookups  */
-    atomic_uint_fast64_t total_tokens_parsed; /* Cumulative tokens across all parses */
-    atomic_int           is_jitted;           /* 1 if JIT code is attached   */
-    atomic_int           jit_in_progress;     /* 1 if background compile active */
+    atomic_uint_fast64_t parse_count;         /**< Number of parse sessions */
+    atomic_uint_fast64_t total_parse_time_ns; /**< Cumulative parse wall-clock (ns) */
+    atomic_uint_fast64_t action_lookup_count; /**< Total action table lookups */
+    atomic_uint_fast64_t total_tokens_parsed; /**< Cumulative tokens across all parses */
+    atomic_int           is_jitted;           /**< 1 if JIT code is attached */
+    atomic_int           jit_in_progress;     /**< 1 if background compile active */
 } JITMetrics;
 
 /* ------------------------------------------------------------------ */
 /*  Policy configuration                                               */
 /* ------------------------------------------------------------------ */
 
-/*
-** Tunable thresholds for the JIT compilation policy.
-** These can be adjusted per-application to match workload patterns.
-*/
+/**
+ * @brief Tunable thresholds for the JIT compilation policy.
+ *
+ * These can be adjusted per-application to match workload patterns.
+ * See jit_policy_default_config() for the shipping defaults.
+ */
 typedef struct JITPolicyConfig {
-    /* Minimum number of parse sessions before considering JIT.
+    /** Minimum number of parse sessions before considering JIT.
     ** Prevents wasting compilation effort on rarely-used grammars. */
     uint64_t min_parse_count;
 
-    /* Minimum cumulative parse time (nanoseconds) before JIT.
+    /** Minimum cumulative parse time (nanoseconds) before JIT.
     ** Ensures the grammar is spending enough time in parsing to
     ** justify the compilation overhead. */
     uint64_t min_total_parse_time_ns;
 
-    /* Minimum average action lookups per parse session.
+    /** Minimum average action lookups per parse session.
     ** Grammars with few lookups per parse won't benefit from JIT. */
     uint64_t min_avg_lookups_per_parse;
 
-    /* If true, JIT compilation happens on a background thread.
+    /** If true, JIT compilation happens on a background thread.
     ** If false, compilation is synchronous (blocks the caller). */
     bool background_compile;
 
-    /* Minimum number of parser states before considering JIT.
+    /** Minimum number of parser states before considering JIT.
     ** Small grammars don't benefit enough to justify compilation. */
     uint32_t min_grammar_states;
 
-    /* Minimum average tokens per parse session before JIT.
+    /** Minimum average tokens per parse session before JIT.
     ** Short inputs don't benefit from JIT compilation. */
     uint32_t min_avg_tokens_per_parse;
 
-    /* Master switch for JIT compilation.
+    /** Master switch for JIT compilation.
     ** Set to false to disable JIT entirely regardless of metrics. */
     bool enabled;
 
-    /* Enable JIT compilation of the keyword tokenizer.
-    ** When true, the JIT policy will compile a trie-based keyword
+    /** Enable JIT compilation of the keyword tokenizer.
+    ** When true, the JIT policy compiles a trie-based keyword
     ** classifier from the TokenTable when the parser JIT triggers.
     ** When false, keyword lookups always use the hash-based path. */
     bool tokenizer_jit_enabled;

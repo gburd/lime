@@ -7,16 +7,18 @@
 extern "C" {
 #endif
 
-/*
-** Arena allocator for AST nodes.
-** Allocates from large contiguous blocks, freeing everything at once.
-** This is ideal for parse trees that are built once and freed together.
-*/
+/**
+ * @brief Arena allocator for AST nodes.
+ *
+ * Allocates from large contiguous blocks, freeing everything at
+ * once.  Ideal for parse trees that are built once and freed
+ * together as a unit.
+ */
 typedef struct LimeArena {
-    char *base;
-    size_t used;
-    size_t capacity;
-    struct LimeArena *next;  /* linked list of arena blocks */
+    char *base;              /**< Base pointer of the current block */
+    size_t used;             /**< Bytes used in the current block */
+    size_t capacity;         /**< Total bytes in the current block */
+    struct LimeArena *next;  /**< Next block in the linked list of blocks */
 } LimeArena;
 
 /* Create an arena with the given initial block size. Returns NULL on failure. */

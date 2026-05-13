@@ -25,21 +25,23 @@ struct state;
 /*  Semantic versioning                                                */
 /* ------------------------------------------------------------------ */
 
-/*
-** A parsed semantic version: major.minor.patch with optional prerelease
-** label (e.g. "1.2.3-beta.1").  The prerelease string is heap-allocated
-** and owned by the SemVer struct; it is NULL when not present.
-*/
+/**
+ * @brief A parsed semantic version: major.minor.patch with optional
+ *        prerelease label (e.g. "1.2.3-beta.1").
+ *
+ * The prerelease string is heap-allocated and owned by the SemVer
+ * struct; it is NULL when not present.
+ */
 typedef struct SemVer {
-    uint32_t major;
-    uint32_t minor;
-    uint32_t patch;
-    char *prerelease;              /* malloc'd, NULL if absent          */
+    uint32_t major;             /**< Major version component */
+    uint32_t minor;             /**< Minor version component */
+    uint32_t patch;             /**< Patch version component */
+    char *prerelease;           /**< Prerelease label (malloc'd; NULL if absent) */
 } SemVer;
 
-/*
-** Version constraint operators used in dependency declarations.
-*/
+/**
+ * @brief Version constraint operators used in dependency declarations.
+ */
 typedef enum VersionOp {
     VERSION_OP_EQ = 0,            /* == exact match                    */
     VERSION_OP_GTE,               /* >= greater-than-or-equal          */
@@ -50,50 +52,53 @@ typedef enum VersionOp {
     VERSION_OP_TILDE,             /* ~  approximately (same major.minor) */
 } VersionOp;
 
-/*
-** A single version constraint on a dependency, e.g. ">=1.2.0".
-*/
+/**
+ * @brief A single version constraint on a dependency, e.g. ">=1.2.0".
+ */
 typedef struct VersionConstraint {
-    VersionOp op;
-    SemVer version;
+    VersionOp op;               /**< Constraint operator */
+    SemVer version;             /**< Reference version for the operator */
 } VersionConstraint;
 
 /* ------------------------------------------------------------------ */
 /*  Module dependency metadata                                         */
 /* ------------------------------------------------------------------ */
 
-/*
-** A dependency declaration from one module to another.  Each dependency
-** names a target module and carries one or more version constraints.
-** Dependencies may be optional: optional dependencies that cannot be
-** satisfied are silently ignored rather than treated as errors.
-*/
+/**
+ * @brief A dependency declaration from one module to another.
+ *
+ * Each dependency names a target module and carries one or more
+ * version constraints.  Dependencies may be optional: optional
+ * dependencies that cannot be satisfied are silently ignored rather
+ * than treated as errors.
+ */
 typedef struct ParserDependency {
-    char *module_name;             /* Target module name (owned)         */
-    uint8_t merkle_root[32];       /* Expected content hash (zero = any) */
-    VersionConstraint *constraints; /* Array of version constraints       */
-    uint32_t nconstraints;         /* Number of constraints              */
-    bool optional;                 /* If true, unsatisfied is not an error */
+    char *module_name;              /**< Target module name (owned) */
+    uint8_t merkle_root[32];        /**< Expected content hash (zero = any) */
+    VersionConstraint *constraints; /**< Array of version constraints */
+    uint32_t nconstraints;          /**< Number of entries in @ref constraints */
+    bool optional;                  /**< If true, unsatisfied is not an error */
 } ParserDependency;
 
-/*
-** A parser module: a named, versioned unit of grammar with explicit
-** dependency, export, and import declarations.  Modules are the unit
-** of composition -- the dependency resolver works over graphs of
-** ParserModule nodes.
-*/
+/**
+ * @brief A parser module: a named, versioned unit of grammar with
+ *        explicit dependency, export, and import declarations.
+ *
+ * Modules are the unit of composition -- the dependency resolver works
+ * over graphs of ParserModule nodes.
+ */
 typedef struct ParserModule {
-    char *name;                    /* Unique module name (owned)         */
-    SemVer version;                /* Module version                     */
+    char *name;                     /**< Unique module name (owned) */
+    SemVer version;                 /**< Module version */
 
-    ParserDependency *dependencies; /* Array of dependencies (owned)     */
-    uint32_t ndependencies;
+    ParserDependency *dependencies; /**< Array of dependencies (owned) */
+    uint32_t ndependencies;         /**< Length of @ref dependencies */
 
-    char **exports;                /* NULL-terminated symbol names exported */
-    uint32_t nexports;
+    char **exports;                 /**< Symbol names exported by this module */
+    uint32_t nexports;              /**< Length of @ref exports */
 
-    char **imports;                /* NULL-terminated symbol names imported */
-    uint32_t nimports;
+    char **imports;                 /**< Symbol names imported from other modules */
+    uint32_t nimports;              /**< Length of @ref imports */
 } ParserModule;
 
 /* ------------------------------------------------------------------ */
@@ -110,46 +115,47 @@ typedef struct ParserModule {
 **   4. Module data   - optional module identity and content hash
 */
 typedef struct ParserSnapshot {
-    /* Monotonically increasing version number. Each new snapshot produced
-    ** from a grammar modification gets a higher version than the last. */
+    /** Monotonically increasing version number.  Each new snapshot
+    ** produced from a grammar modification gets a higher version
+    ** than the last. */
     uint64_t version;
 
-    /* Atomic reference count.  Starts at 1 on creation.  Every call to
+    /** Atomic reference count.  Starts at 1 on creation.  Every call to
     ** snapshot_acquire() adds 1; every call to snapshot_release() subtracts
     ** 1.  When the count drops to 0 the snapshot is destroyed. */
     atomic_uint_fast32_t refcount;
 
     /* --- Grammar data (deep-copied, owned by this snapshot) ----------- */
 
-    struct symbol **symbols;       /* Array of pointers to symbol structs   */
-    uint32_t nsymbol;              /* Total number of symbols               */
-    uint32_t nterminal;            /* Number of terminal symbols            */
+    struct symbol **symbols;       /**< Array of pointers to symbol structs */
+    uint32_t nsymbol;              /**< Total number of symbols */
+    uint32_t nterminal;            /**< Number of terminal symbols */
 
-    struct rule *rules;            /* Linked list of production rules       */
-    uint32_t nrule;                /* Total number of rules                 */
+    struct rule *rules;            /**< Linked list of production rules */
+    uint32_t nrule;                /**< Total number of rules */
 
-    struct state **states;         /* Array of pointers to state structs    */
-    uint32_t nstate;               /* Total number of parser states         */
+    struct state **states;         /**< Array of pointers to state structs */
+    uint32_t nstate;               /**< Total number of parser states */
 
     /* --- Compact action tables (heap-allocated, owned) ---------------- */
 
-    uint16_t *yy_action;          /* Combined shift+reduce action array    */
-    uint16_t *yy_lookahead;       /* Lookahead values parallel to yy_action*/
-    int16_t  *yy_shift_ofst;      /* Per-state offset into yy_action for shifts  */
-    int16_t  *yy_reduce_ofst;     /* Per-state offset into yy_action for reduces */
-    uint16_t *yy_default;         /* Default action for each state         */
-    uint32_t action_count;         /* Number of entries in yy_action        */
-    uint32_t lookahead_count;      /* Number of entries in yy_lookahead     */
+    uint16_t *yy_action;           /**< Combined shift+reduce action array */
+    uint16_t *yy_lookahead;        /**< Lookahead values parallel to yy_action */
+    int16_t  *yy_shift_ofst;       /**< Per-state offset into yy_action for shifts */
+    int16_t  *yy_reduce_ofst;      /**< Per-state offset into yy_action for reduces */
+    uint16_t *yy_default;          /**< Default action for each state */
+    uint32_t action_count;         /**< Number of entries in yy_action */
+    uint32_t lookahead_count;      /**< Number of entries in yy_lookahead */
 
     /* --- Module identity (optional, NULL when not part of a module) --- */
 
-    uint8_t merkle_root[32];       /* Content hash of grammar data       */
-    ParserModule *module;          /* Owning module metadata (or NULL)   */
+    uint8_t merkle_root[32];       /**< Content hash of grammar data */
+    ParserModule *module;          /**< Owning module metadata, or NULL */
 
-    /* Nanosecond-precision wall-clock time when this snapshot was created */
+    /** Nanosecond-precision wall-clock time when this snapshot was created. */
     uint64_t create_time_ns;
 
-    /* Reserved for a future JIT compilation context that can cache
+    /** Reserved for a future JIT compilation context that can cache
     ** machine code generated from the action tables. */
     void *jit_ctx;
 } ParserSnapshot;

@@ -28,12 +28,15 @@ typedef struct TokenTable TokenTable;
 /*  Token representation                                               */
 /* ------------------------------------------------------------------ */
 
+/**
+ * @brief A single token returned by the tokenizer.
+ */
 typedef struct Token {
-    int type;                /* Token type code (keyword code or generic) */
-    const char *start;       /* Pointer into source buffer */
-    size_t length;           /* Length in bytes */
-    uint32_t line;           /* 1-based line number */
-    uint32_t column;         /* 1-based column number */
+    int type;                /**< Token type code (keyword code or generic) */
+    const char *start;       /**< Pointer into source buffer */
+    size_t length;           /**< Length in bytes */
+    uint32_t line;           /**< 1-based line number */
+    uint32_t column;         /**< 1-based column number */
 } Token;
 
 /* Generic token type codes for non-keyword tokens.

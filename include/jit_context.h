@@ -48,12 +48,15 @@ typedef enum JITStatus {
 /*  JIT statistics                                                     */
 /* ------------------------------------------------------------------ */
 
+/**
+ * @brief JIT compilation statistics for a snapshot.
+ */
 typedef struct JITStats {
-    uint32_t states_compiled;     /* Number of states with JIT code    */
-    uint32_t states_total;        /* Total states in snapshot          */
-    uint64_t compile_time_ns;     /* Wall-clock nanoseconds to compile */
-    uint64_t code_size_bytes;     /* Approximate generated code size   */
-    bool     available;           /* True if JIT is available          */
+    uint32_t states_compiled;    /**< Number of states with JIT code attached */
+    uint32_t states_total;       /**< Total number of states in the snapshot */
+    uint64_t compile_time_ns;    /**< Wall-clock nanoseconds spent compiling */
+    uint64_t code_size_bytes;    /**< Approximate generated code size in bytes */
+    bool     available;          /**< True if JIT support is available at runtime */
 } JITStats;
 
 /* ------------------------------------------------------------------ */

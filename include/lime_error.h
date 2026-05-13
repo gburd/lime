@@ -18,21 +18,21 @@ extern "C" {
 typedef struct LimeLocation LimeLocation;
 #endif
 
-/*
-** Accumulated parse error with location and expected-token information.
-**
-** The fields are owned by the LimeError node; lime_error_free() calls
-** free() on `message` and `expected`.  `filename` is borrowed (not
-** duplicated) -- the caller must ensure it outlives the error chain
-** or pass NULL.
-*/
+/**
+ * @brief Accumulated parse error with location and expected-token info.
+ *
+ * The fields are owned by the LimeError node; lime_error_free() calls
+ * free() on @ref message and @ref expected.  @ref filename is borrowed
+ * (not duplicated) -- the caller must ensure it outlives the error
+ * chain or pass NULL.
+ */
 typedef struct LimeError {
-    uint32_t line;
-    uint32_t column;
-    const char *filename;
-    char *message;           /* Human-readable error message (owned) */
-    char *expected;          /* Comma-separated list of expected tokens (owned) */
-    struct LimeError *next;  /* Linked list of errors */
+    uint32_t line;            /**< 1-based source line */
+    uint32_t column;          /**< 1-based source column */
+    const char *filename;     /**< Borrowed filename, or NULL */
+    char *message;            /**< Human-readable error message (owned) */
+    char *expected;           /**< Comma-separated expected-token list (owned) */
+    struct LimeError *next;   /**< Next entry in linked list of errors */
 } LimeError;
 
 /*

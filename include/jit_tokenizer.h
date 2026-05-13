@@ -27,10 +27,13 @@ typedef struct TokenTable TokenTable;
 /*  Statistics                                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * @brief JIT compilation statistics for the tokenizer/keyword trie.
+ */
 typedef struct JITTokenizerStats {
-    uint32_t keywords_compiled;   /* Number of keywords in compiled trie  */
-    uint64_t compile_time_ns;     /* Wall-clock nanoseconds to compile    */
-    uint64_t code_size_bytes;     /* Approximate generated code size      */
+    uint32_t keywords_compiled;  /**< Number of keywords in the compiled trie */
+    uint64_t compile_time_ns;    /**< Wall-clock nanoseconds to compile */
+    uint64_t code_size_bytes;    /**< Approximate generated code size in bytes */
 } JITTokenizerStats;
 
 /* ------------------------------------------------------------------ */

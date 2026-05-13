@@ -19,24 +19,34 @@
 
 typedef uint32_t ExtensionID;
 
+/**
+ * @brief A single token definition in the table.
+ */
 typedef struct TokenDefinition {
-    const char *lexeme;              /* Token string (e.g., "SELECT") */
-    size_t lexeme_len;
-    int token_code;                  /* Token ID (e.g., TK_SELECT) */
-    ExtensionID extension_id;        /* Which extension added it (0 = base) */
-    uint32_t next_in_chain;          /* Hash collision chain */
+    const char *lexeme;          /**< Token string (e.g., "SELECT") */
+    size_t lexeme_len;           /**< Length of @ref lexeme */
+    int token_code;              /**< Token ID (e.g., TK_SELECT) */
+    ExtensionID extension_id;    /**< Which extension added it (0 = base) */
+    uint32_t next_in_chain;      /**< Hash collision chain link */
 } TokenDefinition;
 
+/**
+ * @brief Thread-safe token lookup table.
+ *
+ * Multiple readers can look up tokens simultaneously; writers
+ * acquire exclusive access for modifications.  A version counter
+ * is maintained for external change detection.
+ */
 typedef struct TokenTable {
-    TokenDefinition *tokens;         /* Dense array of tokens */
-    uint32_t ntokens;
-    uint32_t capacity;
+    TokenDefinition *tokens;     /**< Dense array of tokens */
+    uint32_t ntokens;            /**< Number of tokens in @ref tokens */
+    uint32_t capacity;           /**< Allocated slots in @ref tokens */
 
-    uint32_t *hash_table;            /* Hash -> token index */
-    uint32_t hash_capacity;
+    uint32_t *hash_table;        /**< Hash bucket table mapping to indices */
+    uint32_t hash_capacity;      /**< Length of @ref hash_table */
 
-    atomic_uint_fast32_t version;    /* RCU-style versioning */
-    pthread_rwlock_t lock;           /* Write lock */
+    atomic_uint_fast32_t version;/**< RCU-style version counter */
+    pthread_rwlock_t lock;       /**< Reader/writer lock guarding the table */
 } TokenTable;
 
 /*

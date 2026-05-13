@@ -35,6 +35,7 @@
 struct GrammarModification;
 struct ExtensionRegistry;
 struct ParserSnapshot;
+/** @brief Opaque ID identifying a registered extension.  0 = base grammar. */
 typedef uint32_t ExtensionID;
 
 /* ------------------------------------------------------------------ */

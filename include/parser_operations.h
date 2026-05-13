@@ -32,15 +32,16 @@ extern "C" {
 /*  Operation result with detail                                       */
 /* ================================================================== */
 
-/*
-** Extended result from a high-level operation. Contains the
-** ParserManagerStatus code plus an optional error message with
-** more context than the status code alone provides.
-*/
+/**
+ * @brief Extended result from a high-level operation.
+ *
+ * Contains the ParserManagerStatus code plus an optional error
+ * message with more context than the status code alone provides.
+ */
 typedef struct ParserOpResult {
-    ParserManagerStatus status;
-    LimePluginHandle    handle;     /* relevant handle, or INVALID */
-    char               *message;    /* malloc'd detail, or NULL. Caller frees. */
+    ParserManagerStatus status;     /**< Operation status code */
+    LimePluginHandle    handle;     /**< Relevant handle, or INVALID */
+    char               *message;    /**< Malloc'd detail string, or NULL.  Caller frees. */
 } ParserOpResult;
 
 /*
@@ -157,19 +158,19 @@ ParserOpResult parser_op_reload_grammar(ParserManager *mgr,
 /*  Query operations                                                   */
 /* ================================================================== */
 
-/*
-** Runtime statistics for the parser manager.
-*/
+/**
+ * @brief Runtime statistics for the parser manager.
+ */
 typedef struct ParserManagerStats {
-    uint32_t total_plugins;       /* Currently loaded plugins */
-    uint32_t dynamic_plugins;     /* Loaded from shared libraries */
-    uint32_t static_plugins;      /* Registered statically */
-    bool     has_active;          /* Whether an active plugin is set */
-    LimePluginHandle active_handle;
-    const char *active_name;      /* Name of active plugin, or NULL */
-    LimePluginVersion active_version;
-    uint32_t active_capabilities;
-    bool     snapshot_available;  /* Whether get_snapshot would return non-NULL */
+    uint32_t total_plugins;          /**< Currently loaded plugins */
+    uint32_t dynamic_plugins;        /**< Loaded from shared libraries */
+    uint32_t static_plugins;         /**< Registered statically */
+    bool     has_active;             /**< Whether an active plugin is set */
+    LimePluginHandle active_handle;  /**< Handle of the active plugin */
+    const char *active_name;         /**< Name of active plugin, or NULL */
+    LimePluginVersion active_version;/**< Version of the active plugin */
+    uint32_t active_capabilities;    /**< Bitmap of capabilities advertised by the active plugin */
+    bool     snapshot_available;     /**< Whether get_snapshot would return non-NULL */
 } ParserManagerStats;
 
 /*

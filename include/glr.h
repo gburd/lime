@@ -12,49 +12,53 @@ extern "C" {
 /* Forward declarations */
 typedef struct LimeArena LimeArena;
 
-/*
-** Graph-Structured Stack (GSS) node for GLR parsing.
-** Each node represents a parser state in the GLR graph.
-** Multiple predecessor links allow the graph structure that
-** distinguishes GLR from standard LR parsing.
-*/
+/**
+ * @brief Graph-Structured Stack (GSS) node for GLR parsing.
+ *
+ * Each node represents a parser state in the GLR graph.  Multiple
+ * predecessor links allow the graph structure that distinguishes
+ * GLR from standard LR parsing.
+ */
 typedef struct GSSNode {
-    uint32_t state;              /* Parser state number */
-    union { int ival; void *pval; double dval; } value; /* Semantic value */
-    struct GSSNode **predecessors; /* Array of predecessor nodes */
-    uint32_t npred;               /* Number of predecessors */
-    uint32_t pred_capacity;       /* Allocated predecessor slots */
-    uint32_t refcount;            /* Reference count */
+    uint32_t state;                /**< Parser state number */
+    /** Semantic value (one of int / pointer / double, by convention). */
+    union { int ival; void *pval; double dval; } value;
+    struct GSSNode **predecessors; /**< Array of predecessor nodes */
+    uint32_t npred;                /**< Number of predecessors */
+    uint32_t pred_capacity;        /**< Allocated predecessor slots */
+    uint32_t refcount;             /**< Reference count */
 #ifdef YYLOCATIONTYPE
-    /* Location tracking - only when %locations is active */
+    /** Location tracking; only present when %locations is active. */
     struct { uint32_t first_line, first_column, last_line, last_column; } location;
 #endif
 } GSSNode;
 
-/*
-** User-provided disambiguation callback.
-** Called when two reductions produce the same non-terminal at the
-** same position (i.e., two GSS heads merge at the same state).
-** Returns 1 to prefer rule1, 2 to prefer rule2, 0 for ambiguity error.
-*/
+/**
+ * @brief User-provided disambiguation callback.
+ *
+ * Called when two reductions produce the same non-terminal at the
+ * same position (i.e., two GSS heads merge at the same state).
+ * Returns 1 to prefer rule1, 2 to prefer rule2, 0 for ambiguity error.
+ */
 typedef int (*GLRDisambiguateFn)(uint32_t rule1_index, uint32_t rule2_index,
                                   void *user_data);
 
-/*
-** GLR parser context, wrapping an underlying LALR(1) parser.
-** Manages the set of active parse stack heads (the "frontier")
-** and performs forking on conflicts and merging on convergence.
-*/
+/**
+ * @brief GLR parser context, wrapping an underlying LALR(1) parser.
+ *
+ * Manages the set of active parse stack heads (the "frontier") and
+ * performs forking on conflicts and merging on convergence.
+ */
 typedef struct GLRParser {
-    GSSNode **active_heads;       /* Array of active stack top nodes */
-    uint32_t nheads;              /* Number of active heads */
-    uint32_t max_heads;           /* Capacity of active_heads array */
-    LimeArena *arena;             /* Arena for GSSNode allocation */
-    GLRDisambiguateFn disambiguate; /* User disambiguation callback */
-    void *disambiguate_data;      /* User data for callback */
-    uint32_t total_forks;         /* Statistics: total forks */
-    uint32_t total_merges;        /* Statistics: total merges */
-    bool has_ambiguity;           /* True if unresolved ambiguity detected */
+    GSSNode **active_heads;        /**< Array of active stack top nodes */
+    uint32_t nheads;               /**< Number of active heads */
+    uint32_t max_heads;            /**< Capacity of @ref active_heads */
+    LimeArena *arena;              /**< Arena for GSSNode allocation */
+    GLRDisambiguateFn disambiguate;/**< User disambiguation callback */
+    void *disambiguate_data;       /**< User data for callback */
+    uint32_t total_forks;          /**< Statistics: total forks */
+    uint32_t total_merges;         /**< Statistics: total merges */
+    bool has_ambiguity;            /**< True if unresolved ambiguity detected */
 } GLRParser;
 
 /* Create a GLR parser. initial_state is the LALR start state (typically 0).

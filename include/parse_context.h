@@ -12,11 +12,15 @@
 /* Forward declaration (full definition in parser.h) */
 typedef struct ParseContext ParseContext;
 
-/*
-** Parse context structure
-*/
+/**
+ * @brief Per-parse-session state.
+ *
+ * Pins a snapshot for the duration of a parse, ensuring grammar
+ * stability even if extensions are loaded or unloaded by other
+ * threads while parsing is in flight.
+ */
 struct ParseContext {
-    ParserSnapshot *snapshot;   /* Pinned snapshot for this parse */
+    ParserSnapshot *snapshot;   /**< Snapshot pinned for this parse session */
 };
 
 /*
