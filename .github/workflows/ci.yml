@@ -89,3 +89,52 @@ jobs:
     - uses: actions/checkout@v4
     - name: Check all three version sources agree
       run: scripts/check_version_consistency.sh
+
+  # Exercise the LLVM/JIT integration paths.  Without this matrix,
+  # the LLVM 14-21 compat shim, -Dllvm-static, and -Dllvm=disabled
+  # stub mode have no automated coverage; a regression in any of
+  # them would land silently.  We test the latest LLVM available
+  # in Debian apt (one shot) -- not a full version sweep.  The
+  # Nix devShell builds against LLVM 21 separately for developers.
+  llvm-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - { name: "shared",   args: "-Dllvm=enabled" }
+          - { name: "static",   args: "-Dllvm=enabled -Dllvm-static=true" }
+          - { name: "disabled", args: "-Dllvm=disabled" }
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y meson ninja-build pkg-config gcc \
+                                llvm-dev libllvm14 zlib1g-dev \
+                                libxml2-dev libffi-dev libtinfo-dev
+
+    - name: Setup meson (${{ matrix.config.name }})
+      run: meson setup builddir-${{ matrix.config.name }} ${{ matrix.config.args }}
+
+    - name: Build
+      run: ninja -C builddir-${{ matrix.config.name }}
+
+    - name: Test
+      run: meson test -C builddir-${{ matrix.config.name }} --print-errorlogs
+
+    - name: Verify libLLVM linkage matches config
+      # shared: test_jit binary should link libLLVM
+      # static: test_jit binary should NOT link libLLVM
+      # disabled: test_jit binary should NOT link libLLVM
+      run: |
+        binary=builddir-${{ matrix.config.name }}/tests/test_jit
+        refs=$(ldd "$binary" 2>&1 | grep -cE libLLVM || true)
+        case "${{ matrix.config.name }}" in
+          shared)
+            test "$refs" -ge 1 || { echo "shared expected libLLVM, got $refs"; exit 1; } ;;
+          static|disabled)
+            test "$refs" -eq 0 || { echo "${{ matrix.config.name }} expected 0 libLLVM, got $refs"; exit 1; } ;;
+        esac
+        echo "OK: ${{ matrix.config.name }} has $refs libLLVM dependencies"

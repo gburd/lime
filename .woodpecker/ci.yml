@@ -48,6 +48,42 @@ steps:
       - apt-get update && apt-get install -y git grep sed
       - scripts/check_version_consistency.sh
 
+  # LLVM/JIT linkage matrix.  Builds with -Dllvm=enabled (shared
+  # libLLVM), -Dllvm=enabled -Dllvm-static=true (no runtime libLLVM
+  # dep), and -Dllvm=disabled (stub mode, no LLVM at all).  The
+  # post-build ldd check enforces that each config produces a
+  # binary with the expected libLLVM dependency count.
+  llvm-shared:
+    image: debian:bookworm
+    commands:
+      - apt-get update && apt-get install -y gcc meson ninja-build pkg-config
+                                              llvm-dev libllvm14 zlib1g-dev
+                                              libxml2-dev libffi-dev libtinfo-dev
+      - meson setup builddir-llvm-shared -Dllvm=enabled
+      - ninja -C builddir-llvm-shared
+      - meson test -C builddir-llvm-shared --print-errorlogs
+      - 'refs=$(ldd builddir-llvm-shared/tests/test_jit | grep -cE libLLVM || true); test "$refs" -ge 1 || { echo "expected libLLVM, got $refs"; exit 1; }'
+
+  llvm-static:
+    image: debian:bookworm
+    commands:
+      - apt-get update && apt-get install -y gcc meson ninja-build pkg-config
+                                              llvm-dev libllvm14 zlib1g-dev
+                                              libxml2-dev libffi-dev libtinfo-dev
+      - meson setup builddir-llvm-static -Dllvm=enabled -Dllvm-static=true
+      - ninja -C builddir-llvm-static
+      - meson test -C builddir-llvm-static --print-errorlogs
+      - 'refs=$(ldd builddir-llvm-static/tests/test_jit | grep -cE libLLVM || true); test "$refs" -eq 0 || { echo "static should not link libLLVM, got $refs"; exit 1; }'
+
+  llvm-disabled:
+    image: debian:bookworm
+    commands:
+      - apt-get update && apt-get install -y gcc meson ninja-build pkg-config
+      - meson setup builddir-llvm-disabled -Dllvm=disabled
+      - ninja -C builddir-llvm-disabled
+      - meson test -C builddir-llvm-disabled --print-errorlogs
+      - 'refs=$(ldd builddir-llvm-disabled/tests/test_jit | grep -cE libLLVM || true); test "$refs" -eq 0 || { echo "disabled should not link libLLVM, got $refs"; exit 1; }'
+
 # Docs deployment is handled by .forgejo/workflows/pages.yml (Forgejo
 # Actions + git-pages/action@v2). See Codeberg docs:
 #   https://docs.codeberg.org/codeberg-pages/forgejo-actions/

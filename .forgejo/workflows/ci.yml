@@ -102,3 +102,52 @@ jobs:
 
       - name: Check all three sources agree
         run: scripts/check_version_consistency.sh
+
+  # Exercise the three LLVM/JIT linkage paths so the compat shim,
+  # static-link option, and stub mode all stay green on PRs.  See
+  # the matching job in .github/workflows/ci.yml for rationale.
+  llvm-matrix:
+    runs-on: docker
+    container:
+      image: debian:bookworm
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - name: shared
+            args: "-Dllvm=enabled"
+          - name: static
+            args: "-Dllvm=enabled -Dllvm-static=true"
+          - name: disabled
+            args: "-Dllvm=disabled"
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y git gcc meson ninja-build pkg-config \
+                             llvm-dev libllvm14 zlib1g-dev \
+                             libxml2-dev libffi-dev libtinfo-dev
+
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Setup
+        run: meson setup builddir-${{ matrix.config.name }} ${{ matrix.config.args }}
+
+      - name: Build
+        run: ninja -C builddir-${{ matrix.config.name }}
+
+      - name: Test
+        run: meson test -C builddir-${{ matrix.config.name }} --print-errorlogs
+
+      - name: Verify libLLVM linkage matches config
+        run: |
+          binary=builddir-${{ matrix.config.name }}/tests/test_jit
+          refs=$(ldd "$binary" 2>&1 | grep -cE libLLVM || true)
+          case "${{ matrix.config.name }}" in
+            shared)
+              test "$refs" -ge 1 || { echo "shared expected libLLVM, got $refs"; exit 1; } ;;
+            static|disabled)
+              test "$refs" -eq 0 || { echo "${{ matrix.config.name }} expected 0 libLLVM, got $refs"; exit 1; } ;;
+          esac
+          echo "OK: ${{ matrix.config.name }} has $refs libLLVM dependencies"
