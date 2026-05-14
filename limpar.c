@@ -816,6 +816,26 @@ static YYACTIONTYPE yy_reduce(
   yypParser->yytos = yymsp;
   yymsp->stateno = (YYACTIONTYPE)yyact;
   yymsp->major = (YYCODETYPE)yygoto;
+#ifdef YYLOCATIONTYPE
+  /* YYLLOC_DEFAULT-equivalent: set the LHS slot's yyloc.
+  **
+  ** For non-empty rules (yysize<0) the LHS slot at *yymsp now
+  ** physically overlaps the first RHS's old slot -- only the
+  ** stateno and major fields above were rewritten, the yyloc
+  ** field is preserved by the slot reuse and already holds the
+  ** first RHS's location.  This matches Bison's default
+  **    YYLLOC_DEFAULT(Current, Rhs, N) ::= Rhs[1]
+  ** for non-empty productions.
+  **
+  ** For empty rules (yysize==0) yymsp is a freshly-allocated
+  ** slot above the previous top; its yyloc is undefined.  The
+  ** Bison convention is to set it to the position of the
+  ** lookahead -- exactly what yyLookaheadLoc carries.  See
+  ** P0-NEW-2 in Lime-Letter-4. */
+  if( yysize == 0 ){
+    yymsp->yyloc = yypParser->yyLookaheadLoc;
+  }
+#endif
   yyTraceShift(yypParser, yyact, "... then shift");
   return yyact;
 }

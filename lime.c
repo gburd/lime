@@ -568,6 +568,14 @@ struct lime {
   int nexpect;
   /* %locations directive: true if location tracking is enabled */
   int has_locations;
+  /* %location_type {Type} -- override the type used for source
+  ** locations.  Defaults to LimeLocation (and Lime emits an include
+  ** of lime_location.h).  Settable to e.g. {int} for callers (like
+  ** PostgreSQL's gram.y, whose YYLTYPE is a byte offset) that need a
+  ** scalar location type.  When set, Lime emits the user-supplied
+  ** type as YYLOCATIONTYPE and skips the lime_location.h include --
+  ** the caller is expected to provide the type definition. */
+  char *location_type;
   /* %first_token directive: offset added to externally-visible terminal
   ** token codes.  Default 0 (terminals start at 1, Lemon convention).
   ** Set to 258 for Bison parity (reserves 0..127 for ASCII characters
@@ -3152,6 +3160,12 @@ static void parseonetoken(struct pstate *psp)
         }else if( strcmp(x,"token_type")==0 ){
           psp->declargslot = &(psp->gp->tokentype);
           psp->insertLineMacro = 0;
+        }else if( strcmp(x,"location_type")==0 ){
+          /* Override of the default LimeLocation YYLOCATIONTYPE.
+          ** Reuses the same brace-content state as %token_type:
+          ** %location_type {int} or %location_type {struct YYLTYPE}. */
+          psp->declargslot = &(psp->gp->location_type);
+          psp->insertLineMacro = 0;
         }else if( strcmp(x,"default_type")==0 ){
           psp->declargslot = &(psp->gp->vartype);
           psp->insertLineMacro = 0;
@@ -5037,13 +5051,44 @@ PRIVATE int translate_code(struct lime *lemp, struct rule *rp){
       dontUseRhs0 = 1;
       continue;
     }
+    /* @$ -- Bison's literal LHS-location syntax.  Lemon historically
+    ** has no $$ form (LHS is referenced by alias), but @$ is too
+    ** entrenched in bison-derived grammars to ignore.  Treat it as
+    ** the LHS slot's yyloc when %locations is active; otherwise emit
+    ** an explanatory diagnostic and skip. */
+    if( *cp=='@' && cp[1]=='$' ){
+      if( lemp->has_locations ){
+        char buf[64];
+        lemon_sprintf(buf, "yymsp[%d].yyloc", 1 - rp->nrhs);
+        append_str(buf, 0, 0, 0);
+      }else{
+        ErrorMsg(lemp->filename, rp->ruleline,
+          "@$ used but the grammar does not declare %%locations.");
+        lemp->errorcnt++;
+      }
+      cp += 1; /* skip the '$'; outer loop increments past '@' */
+      continue;
+    }
     if( ISALPHA(*cp) && (cp==rp->code || (!ISALNUM(cp[-1]) && cp[-1]!='_')) ){
       char saved;
       for(xp= &cp[1]; ISALNUM(*xp) || *xp=='_'; xp++);
       saved = *xp;
       *xp = 0;
       if( rp->lhsalias && strcmp(cp,rp->lhsalias)==0 ){
-        append_str(zLhs,0,0,0);
+        if( cp!=rp->code && cp[-1]=='@' ){
+          /* @<lhsalias> -- LHS location, post-reduce.  Bison's @$
+          ** equivalent.  Lives at yymsp[1-nrhs].yyloc, the slot the
+          ** LHS will occupy once the reduce completes.  Falls back
+          ** to the LHS value when %locations isn't active, matching
+          ** the @<rhsalias> behaviour above. */
+          if( lemp->has_locations ){
+            append_str("yymsp[%d].yyloc",-1,1-rp->nrhs,0);
+          }else{
+            append_str(zLhs,0,0,0);
+          }
+        }else{
+          append_str(zLhs,0,0,0);
+        }
         cp = xp;
         lhsused = 1;
       }else{
@@ -5055,9 +5100,15 @@ PRIVATE int translate_code(struct lime *lemp, struct rule *rp){
                  rp->rhsalias[0], zOvwrt);
               lemp->errorcnt++;
             }else if( cp!=rp->code && cp[-1]=='@' ){
-              /* If the argument is of the form @X then substituted
-              ** the token number of X, not the value of X */
-              append_str("yymsp[%d].major",-1,i-rp->nrhs+1,0);
+              /* @X reference.  When %locations is active, expand to the
+              ** stack slot's yyloc field (Bison-compatible @N semantics).
+              ** Otherwise fall back to legacy behaviour and emit the
+              ** token's enum code.  See P0-NEW-2 in Lime-Letter-4. */
+              if( lemp->has_locations ){
+                append_str("yymsp[%d].yyloc",-1,i-rp->nrhs+1,0);
+              }else{
+                append_str("yymsp[%d].major",-1,i-rp->nrhs+1,0);
+              }
             }else{
               struct symbol *sp = rp->rhs[i];
               int dtnum;
@@ -5903,8 +5954,16 @@ void ReportTable(
     fprintf(out,"#define YYFALLBACK 1\n");  lineno++;
   }
   if( lemp->has_locations ){
-    fprintf(out,"#include \"lime_location.h\"\n"); lineno++;
-    fprintf(out,"#define YYLOCATIONTYPE LimeLocation\n"); lineno++;
+    if( lemp->location_type ){
+      /* Caller supplied %location_type {Type}; emit their type and
+      ** skip the lime_location.h include -- the user provides the
+      ** type definition themselves.  See P0-NEW-2 in Lime-Letter-4. */
+      fprintf(out,"#define YYLOCATIONTYPE %s\n", lemp->location_type);
+      lineno++;
+    }else{
+      fprintf(out,"#include \"lime_location.h\"\n"); lineno++;
+      fprintf(out,"#define YYLOCATIONTYPE LimeLocation\n"); lineno++;
+    }
   }
   if( lemp->n_error_sync_tokens > 0 ){
     fprintf(out,"#define YYERRORSYNC 1\n"); lineno++;

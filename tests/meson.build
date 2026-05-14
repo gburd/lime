@@ -310,6 +310,31 @@ test_first_token = executable('test_first_token',
 
 test('first_token', test_first_token)
 
+# P0-NEW-2: proper @N location threading.
+# Bison-compatible @<rhsalias> expands to the stack slot's yyloc field
+# (not the token enum code), @<lhsalias>/@$ expand to the post-reduce
+# LHS location, and YYLLOC_DEFAULT for empty productions falls back
+# to the lookahead's loc.  Also exercises %location_type {int}.
+test_locations_gen = custom_target('test_locations_parser',
+  input   : ['test_locations_grammar.y'],
+  output  : ['test_locations_grammar.c', 'test_locations_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_locations = executable('test_locations',
+  'test_locations.c',
+  test_locations_gen,
+  dependencies : lime_parser_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('locations', test_locations)
+
 # P0-NEW-1: %syntax_error must distinguish EOF lookahead from a
 # non-EOF unexpected token, and yyloc must reflect the offending
 # lookahead's location -- not the stack top.  Smoke grammar +
