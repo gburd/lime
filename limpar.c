@@ -242,6 +242,23 @@ struct yyParser {
   ** symbol (which would be the previously-shifted token, off by one). */
   YYLOCATIONTYPE yyLookaheadLoc;
 #endif
+  /* Action-time lookahead access (P0-NEW-5).  While Parse() runs a
+  ** sequence of reduces before shifting the just-pushed token, the
+  ** token's external code and value are stashed here so that user
+  ** action code can read them via Parse_get_lookahead() and
+  ** optionally signal consumption via Parse_clear_lookahead().  This
+  ** is the equivalent of bison's yychar/yyclearin and exists to
+  ** support grammars (notably PostgreSQL's plpgsql pl_gram.y) where
+  ** an empty production needs to consume the lookahead and reach
+  ** into the lexer for further tokens.
+  **
+  ** yyLookaheadMajor is YYEMPTY (-2) when no Parse() call is in
+  ** progress.  yyLookaheadCleared is set by Parse_clear_lookahead()
+  ** to tell the dispatch loop to skip the trailing shift and return,
+  ** treating the lookahead as consumed by the action body. */
+  int yyLookaheadMajor;
+  ParseTOKENTYPE yyLookaheadMinor;
+  char yyLookaheadCleared;
   ParseARG_SDECL                /* A place to hold %extra_argument */
   ParseCTX_SDECL                /* A place to hold %extra_context */
   yyStackEntry *yystackEnd;           /* Last entry in the stack */
@@ -379,6 +396,12 @@ void ParseInit(void *yypRawParser ParseCTX_PDECL){
   ** or in pull-parser mode (Parse() without ParseLoc()). */
   memset(&yypParser->yyLookaheadLoc, 0, sizeof(yypParser->yyLookaheadLoc));
 #endif
+  /* Initialise action-time lookahead state (P0-NEW-5).  YYEMPTY is
+  ** -2 by convention (matching bison's yychar empty value); use it
+  ** as a sentinel for "no Parse() call in progress". */
+  yypParser->yyLookaheadMajor = -2;
+  memset(&yypParser->yyLookaheadMinor, 0, sizeof(yypParser->yyLookaheadMinor));
+  yypParser->yyLookaheadCleared = 0;
   yypParser->yytos = yypParser->yystack;
   yypParser->yystack[0].stateno = 0;
   yypParser->yystack[0].major = 0;
@@ -761,6 +784,23 @@ static const signed char yyRuleInfoNRhs[] = {
 
 static void yy_accept(yyParser*);  /* Forward Declaration */
 
+/* Forward declarations for the action-time lookahead API
+** (Parse_get_lookahead / Parse_clear_lookahead).  The definitions
+** live just before void Parse() further down; these forward
+** declarations let user action bodies inside yy_reduce reference
+** the API without an out-of-order-symbol error.  P0-NEW-5. */
+#ifndef YYEMPTY
+# define YYEMPTY (-2)
+#endif
+int  Parse_get_lookahead(
+  void *yyp,
+  ParseTOKENTYPE *yyminor_out
+#ifdef YYLOCATIONTYPE
+  , YYLOCATIONTYPE *yyloc_out
+#endif
+);
+void Parse_clear_lookahead(void *yyp);
+
 /*
 ** Perform a reduce action and the shift that must immediately
 ** follow the reduce.
@@ -971,6 +1011,56 @@ static void yy_accept(
 # define YY_SYNTAX_ERROR(P,M,m) yy_syntax_error(P,M,m)
 #endif
 
+/*
+** Action-time lookahead access (P0-NEW-5).  Equivalent to bison's
+** yychar / yyclearin from inside an action body.
+**
+** Use case: empty productions whose action wants to consume the
+** parser's pending lookahead and reach into the lexer for further
+** tokens.  PostgreSQL's plpgsql pl_gram.y has a dozen rules of the
+** form
+**     decl_datatype : empty { $$ = read_datatype(yychar, ...); yyclearin; }
+** that all rely on this idiom.
+**
+** Parse_get_lookahead() returns the externally-visible token code
+** the parser is about to shift -- the same value the caller passed
+** to Parse() / ParseLoc() and the same value the user-emitted
+** #defines compare against.  Returns YYEMPTY (-2) if no Parse() call
+** is currently in progress.  yyminor_out and yyloc_out are optional;
+** pass NULL to skip.  yyloc_out is only written when the parser was
+** built with %locations (YYLOCATIONTYPE defined); otherwise it is
+** ignored.
+**
+** Parse_clear_lookahead() tells the dispatch loop the action body
+** consumed the lookahead via Parse_get_lookahead() and pulled
+** further tokens from the lexer itself.  The current Parse() call
+** returns without shifting.  The driver's next Parse() call provides
+** whatever the lexer has advanced to, treated as a fresh lookahead.
+*/
+int Parse_get_lookahead(
+  void *yyp,                          /* The parser */
+  ParseTOKENTYPE *yyminor_out         /* (out) Token value, or NULL */
+#ifdef YYLOCATIONTYPE
+  , YYLOCATIONTYPE *yyloc_out         /* (out) Token location, or NULL */
+#endif
+){
+  yyParser *yypParser = (yyParser*)yyp;
+  if( yyminor_out!=0 ){
+    *yyminor_out = yypParser->yyLookaheadMinor;
+  }
+#ifdef YYLOCATIONTYPE
+  if( yyloc_out!=0 ){
+    *yyloc_out = yypParser->yyLookaheadLoc;
+  }
+#endif
+  return yypParser->yyLookaheadMajor;
+}
+
+void Parse_clear_lookahead(void *yyp){
+  yyParser *yypParser = (yyParser*)yyp;
+  yypParser->yyLookaheadCleared = 1;
+}
+
 void Parse(
   void *yyp,                   /* The parser */
   int yymajor,                 /* The major token code number */
@@ -988,6 +1078,15 @@ void Parse(
   yyParser *yypParser = (yyParser*)yyp;  /* The parser */
   ParseCTX_FETCH
   ParseARG_STORE
+
+  /* Stash the external lookahead first thing so action code that
+  ** runs in any reduce sequence can read it via
+  ** Parse_get_lookahead().  Done before the %first_token range
+  ** check so that even %syntax_error fired on an out-of-range
+  ** code can see the offending token via the same API.  P0-NEW-5. */
+  yypParser->yyLookaheadMajor = yymajor;
+  yypParser->yyLookaheadMinor = yyminor;
+  yypParser->yyLookaheadCleared = 0;
 
   /* %first_token N -- the user passes the externally-visible token
   ** code (with the offset applied per the emitted #defines).  Convert
@@ -1017,6 +1116,8 @@ void Parse(
 #endif
       YY_SYNTAX_ERROR(yypParser, yymajorExternal, yyminor);
       (void)yyminorunion_local;
+      yypParser->yyLookaheadMajor = -2;
+      yypParser->yyLookaheadCleared = 0;
       ParseARG_STORE;
       return;
     }
@@ -1084,6 +1185,25 @@ void Parse(
         }
       }
       yyact = yy_reduce(yypParser,yyruleno,yymajor,yyminor ParseCTX_PARAM);
+      /* If the reduce action called Parse_clear_lookahead() the user
+      ** action consumed the token via Parse_get_lookahead() and read
+      ** further tokens from the lexer themselves.  Skip the rest of
+      ** the dispatch (no shift) and return.  The driver's next
+      ** Parse() call provides whatever the lexer has advanced to.
+      ** P0-NEW-5. */
+      if( yypParser->yyLookaheadCleared ){
+#ifndef NDEBUG
+        if( yyTraceFILE ){
+          fprintf(yyTraceFILE,
+            "%sLookahead consumed by action; returning without shift.\n",
+            yyTracePrompt);
+        }
+#endif
+        yypParser->yyLookaheadMajor = -2;
+        yypParser->yyLookaheadCleared = 0;
+        ParseARG_STORE;
+        return;
+      }
     }else if( yyact <= YY_MAX_SHIFTREDUCE ){
       yy_shift(yypParser,yyact,(YYCODETYPE)yymajor,yyminor);
 #ifndef YYNOERRORRECOVERY
@@ -1228,6 +1348,11 @@ void Parse(
     fprintf(yyTraceFILE,"]\n");
   }
 #endif
+  /* Clear action-time lookahead state on Parse() exit (P0-NEW-5).
+  ** Calls to Parse_get_lookahead() outside an active Parse() are
+  ** defined to return YYEMPTY. */
+  yypParser->yyLookaheadMajor = -2;
+  yypParser->yyLookaheadCleared = 0;
   return;
 }
 

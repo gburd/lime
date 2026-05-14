@@ -363,6 +363,32 @@ test_default_reduce = executable('test_default_reduce',
 
 test('default_reduce', test_default_reduce)
 
+# P0-NEW-5: action-time lookahead access (bison's yychar/yyclearin
+# equivalent).  An empty production's action reads the parser's
+# pending lookahead via Parse_get_lookahead() and signals it was
+# consumed via Parse_clear_lookahead().  Required by PostgreSQL's
+# plpgsql pl_gram.y -- decl_datatype and a dozen sibling rules
+# follow the same pattern.
+test_lookahead_gen = custom_target('test_lookahead_parser',
+  input   : ['test_lookahead_grammar.y'],
+  output  : ['test_lookahead_grammar.c', 'test_lookahead_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_lookahead = executable('test_lookahead',
+  'test_lookahead.c',
+  test_lookahead_gen,
+  dependencies : lime_parser_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lookahead', test_lookahead)
+
 # P0-NEW-1: %syntax_error must distinguish EOF lookahead from a
 # non-EOF unexpected token, and yyloc must reflect the offending
 # lookahead's location -- not the stack top.  Smoke grammar +
