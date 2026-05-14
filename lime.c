@@ -568,6 +568,17 @@ struct lime {
   int nexpect;
   /* %locations directive: true if location tracking is enabled */
   int has_locations;
+  /* %first_token directive: offset added to externally-visible terminal
+  ** token codes.  Default 0 (terminals start at 1, Lemon convention).
+  ** Set to 258 for Bison parity (reserves 0..127 for ASCII characters
+  ** and 128..257 as a buffer).  When non-zero:
+  **   - ReportHeader emits  #define <NAME>  <i + first_token>
+  **   - The runtime template subtracts first_token from incoming
+  **     yymajor before indexing the action table.  EOF (yymajor==0)
+  **     is preserved unchanged.
+  **   - User code (e.g. %syntax_error) sees the external value.
+  ** Internal indices [1..nterminal-1] are unchanged. */
+  int first_token;
   /* %error_sync directive: list of sync tokens for panic-mode recovery */
   char **error_sync_tokens;
   int n_error_sync_tokens;
@@ -2135,6 +2146,7 @@ int main(int argc, char **argv){
   memset(&lem, 0, sizeof(lem));
   lem.errorcnt = 0;
   lem.nexpect = -1;
+  lem.first_token = 0;
   /* qsort(NULL, 0, ...) is undefined per POSIX (the first argument is
   ** documented as "never null").  Skip the sort when the array is
   ** empty -- caught by UBSan. */
@@ -2739,6 +2751,7 @@ enum e_state {
   WAITING_FOR_MODULE_IMPORT_FROM,
   WAITING_FOR_MODULE_IMPORT_END,
   WAITING_FOR_EXPECT_VALUE,
+  WAITING_FOR_FIRST_TOKEN_VALUE,
   WAITING_FOR_ERROR_SYNC_TOKEN,
   WAITING_FOR_AST_PREFIX_VALUE,
   WAITING_FOR_AST_NODE_NAME,
@@ -3203,6 +3216,8 @@ static void parseonetoken(struct pstate *psp)
           psp->state = WAITING_FOR_MODULE_IMPORT;
         }else if( strcmp(x,"expect")==0 ){
           psp->state = WAITING_FOR_EXPECT_VALUE;
+        }else if( strcmp(x,"first_token")==0 ){
+          psp->state = WAITING_FOR_FIRST_TOKEN_VALUE;
         }else if( strcmp(x,"locations")==0 ){
           psp->gp->has_locations = 1;
           psp->state = WAITING_FOR_DECL_OR_RULE;
@@ -3560,6 +3575,36 @@ static void parseonetoken(struct pstate *psp)
       }else{
         ErrorMsg(psp->filename,psp->tokenlineno,
           "Expected integer argument to %%expect but got \"%s\".",x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }
+      break;
+    case WAITING_FOR_FIRST_TOKEN_VALUE:
+      /* %first_token N -- shift externally-visible terminal codes by N.
+      ** Default 0 (Lemon convention).  Common values: 258 (Bison parity,
+      ** reserves 0..127 for ASCII chars and 128..257 as a buffer).  The
+      ** offset only affects the emitted #define values and the
+      ** Parse() entry point's view of yymajor; internal action-table
+      ** indices stay [1..nterminal-1]. */
+      if( ISDIGIT(x[0]) ){
+        int n = atoi(x);
+        if( n<0 || n>32767 ){
+          ErrorMsg(psp->filename,psp->tokenlineno,
+            "%%first_token value must be 0..32767, got %d.", n);
+          psp->errorcnt++;
+          psp->state = WAITING_FOR_DECL_OR_RULE;
+        }else{
+          psp->gp->first_token = n;
+          psp->state = WAITING_FOR_DECL_OR_RULE;
+        }
+      }else if( x[0]=='.' ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Missing argument to %%first_token.");
+        psp->errorcnt++;
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else{
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Expected integer argument to %%first_token but got \"%s\".",x);
         psp->errorcnt++;
         psp->state = RESYNC_AFTER_DECL_ERROR;
       }
@@ -5767,6 +5812,11 @@ void ReportTable(
     fprintf(out,"#define YYWILDCARD %d\n",
        lemp->wildcard->index); lineno++;
   }
+  /* %first_token N -- offset added to externally-visible token codes.
+  ** When zero (the default), the parser is binary-identical to a
+  ** pre-%first_token build; the runtime template's offset arithmetic
+  ** compiles down to nothing. */
+  fprintf(out,"#define YYFIRSTTOKEN %d\n", lemp->first_token); lineno++;
   print_stack_union(out,lemp,&lineno,mhflag);
   fprintf(out, "#ifndef YYSTACKDEPTH\n"); lineno++;
   if( lemp->stacksize ){
@@ -6423,7 +6473,7 @@ void ReportHeader(struct lime *lemp)
       int nextChar;
       for(i=1; i<lemp->nterminal && fgets(line,LINESIZE,in); i++){
         lemon_sprintf(pattern,"#define %s%-30s %3d\n",
-                      prefix,lemp->symbols[i]->name,i);
+                      prefix,lemp->symbols[i]->name,i+lemp->first_token);
         if( strcmp(line,pattern) ) break;
       }
       nextChar = fgetc(in);
@@ -6437,7 +6487,8 @@ void ReportHeader(struct lime *lemp)
   out = file_open(lemp,".h","wb");
   if( out ){
     for(i=1; i<lemp->nterminal; i++){
-      fprintf(out,"#define %s%-30s %3d\n",prefix,lemp->symbols[i]->name,i);
+      fprintf(out,"#define %s%-30s %3d\n",prefix,lemp->symbols[i]->name,
+              i+lemp->first_token);
     }
 
     /* Generate AST type definitions if %ast_node directives were used */

@@ -283,6 +283,33 @@ test_alternation = executable('test_alternation',
 
 test('alternation', test_alternation)
 
+# P0-NEW-4: %first_token N -- shift externally-visible terminal
+# codes by N so they don't collide with ASCII characters.  The
+# generated header emits #define FT_A 259 (= 1+258) etc.; the
+# runtime template subtracts the offset before indexing the
+# action table.  Required by callers like PostgreSQL whose
+# scanner returns ASCII values for single-char tokens and would
+# otherwise alias keyword token codes.
+test_first_token_gen = custom_target('test_first_token_parser',
+  input   : ['test_first_token_grammar.y'],
+  output  : ['test_first_token_grammar.c', 'test_first_token_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_first_token = executable('test_first_token',
+  'test_first_token.c',
+  test_first_token_gen,
+  dependencies : lime_parser_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('first_token', test_first_token)
+
 # P0-NEW-1: %syntax_error must distinguish EOF lookahead from a
 # non-EOF unexpected token, and yyloc must reflect the offending
 # lookahead's location -- not the stack top.  Smoke grammar +

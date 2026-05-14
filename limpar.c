@@ -969,6 +969,40 @@ void Parse(
   ParseCTX_FETCH
   ParseARG_STORE
 
+  /* %first_token N -- the user passes the externally-visible token
+  ** code (with the offset applied per the emitted #defines).  Convert
+  ** to the internal action-table index by subtracting the offset.
+  ** EOF (0) is preserved.  When YYFIRSTTOKEN is 0 (the default), this
+  ** entire block is a no-op that the optimiser deletes.
+  **
+  ** If the external code is out of range -- e.g. an ASCII '+' (43)
+  ** sneaking through to a parser declared with %first_token 258 --
+  ** fire %syntax_error directly and return.  Indexing the action
+  ** table at a negative or out-of-range slot would be undefined
+  ** behaviour. */
+  int yymajorExternal = yymajor;
+#if YYFIRSTTOKEN > 0
+  if( yymajor != 0 ){
+    yymajor -= YYFIRSTTOKEN;
+    if( yymajor < 0 || yymajor >= YYNTOKEN ){
+      YYMINORTYPE yyminorunion_local;
+      memset(&yyminorunion_local, 0, sizeof(yyminorunion_local));
+      yyminorunion_local.yy0 = yyminor;
+#ifndef NDEBUG
+      if( yyTraceFILE ){
+        fprintf(yyTraceFILE, "%sExternal token code %d outside "
+                "[YYFIRSTTOKEN..YYFIRSTTOKEN+YYNTOKEN); rejecting.\n",
+                yyTracePrompt, yymajorExternal);
+      }
+#endif
+      YY_SYNTAX_ERROR(yypParser, yymajorExternal, yyminor);
+      (void)yyminorunion_local;
+      ParseARG_STORE;
+      return;
+    }
+  }
+#endif
+
   assert( yypParser->yytos!=0 );
 #if !defined(YYERRORSYMBOL) && !defined(YYNOERRORRECOVERY)
   yyendofinput = (yymajor==0);
@@ -1072,7 +1106,10 @@ void Parse(
       **
       */
       if( yypParser->yyerrcnt<0 ){
-        YY_SYNTAX_ERROR(yypParser,yymajor,yyminor);
+        /* yymajorExternal is the offset-corrected token code that the
+        ** caller passed to Parse(); user %syntax_error code expects to
+        ** see this rather than the internal action-table index. */
+        YY_SYNTAX_ERROR(yypParser,yymajorExternal,yyminor);
       }
       yymx = yypParser->yytos->major;
       if( yymx==YYERRORSYMBOL || yyerrorhit ){
@@ -1114,7 +1151,7 @@ void Parse(
       ** Applications can set this macro (for example inside %include) if
       ** they intend to abandon the parse upon the first syntax error seen.
       */
-      YY_SYNTAX_ERROR(yypParser,yymajor,yyminor);
+      YY_SYNTAX_ERROR(yypParser,yymajorExternal,yyminor);
       yy_destructor(yypParser,(YYCODETYPE)yymajor,&yyminorunion);
       break;
 #else  /* YYERRORSYMBOL is not defined */
@@ -1132,7 +1169,7 @@ void Parse(
       ** then resume parsing from the current state.
       */
       if( yypParser->yyerrcnt<=0 ){
-        YY_SYNTAX_ERROR(yypParser,yymajor,yyminor);
+        YY_SYNTAX_ERROR(yypParser,yymajorExternal,yyminor);
       }
       yypParser->yyerrcnt = 3;
 #ifdef YYERRORSYNC
