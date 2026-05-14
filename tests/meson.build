@@ -335,6 +335,34 @@ test_locations = executable('test_locations',
 
 test('locations', test_locations)
 
+# P0-NEW-3 evidence test: confirm Lime's LALR(1) default-reduce for
+# empty productions works as designed.  The PG migration team in
+# Lime-Letter-4 claimed Lime fires %syntax_error on inputs that
+# Bison reduces; the .out files for three reduced grammars all
+# show {default} reduce actions for the empty alternatives, so
+# this test verifies at runtime that the reduction actually
+# happens.  If any case here regresses, the LALR machinery has
+# a real bug -- not what the original letter described.
+test_default_reduce_gen = custom_target('test_default_reduce_parser',
+  input   : ['test_default_reduce_grammar.y'],
+  output  : ['test_default_reduce_grammar.c', 'test_default_reduce_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_default_reduce = executable('test_default_reduce',
+  'test_default_reduce.c',
+  test_default_reduce_gen,
+  dependencies : lime_parser_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('default_reduce', test_default_reduce)
+
 # P0-NEW-1: %syntax_error must distinguish EOF lookahead from a
 # non-EOF unexpected token, and yyloc must reflect the offending
 # lookahead's location -- not the stack top.  Smoke grammar +
