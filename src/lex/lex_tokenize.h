@@ -65,6 +65,7 @@ typedef enum {
     /* Multi-char marker tokens. */
     LIME_LEX_TOK_EOF_MARKER,          /* <<EOF>> */
     LIME_LEX_TOK_KW_MATCHES,          /* the `matches` keyword */
+    LIME_LEX_TOK_KW_RULE,             /* the `rule` keyword */
 
     /* Directives. */
     LIME_LEX_TOK_DIR_NAME_PREFIX,           /* %name_prefix */

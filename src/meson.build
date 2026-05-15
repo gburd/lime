@@ -137,6 +137,8 @@ lime_parser_dep = declare_dependency(
 lime_lex_compiler_lib = static_library('lime_lex_compiler',
   files(
     'lex/lex_tokenize.c',
+    'lex/lex_ast.c',
+    'lex/lex_parse.c',
   ),
   include_directories : [inc, include_directories('lex')],
   c_args : coverage_args,

@@ -169,6 +169,7 @@ const char *lime_lex_tok_kind_name(LimeLexTokKind kind) {
         case LIME_LEX_TOK_EQUALS:                  return "EQUALS";
         case LIME_LEX_TOK_EOF_MARKER:              return "EOF_MARKER";
         case LIME_LEX_TOK_KW_MATCHES:              return "KW_MATCHES";
+        case LIME_LEX_TOK_KW_RULE:                 return "KW_RULE";
         case LIME_LEX_TOK_DIR_NAME_PREFIX:         return "DIR_NAME_PREFIX";
         case LIME_LEX_TOK_DIR_TOKEN_PREFIX:        return "DIR_TOKEN_PREFIX";
         case LIME_LEX_TOK_DIR_TOKEN_TYPE:          return "DIR_TOKEN_TYPE";
@@ -419,12 +420,14 @@ int lime_lex_tokenize_next(LimeLexTokenizer *t, LimeLexToken *out) {
         return 0;
     }
 
-    /* Identifier / keyword.  `matches` is the only keyword. */
+    /* Identifier / keyword.  `matches` and `rule` are keywords. */
     if (is_ident_start(c)) {
         consume_ident(t);
         size_t len = t->pos - start;
         if (len == 7 && memcmp(t->src + start, "matches", 7) == 0) {
             emit(t, out, LIME_LEX_TOK_KW_MATCHES, start, t->pos, start_line);
+        } else if (len == 4 && memcmp(t->src + start, "rule", 4) == 0) {
+            emit(t, out, LIME_LEX_TOK_KW_RULE, start, t->pos, start_line);
         } else {
             emit(t, out, LIME_LEX_TOK_IDENT, start, t->pos, start_line);
         }

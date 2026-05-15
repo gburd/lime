@@ -403,6 +403,16 @@ test_lex_tokenize = executable('test_lex_tokenize',
 
 test('lex_tokenize', test_lex_tokenize)
 
+# M1.2 of the lexer subsystem: .lex parser (token stream -> AST).
+# Pattern resolution and block desugaring are M1.3/M1.4.
+test_lex_parse = executable('test_lex_parse',
+  'test_lex_parse.c',
+  dependencies : lime_lex_compiler_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_parse', test_lex_parse)
+
 # P0-NEW-3 evidence test: confirm Lime's LALR(1) default-reduce for
 # empty productions works as designed.  The PG migration team in
 # Lime-Letter-4 claimed Lime fires %syntax_error on inputs that

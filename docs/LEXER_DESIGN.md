@@ -471,7 +471,7 @@ this a first-class declaration:
 %literal_buffer scanstr {
     type      char       /* element type; usually char or unsigned char */
     initial   64         /* initial capacity */
-    grow      *2         /* growth policy: doubling */
+    grow      "*2"       /* growth policy; quote operator-bearing values */
     alloc     palloc     /* C function: void *(size_t) */
     realloc   repalloc   /* C function: void *(void *, size_t) */
     free      pfree      /* C function: void (void *) */
