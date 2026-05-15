@@ -28,7 +28,13 @@ typedef struct LimeLexPattern LimeLexPattern;
 struct LimeLexPattern {
     char            *name;        /* pattern fragment name */
     char            *regex;       /* raw regex source, no /.../ delimiters */
+    char            *expanded_regex;  /* M1.3: regex with {name} references
+                                       ** substituted; populated by
+                                       ** lime_lex_resolve_patterns. */
     int              line;        /* source line number */
+    int              _resolve_visit; /* transient visitor state for cycle
+                                      ** detection: 0 unvisited, 1 in
+                                      ** progress, 2 done. */
     LimeLexPattern  *next;        /* singly-linked declaration list */
 };
 
@@ -80,8 +86,12 @@ struct LimeLexRule {
                                    ** NULL means INITIAL */
     int              n_states;
     int              is_eof;      /* 1 if <<EOF>> rule, 0 otherwise */
-    char            *pattern;     /* regex source (post {name} expansion);
+    char            *pattern;     /* regex source (pre-expansion);
                                    ** NULL when is_eof */
+    char            *expanded_pattern;  /* M1.3: pattern with {name}
+                                         ** references substituted from
+                                         ** the patterns table; NULL when
+                                         ** is_eof or before resolve. */
     char            *action;      /* action body C code, includes braces */
     int              line;
     LimeLexRule     *next;

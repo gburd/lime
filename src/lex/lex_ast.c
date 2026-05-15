@@ -30,6 +30,7 @@ static void free_pattern_list(LimeLexPattern *p) {
         LimeLexPattern *next = p->next;
         free(p->name);
         free(p->regex);
+        free(p->expanded_regex);
         free(p);
         p = next;
     }
@@ -77,6 +78,7 @@ static void free_rule_list(LimeLexRule *r) {
         free(r->name);
         free_string_array(r->states, r->n_states);
         free(r->pattern);
+        free(r->expanded_pattern);
         free(r->action);
         free(r);
         r = next;
