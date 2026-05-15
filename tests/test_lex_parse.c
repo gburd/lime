@@ -384,6 +384,101 @@ static int test_error_recovery(void) {
     return fail_count;
 }
 
+static int test_state_block_desugaring(void) {
+    fail_count = 0;
+    /* M1.4: <STATES> { rule ... rule ... } block form.
+    ** Each inner rule should inherit the outer state qualifier. */
+    const char *src =
+        "<EXPR> {\n"
+        "    rule plus  matches /\\+/ { LEX_EMIT_NOVAL('+'); }\n"
+        "    rule minus matches /-/  { LEX_EMIT_NOVAL('-'); }\n"
+        "    rule times matches /\\*/ { LEX_EMIT_NOVAL('*'); }\n"
+        "}\n";
+    LimeLexSpec *s = lime_lex_parse("<block>", src, strlen(src));
+    EXPECT(s && s->error_count == 0, "errors=%d", s ? s->error_count : -1);
+    if (s) {
+        EXPECT(list_len_rule(s->rules) == 3, "n_rules=%d want 3",
+               list_len_rule(s->rules));
+        for (LimeLexRule *r = s->rules; r; r = r->next) {
+            EXPECT(r->n_states == 1, "%s: n_states=%d want 1",
+                   r->name, r->n_states);
+            if (r->n_states >= 1) EXPECT_STR(r->states[0], "EXPR");
+        }
+        if (s->rules) {
+            EXPECT_STR(s->rules->name, "plus");
+            EXPECT_STR(s->rules->next->name, "minus");
+            EXPECT_STR(s->rules->next->next->name, "times");
+        }
+        lime_lex_spec_free(s);
+    }
+    if (fail_count == 0) printf("test_state_block_desugaring: PASS\n");
+    return fail_count;
+}
+
+static int test_multi_state_block_desugaring(void) {
+    fail_count = 0;
+    /* Block with multi-state qualifier: each inner rule should
+    ** inherit ALL of the outer states. */
+    const char *src =
+        "<xq, xqc, xe> {\n"
+        "    rule eof  matches <<EOF>> { abort(); }\n"
+        "    rule body matches /[^']+/ { /* */ }\n"
+        "}\n";
+    LimeLexSpec *s = lime_lex_parse("<mblock>", src, strlen(src));
+    EXPECT(s && s->error_count == 0, "errors=%d", s ? s->error_count : -1);
+    if (s) {
+        EXPECT(list_len_rule(s->rules) == 2, "n_rules=%d want 2",
+               list_len_rule(s->rules));
+        for (LimeLexRule *r = s->rules; r; r = r->next) {
+            EXPECT(r->n_states == 3, "%s: n_states=%d want 3",
+                   r->name, r->n_states);
+            if (r->n_states >= 3) {
+                EXPECT_STR(r->states[0], "xq");
+                EXPECT_STR(r->states[1], "xqc");
+                EXPECT_STR(r->states[2], "xe");
+            }
+        }
+        lime_lex_spec_free(s);
+    }
+    if (fail_count == 0) printf("test_multi_state_block_desugaring: PASS\n");
+    return fail_count;
+}
+
+static int test_block_inner_qualifier_rejected(void) {
+    fail_count = 0;
+    /* Inner rules MUST NOT have their own state qualifier inside
+    ** a block; the parser flags it as an error and continues. */
+    fflush(stderr);
+    int saved_stderr = dup(2);
+    int devnull = open("/dev/null", 1);
+    if (devnull >= 0) { dup2(devnull, 2); close(devnull); }
+
+    const char *src =
+        "<EXPR> {\n"
+        "    <OTHER> rule confused matches /x/ { /* */ }\n"
+        "    rule plain matches /y/ { /* */ }\n"
+        "}\n";
+    LimeLexSpec *s = lime_lex_parse("<bad-block>", src, strlen(src));
+
+    fflush(stderr);
+    if (saved_stderr >= 0) { dup2(saved_stderr, 2); close(saved_stderr); }
+
+    EXPECT(s != NULL, "spec NULL");
+    if (s) {
+        EXPECT(s->error_count >= 1,
+               "expected >=1 error for inner-qualifier, got %d",
+               s->error_count);
+        /* Both rules should still parse (with the outer EXPR state
+        ** -- the inner qualifier is consumed but ignored). */
+        EXPECT(list_len_rule(s->rules) >= 1,
+               "expected at least one rule parsed despite error, got %d",
+               list_len_rule(s->rules));
+        lime_lex_spec_free(s);
+    }
+    if (fail_count == 0) printf("test_block_inner_qualifier_rejected: PASS\n");
+    return fail_count;
+}
+
 int main(void) {
     int total = 0;
     /* Suppress stderr noise for the deliberate-error sub-test by
@@ -398,6 +493,9 @@ int main(void) {
     total += test_ruleset_and_include();
     total += test_bootscanner_shape();
     total += test_error_recovery();
+    total += test_state_block_desugaring();
+    total += test_multi_state_block_desugaring();
+    total += test_block_inner_qualifier_rejected();
     if (total == 0) {
         printf("\ntest_lex_parse: all sub-tests PASS\n");
         return 0;

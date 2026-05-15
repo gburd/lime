@@ -285,15 +285,31 @@ static size_t consume_code_block(LimeLexTokenizer *t) {
             continue;
         }
         if (c == '\'') {
-            /* Char literal */
-            advance(t);
-            while (peek(t) >= 0 && peek(t) != '\'') {
-                if (peek(t) == '\\' && peek_at(t, 1) >= 0) {
-                    advance(t);
+            /* Char literal -- bounded scan.  Real C char literals are
+            ** at most 8 bytes (`'\\xff'` etc.).  If we don't find a
+            ** closing `'` within that window, treat the `'` as a
+            ** literal byte: this happens when an action body or rule
+            ** contains a regex character class like `[^']` whose `'`
+            ** has no syntactic close.  Without the bound we'd scan
+            ** to EOF and miscount braces. */
+            size_t look = 1;
+            int found_close = 0;
+            while (look <= 8 && t->pos + look < t->len) {
+                char ch = t->src[t->pos + look];
+                if (ch == '\\' && t->pos + look + 1 < t->len) {
+                    look += 2;
+                    continue;
                 }
+                if (ch == '\'') { found_close = 1; break; }
+                look++;
+            }
+            if (found_close) {
+                /* Consume the entire char literal including close. */
+                for (size_t i = 0; i <= look; i++) advance(t);
+            } else {
+                /* Treat the lone `'` as a literal byte. */
                 advance(t);
             }
-            if (peek(t) == '\'') advance(t);
             continue;
         }
         advance(t);

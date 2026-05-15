@@ -638,40 +638,69 @@ static void parse_lexer_include(Parser *p) {
     p->spec->n_lexer_includes = n;
 }
 
-/* Parse a single rule starting at the current token (already
-** known to be LANGLE or KW_RULE).  Appends to `*tail` (which
-** points at the trailing slot of a LimeLexRule list). */
-static void parse_rule(Parser *p, LimeLexRule **list) {
-    int line = p->cur.line;
+/* Parse a state list `<NAME, NAME, ...>` (the LANGLE token is
+** at the current cursor on entry).  Stores the result in *out;
+** returns 1 on success, 0 on parse error (after emitting the
+** diagnostic and synchronising).  When the input is a single
+** rule with no state qualifier, the caller doesn't call this at
+** all (states/n_states stay 0/0). */
+static int parse_state_list(Parser *p, char ***out, int *out_n) {
     char **states = NULL;
-    int    n_states = 0;
-    int    cap = 0;
-
-    if (consume(p, LIME_LEX_TOK_LANGLE)) {
-        for (;;) {
-            if (!at(p, LIME_LEX_TOK_IDENT)) {
-                error_here(p, "expected state name in '<...>' qualifier");
-                synchronise(p);
-                free(states);
-                return;
-            }
-            if (n_states == cap) {
-                cap = cap ? cap * 2 : 4;
-                char **ns = realloc(states, cap * sizeof(char *));
-                if (!ns) { free(states); return; }
-                states = ns;
-            }
-            states[n_states++] = strndup_lexeme(&p->cur);
-            pull(p);
-            if (!consume(p, LIME_LEX_TOK_COMMA)) break;
-        }
-        if (!expect(p, LIME_LEX_TOK_RANGLE, "'>' to close state list")) {
+    int n_states = 0;
+    int cap = 0;
+    /* LANGLE already at p->cur. */
+    pull(p);
+    for (;;) {
+        if (!at(p, LIME_LEX_TOK_IDENT)) {
+            error_here(p, "expected state name in '<...>' qualifier");
+            synchronise(p);
             for (int i = 0; i < n_states; i++) free(states[i]);
             free(states);
-            return;
+            return 0;
         }
+        if (n_states == cap) {
+            cap = cap ? cap * 2 : 4;
+            char **ns = realloc(states, cap * sizeof(char *));
+            if (!ns) {
+                for (int i = 0; i < n_states; i++) free(states[i]);
+                free(states);
+                return 0;
+            }
+            states = ns;
+        }
+        states[n_states++] = strndup_lexeme(&p->cur);
+        pull(p);
+        if (!consume(p, LIME_LEX_TOK_COMMA)) break;
     }
+    if (!expect(p, LIME_LEX_TOK_RANGLE, "'>' to close state list")) {
+        for (int i = 0; i < n_states; i++) free(states[i]);
+        free(states);
+        return 0;
+    }
+    *out = states;
+    *out_n = n_states;
+    return 1;
+}
 
+/* Duplicate a state-name array (for block desugaring -- each
+** inner rule gets its own copy of the outer block's states). */
+static char **dup_state_array(char **src, int n) {
+    if (n == 0) return NULL;
+    char **out = malloc(n * sizeof(char *));
+    if (!out) return NULL;
+    for (int i = 0; i < n; i++) {
+        out[i] = src[i] ? strdup(src[i]) : NULL;
+    }
+    return out;
+}
+
+/* Parse one rule's body starting at the `rule` keyword.  States
+** are passed in pre-parsed (block form pre-applies the outer
+** block's states; single form passes its own state list).  On
+** success, transfers ownership of `states` to the new rule.  On
+** error, frees `states` and emits diagnostics. */
+static void parse_rule_body(Parser *p, char **states, int n_states,
+                            int line, LimeLexRule **list) {
     if (!expect(p, LIME_LEX_TOK_KW_RULE, "'rule' keyword")) {
         for (int i = 0; i < n_states; i++) free(states[i]);
         free(states);
@@ -704,7 +733,6 @@ static void parse_rule(Parser *p, LimeLexRule **list) {
         is_eof = 1;
         pull(p);
     } else if (at(p, LIME_LEX_TOK_STRING)) {
-        /* Allow string literal as a pattern (literal match). */
         pattern = unquote_string(&p->cur);
         pull(p);
     } else {
@@ -742,10 +770,74 @@ static void parse_rule(Parser *p, LimeLexRule **list) {
     r->action   = action;
     r->line     = line;
 
-    /* Append to caller's list. */
     LimeLexRule **tail = list;
     while (*tail) tail = &(*tail)->next;
     *tail = r;
+}
+
+/* Parse a rule or rule-block starting at the current token
+** (LANGLE or KW_RULE).  Single-rule form:
+**     [<STATES>] rule NAME matches /regex|<<EOF>>|"str"/ { action }
+** Block form (M1.4, audit gap B):
+**     <STATES> { (rule NAME matches ...)+ }
+** In the block form, inner rules MUST NOT have their own state
+** qualifier (it would be redundant); they inherit the outer
+** block's states.  Inner rule violations report a diagnostic
+** and skip the offending rule.  Both forms append all parsed
+** rules to *list. */
+static void parse_rule(Parser *p, LimeLexRule **list) {
+    int line = p->cur.line;
+    char **outer_states = NULL;
+    int    n_outer = 0;
+
+    if (at(p, LIME_LEX_TOK_LANGLE)) {
+        if (!parse_state_list(p, &outer_states, &n_outer)) return;
+    }
+
+    /* Block form?  After <STATES> a CODE_BLOCK opens a list of
+    ** rules that all inherit the outer state qualifier. */
+    if (at(p, LIME_LEX_TOK_CODE_BLOCK) && n_outer > 0) {
+        LimeLexTokenizer *inner = open_inner(&p->cur, p->filename);
+        pull(p);   /* eat CODE_BLOCK */
+        if (!inner) {
+            for (int i = 0; i < n_outer; i++) free(outer_states[i]);
+            free(outer_states);
+            return;
+        }
+
+        Parser inner_p;
+        parser_init(&inner_p, inner, p->spec, p->filename);
+        pull(&inner_p);
+        while (!at(&inner_p, LIME_LEX_TOK_EOF)) {
+            if (at(&inner_p, LIME_LEX_TOK_LANGLE)) {
+                error_at(p, inner_p.cur.line,
+                         "inner rule must not declare its own state qualifier "
+                         "(inherits the enclosing block's <...>)");
+                /* Skip the qualifier and continue. */
+                char **dummy = NULL; int dn = 0;
+                if (parse_state_list(&inner_p, &dummy, &dn)) {
+                    for (int i = 0; i < dn; i++) free(dummy[i]);
+                    free(dummy);
+                }
+            }
+            if (!at(&inner_p, LIME_LEX_TOK_KW_RULE)) {
+                error_at(p, inner_p.cur.line,
+                         "expected 'rule' inside <...>{...} block");
+                break;
+            }
+            int rule_line = inner_p.cur.line;
+            char **dup = dup_state_array(outer_states, n_outer);
+            if (!dup && n_outer > 0) break;
+            parse_rule_body(&inner_p, dup, n_outer, rule_line, list);
+        }
+        lime_lex_tokenize_free(inner);
+        for (int i = 0; i < n_outer; i++) free(outer_states[i]);
+        free(outer_states);
+        return;
+    }
+
+    /* Single-rule form: parse_rule_body takes ownership of outer_states. */
+    parse_rule_body(p, outer_states, n_outer, line, list);
 }
 
 /* %ruleset IDENT { rule ... }. */
