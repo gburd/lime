@@ -808,6 +808,26 @@ int  Parse_get_lookahead(
 );
 void Parse_clear_lookahead(void *yyp);
 
+/* P0-NEW-8: opt-in eager default-reduce drain.  After a Parse()
+** call returns the parser may be in a state whose only available
+** action is a reduce (independent of the next lookahead).  Bison's
+** pull-mode fires those reduces eagerly between yylex calls; Lime's
+** push-mode normally waits for the next push to confirm the
+** reduction.  Parse_drain forces the eager-fire behavior on demand,
+** letting drivers like ecpg's preproc -- whose action bodies have
+** side effects (fprintf to base_yyout) that must precede the
+** lexer's next echo of whitespace -- match Bison's timing.
+**
+** Loops while the top-of-stack state's default action is
+** (a) a reduce and (b) unconditional (no token-specific entries
+** would override it).  Stops on a shift state, an unconditional
+** non-reduce default, or YY_ACCEPT.  Action bodies fired during
+** drain see no lookahead (Parse_get_lookahead returns YYEMPTY).
+** Safe to call between Parse() invocations; safe to call multiple
+** times in a row (the second call is a no-op once the parser is
+** quiescent). */
+void Parse_drain(void *yyp ParseCTX_PDECL);
+
 /*
 ** Perform a reduce action and the shift that must immediately
 ** follow the reduce.
@@ -1097,6 +1117,101 @@ int Parse_get_lookahead(
 void Parse_clear_lookahead(void *yyp){
   yyParser *yypParser = (yyParser*)yyp;
   yypParser->yyLookaheadCleared = 1;
+}
+
+/* P0-NEW-8: opt-in eager default-reduce drain.  See forward-decl
+** comment above for the semantics.  Implementation: at each step,
+** check if the top state's yy_default[] entry is an unconditional
+** reduce (no token-specific entries would override it for any
+** lookahead).  If so, fire it via yy_reduce; loop.  Otherwise stop.
+**
+** Detecting "unconditional" requires scanning the state's region of
+** yy_lookahead[] for any entry that matches its position-relative
+** token code -- O(YYNTOKEN) per drain step.  This is acceptable for
+** the use case (one drain per token in the driver loop); a future
+** optimization could emit a per-state bitmap at parser-build time. */
+void Parse_drain(void *yyp ParseCTX_PDECL){
+  yyParser *yypParser = (yyParser*)yyp;
+  ParseCTX_FETCH
+#ifndef NDEBUG
+  if( yyTraceFILE ){
+    fprintf(yyTraceFILE, "%sDrain entry, top=%d\n",
+            yyTracePrompt, yypParser->yytos->stateno);
+  }
+#endif
+  for(;;){
+    YYACTIONTYPE state = yypParser->yytos->stateno;
+    YYACTIONTYPE def;
+    int base, i, unconditional;
+    ParseTOKENTYPE dummy_tok;
+    unsigned int ruleno;
+
+    /* Case 1: state is a deferred reduce from a prior
+    ** SHIFTREDUCE action.  In that case yy_shift stashed
+    ** stateno = (real_state) + (YY_MIN_REDUCE - YY_MIN_SHIFTREDUCE)
+    ** so the next Parse() call would re-enter the dispatch loop
+    ** and fire the reduce on the new lookahead.  Fire it here
+    ** instead -- with no lookahead in hand, exactly the
+    ** semantics the caller asked for. */
+    if( state >= YY_MIN_REDUCE && state <= YY_MAX_REDUCE ){
+      ruleno = (unsigned int)(state - YY_MIN_REDUCE);
+#ifndef NDEBUG
+      if( yyTraceFILE ){
+        fprintf(yyTraceFILE,
+            "%sDrain firing deferred SHIFTREDUCE rule %u\n",
+            yyTracePrompt, ruleno);
+      }
+#endif
+      memset(&dummy_tok, 0, sizeof(dummy_tok));
+      yy_reduce(yypParser, ruleno, YYNOCODE, dummy_tok ParseCTX_PARAM);
+      continue;
+    }
+
+    /* Case 2: state is a normal shift state.  If its default
+    ** action is an unconditional reduce (no token-specific
+    ** entries would override it for any lookahead), fire that
+    ** reduce now.  Otherwise stop -- a real lookahead is
+    ** required to disambiguate. */
+    if( state > YY_MAX_SHIFT ) break;       /* error/accept etc. */
+
+    def = yy_default[state];
+    if( def < YY_MIN_REDUCE || def > YY_MAX_REDUCE ) break;
+
+    if( state > YY_SHIFT_COUNT ){
+      /* Out of yy_shift_ofst[] range -- no specific actions
+      ** possible, so the default is unconditional. */
+      unconditional = 1;
+    }else{
+      base = yy_shift_ofst[state];
+      unconditional = 1;
+      for( i=0; i<YYNTOKEN; i++ ){
+        int j = base + i;
+        if( j>=0 && j<YY_ACTTAB_COUNT && yy_lookahead[j]==(YYCODETYPE)i ){
+          unconditional = 0;
+          break;
+        }
+      }
+    }
+    if( !unconditional ) break;
+
+    ruleno = (unsigned int)(def - YY_MIN_REDUCE);
+#ifndef NDEBUG
+    if( yyTraceFILE ){
+      fprintf(yyTraceFILE,
+          "%sDrain firing unconditional default reduce by rule %u\n",
+          yyTracePrompt, ruleno);
+    }
+#endif
+    memset(&dummy_tok, 0, sizeof(dummy_tok));
+    yy_reduce(yypParser, ruleno, YYNOCODE, dummy_tok ParseCTX_PARAM);
+    /* Loop. */
+  }
+#ifndef NDEBUG
+  if( yyTraceFILE ){
+    fprintf(yyTraceFILE, "%sDrain exit, top=%d\n",
+            yyTracePrompt, yypParser->yytos->stateno);
+  }
+#endif
 }
 
 void Parse(

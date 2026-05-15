@@ -414,6 +414,75 @@ Example mirroring ecpg's source-text concatenation:
 See `tests/test_yylloc_default_grammar.y` for a self-contained
 example using `struct {int start; int end;}` locations.
 
+## Push vs pull semantics
+
+Lime is a push-driven parser: the caller feeds tokens into
+`Parse(parser, tok, value, loc)` one at a time.  Bison is
+pull-driven: the parser repeatedly calls `yylex()` to fetch
+tokens.
+
+This difference is mostly invisible at the grammar level, but two
+corner cases need explicit support:
+
+### Action-time lookahead access (`Parse_get_lookahead` / `Parse_clear_lookahead`)
+
+A Bison action that reads `yychar` (the pending lookahead) or
+calls `yyclearin` to consume it has push-mode equivalents:
+
+```c
+int  Parse_get_lookahead(void *parser, ParseTOKENTYPE *value
+                         /* , YYLOCATIONTYPE *loc -- when %locations */);
+void Parse_clear_lookahead(void *parser);
+```
+
+Returns `YYEMPTY` (-2) when no `Parse()` call is in progress.
+Use case: an empty rule's action body needs to peek at the
+next token, decide what to do, and possibly tell the parser the
+token has been consumed.  PostgreSQL `plpgsql` uses this in
+`decl_datatype` and a dozen sibling rules.  Shipped in P0-NEW-5.
+
+### Eager default-reduce drain (`Parse_drain`)
+
+Bison's pull-mode fires default reduces between `yylex()` calls;
+Lime's push-mode waits for the next `Parse()` call to confirm the
+reduce.  When action bodies have side effects (writing to an
+output stream, mutating shared state) that must precede the
+lexer's next side effects, the timing difference is observable.
+
+```c
+void Parse_drain(void *parser);
+```
+
+Call after each `Parse()` to fire any pending default reduces.
+Loops until the parser is in a state that requires a real
+lookahead.  Idempotent past quiescence (multiple calls in a row
+are safe).  Action bodies fired during drain see no lookahead
+(`Parse_get_lookahead` returns `YYEMPTY`).
+
+Driver template for grammars that need Bison-equivalent reduce
+timing:
+
+```c
+while ((tok = lex_next()) != 0) {
+    Parse(parser, tok, value, loc);
+    Parse_drain(parser);   /* match Bison's pull-mode timing */
+}
+Parse(parser, 0, eof_value, eof_loc);   /* push EOF */
+```
+
+Motivating example: PostgreSQL `ecpg`'s preprocessor has a
+lex-time `echo_text` channel and a reduce-time `fprintf` channel
+both writing to the same `FILE *`.  Without `Parse_drain`,
+reduces fire AFTER the lexer's next echo, scrambling the output.
+With `Parse_drain`, reduces fire BEFORE the lexer's next echo,
+matching Bison's pull-mode order.  Shipped in P0-NEW-8.
+
+See `tests/test_drain_grammar.y` for a self-contained
+discriminator: a three-token grammar where the driver appends a
+space between `Parse()` calls and the action bodies append the
+token text; with drain the buffer is `"A B C "`, without drain
+it's `" A B C"`.
+
 ## Quick Reference Card
 
 | Task | Bison | Lime |

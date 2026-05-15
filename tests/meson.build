@@ -413,6 +413,34 @@ test_lex_parse = executable('test_lex_parse',
 
 test('lex_parse', test_lex_parse)
 
+# P0-NEW-8: opt-in eager default-reduce drain.  Discriminator
+# mirrors ecpg's lex-time-vs-reduce-time channel interleaving:
+# the driver appends a marker between Parse() calls (simulating
+# pgc.c's echo_text), grammar action bodies append token text
+# at reduce time.  Without Parse_drain, source order is wrong
+# (lexer marker beats action's first-token write).  With
+# Parse_drain between pushes, order matches Bison's pull-mode
+# timing.
+test_drain_gen = custom_target('test_drain_parser',
+  input   : ['test_drain_grammar.y'],
+  output  : ['test_drain_grammar.c', 'test_drain_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_drain = executable('test_drain',
+  'test_drain.c',
+  test_drain_gen,
+  dependencies : lime_parser_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('drain', test_drain)
+
 # P0-NEW-3 evidence test: confirm Lime's LALR(1) default-reduce for
 # empty productions works as designed.  The PG migration team in
 # Lime-Letter-4 claimed Lime fires %syntax_error on inputs that

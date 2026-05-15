@@ -657,6 +657,51 @@ names at the parser's current state (e.g.,
 The caller must
 .BR free (3)
 the result.
+.SH "BISON-COMPATIBILITY API"
+.PP
+Functions that exist to ease porting from Bison-generated parsers.
+All renameable via the
+.B %name_prefix
+directive.
+.TP
+.BI "int " Parse_get_lookahead( "void *parser" ", " "ParseTOKENTYPE *value" " [, " "YYLOCATIONTYPE *loc" "]" );
+.PD 0
+.TP
+.BI "void " Parse_clear_lookahead( "void *parser" );
+.PD
+Action-body access to the parser's pending lookahead.  Equivalent
+to Bison's
+.BR yychar " / " yyclearin .
+Returns
+.B YYEMPTY
+(-2) when no
+.B Parse()
+call is in progress.  Used by grammars where an empty production
+needs to consume the lookahead and pull further tokens from the
+lexer itself (PostgreSQL plpgsql is the motivating example).
+P0-NEW-5.
+.TP
+.BI "void " Parse_drain( "void *parser" );
+Fire any pending default reduces eagerly, matching Bison's pull-mode
+timing.  In Lime's push-mode, after
+.B Parse()
+shifts a token the parser may be in a state whose only available
+next action is a reduce.  By default Lime waits for the next
+.B Parse()
+call to confirm the reduce; this opt-in primitive forces the
+reduce to fire now.  Useful for drivers whose action bodies have
+side effects (writing to an output stream, mutating shared state)
+that must precede the lexer's next side effects.  PostgreSQL ecpg
+is the motivating example.  Loops until the top of stack is in a
+state that requires a real lookahead, the parser accepts, or
+encounters an error.  Safe to call between
+.B Parse()
+invocations and idempotent past quiescence.  Action bodies fired
+during drain see no lookahead
+.RB ( Parse_get_lookahead
+returns
+.BR YYEMPTY ).
+P0-NEW-8.
 .SH "SEE ALSO"
 .BR lime (1),
 .BR yacc (1),
