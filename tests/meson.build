@@ -435,6 +435,17 @@ test_lex_round_trip = executable('test_lex_round_trip',
 
 test('lex_round_trip', test_lex_round_trip)
 
+# M2.1 of the lexer subsystem: regex parser.  Builds an AST
+# from regex source strings (POSIX-extended subset).  Input to
+# the M2.2 NFA construction (Thompson's algorithm).
+test_lex_regex = executable('test_lex_regex',
+  'test_lex_regex.c',
+  dependencies : lime_lex_compiler_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_regex', test_lex_regex)
+
 # P0-NEW-8: opt-in eager default-reduce drain.  Discriminator
 # mirrors ecpg's lex-time-vs-reduce-time channel interleaving:
 # the driver appends a marker between Parse() calls (simulating
