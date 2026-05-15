@@ -367,15 +367,16 @@ the rule head (e.g.
 .B "@$"
 or
 .B "@<lhsalias>"
--- the location of the LHS slot.  Inside an action body this reads
-the slot-reuse value (= the first RHS's location for non-empty
-rules, or the lookahead's location for empty rules); the
-post-override value (when
+-- the location of the LHS slot.  Inside an action body these
+bind to a per-reduce local that holds the LHS location.  Lime
+populates the local before the action runs (via
 .B YYLLOC_DEFAULT
-is defined) is observed by the next reduce that consumes this LHS
-as an RHS.  See
-.B Location override
-below.
+when defined, or the built-in default otherwise) and commits
+it to the LHS slot after the action returns.  An action body
+can read the default and/or write the local via
+.BI "@$ = " expr ;
+the written value is what survives.  This matches Bison's
+documented ordering.
 .RE
 .TP
 .BI "#define YYLLOC_DEFAULT(" "Current" ", " "Rhs" ", " "N" )\| ...

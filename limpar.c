@@ -829,10 +829,55 @@ static YYACTIONTYPE yy_reduce(
   YYACTIONTYPE yyact;             /* The next action */
   yyStackEntry *yymsp;            /* The top of the parser's stack */
   int yysize;                     /* Amount to pop the stack */
+#ifdef YYLOCATIONTYPE
+  /* P0-NEW-7: per-reduce LHS-location local.  Bound to @$ /
+  ** @<lhsalias> in user action bodies, so the action sees
+  ** Bison's documented pre-action default and may overwrite
+  ** it.  Computed below before the action switch; committed
+  ** to the LHS slot's yyloc after the stack adjustment. */
+  YYLOCATIONTYPE yyloc_lhs;
+# ifndef YYRHSLOC
+#  define YYRHSLOC(Rhs, K) ((Rhs)[K])
+# endif
+#endif
   ParseARG_FETCH
   (void)yyLookahead;
   (void)yyLookaheadToken;
   yymsp = yypParser->yytos;
+
+#ifdef YYLOCATIONTYPE
+  /* Compute the LHS location BEFORE the action body, matching
+  ** Bison's documented YYLLOC_DEFAULT ordering (P0-NEW-7).  The
+  ** action body's @$ writes go to yyloc_lhs and are preserved;
+  ** see P0-NEW-6 for why this matters (ecpg's preproc.y has 70+
+  ** non-trivial @$ assignments that build source-text
+  ** accumulation across each reduce). */
+  {
+    int yyN = -yyRuleInfoNRhs[yyruleno];   /* nrhs >= 0 */
+# ifdef YYLLOC_DEFAULT
+    /* User-defined override.  Build a 0-indexed YYLOCATIONTYPE
+    ** array per Bison's signature: Rhs[i] for i in 1..N is the
+    ** i-th RHS's location, Rhs[0] is the slot below the rule
+    ** (used for empty-rule fallback). */
+    YYLOCATIONTYPE yyloc_rhs[YYNRHS_MAX + 1];
+    int yi;
+    yyloc_rhs[0] = yymsp[-yyN].yyloc;
+    for( yi=1; yi<=yyN; yi++ ){
+      yyloc_rhs[yi] = yymsp[yi-yyN].yyloc;
+    }
+    YYLLOC_DEFAULT(yyloc_lhs, yyloc_rhs, yyN);
+# else
+    /* Built-in default: Rhs[1] for non-empty, lookahead for
+    ** empty.  Same observable result as the prior post-action
+    ** slot-reuse logic. */
+    if( yyN == 0 ){
+      yyloc_lhs = yypParser->yyLookaheadLoc;
+    }else{
+      yyloc_lhs = yymsp[1-yyN].yyloc;
+    }
+# endif
+  }
+#endif
 
   switch( yyruleno ){
   /* Beginning here are the reduction cases.  A typical example
@@ -864,68 +909,11 @@ static YYACTIONTYPE yy_reduce(
   yymsp->stateno = (YYACTIONTYPE)yyact;
   yymsp->major = (YYCODETYPE)yygoto;
 #ifdef YYLOCATIONTYPE
-# ifdef YYLLOC_DEFAULT
-  /* P0-NEW-6: user-defined YYLLOC_DEFAULT.  When the grammar's
-  ** %include block (or the generated header) defines
-  **
-  **    #define YYLLOC_DEFAULT(Current, Rhs, N) ...
-  **
-  ** we honor Bison's signature on every reduce: Current is the
-  ** new LHS location (lvalue), Rhs is a 0-indexed array of
-  ** YYLOCATIONTYPE such that Rhs[i] for i in 1..N is the i-th
-  ** RHS's location, and Rhs[0] is the location of the slot
-  ** below the rule (used for empty-rule fallback).
-  **
-  ** YYRHSLOC(Rhs, K) is provided as ((Rhs)[K]) so user macros
-  ** that follow Bison's documented YYRHSLOC indirection also
-  ** work.
-  **
-  ** Implementation: at this point yymsp has already been adjusted
-  ** to the LHS slot via yymsp += yysize+1; yysize is -N for non-
-  ** empty rules and 0 for empty rules.  The OLD RHS slots are
-  ** still live in stack memory: Rhs[1] is at yymsp[0], Rhs[i]
-  ** at yymsp[i-1], and Rhs[0] at yymsp[-1] (the slot below the
-  ** rule, which is always in-bounds because yystack[0] is a
-  ** zero-initialised sentinel populated by ParseInit).
-  **
-  ** YYNRHS_MAX is emitted by lime as the longest RHS in the
-  ** grammar, so the array fits on the stack with no VLA. */
-# ifndef YYRHSLOC
-#  define YYRHSLOC(Rhs, K) ((Rhs)[K])
-# endif
-  {
-    YYLOCATIONTYPE yyloc_rhs[YYNRHS_MAX + 1];
-    YYLOCATIONTYPE yyloc_lhs;
-    int yyN = -yysize;       /* yysize is <= 0; -yysize == N >= 0. */
-    int yi;
-    yyloc_rhs[0] = yymsp[-1].yyloc;
-    for( yi=1; yi<=yyN; yi++ ){
-      yyloc_rhs[yi] = yymsp[yi-1].yyloc;
-    }
-    YYLLOC_DEFAULT(yyloc_lhs, yyloc_rhs, yyN);
-    yymsp->yyloc = yyloc_lhs;
-  }
-# else
-  /* Built-in default: Bison's standard YYLLOC_DEFAULT behavior.
-  **
-  ** For non-empty rules (yysize<0) the LHS slot at *yymsp now
-  ** physically overlaps the first RHS's old slot -- only the
-  ** stateno and major fields above were rewritten, the yyloc
-  ** field is preserved by the slot reuse and already holds the
-  ** first RHS's location.  This matches Bison's default
-  **    YYLLOC_DEFAULT(Current, Rhs, N) ::= Rhs[1]
-  ** for non-empty productions.
-  **
-  ** For empty rules (yysize==0) yymsp is a freshly-allocated
-  ** slot above the previous top; its yyloc is undefined.  The
-  ** Bison convention is to set it to the position of the
-  ** lookahead -- exactly what yyLookaheadLoc carries.  See
-  ** P0-NEW-2 in Lime-Letter-4. */
-  if( yysize == 0 ){
-    yymsp->yyloc = yypParser->yyLookaheadLoc;
-  }
-# endif /* YYLLOC_DEFAULT */
-#endif /* YYLOCATIONTYPE */
+  /* P0-NEW-7: commit the LHS location computed before the
+  ** action body (and possibly overwritten by the action via
+  ** @$ / @<lhsalias>) to the LHS slot's yyloc field. */
+  yymsp->yyloc = yyloc_lhs;
+#endif
   yyTraceShift(yypParser, yyact, "... then shift");
   return yyact;
 }

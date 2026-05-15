@@ -354,19 +354,16 @@ boot_openStmt(A) ::= OPEN boot_ident(B). {
    the code block: `%destructor sym { free($$); }`. Bison puts the code
    first: `%destructor { free($$); } sym`.
 
-9. **YYLLOC_DEFAULT timing**: Lime evaluates `YYLLOC_DEFAULT` *after* the
-   action body for the same reduce, then assigns the result to the LHS
-   slot.  Bison evaluates it *before* the action body and stages it in
-   `yyloc`.  Practically: inside an action body, `@$` / `@<lhsalias>`
-   reads the *pre-override* value (the slot reuse of `Rhs[1]` for
-   non-empty rules; the lookahead's location for empty rules).  The
-   *post-override* value is observed by the next reduce that consumes
-   this LHS as an RHS (via `@<rhsalias>` or `@N`).  Action bodies that
-   only chain locations through subsequent rules (the common ecpg
-   pattern, where YYLLOC_DEFAULT concatenates source-text strings
-   across each reduce) work without modification.  Bodies that read
-   `@$` mid-action and expect Bison's pre-action ordering need to be
-   restructured to read RHS locations explicitly.
+9. **YYLLOC_DEFAULT timing**: Lime evaluates `YYLLOC_DEFAULT` *before*
+   the action body for the same reduce, stores the result in a
+   per-reduce local, binds `@$` / `@<lhsalias>` to that local, and
+   commits the local's final value to the LHS slot's `yyloc` after
+   the action body returns.  This is Bison's documented ordering.
+   An action body that writes `@$ = expr` overwrites the default
+   for this reduce's LHS location; an action body that does not
+   write `@$` inherits the default unchanged.  This is what the
+   ecpg `@$ = cat_str(...)` source-text-accumulation pattern
+   relies on.
 
 ## Location override (`YYLLOC_DEFAULT`)
 

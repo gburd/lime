@@ -363,6 +363,35 @@ test_yylloc_default = executable('test_yylloc_default',
 
 test('yylloc_default', test_yylloc_default)
 
+# P0-NEW-7: Bison-compatible YYLLOC_DEFAULT pre-action ordering.
+# The action body's `@$ = expr` write must survive the LHS-yyloc
+# commit at the end of the reduce.  Without this, ecpg's preproc.y
+# (70+ rules with non-trivial @$ assignments building source-text
+# accumulation) sees its action overrides silently overwritten by
+# the YYLLOC_DEFAULT default, producing duplicated tokens in the
+# emitted source (`int x x ;`).  Discriminator: a multi-rule list
+# whose action overrides @$ via cat_str-style concatenation; final
+# location must hold the assembled source-text, not just Rhs[1].
+test_yylloc_action_assign_gen = custom_target('test_yylloc_action_assign_parser',
+  input   : ['test_yylloc_action_assign_grammar.y'],
+  output  : ['test_yylloc_action_assign_grammar.c', 'test_yylloc_action_assign_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_yylloc_action_assign = executable('test_yylloc_action_assign',
+  'test_yylloc_action_assign.c',
+  test_yylloc_action_assign_gen,
+  dependencies : lime_parser_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('yylloc_action_assign', test_yylloc_action_assign)
+
 # P0-NEW-3 evidence test: confirm Lime's LALR(1) default-reduce for
 # empty productions works as designed.  The PG migration team in
 # Lime-Letter-4 claimed Lime fires %syntax_error on inputs that

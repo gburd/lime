@@ -5053,14 +5053,16 @@ PRIVATE int translate_code(struct lime *lemp, struct rule *rp){
     }
     /* @$ -- Bison's literal LHS-location syntax.  Lemon historically
     ** has no $$ form (LHS is referenced by alias), but @$ is too
-    ** entrenched in bison-derived grammars to ignore.  Treat it as
-    ** the LHS slot's yyloc when %locations is active; otherwise emit
-    ** an explanatory diagnostic and skip. */
+    ** entrenched in bison-derived grammars to ignore.  Expands to
+    ** the per-reduce LHS-location local `yyloc_lhs` (computed by
+    ** YYLLOC_DEFAULT or its built-in default before the action
+    ** body runs; committed to the LHS slot's yyloc field after).
+    ** This gives the action body Bison's documented pre-action
+    ** ordering: @$ reads the default and may be overwritten by
+    ** the action.  See P0-NEW-7 in Lime-Letter-8. */
     if( *cp=='@' && cp[1]=='$' ){
       if( lemp->has_locations ){
-        char buf[64];
-        lemon_sprintf(buf, "yymsp[%d].yyloc", 1 - rp->nrhs);
-        append_str(buf, 0, 0, 0);
+        append_str("yyloc_lhs", 0, 0, 0);
       }else{
         ErrorMsg(lemp->filename, rp->ruleline,
           "@$ used but the grammar does not declare %%locations.");
@@ -5076,13 +5078,16 @@ PRIVATE int translate_code(struct lime *lemp, struct rule *rp){
       *xp = 0;
       if( rp->lhsalias && strcmp(cp,rp->lhsalias)==0 ){
         if( cp!=rp->code && cp[-1]=='@' ){
-          /* @<lhsalias> -- LHS location, post-reduce.  Bison's @$
-          ** equivalent.  Lives at yymsp[1-nrhs].yyloc, the slot the
-          ** LHS will occupy once the reduce completes.  Falls back
-          ** to the LHS value when %locations isn't active, matching
-          ** the @<rhsalias> behaviour above. */
+          /* @<lhsalias> -- LHS location.  P0-NEW-7: expands to the
+          ** per-reduce yyloc_lhs local so the action body sees
+          ** Bison's documented pre-action default and may overwrite
+          ** it.  yyloc_lhs is computed before the action switch by
+          ** YYLLOC_DEFAULT (when defined) or by the built-in default
+          ** (Rhs[1] for non-empty, lookahead for empty), and is
+          ** committed to the LHS slot's yyloc after the action and
+          ** stack adjustment. */
           if( lemp->has_locations ){
-            append_str("yymsp[%d].yyloc",-1,1-rp->nrhs,0);
+            append_str("yyloc_lhs", -1, 0, 0);
           }else{
             append_str(zLhs,0,0,0);
           }
