@@ -127,3 +127,23 @@ lime_parser_dep = declare_dependency(
   include_directories : inc,
   dependencies : [thread_dep, dl_dep] + jit_deps,
 )
+
+# .lex source-language frontend (M1 of the lexer project).
+# Built as a separate static library because it is part of the
+# lime generator binary, not the runtime library that ships with
+# generated parsers.  The lexer subsystem will grow to include
+# the AST/parser (lex_parse.c), pattern fragment resolution, and
+# eventually the DFA compiler -- all linked into this lib.
+lime_lex_compiler_lib = static_library('lime_lex_compiler',
+  files(
+    'lex/lex_tokenize.c',
+  ),
+  include_directories : [inc, include_directories('lex')],
+  c_args : coverage_args,
+  link_args : coverage_link_args,
+)
+
+lime_lex_compiler_dep = declare_dependency(
+  link_with : [lime_lex_compiler_lib],
+  include_directories : [inc, include_directories('lex')],
+)

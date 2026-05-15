@@ -392,6 +392,17 @@ test_yylloc_action_assign = executable('test_yylloc_action_assign',
 
 test('yylloc_action_assign', test_yylloc_action_assign)
 
+# M1 phase 1 of the lexer subsystem: .lex source-language
+# tokenizer.  No DFA, no parser yet -- just the byte-level
+# token stream that the M1 parser will consume.
+test_lex_tokenize = executable('test_lex_tokenize',
+  'test_lex_tokenize.c',
+  dependencies : lime_lex_compiler_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_tokenize', test_lex_tokenize)
+
 # P0-NEW-3 evidence test: confirm Lime's LALR(1) default-reduce for
 # empty productions works as designed.  The PG migration team in
 # Lime-Letter-4 claimed Lime fires %syntax_error on inputs that
