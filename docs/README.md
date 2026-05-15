@@ -27,6 +27,7 @@
 | [MIGRATION_FROM_YACC.md](MIGRATION_FROM_YACC.md) | Porting Yacc grammars to Lime |
 | [JIT_ANALYSIS.md](JIT_ANALYSIS.md) | JIT compilation cost-benefit analysis |
 | [PARSER_PLUGIN_DESIGN.md](PARSER_PLUGIN_DESIGN.md) | Plugin system design |
+| [LEXER_DESIGN.md](LEXER_DESIGN.md) | Lexer component design (v0.1 draft, in review) |
 | [MODULE_FORMAT.md](MODULE_FORMAT.md) | Modular grammar file format |
 | [LITERATE_FORMAT.md](LITERATE_FORMAT.md) | Literate grammar format |
 
