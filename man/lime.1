@@ -213,6 +213,25 @@ compiler options through build systems.
 .TP
 .B \-x
 Print the version number and exit.
+.TP
+.B \-X
+Run in lex-compiler mode (lexer subsystem M1 frontend).
+Reads the input as a
+.B .lex
+source file, runs parse \(-> resolve \(-> pretty-print, and
+writes the canonical
+.B .lex
+representation to standard output.
+Used for syntax-checking and round-trip validation;
+future milestones extend this to emit DFA tables and
+generated C runtime code.
+See
+.BR lime_grammar (5)
+and
+.B docs/LEXER_DESIGN.md
+for the
+.B .lex
+syntax.
 .SH GRAMMAR FILE FORMAT
 A grammar file consists of a sequence of production rules and
 directives.

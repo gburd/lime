@@ -2098,6 +2098,11 @@ int main(int argc, char **argv){
   static int formatFlag = 0;
   static int verboseConflict = 0;
   static int aotFlag = 0;
+  static int lexFlag = 0;       /* -X: run as .lex compiler */
+
+  /* Forward decl: defined in src/lex/lex_main.c, linked in via
+  ** the lime executable's source list in meson.build. */
+  extern int lime_lex_run_compiler(const char *input_path);
 
 
   static struct s_options options[] = {
@@ -2134,6 +2139,8 @@ int main(int argc, char **argv){
     {OPT_FSTR, "U", (char*)handle_U_option, "Undefine a macro."},
     {OPT_FLAG, "V", (char*)&verboseConflict,
                     "Verbose conflict diagnostics with derivation paths."},
+    {OPT_FLAG, "X", (char*)&lexFlag,
+                    "Run as .lex compiler (lexer subsystem M1 frontend)."},
     {OPT_FSTR, "W", 0, "Ignored.  (Placeholder for '-W' compiler options.)"},
     {OPT_FLAG,0,0,0}
   };
@@ -2150,6 +2157,25 @@ int main(int argc, char **argv){
   if( OptNArgs()!=1 ){
     fprintf(stderr,"Exactly one filename argument is required.\n");
     exit(1);
+  }
+  if( lexFlag ){
+    /* -X: run the .lex compiler frontend instead of the parser
+    ** generator.  Reads the input as a .lex source file, runs
+    ** parse -> resolve -> pretty-print, writes canonical .lex
+    ** to stdout.  M2 will extend this to emit DFA tables and
+    ** generated C runtime code. */
+    const char *input = NULL;
+    int k;
+    for(k=1; argv[k]; k++){
+      if( argv[k][0]=='-' || strchr(argv[k],'=') ) continue;
+      input = argv[k];
+      break;
+    }
+    if( !input ){
+      fprintf(stderr, "lime -X: missing input filename\n");
+      exit(1);
+    }
+    exit(lime_lex_run_compiler(input));
   }
   memset(&lem, 0, sizeof(lem));
   lem.errorcnt = 0;

@@ -22,11 +22,11 @@ add_project_arguments('-D_GNU_SOURCE', language : 'c')
 # Project-wide include directory
 inc = include_directories('include')
 
-# Build the lime parser generator tool from root lime.c
-lime_exe = executable('lime',
-  'lime.c',
-  install : true,
-)
+# Build the lime parser generator tool from root lime.c.  The
+# executable also links in the lex compiler subsystem so the -X
+# flag dispatches to the .lex frontend (M1 of the lexer
+# project).  Defined after subdir('src') so lime_lex_compiler_lib
+# is in scope.
 
 # Install man pages
 install_man('man/lime.1', 'man/lime_grammar.5')
@@ -77,6 +77,13 @@ install_headers(lime_public_headers, subdir : 'lime')
 
 # Build the library components from src/
 subdir('src')
+
+lime_exe = executable('lime',
+  'lime.c',
+  link_with : [lime_lex_compiler_lib],
+  include_directories : [inc, include_directories('src/lex')],
+  install : true,
+)
 
 # pkg-config file so downstream meson/cmake/autotools builds can
 # locate Lime via dependency('lime') / pkg_check_modules(LIME ..) /
