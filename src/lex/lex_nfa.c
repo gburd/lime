@@ -336,7 +336,78 @@ LimeNfa *lime_lex_nfa_from_regex(const LimeReNode *root) {
     n->start = f.start;
     n->accept = f.end;
     n->states[f.end].is_accept = 1;
+    n->states[f.end].accept_rule = 0;
     return n;
+}
+
+/* Combine multiple NFAs into one.  New start state with epsilon
+** edges to each input's start.  Each input's accept state keeps
+** its accept_rule.  Inputs are consumed (their state arrays
+** stitched into the output, then the input NFA shells freed).
+*/
+LimeNfa *lime_lex_nfa_combine(LimeNfa **nfas, int n_nfas) {
+    if (n_nfas <= 0 || !nfas) return NULL;
+    /* Validate all inputs are non-NULL. */
+    for (int i = 0; i < n_nfas; i++) {
+        if (!nfas[i]) return NULL;
+    }
+    /* Total state count = sum of inputs + 1 for new start. */
+    int total = 1;
+    for (int i = 0; i < n_nfas; i++) total += nfas[i]->n_states;
+
+    LimeNfa *out = calloc(1, sizeof(*out));
+    if (!out) return NULL;
+    out->states = calloc(total, sizeof(*out->states));
+    if (!out->states) { free(out); return NULL; }
+    out->cap = out->n_states = total;
+
+    /* New start = state 0. */
+    int new_start = 0;
+    out->states[0].id = 0;
+    out->start = new_start;
+    out->accept = -1;          /* no single accept; per-rule */
+
+    /* Append each input NFA, remapping state ids by adding the
+    ** current offset. */
+    int next_id = 1;
+    for (int i = 0; i < n_nfas; i++) {
+        LimeNfa *src = nfas[i];
+        int base = next_id;
+        for (int s = 0; s < src->n_states; s++) {
+            int dst_id = base + s;
+            out->states[dst_id].id          = dst_id;
+            out->states[dst_id].is_accept   = src->states[s].is_accept;
+            out->states[dst_id].accept_rule = src->states[s].accept_rule;
+            out->states[dst_id].anchor_start= src->states[s].anchor_start;
+            out->states[dst_id].anchor_end  = src->states[s].anchor_end;
+            /* Steal the edges list verbatim, remapping targets. */
+            out->states[dst_id].edges = src->states[s].edges;
+            for (LimeNfaEdge *e = out->states[dst_id].edges; e; e = e->next) {
+                e->target += base;
+            }
+            src->states[s].edges = NULL;   /* prevent free in next loop */
+        }
+        /* Add epsilon edge from new start to this NFA's start. */
+        LimeNfaEdge *eps = calloc(1, sizeof(*eps));
+        if (!eps) {
+            /* Restore -- caller will free the inputs, partial
+            ** output here is incoherent so just bail. */
+            lime_lex_nfa_free(out);
+            return NULL;
+        }
+        eps->kind   = LIME_NFA_EPS;
+        eps->target = base + src->start;
+        eps->next   = out->states[new_start].edges;
+        out->states[new_start].edges = eps;
+        next_id += src->n_states;
+    }
+
+    /* Free input shells (their edges were stolen above). */
+    for (int i = 0; i < n_nfas; i++) {
+        free(nfas[i]->states);
+        free(nfas[i]);
+    }
+    return out;
 }
 
 /* ============================================================

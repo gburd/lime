@@ -49,7 +49,9 @@ struct LimeNfaEdge {
 typedef struct {
     int           id;
     LimeNfaEdge  *edges;
-    int           is_accept;    /* set on the unique accept state */
+    int           is_accept;    /* set on accept states */
+    int           accept_rule;  /* rule id (0-based); only meaningful when
+                                 ** is_accept is set.  Set by combiners. */
     int           anchor_start; /* set on states reachable only after ^ */
     int           anchor_end;   /* set if this state requires end-of-input */
 } LimeNfaState;
@@ -64,8 +66,21 @@ typedef struct {
 
 /* Build an NFA from the regex AST.  Returns NULL on alloc
 ** failure.  The returned NFA owns all its states and edges;
-** release with lime_lex_nfa_free. */
+** release with lime_lex_nfa_free.  Sets accept_rule = 0 on the
+** unique accept state; callers combining multiple per-rule NFAs
+** should set accept_rule on each before combining. */
 LimeNfa *lime_lex_nfa_from_regex(const LimeReNode *root);
+
+/* Combine an array of per-rule NFAs into a single NFA whose
+** start state has epsilon-edges to each input NFA's start.
+** Each input NFA's accept state is preserved with its own
+** accept_rule.  The combined NFA's `accept` field is set to -1
+** (since there is no single accept state); is_accept survives
+** on each per-rule terminal.  Inputs are CONSUMED -- their
+** state arrays are merged into the output and the input NFAs
+** are freed.  Returns NULL on alloc failure (with all inputs
+** still owned by the caller in that case). */
+LimeNfa *lime_lex_nfa_combine(LimeNfa **nfas, int n_nfas);
 
 void lime_lex_nfa_free(LimeNfa *nfa);
 

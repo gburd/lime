@@ -184,9 +184,28 @@ static int intern_state(Build *bld, const unsigned char *set,
     bld->records[id].set = malloc(bld->nfa_bytes);
     if (!bld->records[id].set) return -1;
     memcpy(bld->records[id].set, set, bld->nfa_bytes);
-    /* Mark accept if the NFA accept state is in the set. */
-    if (bmap_has(set, bld->nfa->accept)) {
-        bld->dfa->states[id].is_accept = 1;
+    /* Determine accept status: a DFA state is accepting iff any
+    ** NFA state in its set is accepting.  Among accepting NFA
+    ** states, pick the LOWEST rule id (declaration order =
+    ** priority on length ties; rule 0 wins over rule 1).  When
+    ** the NFA has a single accept state (single-rule input from
+    ** lime_lex_nfa_from_regex), this is just "accept_rule = 0". */
+    {
+        int best_rule = -1;
+        int any_accept = 0;
+        for (int s = 0; s < bld->nfa->n_states; s++) {
+            if (!bmap_has(set, s)) continue;
+            if (!bld->nfa->states[s].is_accept) continue;
+            int r = bld->nfa->states[s].accept_rule;
+            if (!any_accept || r < best_rule) {
+                best_rule = r;
+                any_accept = 1;
+            }
+        }
+        if (any_accept) {
+            bld->dfa->states[id].is_accept = 1;
+            bld->dfa->states[id].accept_rule = best_rule;
+        }
     }
     if (created_out) *created_out = 1;
     return id;

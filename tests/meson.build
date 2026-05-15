@@ -478,6 +478,17 @@ test_lex_dfa_min = executable('test_lex_dfa_min',
 
 test('lex_dfa_min', test_lex_dfa_min)
 
+# M2.5a of the lexer subsystem: multi-rule NFA combiner +
+# accept-rule tagging.  Tests the NFA combine + subset
+# construction's lowest-rule-id resolution on overlap.
+test_lex_combine = executable('test_lex_combine',
+  'test_lex_combine.c',
+  dependencies : lime_lex_compiler_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_combine', test_lex_combine)
+
 # P0-NEW-8: opt-in eager default-reduce drain.  Discriminator
 # mirrors ecpg's lex-time-vs-reduce-time channel interleaving:
 # the driver appends a marker between Parse() calls (simulating
