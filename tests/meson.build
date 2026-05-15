@@ -458,6 +458,15 @@ test_lex_nfa = executable('test_lex_nfa',
 
 test('lex_nfa', test_lex_nfa)
 
+# M2.3 of the lexer subsystem: subset construction (NFA -> DFA).
+test_lex_dfa = executable('test_lex_dfa',
+  'test_lex_dfa.c',
+  dependencies : lime_lex_compiler_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_dfa', test_lex_dfa)
+
 # P0-NEW-8: opt-in eager default-reduce drain.  Discriminator
 # mirrors ecpg's lex-time-vs-reduce-time channel interleaving:
 # the driver appends a marker between Parse() calls (simulating
