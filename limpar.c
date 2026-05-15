@@ -395,6 +395,13 @@ void ParseInit(void *yypRawParser ParseCTX_PDECL){
   ** sees a defined value if it fires before the first ParseLoc() call,
   ** or in pull-parser mode (Parse() without ParseLoc()). */
   memset(&yypParser->yyLookaheadLoc, 0, sizeof(yypParser->yyLookaheadLoc));
+  /* P0-NEW-6: zero-init the sentinel slot's yyloc.  When yy_reduce
+  ** invokes a user-defined YYLLOC_DEFAULT it reads yymsp[-1].yyloc
+  ** (the location of the slot below the rule, Bison's Rhs[0]).  For
+  ** the very first reduce -- particularly an empty rule -- yymsp[-1]
+  ** is yystack[0], the parser's stack sentinel.  Without this init,
+  ** that read returns whatever was in heap memory at allocation. */
+  memset(&yypParser->yystack[0].yyloc, 0, sizeof(yypParser->yystack[0].yyloc));
 #endif
   /* Initialise action-time lookahead state (P0-NEW-5).  YYEMPTY is
   ** -2 by convention (matching bison's yychar empty value); use it
@@ -857,7 +864,49 @@ static YYACTIONTYPE yy_reduce(
   yymsp->stateno = (YYACTIONTYPE)yyact;
   yymsp->major = (YYCODETYPE)yygoto;
 #ifdef YYLOCATIONTYPE
-  /* YYLLOC_DEFAULT-equivalent: set the LHS slot's yyloc.
+# ifdef YYLLOC_DEFAULT
+  /* P0-NEW-6: user-defined YYLLOC_DEFAULT.  When the grammar's
+  ** %include block (or the generated header) defines
+  **
+  **    #define YYLLOC_DEFAULT(Current, Rhs, N) ...
+  **
+  ** we honor Bison's signature on every reduce: Current is the
+  ** new LHS location (lvalue), Rhs is a 0-indexed array of
+  ** YYLOCATIONTYPE such that Rhs[i] for i in 1..N is the i-th
+  ** RHS's location, and Rhs[0] is the location of the slot
+  ** below the rule (used for empty-rule fallback).
+  **
+  ** YYRHSLOC(Rhs, K) is provided as ((Rhs)[K]) so user macros
+  ** that follow Bison's documented YYRHSLOC indirection also
+  ** work.
+  **
+  ** Implementation: at this point yymsp has already been adjusted
+  ** to the LHS slot via yymsp += yysize+1; yysize is -N for non-
+  ** empty rules and 0 for empty rules.  The OLD RHS slots are
+  ** still live in stack memory: Rhs[1] is at yymsp[0], Rhs[i]
+  ** at yymsp[i-1], and Rhs[0] at yymsp[-1] (the slot below the
+  ** rule, which is always in-bounds because yystack[0] is a
+  ** zero-initialised sentinel populated by ParseInit).
+  **
+  ** YYNRHS_MAX is emitted by lime as the longest RHS in the
+  ** grammar, so the array fits on the stack with no VLA. */
+# ifndef YYRHSLOC
+#  define YYRHSLOC(Rhs, K) ((Rhs)[K])
+# endif
+  {
+    YYLOCATIONTYPE yyloc_rhs[YYNRHS_MAX + 1];
+    YYLOCATIONTYPE yyloc_lhs;
+    int yyN = -yysize;       /* yysize is <= 0; -yysize == N >= 0. */
+    int yi;
+    yyloc_rhs[0] = yymsp[-1].yyloc;
+    for( yi=1; yi<=yyN; yi++ ){
+      yyloc_rhs[yi] = yymsp[yi-1].yyloc;
+    }
+    YYLLOC_DEFAULT(yyloc_lhs, yyloc_rhs, yyN);
+    yymsp->yyloc = yyloc_lhs;
+  }
+# else
+  /* Built-in default: Bison's standard YYLLOC_DEFAULT behavior.
   **
   ** For non-empty rules (yysize<0) the LHS slot at *yymsp now
   ** physically overlaps the first RHS's old slot -- only the
@@ -875,7 +924,8 @@ static YYACTIONTYPE yy_reduce(
   if( yysize == 0 ){
     yymsp->yyloc = yypParser->yyLookaheadLoc;
   }
-#endif
+# endif /* YYLLOC_DEFAULT */
+#endif /* YYLOCATIONTYPE */
   yyTraceShift(yypParser, yyact, "... then shift");
   return yyact;
 }

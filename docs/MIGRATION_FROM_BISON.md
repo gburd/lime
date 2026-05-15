@@ -19,6 +19,8 @@ PostgreSQL bootstrap parser in `examples/bootstrap/`.
 | `%lex-param { T *p }` | (none) | Lime uses push parsing; caller manages the lexer |
 | `%pure-parser` | (default) | Lime parsers are always reentrant |
 | `%expect N` | `%expect N.` | Supported.  Lime treats the count as an **exact-match assertion** (unlike Bison's loose "at most N"): if the actual conflict count differs, `lime` exits non-zero.  Currently reports a combined shift/reduce + reduce/reduce total; distinct `%expect_shift_reduce` / `%expect_reduce_reduce` counters are not yet separated. |
+| `%locations` | `%locations` | Supported.  Combine with `%location_type {T}` to declare the type. |
+| `#define YYLLOC_DEFAULT(C, R, N) ...` | `#define YYLLOC_DEFAULT(C, R, N) ...` | Supported.  Bison-compatible signature; see [Location override](#location-override-yylloc_default) below. |
 | `%destructor { ... } sym` | `%destructor sym { ... }` | Order is reversed |
 | `%left TOK1 TOK2` | `%left TOK1 TOK2.` | Terminating period required |
 | `%right TOK1 TOK2` | `%right TOK1 TOK2.` | Terminating period required |
@@ -351,6 +353,69 @@ boot_openStmt(A) ::= OPEN boot_ident(B). {
 8. **Destructor syntax**: Lime's `%destructor` puts the symbol name before
    the code block: `%destructor sym { free($$); }`. Bison puts the code
    first: `%destructor { free($$); } sym`.
+
+9. **YYLLOC_DEFAULT timing**: Lime evaluates `YYLLOC_DEFAULT` *after* the
+   action body for the same reduce, then assigns the result to the LHS
+   slot.  Bison evaluates it *before* the action body and stages it in
+   `yyloc`.  Practically: inside an action body, `@$` / `@<lhsalias>`
+   reads the *pre-override* value (the slot reuse of `Rhs[1]` for
+   non-empty rules; the lookahead's location for empty rules).  The
+   *post-override* value is observed by the next reduce that consumes
+   this LHS as an RHS (via `@<rhsalias>` or `@N`).  Action bodies that
+   only chain locations through subsequent rules (the common ecpg
+   pattern, where YYLLOC_DEFAULT concatenates source-text strings
+   across each reduce) work without modification.  Bodies that read
+   `@$` mid-action and expect Bison's pre-action ordering need to be
+   restructured to read RHS locations explicitly.
+
+## Location override (`YYLLOC_DEFAULT`)
+
+Bison lets a grammar override its built-in location-inheritance rule
+by `#define`-ing the macro
+
+```c
+#define YYLLOC_DEFAULT(Current, Rhs, N)  /* user code */
+```
+
+Lime honors the same signature on every reduce when the macro is
+defined in the grammar's `%include { ... }` block (or in any header
+included therein).  Semantics match Bison's documented contract:
+
+- `Current` is the LHS location, an lvalue of type `YYLOCATIONTYPE`.
+- `Rhs` is a 0-indexed array such that `Rhs[i]` for `i = 1..N` is the
+  i-th RHS symbol's location.  `Rhs[0]` is the location of the slot
+  *below* the rule on the parser stack (used for the empty-rule
+  fallback).  The array is stack-allocated per reduce, sized to fit
+  the longest RHS in the grammar (`YYNRHS_MAX`, emitted by lime).
+- `N` is the number of RHS symbols (0 for empty rules).
+
+`YYRHSLOC(Rhs, K)` is provided as `((Rhs)[K])` so user macros that
+follow Bison's documented `YYRHSLOC` indirection -- e.g. Bison's
+stock default copying first/last positions -- also work unmodified.
+
+When `YYLLOC_DEFAULT` is *not* defined, Lime applies its built-in
+rule: for non-empty rules the LHS yyloc is `Rhs[1]` (via slot reuse),
+for empty rules it is the lookahead location.
+
+Example mirroring ecpg's source-text concatenation:
+
+```c
+%location_type { char * }
+
+%include {
+#define YYLLOC_DEFAULT(Current, Rhs, N)                  \
+    do {                                                 \
+        if ((N) > 0) {                                   \
+            (Current) = cat_str_n(Rhs, N);               \
+        } else {                                         \
+            (Current) = strdup("");                      \
+        }                                                \
+    } while (0)
+}
+```
+
+See `tests/test_yylloc_default_grammar.y` for a self-contained
+example using `struct {int start; int end;}` locations.
 
 ## Quick Reference Card
 

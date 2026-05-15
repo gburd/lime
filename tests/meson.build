@@ -335,6 +335,34 @@ test_locations = executable('test_locations',
 
 test('locations', test_locations)
 
+# P0-NEW-6: user-defined YYLLOC_DEFAULT honored on every reduce.
+# Bison-style override macro that produces span(start..end) across
+# all RHS symbols.  Discriminator sub-test: a multi-RHS list
+# reduction whose .end must march forward to the last element --
+# unreachable with the pre-P0-NEW-6 slot-reuse default.  Mirrors
+# ecpg's preproc grammar shape (string-typed YYLTYPE concatenated
+# across each reduce); the LAST blocker for retiring bison from
+# the PostgreSQL tree.
+test_yylloc_default_gen = custom_target('test_yylloc_default_parser',
+  input   : ['test_yylloc_default_grammar.y'],
+  output  : ['test_yylloc_default_grammar.c', 'test_yylloc_default_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_yylloc_default = executable('test_yylloc_default',
+  'test_yylloc_default.c',
+  test_yylloc_default_gen,
+  dependencies : lime_parser_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('yylloc_default', test_yylloc_default)
+
 # P0-NEW-3 evidence test: confirm Lime's LALR(1) default-reduce for
 # empty productions works as designed.  The PG migration team in
 # Lime-Letter-4 claimed Lime fires %syntax_error on inputs that

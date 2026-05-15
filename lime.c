@@ -5868,6 +5868,20 @@ void ReportTable(
   ** pre-%first_token build; the runtime template's offset arithmetic
   ** compiles down to nothing. */
   fprintf(out,"#define YYFIRSTTOKEN %d\n", lemp->first_token); lineno++;
+  /* P0-NEW-6: longest RHS in the grammar.  Used in yy_reduce to bound
+  ** the on-stack YYLOCATIONTYPE array passed to a user-defined
+  ** YYLLOC_DEFAULT macro per Bison's signature.  Computed from
+  ** rp->nrhs across all rules; floor of 1 so the array declaration
+  ** is always well-formed even for the degenerate empty-grammar case. */
+  {
+    struct rule *rp;
+    int yymaxrhs = 0;
+    for(rp=lemp->rule; rp; rp=rp->next){
+      if( rp->nrhs > yymaxrhs ) yymaxrhs = rp->nrhs;
+    }
+    if( yymaxrhs < 1 ) yymaxrhs = 1;
+    fprintf(out,"#define YYNRHS_MAX %d\n", yymaxrhs); lineno++;
+  }
   print_stack_union(out,lemp,&lineno,mhflag);
   fprintf(out, "#ifndef YYSTACKDEPTH\n"); lineno++;
   if( lemp->stacksize ){
