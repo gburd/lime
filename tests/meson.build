@@ -467,6 +467,17 @@ test_lex_dfa = executable('test_lex_dfa',
 
 test('lex_dfa', test_lex_dfa)
 
+# M2.4 of the lexer subsystem: DFA minimization (Moore's
+# algorithm).  Asserts language preservation, no state growth,
+# and strict reduction on redundant patterns.
+test_lex_dfa_min = executable('test_lex_dfa_min',
+  'test_lex_dfa_min.c',
+  dependencies : lime_lex_compiler_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_dfa_min', test_lex_dfa_min)
+
 # P0-NEW-8: opt-in eager default-reduce drain.  Discriminator
 # mirrors ecpg's lex-time-vs-reduce-time channel interleaving:
 # the driver appends a marker between Parse() calls (simulating

@@ -56,4 +56,10 @@ int lime_lex_dfa_match(const LimeDfa *dfa, const char *bytes, size_t n);
 /* Number of DFA states.  Useful for testing and audit checks. */
 int lime_lex_dfa_state_count(const LimeDfa *dfa);
 
+/* Minimize a DFA using Moore's algorithm.  Returns a freshly
+** allocated DFA accepting the same language with the minimum
+** number of states.  The input is not modified.  Returns NULL
+** on alloc failure. */
+LimeDfa *lime_lex_dfa_minimize(const LimeDfa *src);
+
 #endif /* LIME_LEX_DFA_H */
