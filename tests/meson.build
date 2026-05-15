@@ -446,6 +446,18 @@ test_lex_regex = executable('test_lex_regex',
 
 test('lex_regex', test_lex_regex)
 
+# M2.2 of the lexer subsystem: Thompson's NFA construction +
+# bounded NFA simulator (testing only).  Inputs are regex ASTs
+# from M2.1; output is a fragment NFA fed to M2.3 subset
+# construction.
+test_lex_nfa = executable('test_lex_nfa',
+  'test_lex_nfa.c',
+  dependencies : lime_lex_compiler_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_nfa', test_lex_nfa)
+
 # P0-NEW-8: opt-in eager default-reduce drain.  Discriminator
 # mirrors ecpg's lex-time-vs-reduce-time channel interleaving:
 # the driver appends a marker between Parse() calls (simulating
