@@ -2102,7 +2102,8 @@ int main(int argc, char **argv){
 
   /* Forward decl: defined in src/lex/lex_main.c, linked in via
   ** the lime executable's source list in meson.build. */
-  extern int lime_lex_run_compiler(const char *input_path);
+  extern int lime_lex_run_compiler(const char *input_path,
+                                   const char *output_dir);
 
 
   static struct s_options options[] = {
@@ -2175,7 +2176,10 @@ int main(int argc, char **argv){
       fprintf(stderr, "lime -X: missing input filename\n");
       exit(1);
     }
-    exit(lime_lex_run_compiler(input));
+    /* outputDir is the static set by handle_d_option; pass it
+    ** through so the .lex compiler emits .c/.h to the same place
+    ** the parser generator would. */
+    exit(lime_lex_run_compiler(input, outputDir));
   }
   memset(&lem, 0, sizeof(lem));
   lem.errorcnt = 0;

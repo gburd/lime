@@ -215,16 +215,25 @@ compiler options through build systems.
 Print the version number and exit.
 .TP
 .B \-X
-Run in lex-compiler mode (lexer subsystem M1 frontend).
+Run in lex-compiler mode (lexer subsystem M3 frontend).
 Reads the input as a
 .B .lex
-source file, runs parse \(-> resolve \(-> pretty-print, and
-writes the canonical
+source file, parses it, resolves
+.B %pattern
+interpolations, compiles per-state DFAs, and emits
+.IR <stem>_lex.c " and " <stem>_lex.h
+where
+.I stem
+is the input filename without its
 .B .lex
-representation to standard output.
-Used for syntax-checking and round-trip validation;
-future milestones extend this to emit DFA tables and
-generated C runtime code.
+extension.  Output goes to the directory specified by
+.B \-d
+(default current directory).  The generated
+.B .c
++
+.B .h
+pair has no Lime runtime dependency -- compile and link with any
+C code, no library required.
 See
 .BR lime_grammar (5)
 and
