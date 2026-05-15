@@ -423,6 +423,18 @@ test_lex_resolve = executable('test_lex_resolve',
 
 test('lex_resolve', test_lex_resolve)
 
+# M1.5 of the lexer subsystem: pretty-printer round-trip.
+# parse(text) -> A; pretty(A) -> text'; parse(text') -> A';
+# pretty(A') -> text''.  Assert text' == text'' (idempotent)
+# AND A == A' (structural).  M1 ship gate.
+test_lex_round_trip = executable('test_lex_round_trip',
+  'test_lex_round_trip.c',
+  dependencies : lime_lex_compiler_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_round_trip', test_lex_round_trip)
+
 # P0-NEW-8: opt-in eager default-reduce drain.  Discriminator
 # mirrors ecpg's lex-time-vs-reduce-time channel interleaving:
 # the driver appends a marker between Parse() calls (simulating
