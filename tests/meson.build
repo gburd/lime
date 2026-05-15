@@ -500,6 +500,17 @@ test_lex_compile = executable('test_lex_compile',
 
 test('lex_compile', test_lex_compile)
 
+# M3.1 of the lexer subsystem: emit DFA tables + longest-match
+# driver as compilable C source.  Foundation for the M3.2+
+# runtime API layer.
+test_lex_emit = executable('test_lex_emit',
+  'test_lex_emit.c',
+  dependencies : lime_lex_compiler_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_emit', test_lex_emit)
+
 # P0-NEW-8: opt-in eager default-reduce drain.  Discriminator
 # mirrors ecpg's lex-time-vs-reduce-time channel interleaving:
 # the driver appends a marker between Parse() calls (simulating
