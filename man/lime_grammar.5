@@ -330,6 +330,116 @@ The default is
 Enable source location tracking in the parser.
 When enabled, each token and non-terminal carries location
 information that can be used for error reporting.
+A grammar that declares
+.B %locations
+must use
+.BR ParseLoc ()
+(or its renamed equivalent under
+.BR %name_prefix )
+to feed tokens; locations are stored in
+.B yyStackEntry.yyloc
+and can be read in actions via the
+.B @
+macros described below.
+.TP
+.BI %location_type " {" " type " "}"
+Declare the C type used to carry locations.
+The default is
+.B LimeLocation
+(a {start, end} byte-offset struct).
+Grammars typically override this -- for example, to use a single
+.B int
+byte offset (PostgreSQL's YYLTYPE convention) or a string for
+source-text accumulation (PostgreSQL's ecpg preprocessor).
+The declared type becomes
+.BR YYLOCATIONTYPE .
+.TP
+.B Location aliases in actions
+Within an action body the following macros expand to stack-slot
+location reads:
+.RS
+.IP \(bu 2
+.B @<rhsalias>
+-- the location of the i-th RHS symbol whose alias was declared in
+the rule head (e.g.
+.BR "e(E) ::= a(X) PLUS b(Y)." " -- @X, @Y)."
+.IP \(bu 2
+.B "@$"
+or
+.B "@<lhsalias>"
+-- the location of the LHS slot.  Inside an action body this reads
+the slot-reuse value (= the first RHS's location for non-empty
+rules, or the lookahead's location for empty rules); the
+post-override value (when
+.B YYLLOC_DEFAULT
+is defined) is observed by the next reduce that consumes this LHS
+as an RHS.  See
+.B Location override
+below.
+.RE
+.TP
+.BI "#define YYLLOC_DEFAULT(" "Current" ", " "Rhs" ", " "N" )\| ...
+.PD 0
+.TP
+.B Location override
+Define the macro in the grammar's
+.B %include
+block (or in any header included therein) to override Lime's
+built-in location-inheritance rule on every reduce.
+Semantics match Bison's documented contract:
+.PD
+.RS
+.IP \(bu 2
+.I Current
+is an lvalue of type
+.BR YYLOCATIONTYPE ;
+assign the LHS location to it.
+.IP \(bu 2
+.I Rhs
+is a 0-indexed array of
+.BR YYLOCATIONTYPE .
+.RI Rhs[ i ]
+for
+.IR i " = 1.." N
+is the i-th RHS symbol's location.
+.B Rhs[0]
+is the location of the slot below the rule on the parser stack
+(used for the empty-rule fallback).
+.IP \(bu 2
+.I N
+is the number of RHS symbols (0 for empty rules).
+.IP \(bu 2
+.BI YYRHSLOC( Rhs , " K" )
+is provided as
+.BI (( Rhs )[ K ])
+so user macros that follow Bison's documented YYRHSLOC indirection
+also work unmodified.
+.RE
+.IP
+When the macro is
+.I not
+defined, Lime applies its built-in rule: for non-empty rules the
+LHS yyloc is
+.B Rhs[1]
+(via slot reuse), for empty rules it is the lookahead's location.
+.IP
+The array is stack-allocated per reduce, sized to fit the longest
+RHS in the grammar (
+.BR YYNRHS_MAX ,
+emitted by
+.BR lime ).
+No VLA is used.
+.IP
+.B Note
+on timing: Lime evaluates
+.B YYLLOC_DEFAULT
+after the action body, then assigns the result to the LHS slot.
+Bison evaluates it before the action body and stages it in
+.IR yyloc .
+This is observable when an action body reads
+.B "@$"
+;
+see the alias documentation above.
 .SS "Preprocessor Directives"
 .TP
 .BI %ifdef " macro"

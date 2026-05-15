@@ -1,6 +1,61 @@
 ChangeLog for Lime Parser Generator
 ====================================
 
+2026-05-15  Greg Burd  <greg@burd.me>
+
+	* limpar.c, lime.c: Honor user-defined YYLLOC_DEFAULT macro on
+	every reduce, per Bison's documented signature
+	(Current, Rhs, N).  When the macro is defined in the grammar's
+	%include block (or any header included therein), yy_reduce
+	builds a YYLOCATIONTYPE Rhs[YYNRHS_MAX+1] from the just-popped
+	stack slots and calls the user macro to compute the LHS
+	location.  When undefined, the prior built-in default (Rhs[1]
+	via slot reuse for non-empty rules; lookahead loc for empty
+	rules) is preserved byte-for-byte -- zero behavior change for
+	grammars that don't override.  YYRHSLOC(Rhs, K) provided as
+	((Rhs)[K]) so user macros using Bison's documented YYRHSLOC
+	indirection also work.  YYNRHS_MAX is emitted by lime as the
+	longest RHS in the grammar; fixed on-stack buffer, no VLA.
+
+	* limpar.c (ParseInit): Zero-initialise yystack[0].yyloc.  The
+	sentinel slot is the Rhs[0] source for the very first reduce
+	when a user-defined YYLLOC_DEFAULT runs (e.g. an empty rule
+	fired before any token shifts).  Pre-existing default-only
+	code never read it; same convention as the existing
+	yyLookaheadLoc zero-init.
+
+	* tests/test_yylloc_default*: New focused test grammar +
+	driver.  %location_type {struct span} carrying {start, end}
+	byte offsets; YYLLOC_DEFAULT computes Bison's stock span
+	(Rhs[1].start..Rhs[N].end with Rhs[0].end empty-rule
+	fallback).  Discriminator sub-test reduces list ::= list C
+	across multiple tokens; LHS span .end must march forward to
+	each successive token.  Fails on the prior slot-reuse default;
+	passes on the new override path.
+
+	* docs/MIGRATION_FROM_BISON.md: New "Location override" section
+	documenting the YYLLOC_DEFAULT signature, YYRHSLOC, the
+	empty-rule fallback, and the post-action timing difference vs
+	Bison.  Directive-mapping rows for %locations and
+	YYLLOC_DEFAULT.  New Common Gotcha #9 on Lime's post-action
+	orderng: @$ inside an action body reads the pre-override
+	slot-reuse value; post-override is observed via @N in the
+	next reduce.
+
+	* man/lime_grammar.5: Expand "Location Tracking" subsection
+	with %location_type, the @<rhsalias> / @<lhsalias> / @$ macro
+	aliases, and the YYLLOC_DEFAULT override contract.  Backfills
+	coverage of P0-NEW-2 (location threading, shipped 2026-05-13)
+	as well as the new P0-NEW-6 override.
+
+	* Lime-Requests.txt: P1-6 ("YYLLOC_DEFAULT override") marked
+	SHIPPED.
+
+	* Note: this entry only covers the P0-NEW-6 commit; the
+	ChangeLog is otherwise 37 commits behind HEAD.  Backfilling
+	earlier P0-NEW-2/3/4/5 + P1-NEW-1 entries is a separate
+	hygiene task.
+
 2026-04-30  Greg Burd  <greg@burd.me>
 
 	* Project restructuring: move shell scripts into scripts/, move
