@@ -489,6 +489,17 @@ test_lex_combine = executable('test_lex_combine',
 
 test('lex_combine', test_lex_combine)
 
+# M2.5b of the lexer subsystem: per-state spec compilation.
+# End-to-end pipeline: spec source -> parse -> resolve ->
+# compile per-state DFAs.
+test_lex_compile = executable('test_lex_compile',
+  'test_lex_compile.c',
+  dependencies : lime_lex_compiler_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_compile', test_lex_compile)
+
 # P0-NEW-8: opt-in eager default-reduce drain.  Discriminator
 # mirrors ecpg's lex-time-vs-reduce-time channel interleaving:
 # the driver appends a marker between Parse() calls (simulating

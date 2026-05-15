@@ -51,16 +51,31 @@ LimeDfa *lime_lex_dfa_minimize(const LimeDfa *src) {
         return NULL;
     }
 
-    /* Initial partition: accept states in group 1, non-accept
-    ** in group 0.  (If only one of the two is non-empty,
-    ** everything starts in one group.) */
+    /* Initial partition.  Non-accepting states in group 0;
+    ** accepting states partitioned by accept_rule (each distinct
+    ** rule id gets its own group).  This prevents minimization
+    ** from merging two accept states that report different
+    ** rules -- crucial for multi-rule DFAs from the M2.5
+    ** combiner where each rule's accept must remain
+    ** distinguishable. */
+    int max_rule = -1;
     for (int i = 0; i < n; i++) {
-        group[i] = src->states[i].is_accept ? 1 : 0;
+        if (src->states[i].is_accept &&
+            src->states[i].accept_rule > max_rule) {
+            max_rule = src->states[i].accept_rule;
+        }
     }
+    for (int i = 0; i < n; i++) {
+        if (!src->states[i].is_accept) {
+            group[i] = 0;
+        } else {
+            group[i] = 1 + src->states[i].accept_rule;
+        }
+    }
+    int max_groups = (max_rule >= 0) ? max_rule + 2 : 1;
 
     /* Iterate. */
     int changed = 1;
-    int max_groups = 2;
     while (changed) {
         changed = 0;
         /* Compute each state's signature using the current
