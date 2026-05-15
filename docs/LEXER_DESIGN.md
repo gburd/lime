@@ -1,14 +1,22 @@
-# Lime Lexer Design (v0.1 draft)
+# Lime Lexer Design (v0.2 draft)
 
-**Status.**  This is a v0.1 design draft for review by the PostgreSQL
-Lime migration team (P0-NEW-7) and the Lime maintainer.  Not yet
-implementation-ready; expect two-to-three rounds of iteration before
-the spec stabilizes and compiler work begins.
+**Status.**  v0.2 — folds in gap analysis from
+`docs/LEXER_SCANNER_AUDIT.md` (audit of 6 PG flex scanners,
+~5,300 LOC).  v0.1 architecture survived the audit unchanged;
+five source-language gaps and three runtime gaps were filled
+in.  Open for PG team review (P0-NEW-7).  Compiler work (M1)
+begins after PG's gate-1 reaction lands.
 
-**Reading order.**  Skim Goals / Non-goals / Architecture first.  The
-worked example near the bottom is what determines whether the design
-is human-writable; the API and language sections explain how it
-desugars.
+**Reading order.**  Skim Goals / Non-goals / Architecture
+first.  The worked examples near the bottom are what determine
+whether the design is human-writable; the API and language
+sections explain how each example desugars.
+
+**Changes from v0.1.**  Detailed in the
+[v0.2 changelog](#v02-changelog) at the bottom.  TL;DR:
+`%pattern` declarations, `<STATE>{...}` block syntax,
+comma-separated multi-state qualifiers, `<STATE><<EOF>>` rules,
+`LEX_PUSHBACK`, `LEX_TERMINATE`, `LexSetState`, `%literal_buffer`.
 
 ---
 
@@ -130,9 +138,11 @@ periods, `%directive` keywords, `{C code}` blocks).  Authoring a
 | `%token_type {C type}` | Default type of a token's emitted value. |
 | `%location_type {C type}` | Type of source locations (default: `LimeLocation`). |
 | `%lexer_extra_argument {C type *name}` | Per-instance opaque user pointer (mirrors `%extra_argument`). |
+| `%pattern name /regex/.` | Named pattern fragment; reference as `{name}` in rule patterns. |
 | `%state NAME.` | Declare an inclusive state. |
 | `%state NAME { typed body }.` | Declare a state with typed local data. |
 | `%exclusive_state NAME.` | Declare an exclusive state (rules in other states do not match). |
+| `%literal_buffer NAME { type, ops }.` | Declare a managed character-accumulation buffer; emits `LEX_BUF_START`/`LEX_BUF_APPEND`/`LEX_BUF_APPEND_CH`/`LEX_BUF_TAKE` operations. |
 | `%keyword_table NAME (case_insensitive, prefix=K_) { "select", "from", ... }.` | Declare a keyword set. |
 | `%ruleset name { ... }.` | Group rules into a named, composable set. |
 | `%lexer_include name1, name2, ....` | Include rule sets into the current lexer. |
@@ -143,16 +153,53 @@ periods, `%directive` keywords, `{C code}` blocks).  Authoring a
 Each rule has the shape:
 
 ```
-[<STATE>]  rule_name  matches  /pattern/  { action body }
+[<STATE_LIST>]  rule_name  matches  /pattern/  { action body }
 ```
 
 - Optional state qualifier — when present, the rule fires only in
-  that state.  When absent, the rule fires in INITIAL.
+  the listed state(s).  When absent, the rule fires in INITIAL.
+  STATE_LIST is one or more state names separated by commas:
+  `<xq>` or `<xq, xqc, xe, xn, xus>`.
 - `rule_name` is a stable identifier used in trace output and
   introspection (`lime_lexer_to_text`).  Required.
 - `/pattern/` is a POSIX-extended regex.  Patterns are delimited by
-  `/.../` (no embedded `/` allowed; use `\/`).
+  `/.../` (no embedded `/` allowed; use `\/`).  Named pattern
+  fragments declared by `%pattern` are referenced as `{name}`.
 - Action body is C code with typed locals bound (see below).
+
+### State-qualified rule blocks
+
+For concise grouping when many rules share a state qualifier:
+
+```
+<EXPR> {
+    rule plus    matches /\+/       { LEX_EMIT_NOVAL('+'); }
+    rule minus   matches /-/        { LEX_EMIT_NOVAL('-'); }
+    rule times   matches /\*/       { LEX_EMIT_NOVAL('*'); }
+    /* ... */
+}
+```
+
+Desugars to per-rule `<EXPR>` qualifiers.  Block-form rules can
+be interleaved with non-block-form rules in the same source file;
+the state qualifier is per-rule semantically.
+
+### End-of-input rules
+
+```
+<STATE> rule rule_name matches <<EOF>> { action body }
+```
+
+Fires when input ends (the caller invokes `LexFeedEOF`) while the
+lexer is in STATE.  Used by PG scanners to detect "unterminated
+string/comment at EOF" and emit a typed error.  The unqualified
+form `<<EOF>>` (no state) fires in INITIAL.
+
+Default behavior when no `<<EOF>>` rule is declared for the
+current state: INITIAL returns `LEX_OK`; any exclusive state
+returns `LEX_ERROR`.  Match rule-name `eof_*` for clarity.
+
+### Action body locals
 
 The action body executes in a scope where these locals are live:
 
@@ -163,11 +210,21 @@ The action body executes in a scope where these locals are live:
 | `loc` | `YYLOCATIONTYPE` | Location of the matched span. |
 | `lex` | `yyLexer *` | The lexer instance handle. |
 | `extra` | as declared by `%lexer_extra_argument` | User data pointer. |
-| `state` | `yyLexState` | Current state code (an enum). |
+| `state` | `yyLexState` | Current state code (lvalue: write to save, read to inspect; assigning is equivalent to `LEX_TRANSITION` without state-data init). |
 
-Action bodies emit tokens by calling `LEX_EMIT(token, value)` (or
-`LEX_EMIT_NOVAL(token)`).  State transitions use
-`LEX_TRANSITION(NEW_STATE)` — no `BEGIN(...)` macro.
+### Action primitives
+
+Macros available inside any action body:
+
+| Macro | Effect |
+|-------|--------|
+| `LEX_EMIT(token, value)` | Emit a token with a typed value. |
+| `LEX_EMIT_NOVAL(token)` | Emit a token with no value (e.g. punctuation).  `token` may be a named token from `%token_table`/`%keyword_table` or a char literal (token codes are `int`). |
+| `LEX_TRANSITION(STATE)` | Switch to STATE; clears any prior state-local data. |
+| `LEX_TRANSITION(STATE, .field = value, ...)` | Switch and initialize state-local data. |
+| `LEX_PUSHBACK(n)` | Un-consume the trailing `matched_len - n` bytes of the just-matched text; the next iteration sees them again from the top.  Equivalent to flex's `yyless(n)`. |
+| `LEX_TERMINATE()` | Stop lexing immediately; the current `LexFeedBytes`/`LexFeedEOF` call returns `LEX_OK` with no further emits.  Distinct from emitting EOF. |
+| `LEX_ERROR_AT(msg)` | Cause the call to return `LEX_ERROR`; `msg` is stashed for `LexErrorMessage`. |
 
 ### State-local data access
 
@@ -228,14 +285,50 @@ LexResult LexFeedEOF(void *yyl, LexEmitFn emit, void *user_data);
 int  LexCurrentState(void *yyl);
 const char *LexStateName(int state);
 
+/* Caller-controlled state.  Used by scanners (e.g. exprscan.l)
+** where the embedding application chooses the start state for
+** each lex pass -- psql streams between INITIAL and EXPR for
+** different parts of the input.  Equivalent to the action-body
+** LEX_TRANSITION primitive, exposed for caller use.  Does NOT
+** initialize state-local data; if the target state declares
+** state-local data, the caller is responsible for setting it
+** via LexStateData (below). */
+void LexSetState(void *yyl, int state);
+
+/* State-local data access.  Returns a pointer to the current
+** state's struct (or NULL if the state has no local data).
+** Stable until the next LexTransition / LexSetState. */
+void *LexStateData(void *yyl);
+
+/* Pushback / un-consume.  Returns the last n bytes of the
+** previously emitted token to the input stream so they will be
+** re-matched.  Equivalent to flex's yyless(yyleng - n) behavior
+** when called outside an action body; inside an action body,
+** prefer the LEX_PUSHBACK macro.  Bounds-checked: returns
+** LEX_ERROR if n exceeds the available buffered prefix. */
+LexResult LexPushback(void *yyl, size_t n);
+
 /* Buffer stack for include directives.  LexInclude pushes a new
 ** input source onto the stack; the lexer continues from the new
-** source until it hits EOF, then resumes the prior buffer.  This
-** replaces flex's yywrap + multi-buffer machinery. */
+** source until it hits EOF, then resumes the prior buffer.  The
+** runtime tracks include depth automatically; on EOF in an
+** included buffer, the runtime pops and resumes the parent
+** without firing any <<EOF>> rule for the popped state.  No
+** yywrap-equivalent is needed.  Caller-supplied bytes are NOT
+** copied -- caller retains ownership and must keep the buffer
+** alive until the corresponding pop (which the caller can
+** observe via LexIncludeDepth). */
 LexResult LexInclude(void *yyl, const char *bytes, size_t n);
+int  LexIncludeDepth(void *yyl);
 
 /* Trace output (mirrors ParseTrace). */
 void LexTrace(void *yyl, FILE *trace, const char *prompt);
+
+/* On LEX_ERROR, retrieve a stable diagnostic string set by the
+** failing rule (via LEX_ERROR_AT or default "unmatched input")
+** or by the runtime's bounds checks.  Pointer valid until the
+** next LexFeed* call. */
+const char *LexErrorMessage(void *yyl);
 ```
 
 ### Composition with the parser
@@ -266,6 +359,38 @@ hand-writes today.
 ## Pattern language
 
 POSIX-extended regex subset.  No PCRE-isms.
+
+### Named pattern fragments
+
+Long patterns and shared sub-patterns are factored out:
+
+```
+%pattern digit         /[0-9]/.
+%pattern hexdigit      /[0-9A-Fa-f]/.
+%pattern ident_start   /[A-Za-z_]/.
+%pattern ident_cont    /[A-Za-z0-9_]/.
+%pattern identifier    /{ident_start}{ident_cont}*/.
+```
+
+Reference fragments inside any rule's `/pattern/` body using
+`{name}` interpolation.  Fragments may reference other fragments
+recursively; cycles are detected at parse time and reported as
+errors.  Forward references are allowed (declarations don't have
+to precede uses).  Fragment substitution happens before regex
+compilation, so the DFA sees the fully expanded pattern.
+
+This directly replaces flex's definitions section:
+
+```
+flex                       lime
+----                       ----
+digit       [0-9]          %pattern digit /[0-9]/.
+identifier  [A-Za-z_]+     %pattern identifier /[A-Za-z_]+/.
+```
+
+rule pattern usage `{digit}+` works identically.
+
+### Regex constructs
 
 | Construct | Meaning |
 |-----------|---------|
@@ -334,6 +459,45 @@ The generator picks the lookup implementation:
 
 For PG's `kwlist.h` (~440 SQL keywords): perfect hash.  Replaces
 the entire `gen_keywordlist.pl` machinery.
+
+## Literal buffers
+
+Four of the six PG flex scanners (every one with quoted strings)
+implement a near-identical character-accumulation primitive
+(`startlit`, `addlit`, `addlitchar`, `litbufdup`).  Lime makes
+this a first-class declaration:
+
+```
+%literal_buffer scanstr {
+    type      char       /* element type; usually char or unsigned char */
+    initial   64         /* initial capacity */
+    grow      *2         /* growth policy: doubling */
+    alloc     palloc     /* C function: void *(size_t) */
+    realloc   repalloc   /* C function: void *(void *, size_t) */
+    free      pfree      /* C function: void (void *) */
+}.
+```
+
+The declaration emits state-private buffer storage plus a family
+of macros usable in any action body:
+
+| Macro | Effect |
+|-------|--------|
+| `LEX_BUF_START(scanstr)` | Reset the buffer to empty.  Equivalent to flex's `startlit()`. |
+| `LEX_BUF_APPEND(scanstr, ptr, n)` | Append `n` elements from `ptr`.  Equivalent to `addlit(ytext, yleng, ...)`. |
+| `LEX_BUF_APPEND_CH(scanstr, ch)` | Append one element.  Equivalent to `addlitchar(ychar, ...)`. |
+| `LEX_BUF_TAKE(scanstr)` | Return a freshly allocated null-terminated copy of the buffer's contents and reset.  Caller owns the result.  Equivalent to `litbufdup(...)`. |
+| `LEX_BUF_LEN(scanstr)` | Current accumulated length. |
+| `LEX_BUF_PEEK(scanstr)` | Read-only pointer to the buffer (NOT null-terminated; use `LEX_BUF_LEN`). |
+
+Multiple `%literal_buffer` declarations are allowed (e.g. one
+buffer per concurrent string flavor).  Each is independent
+state per lexer instance.  The buffers are freed automatically
+at `LexFree` time.
+
+This collapses ~80-150 lines of per-scanner C boilerplate into
+a single declaration.  `scan.l`, `pgc.l`, `repl_scanner.l`,
+`jsonpath_scan.l` all use this exact shape.
 
 ## Locations
 
@@ -610,16 +774,22 @@ rule comment_open matches "/\\*" {
 Five milestones.  Each is independently testable and can land as
 a separate commit series on `main`.
 
-### M1 — Source language frontend (3-4 weeks)
+### M1 — Source language frontend (5-6 weeks)
 
 - Tokenizer for `.lex` syntax (fork from `tokenize.c`).
-- AST types for rules, states, keyword tables, ruleset blocks.
-- Pattern parser (POSIX-extended regex → AST).
+- AST types for rules, states, keyword tables, literal buffers,
+  ruleset blocks.
+- `%pattern` resolution pass with cycle detection.
+- Pattern parser (POSIX-extended regex → AST), with `{name}`
+  fragment expansion.
+- Multi-state qualifier parsing (`<a, b, c>`) and
+  `<STATE> { rule ... }` block desugaring.
+- `<<EOF>>` rule recognition and AST flag.
 - No DFA construction yet; just parse-and-print round-trip.
 - **Test gate**: `lime --lex --syntax-only foo.lex` round-trips
   all 6 PG scanners' converted forms with no semantic loss.
 
-### M2 — DFA compiler (4-6 weeks)
+### M2 — DFA compiler (5-7 weeks)
 
 - NFA construction from regex AST (Thompson).
 - Subset construction NFA → DFA.
@@ -627,6 +797,8 @@ a separate commit series on `main`.
 - Action attachment to accepting states.
 - Per-state DFAs for exclusive states (avoid combined-state
   blowup; cap each DFA at ~10k states).
+- Pushback bookkeeping: each DFA accept records the matched
+  prefix length so `LEX_PUSHBACK(n)` can rewind.
 - **Test gate**: `tests/test_lex_dfa_*` exercise each construction
   step on small grammars; total DFA states across all 6 PG
   scanners stay within 10× the rule count.
@@ -634,7 +806,12 @@ a separate commit series on `main`.
 ### M3 — Runtime template + emit pipeline (2-3 weeks)
 
 - `limpar_lex.c` template (analog of `limpar.c`).
-- `LexAlloc`/`LexFree`/`LexFeedBytes`/`LexFeedEOF`/`LexInclude`.
+- `LexAlloc`/`LexFree`/`LexFeedBytes`/`LexFeedEOF`/`LexInclude`/
+  `LexSetState`/`LexStateData`/`LexPushback`/`LexErrorMessage`.
+- `<<EOF>>` action dispatch on `LexFeedEOF`.
+- `LEX_TERMINATE` / `LEX_ERROR_AT` action primitives.
+- `%literal_buffer` runtime: per-state buffer storage, grow
+  policy, automatic free at `LexFree`.
 - Tokenize-and-emit hot path.
 - Trace machinery (`LexTrace`).
 - **Test gate**: bootscanner.l-equivalent passes its own
@@ -661,9 +838,16 @@ a separate commit series on `main`.
 - **Ship gate**: PG's bootscanner port replaces the flex
   bootscanner.l in their tree, all PG meson tests still pass.
 
-**Cumulative effort**: 13-20 weeks focused work.  Calendar with
-other commitments and design iteration: 5-7 months realistic, 9
-months pessimistic.
+**Cumulative effort**: 16-23 weeks focused work (revised from
+v0.1's 13-20).  Calendar with other commitments and design
+iteration: 6-8 months realistic, 9-10 months pessimistic.
+
+The budget grew because the audit (`docs/LEXER_SCANNER_AUDIT.md`)
+surfaced five hard source-language gaps that v0.1 had missed:
+`%pattern` definitions, `<STATE>{...}` blocks, multi-state
+qualifiers, `<<EOF>>` rules, and `LEX_PUSHBACK`.  All five are
+routine extensions; none introduce design risk.  Total effort
+delta: ~2-3 weeks across M1+M2.
 
 ## What's deferred to v2
 
@@ -781,10 +965,92 @@ this draft:
   separate `.y` and `.lex` targets fine?  Single output file
   per scanner or pair?
 
-When (A)/(B)/(C) come back I'll fold the feedback into a v0.2
+When (A)/(B)/(C) come back I'll fold the feedback into a v0.3
 draft and we move to compiler implementation (M1).
+
+## v0.2 changelog
+
+Changes from v0.1.  Driven by the empirical PG scanner audit at
+`docs/LEXER_SCANNER_AUDIT.md` (six PG flex scanners, ~5,300
+LOC).  No architecture changes; v0.1's nine sketches survived
+the audit unmodified.  Source-language and runtime API both
+grew to cover idioms the v0.1 spec couldn't express.
+
+**Source language additions**:
+
+- `%pattern name /regex/.` named pattern fragments with `{name}`
+  interpolation in rules.  Replaces flex's definitions section.
+  Necessary for any non-trivial scanner -- `scan.l` has ~30.
+- `<STATE> { rule ... }` block syntax for state-qualified rules.
+  Avoids repeating `<EXPR>` 80 times in `exprscan.l`-shaped
+  scanners.
+- Comma-separated multi-state qualifiers: `<xq, xqc, xe, xn, xus>`.
+  Required for `pgc.l`-shape "all string-flavor states share an
+  EOF rule" pattern.
+- `<STATE> rule rule_name matches <<EOF>> { ... }` end-of-input
+  rules.  Default behavior: INITIAL returns `LEX_OK`; any
+  exclusive state without an EOF rule returns `LEX_ERROR`.
+  Required for PG's "unterminated string at EOF" diagnostics.
+- `%literal_buffer NAME { ... }` directive for managed character-
+  accumulation buffers.  Replaces the `startlit`/`addlit`/
+  `addlitchar`/`litbufdup` boilerplate that four PG scanners
+  re-implement.
+
+**Action body API additions**:
+
+- `LEX_PUSHBACK(n)`: un-consume the trailing bytes of the
+  just-matched text.  Equivalent to flex's `yyless(n)`.  Used
+  ~70 times across the audit corpus.
+- `LEX_TERMINATE()`: stop lexing immediately, return `LEX_OK`
+  with no further emits.  Equivalent to flex's `yyterminate()`.
+- `LEX_ERROR_AT(msg)`: cause the call to return `LEX_ERROR`
+  with the supplied message available via `LexErrorMessage`.
+- `LEX_BUF_START` / `LEX_BUF_APPEND` / `LEX_BUF_APPEND_CH` /
+  `LEX_BUF_TAKE` / `LEX_BUF_LEN` / `LEX_BUF_PEEK`: literal
+  buffer operations.
+- Action-body local `state` is now documented as an lvalue that
+  can be assigned to (semantically equivalent to
+  `LEX_TRANSITION(value)` without state-data init).
+
+**Runtime C API additions**:
+
+- `LexSetState(yyl, state)`: caller-controlled state switch,
+  exposing the action-body `LEX_TRANSITION` primitive.  Required
+  by `exprscan.l`'s caller-driven INITIAL/EXPR mode shape.
+- `LexStateData(yyl)`: read the current state's local-data
+  pointer.
+- `LexPushback(yyl, n)`: pushback from outside an action body.
+- `LexIncludeDepth(yyl)`: how many `LexInclude` levels deep,
+  for caller-side buffer-lifetime management.
+- `LexErrorMessage(yyl)`: stable diagnostic string after
+  `LEX_ERROR`.
+- Documented: `LexInclude` does not copy the supplied bytes;
+  caller retains ownership and must keep the buffer alive
+  until the corresponding pop.  EOF in an included buffer
+  pops automatically without firing any `<<EOF>>` rule.
+
+**Documented (no spec change)**:
+
+- Token codes are `int`; char literals like `'+'` are valid
+  arguments to `LEX_EMIT_NOVAL`.
+- State save/restore via the `state` local + a regular C
+  variable + `LEX_TRANSITION(saved)`.  No new API needed.
+- ecpg-overlay states (`pgc.l`'s `C` `SQL` `incl` `def`
+  `def_ident` `undef`) handled as regular exclusive states in
+  the same rule set; runtime composition (sketch 4-runtime)
+  remains v2.
+
+**Implementation plan**: M1 grows from 3-4 to 5-6 weeks; M2
+from 4-6 to 5-7 weeks (pushback's interaction with longest-
+match DFA bookkeeping).  Total v1 budget: 16-23 weeks focused
+(was 13-20).
+
+**Architecture unchanged.**  All v0.1 sketches retained; all
+v0.1 non-goals retained; all v0.1 deferred-to-v2 items still
+deferred.
 
 ---
 
-*v0.1 draft authored 2026-05-15 by Greg Burd.  Iteration tracking:
-none yet; bump version on substantive changes.*
+*v0.1 draft authored 2026-05-15 by Greg Burd.  v0.2 draft
+authored 2026-05-15 same day after PG-scanner audit.  Iteration
+tracking: bump version on substantive changes.*
