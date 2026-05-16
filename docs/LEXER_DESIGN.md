@@ -190,14 +190,60 @@ the state qualifier is per-rule semantically.
 <STATE> rule rule_name matches <<EOF>> { action body }
 ```
 
-Fires when input ends (the caller invokes `LexFeedEOF`) while the
-lexer is in STATE.  Used by PG scanners to detect "unterminated
-string/comment at EOF" and emit a typed error.  The unqualified
-form `<<EOF>>` (no state) fires in INITIAL.
+Fires when the lexer reaches end-of-input in any buffer-stack
+frame while in STATE.  Used by PG scanners to detect
+"unterminated string/comment at EOF" and emit a typed error.
+The unqualified form `<<EOF>>` (no state) fires in INITIAL.
 
 Default behavior when no `<<EOF>>` rule is declared for the
 current state: INITIAL returns `LEX_OK`; any exclusive state
 returns `LEX_ERROR`.  Match rule-name `eof_*` for clarity.
+
+**Per-frame firing.**  EOF rules fire on every buffer-stack
+frame that hits end-of-input, not just the outermost one.  The
+dispatch happens inside `LexFeedBytes` on the auto-pop branch
+(see "Buffer stack for include directives" below); the matching
+rule for the current state runs **before** the frame is popped.
+This covers both the bottom frame (the bytes the caller pushed
+via `LexFeedBytes` itself) and every frame pushed by
+`LexInclude`.  `LexFeedEOF` is therefore a tail signal only --
+the per-state EOF action has already run by the time control
+returns from `LexFeedBytes` -- and calling it after a clean
+`LexFeedBytes` is a no-op.
+
+The action body's locals match a regular rule body's: `lex` is
+the instance, `state` is the current state at the moment of
+EOF in that frame (and is an lvalue), `extra` is the user
+pointer, and `matched` / `matched_len` are bound to the empty
+string so action code that conditionally inspects them is
+well-defined.  All action-body macros are live: `LEX_EMIT`,
+`LEX_TRANSITION`, `LEX_PUSHBACK`, `LEX_TERMINATE`, and
+`LEX_ERROR_AT` all behave as in a regular rule body.  An EOF
+action does NOT auto-emit -- the rule body is the source of
+truth.
+
+**Practical consequence.**  An `<INITIAL><<EOF>>` rule fires
+once per `LexFeedBytes` call's bottom frame, and the same rule
+fires again every time a `LexInclude`'d frame hits its own EOF
+(when the lexer is in INITIAL at that moment).  This is the
+right shape for ecpg-style grammars where each include unit is
+logically its own input -- each pop wants the same
+end-of-translation-unit handling.  It is the wrong shape for a
+grammar that wants a single end-of-translation-unit signal
+across include nesting; for that case, gate the action body on
+a flag in `extra`:
+
+```c
+<INITIAL> rule eof_init matches <<EOF>> {
+    if (((MyExtra *)extra)->eof_seen) break;
+    ((MyExtra *)extra)->eof_seen = 1;
+    LEX_EMIT(MY_RULE_END_OF_TRANSLATION_UNIT);
+}
+```
+
+The runtime does not deduplicate firings across frames; that
+policy belongs in user code where the grammar's intent is
+known.
 
 ### Action body locals
 
@@ -312,8 +358,11 @@ LexResult LexPushback(void *yyl, size_t n);
 ** input source onto the stack; the lexer continues from the new
 ** source until it hits EOF, then resumes the prior buffer.  The
 ** runtime tracks include depth automatically; on EOF in an
-** included buffer, the runtime pops and resumes the parent
-** without firing any <<EOF>> rule for the popped state.  No
+** included buffer, the matching <<EOF>> rule for the current
+** state fires (inside the auto-pop branch of LexFeedBytes,
+** before the frame is popped), then control resumes in the
+** parent frame.  See "End-of-input rules" for the per-frame
+** firing semantics and the user-side dedup recipe.  No
 ** yywrap-equivalent is needed.  Caller-supplied bytes are NOT
 ** copied -- caller retains ownership and must keep the buffer
 ** alive until the corresponding pop (which the caller can
@@ -1027,7 +1076,11 @@ grew to cover idioms the v0.1 spec couldn't express.
 - Documented: `LexInclude` does not copy the supplied bytes;
   caller retains ownership and must keep the buffer alive
   until the corresponding pop.  EOF in an included buffer
-  pops automatically without firing any `<<EOF>>` rule.
+  fires the matching `<<EOF>>` rule for the current state
+  (per-frame) before the auto-pop unwinds the frame, so the
+  same rule may fire multiple times across a `LexFeedBytes`
+  call when `LexInclude` is used.  See "End-of-input rules"
+  for the rationale and the user-side dedup recipe.
 
 **Documented (no spec change)**:
 
