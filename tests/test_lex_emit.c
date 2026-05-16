@@ -133,7 +133,7 @@ static int test_minimal_emit(void) {
     EXPECT_CONTAINS(c, "\"kw_if\"");
     EXPECT_CONTAINS(c, "\"ident\"");
     EXPECT_CONTAINS(c, "\"num\"");
-    EXPECT_CONTAINS(c, "Foo_dfa_INITIAL_n_states");
+    EXPECT_CONTAINS(c, "Foo_dfa_INITIAL_start");
     EXPECT_CONTAINS(c, "Foo_dfa_INITIAL_trans");
     EXPECT_CONTAINS(c, "Foo_dfa_INITIAL_accept");
     EXPECT_CONTAINS(c, "int Foo_match(int state");

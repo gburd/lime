@@ -511,6 +511,32 @@ test_lex_emit = executable('test_lex_emit',
 
 test('lex_emit', test_lex_emit)
 
+# M3.3 of the lexer subsystem: push-driven runtime API.
+# End-to-end pipeline test: lime -X compiles the .lex grammar
+# to .c + .h, the test driver compiles against the generated
+# header and exercises LexAlloc/Free/FeedBytes/FeedEOF/etc.
+# This is the first test that actually compiles+runs lime-
+# generated runtime code.
+test_lex_runtime_gen = custom_target('test_lex_runtime_lex',
+  input   : ['test_lex_runtime_grammar.lex'],
+  output  : ['test_lex_runtime_grammar_lex.c',
+             'test_lex_runtime_grammar_lex.h'],
+  command : [
+    lime_exe,
+    '-X',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_lex_runtime = executable('test_lex_runtime',
+  'test_lex_runtime.c',
+  test_lex_runtime_gen,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_runtime', test_lex_runtime)
+
 # P0-NEW-8: opt-in eager default-reduce drain.  Discriminator
 # mirrors ecpg's lex-time-vs-reduce-time channel interleaving:
 # the driver appends a marker between Parse() calls (simulating
