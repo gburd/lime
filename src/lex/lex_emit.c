@@ -516,6 +516,37 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         }
     }
 
+    /* M3.6: per-state EOF-rule lookup.  state_eof_rule[i] is
+    ** the global rule index of the <<EOF>> rule that fires when
+    ** the lexer hits end-of-input in state i, or -1 if no such
+    ** rule applies.  Multi-state qualifiers (e.g. <a, b><<EOF>>)
+    ** populate every listed state's slot with the same rule
+    ** index.  If a state has more than one applicable EOF rule
+    ** (overlapping multi-state qualifiers), the first one in
+    ** declaration order wins. */
+    short *state_eof_rule = NULL;
+    int any_eof = 0;
+    if (have_actions && c->n_states > 0) {
+        state_eof_rule = malloc((size_t)c->n_states * sizeof(*state_eof_rule));
+        if (!state_eof_rule) {
+            free(rule_actions); free(rule_is_eof);
+            free(PREFIX);
+            return -1;
+        }
+        for (int si = 0; si < c->n_states; si++) {
+            state_eof_rule[si] = -1;
+            const LimeLexCompiledState *cs = &c->states[si];
+            for (int k = 0; k < cs->n_rules; k++) {
+                int gi = cs->rule_indices[k];
+                if (gi >= 0 && gi < n_rules && rule_is_eof[gi]) {
+                    state_eof_rule[si] = (short)gi;
+                    any_eof = 1;
+                    break;
+                }
+            }
+        }
+    }
+
     /* Macro definitions: scoped to LexFeedBytes by paired
     ** #define / #undef.  They reference the function-locals
     ** matched, matched_len, lex, state, _action_emitted,
@@ -542,6 +573,25 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "} while (0)\n"
         "#define LEX_PUSHBACK(n) (void)%sLexPushback(lex, (size_t)(n))\n\n",
         prefix, prefix);
+
+    /* M3.6: emit the per-state EOF-rule lookup table.  The
+    ** auto-pop branch of LexFeedBytes indexes this with the
+    ** lexer's current state to find the rule whose action body
+    ** to run before unwinding the buffer-stack frame. */
+    if (any_eof) {
+        fprintf(out,
+            "/* M3.6: per-state <<EOF>> rule index (-1 = no rule). */\n"
+            "static const short %s_eof_rule[%d] = {\n   ",
+            prefix, c->n_states);
+        for (int si = 0; si < c->n_states; si++) {
+            fprintf(out, " %d%s", state_eof_rule[si],
+                    (si + 1 < c->n_states) ? "," : "");
+            if ((si + 1) % 12 == 0 && si + 1 < c->n_states) {
+                fprintf(out, "\n   ");
+            }
+        }
+        fprintf(out, "\n};\n\n");
+    }
 
     fprintf(out,
         "%sLexResult %sLexInclude(%sLexer *yyl,\n"
@@ -607,9 +657,55 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "        int top = yyl->depth - 1;\n"
         "        size_t fpos = yyl->stack[top].pos;\n"
         "        size_t flen = yyl->stack[top].len;\n"
-        "        if (fpos >= flen) {\n"
-        "            /* Auto-pop on EOF.  M3.6 will fire <<EOF>> rules\n"
-        "            ** here; for now, just unwind silently. */\n"
+        "        if (fpos >= flen) {\n",
+        prefix, prefix, prefix, prefix,
+        PREFIX, PREFIX, PREFIX);
+
+    /* M3.6: EOF-rule dispatch inside the auto-pop branch.  When
+    ** the top-of-stack frame is exhausted, look up the EOF rule
+    ** for the current lexer state and run its action body before
+    ** unwinding the frame.  An EOF action body sees matched="",
+    ** matched_len=0, and the same lex/state/_action_emitted
+    ** locals as a normal-rule body, so LEX_EMIT/LEX_TRANSITION/
+    ** LEX_ERROR_AT/LEX_TERMINATE all work.  No auto-emit on
+    ** EOF: the rule's body is the source of truth. */
+    if (any_eof) {
+        fprintf(out,
+            "            /* M3.6: fire <<EOF>> rule for the current state. */\n"
+            "            int _eof_rule = -1;\n"
+            "            if (yyl->state >= 0 && yyl->state < %d) {\n"
+            "                _eof_rule = %s_eof_rule[yyl->state];\n"
+            "            }\n"
+            "            if (_eof_rule >= 0) {\n"
+            "                const char *matched = \"\";\n"
+            "                size_t matched_len = 0;\n"
+            "                %sLexer *lex = yyl;\n"
+            "                int state = lex->state;\n"
+            "                int _action_emitted = 0;\n"
+            "                switch (_eof_rule) {\n",
+            c->n_states, prefix, prefix);
+        for (int i = 0; i < n_rules; i++) {
+            if (!rule_is_eof[i]) continue;
+            const char *body = rule_actions[i] ? rule_actions[i] : "";
+            fprintf(out,
+                "                case %d: {\n"
+                "%s\n"
+                "                } break;\n",
+                i, body);
+        }
+        fprintf(out,
+            "                default: break;\n"
+            "                }\n"
+            "                lex->state = state;\n"
+            "                (void)matched; (void)matched_len;\n"
+            "                (void)_action_emitted;\n"
+            "                if (_error) return %s_LEX_ERROR;\n"
+            "                if (_terminate) return %s_LEX_OK;\n"
+            "            }\n",
+            PREFIX, PREFIX);
+    }
+
+    fprintf(out,
         "            yyl->depth--;\n"
         "            continue;\n"
         "        }\n"
@@ -635,8 +731,6 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "        int state = lex->state;\n"
         "        int _action_emitted = 0;\n"
         "        switch (rule) {\n",
-        prefix, prefix, prefix, prefix,
-        PREFIX, PREFIX, PREFIX,
         prefix, PREFIX, prefix);
 
     if (have_actions) {
@@ -675,13 +769,17 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
 
     free(rule_actions);
     free(rule_is_eof);
+    free(state_eof_rule);
     fprintf(out,
         "%sLexResult %sLexFeedEOF(%sLexer *yyl,\n"
         "                            %sEmitFn emit, void *user) {\n"
-        "    /* M3.5: no <<EOF>> rule dispatch yet (deferred to M3.6).\n"
-        "    ** Auto-pop of included buffers is handled inside\n"
-        "    ** LexFeedBytes; this entry point becomes meaningful once\n"
-        "    ** EOF actions can fire user code. */\n"
+        "    /* M3.6: <<EOF>> rule dispatch lives in the LexFeedBytes\n"
+        "    ** auto-pop branch -- it fires once per buffer-stack\n"
+        "    ** frame as that frame hits end-of-input, including the\n"
+        "    ** bottom frame that LexFeedBytes itself pushes.  This\n"
+        "    ** entry point therefore has nothing to do beyond signal\n"
+        "    ** clean termination; calling it after LexFeedBytes\n"
+        "    ** returned LEX_OK is a no-op. */\n"
         "    (void)yyl; (void)emit; (void)user;\n"
         "    return %s_LEX_OK;\n"
         "}\n\n",

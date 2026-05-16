@@ -618,6 +618,52 @@ test_lex_m3_integration = executable('test_lex_m3_integration',
 
 test('lex_m3_integration', test_lex_m3_integration)
 
+# M3.6 of the lexer subsystem: <<EOF>> rule dispatch in the
+# LexFeedBytes auto-pop branch.  Two grammars feed one driver:
+#   - test_lex_eof_grammar.lex declares both an unqualified
+#     <<EOF>> rule (firing in INITIAL) and an <XQ><<EOF>> rule
+#     (firing only in the exclusive XQ state); the driver
+#     verifies per-state dispatch, LEX_EMIT and LEX_ERROR_AT
+#     inside an EOF action, and EOF firing on every
+#     buffer-stack frame's auto-pop including LexInclude'd
+#     frames.
+#   - test_lex_eof_none_grammar.lex declares zero EOF rules and
+#     pins the regression that LexFeedBytes still returns
+#     LEX_OK on end-of-input when the codegen omits the EOF
+#     dispatch entirely (the `any_eof == 0` branch).
+test_lex_eof_gen = custom_target('test_lex_eof_lex',
+  input   : ['test_lex_eof_grammar.lex'],
+  output  : ['test_lex_eof_grammar_lex.c',
+             'test_lex_eof_grammar_lex.h'],
+  command : [
+    lime_exe,
+    '-X',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_lex_eof_none_gen = custom_target('test_lex_eof_none_lex',
+  input   : ['test_lex_eof_none_grammar.lex'],
+  output  : ['test_lex_eof_none_grammar_lex.c',
+             'test_lex_eof_none_grammar_lex.h'],
+  command : [
+    lime_exe,
+    '-X',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_lex_eof = executable('test_lex_eof',
+  'test_lex_eof.c',
+  test_lex_eof_gen,
+  test_lex_eof_none_gen,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_eof', test_lex_eof)
+
 # P0-NEW-8: opt-in eager default-reduce drain.  Discriminator
 # mirrors ecpg's lex-time-vs-reduce-time channel interleaving:
 # the driver appends a marker between Parse() calls (simulating
