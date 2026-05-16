@@ -168,8 +168,16 @@ int lime_lex_emit_h(const LimeLexCompiled *c,
             prefix);
     fprintf(out, "             int *out_rule, size_t *out_consumed);\n\n");
 
-    /* M3.3: push-driven runtime API. */
-    fprintf(out, "/* ===== Push-driven runtime API (M3.3) ===== */\n\n");
+    /* M3.3: push-driven runtime API (extended in M3.5 with the
+    ** include buffer stack and pushback). */
+    fprintf(out, "/* ===== Push-driven runtime API (M3.3 + M3.5) ===== */\n\n");
+    fprintf(out,
+        "/* Maximum nesting depth of LexInclude calls (counting the\n"
+        "** initial LexFeedBytes buffer as the bottom frame).  64 is\n"
+        "** well above any real-world include nesting; if exceeded,\n"
+        "** LexInclude returns LEX_ERROR rather than overflowing. */\n"
+        "#define %s_LEX_MAX_INCLUDE_DEPTH 64\n\n",
+        PREFIX);
     fprintf(out, "typedef struct %sLexer %sLexer;\n\n", prefix, prefix);
     fprintf(out,
         "typedef enum {\n"
@@ -205,6 +213,35 @@ int lime_lex_emit_h(const LimeLexCompiled *c,
         prefix,
         prefix, prefix,
         prefix, prefix,
+        prefix, prefix);
+
+    fprintf(out,
+        "/* Push a new input source onto the lexer's buffer stack.\n"
+        "** The lexer continues from the new source until it hits EOF,\n"
+        "** then automatically resumes the parent buffer.  The supplied\n"
+        "** bytes are NOT copied -- the caller retains ownership and\n"
+        "** must keep the buffer alive until the corresponding pop\n"
+        "** (observable via LexIncludeDepth).  Typical use: from inside\n"
+        "** an emit callback that just recognised an INCLUDE directive.\n"
+        "** Returns LEX_ERROR if the lexer is NULL or the maximum\n"
+        "** include depth has been reached. */\n"
+        "%sLexResult  %sLexInclude(%sLexer *yyl,\n"
+        "                            const char *bytes, size_t n);\n\n",
+        prefix, prefix, prefix);
+    fprintf(out,
+        "/* Un-consume the last n bytes from the top-of-stack buffer.\n"
+        "** Equivalent to flex's yyless(yyleng - n) when called outside\n"
+        "** an action body.  Bounds-checked against the available\n"
+        "** buffered prefix in the current frame: returns LEX_ERROR if\n"
+        "** n exceeds the bytes consumed so far in that frame, or the\n"
+        "** buffer stack is empty. */\n"
+        "%sLexResult  %sLexPushback(%sLexer *yyl, size_t n);\n\n",
+        prefix, prefix, prefix);
+    fprintf(out,
+        "/* Number of LexInclude levels currently active.  0 when no\n"
+        "** include is on the stack (i.e. the lexer is processing the\n"
+        "** original LexFeedBytes buffer or is idle). */\n"
+        "int           %sLexIncludeDepth(const %sLexer *yyl);\n\n",
         prefix, prefix);
 
     fprintf(out, "#endif /* %s_LEX_H */\n", PREFIX);
@@ -375,14 +412,23 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     fprintf(out, "    return 1;\n");
     fprintf(out, "}\n\n");
 
-    /* ===== M3.3: push-driven runtime ===== */
-    fprintf(out, "/* ===== Push-driven runtime (M3.3) ===== */\n\n");
+    /* ===== M3.3 + M3.5: push-driven runtime ===== */
+    fprintf(out, "/* ===== Push-driven runtime (M3.3 + M3.5) ===== */\n\n");
     fprintf(out,
+        "/* Buffer stack frame.  Caller-supplied bytes are NOT copied\n"
+        "** -- the caller retains ownership.  pos is the next-byte-to-\n"
+        "** match offset; LexPushback rewinds it. */\n"
         "struct %sLexer {\n"
         "    int          state;\n"
         "    const char  *err_msg;\n"
+        "    int          depth;       /* # frames currently on stack */\n"
+        "    struct {\n"
+        "        const char *bytes;\n"
+        "        size_t      len;\n"
+        "        size_t      pos;\n"
+        "    } stack[%s_LEX_MAX_INCLUDE_DEPTH];\n"
         "};\n\n",
-        prefix);
+        prefix, PREFIX);
     fprintf(out,
         "%sLexer *%sLexAlloc(void *(*mallocProc)(size_t)) {\n"
         "    if (!mallocProc) return 0;\n"
@@ -390,6 +436,7 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "    if (!yyl) return 0;\n"
         "    yyl->state = 0;          /* INITIAL */\n"
         "    yyl->err_msg = 0;\n"
+        "    yyl->depth = 0;\n"
         "    return yyl;\n"
         "}\n\n",
         prefix, prefix, prefix, prefix);
@@ -399,33 +446,99 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "}\n\n",
         prefix, prefix);
     fprintf(out,
+        "%sLexResult %sLexInclude(%sLexer *yyl,\n"
+        "                            const char *bytes, size_t n) {\n"
+        "    if (!yyl) return %s_LEX_ERROR;\n"
+        "    if (yyl->depth >= %s_LEX_MAX_INCLUDE_DEPTH) {\n"
+        "        yyl->err_msg = \"include depth exceeded\";\n"
+        "        return %s_LEX_ERROR;\n"
+        "    }\n"
+        "    yyl->stack[yyl->depth].bytes = bytes;\n"
+        "    yyl->stack[yyl->depth].len   = n;\n"
+        "    yyl->stack[yyl->depth].pos   = 0;\n"
+        "    yyl->depth++;\n"
+        "    return %s_LEX_OK;\n"
+        "}\n\n",
+        prefix, prefix, prefix, PREFIX, PREFIX, PREFIX, PREFIX);
+    fprintf(out,
+        "%sLexResult %sLexPushback(%sLexer *yyl, size_t n) {\n"
+        "    if (!yyl || yyl->depth <= 0) {\n"
+        "        if (yyl) yyl->err_msg = \"pushback on empty stack\";\n"
+        "        return %s_LEX_ERROR;\n"
+        "    }\n"
+        "    size_t pos = yyl->stack[yyl->depth - 1].pos;\n"
+        "    if (n > pos) {\n"
+        "        yyl->err_msg = \"pushback exceeds buffered prefix\";\n"
+        "        return %s_LEX_ERROR;\n"
+        "    }\n"
+        "    yyl->stack[yyl->depth - 1].pos = pos - n;\n"
+        "    return %s_LEX_OK;\n"
+        "}\n\n",
+        prefix, prefix, prefix, PREFIX, PREFIX, PREFIX);
+    fprintf(out,
+        "int %sLexIncludeDepth(const %sLexer *yyl) {\n"
+        "    if (!yyl || yyl->depth <= 0) return 0;\n"
+        "    return yyl->depth - 1;\n"
+        "}\n\n",
+        prefix, prefix);
+    fprintf(out,
         "%sLexResult %sLexFeedBytes(%sLexer *yyl,\n"
         "                              const char *bytes, size_t n,\n"
         "                              %sEmitFn emit, void *user) {\n"
         "    if (!yyl) return %s_LEX_ERROR;\n"
-        "    size_t pos = 0;\n"
-        "    while (pos < n) {\n"
+        "    /* Push the caller's buffer as a new bottom-of-this-call\n"
+        "    ** frame, then drive top-of-stack until depth drops back\n"
+        "    ** to where it was before the push.  This handles nested\n"
+        "    ** LexInclude calls invoked from inside `emit`: each push\n"
+        "    ** raises the loop bound, each auto-pop lowers it. */\n"
+        "    if (yyl->depth >= %s_LEX_MAX_INCLUDE_DEPTH) {\n"
+        "        yyl->err_msg = \"include depth exceeded\";\n"
+        "        return %s_LEX_ERROR;\n"
+        "    }\n"
+        "    int initial_depth = yyl->depth;\n"
+        "    yyl->stack[yyl->depth].bytes = bytes;\n"
+        "    yyl->stack[yyl->depth].len   = n;\n"
+        "    yyl->stack[yyl->depth].pos   = 0;\n"
+        "    yyl->depth++;\n"
+        "    while (yyl->depth > initial_depth) {\n"
+        "        int top = yyl->depth - 1;\n"
+        "        size_t fpos = yyl->stack[top].pos;\n"
+        "        size_t flen = yyl->stack[top].len;\n"
+        "        if (fpos >= flen) {\n"
+        "            /* Auto-pop on EOF.  M3.6 will fire <<EOF>> rules\n"
+        "            ** here; for now, just unwind silently. */\n"
+        "            yyl->depth--;\n"
+        "            continue;\n"
+        "        }\n"
+        "        const char *fbytes = yyl->stack[top].bytes;\n"
         "        int rule = -1;\n"
         "        size_t consumed = 0;\n"
-        "        int ok = %s_match(yyl->state, bytes + pos, n - pos,\n"
+        "        int ok = %s_match(yyl->state, fbytes + fpos, flen - fpos,\n"
         "                          &rule, &consumed);\n"
         "        if (!ok || consumed == 0) {\n"
         "            yyl->err_msg = \"unmatched input\";\n"
         "            return %s_LEX_ERROR;\n"
         "        }\n"
-        "        if (emit) emit(user, rule, bytes + pos, consumed);\n"
-        "        pos += consumed;\n"
+        "        /* Advance pos BEFORE emit: a recursive LexInclude\n"
+        "        ** issued from inside `emit` must land its new frame\n"
+        "        ** above an already-consumed parent slice, so that on\n"
+        "        ** auto-pop the parent resumes after the just-emitted\n"
+        "        ** token rather than re-matching it. */\n"
+        "        yyl->stack[top].pos = fpos + consumed;\n"
+        "        if (emit) emit(user, rule, fbytes + fpos, consumed);\n"
         "    }\n"
         "    return %s_LEX_OK;\n"
         "}\n\n",
         prefix, prefix, prefix, prefix,
-        PREFIX, prefix, PREFIX, PREFIX);
+        PREFIX, PREFIX, PREFIX,
+        prefix, PREFIX, PREFIX);
     fprintf(out,
         "%sLexResult %sLexFeedEOF(%sLexer *yyl,\n"
         "                            %sEmitFn emit, void *user) {\n"
-        "    /* M3.3: no <<EOF>> rule dispatch yet (M3.5+).  Just signal\n"
-        "    ** that no error occurred; future versions will fire any\n"
-        "    ** matching <<EOF>> rule's action. */\n"
+        "    /* M3.5: no <<EOF>> rule dispatch yet (deferred to M3.6).\n"
+        "    ** Auto-pop of included buffers is already handled inside\n"
+        "    ** LexFeedBytes; this entry point becomes meaningful once\n"
+        "    ** EOF actions can fire user code. */\n"
         "    (void)yyl; (void)emit; (void)user;\n"
         "    return %s_LEX_OK;\n"
         "}\n\n",

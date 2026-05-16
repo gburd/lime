@@ -537,6 +537,34 @@ test_lex_runtime = executable('test_lex_runtime',
 
 test('lex_runtime', test_lex_runtime)
 
+# M3.5 of the lexer subsystem: LexInclude buffer-stack +
+# LexPushback runtime support.  Mirrors the M3.3 wiring: lime -X
+# generates the lexer .c+.h pair, the test driver compiles
+# against the generated header and exercises the buffer stack
+# (LexInclude / LexIncludeDepth / auto-pop) and runtime pushback
+# (LexPushback bounds + rewind).  Three single-byte rules in the
+# grammar are enough -- the work under test is the runtime, not
+# the DFA.
+test_lex_include_gen = custom_target('test_lex_include_lex',
+  input   : ['test_lex_include_grammar.lex'],
+  output  : ['test_lex_include_grammar_lex.c',
+             'test_lex_include_grammar_lex.h'],
+  command : [
+    lime_exe,
+    '-X',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_lex_include = executable('test_lex_include',
+  'test_lex_include.c',
+  test_lex_include_gen,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_include', test_lex_include)
+
 # P0-NEW-8: opt-in eager default-reduce drain.  Discriminator
 # mirrors ecpg's lex-time-vs-reduce-time channel interleaving:
 # the driver appends a marker between Parse() calls (simulating
