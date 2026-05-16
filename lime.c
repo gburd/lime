@@ -26,7 +26,7 @@
 ** mirrored by lemon_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "0.2.0"
+#define LIME_VERSION_STRING "0.2.1"
 #endif
 
 
