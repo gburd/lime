@@ -75,7 +75,7 @@ static int emit_for(const char *src, char **h_out, char **c_out) {
     char *h_buf = NULL;
     size_t h_size = 0;
     FILE *h_f = open_memstream(&h_buf, &h_size);
-    int h_rc = lime_lex_emit_h(c, name_prefix,
+    int h_rc = lime_lex_emit_h(c, spec, name_prefix,
                                (const char *const *)rule_names, n_rules, h_f);
     fclose(h_f);
 

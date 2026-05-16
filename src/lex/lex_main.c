@@ -140,7 +140,7 @@ static int emit_files(LimeLexCompiled *c,
         free(stem); free(h_path); free(c_path);
         return 2;
     }
-    int rc = lime_lex_emit_h(c, prefix,
+    int rc = lime_lex_emit_h(c, spec, prefix,
                              (const char *const *)rule_names, n_rules, fh);
     fclose(fh);
     if (rc != 0) {

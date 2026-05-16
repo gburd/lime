@@ -42,8 +42,15 @@
 ** falls back to "Lex".  The compiled spec's `LimeLexSpec`
 ** name_prefix should be passed if present.
 **
+** `spec` carries the parsed source rules.  When non-NULL it is
+** used to emit the M4.3 per-rule test entry-point declarations
+** (one prototype per non-EOF rule).  When NULL the test entries
+** are suppressed -- legacy callers that only want the runtime
+** API surface keep working.
+**
 ** Returns 0 on success, non-zero on write error. */
 int lime_lex_emit_h(const LimeLexCompiled *c,
+                    const LimeLexSpec *spec,
                     const char *name_prefix,
                     const char *const *rule_names,
                     int n_rules,

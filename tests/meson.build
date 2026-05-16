@@ -689,6 +689,42 @@ test_lex_eof = executable('test_lex_eof',
 
 test('lex_eof', test_lex_eof)
 
+# M4.3 of the lexer subsystem: per-rule test entry points.
+# The generator emits a thin wrapper per non-EOF rule:
+#   FooLexResult Foo_test_rule_<name>(input, n, &consumed);
+# Wrappers invoke Foo_match in the rule's first declared state
+# qualifier (or INITIAL when unqualified) and report LEX_OK
+# only when that specific rule wins the longest-match.  EOF
+# rules are excluded -- they aren't reachable through Foo_match
+# (M3.6 dispatches them from LexFeedBytes' auto-pop branch).
+#
+# The driver also reads back the generated .c file (path passed
+# via -DPER_RULE_GEN_C) to assert the EOF rule's wrapper is
+# absent.  meson.current_build_dir() pins the path stably across
+# build configurations.
+test_lex_per_rule_gen = custom_target('test_lex_per_rule_lex',
+  input   : ['test_lex_per_rule_grammar.lex'],
+  output  : ['test_lex_per_rule_grammar_lex.c',
+             'test_lex_per_rule_grammar_lex.h'],
+  command : [
+    lime_exe,
+    '-X',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_lex_per_rule_gen_c = meson.current_build_dir() / 'test_lex_per_rule_grammar_lex.c'
+
+test_lex_per_rule = executable('test_lex_per_rule',
+  'test_lex_per_rule.c',
+  test_lex_per_rule_gen,
+  c_args : ['-Wno-unused-parameter',
+            '-DPER_RULE_GEN_C="' + test_lex_per_rule_gen_c + '"'],
+)
+
+test('lex_per_rule', test_lex_per_rule)
+
 # P0-NEW-8: opt-in eager default-reduce drain.  Discriminator
 # mirrors ecpg's lex-time-vs-reduce-time channel interleaving:
 # the driver appends a marker between Parse() calls (simulating

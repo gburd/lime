@@ -180,7 +180,122 @@ int lime_lex_collect_rule_names(const LimeLexSpec *spec,
 ** Header emission
 ** ============================================================ */
 
+/* M4.3: per-rule test entry-point emission.  Walks the spec's
+** rule list (including ruleset rules subject to %lexer_include
+** filtering, via lime_lex_walk_rules) and emits per-non-EOF
+** wrappers.  EOF rules are skipped because they are not
+** dispatchable through Foo_match -- they fire from
+** LexFeedBytes' auto-pop branch on a buffer-stack frame's EOF.
+**
+** State choice: the wrapper invokes Foo_match in the rule's
+** FIRST state qualifier (or INITIAL if unqualified).  This is
+** the simplest stable contract; multi-state rules are testable
+** by hand against the appropriate constant via Foo_match
+** directly. */
+typedef struct {
+    FILE       *out;
+    const char *prefix;        /* "Foo" */
+    char       *PREFIX;        /* "FOO" -- borrowed, do not free */
+    int         emit_h;        /* 1 = decls only, 0 = bodies */
+    int         compiled_state_count;
+    const LimeLexCompiledState *compiled_states;
+    int         err;
+} TestWrapperCtx;
+
+/* Look up a state name in the compiled state list.  Returns
+** the state's index (suitable for FOO_STATE_<NAME> selection)
+** or -1 if the name is not known.  We compare on the original
+** state name, not the upper-cased variant, since c->states[]
+** stores the source-form name. */
+static int compiled_state_index(const TestWrapperCtx *ctx,
+                                const char *name) {
+    for (int i = 0; i < ctx->compiled_state_count; i++) {
+        if (strcmp(ctx->compiled_states[i].state_name, name) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int test_wrapper_visit(const LimeLexRule *r, void *user) {
+    TestWrapperCtx *ctx = (TestWrapperCtx *)user;
+    if (r->is_eof) return 0;
+    if (!r->name) return 0;
+
+    char *suffix = strdup(r->name);
+    if (!suffix) { ctx->err = 1; return -1; }
+    sanitise_ident(suffix);
+
+    char *RULE_UPPER = upper_dup(suffix);
+    if (!RULE_UPPER) { free(suffix); ctx->err = 1; return -1; }
+
+    /* Pick the state for the wrapper.  Unqualified -> INITIAL.
+    ** Qualified -> first state.  Defensive: if the named state
+    ** is unknown (malformed grammar) skip the wrapper -- emitting
+    ** a reference to FOO_STATE_<UNKNOWN> would break compilation. */
+    const char *state_name = "INITIAL";
+    if (r->n_states > 0 && r->states && r->states[0]) {
+        state_name = r->states[0];
+        if (compiled_state_index(ctx, state_name) < 0) {
+            free(suffix); free(RULE_UPPER);
+            return 0;
+        }
+    }
+    char *STATE_UPPER = upper_dup(state_name);
+    if (!STATE_UPPER) {
+        free(suffix); free(RULE_UPPER);
+        ctx->err = 1; return -1;
+    }
+
+    if (ctx->emit_h) {
+        fprintf(ctx->out,
+            "%sLexResult %s_test_rule_%s(const char *input, size_t n,\n"
+            "                              size_t *out_consumed);\n",
+            ctx->prefix, ctx->prefix, suffix);
+    } else {
+        fprintf(ctx->out,
+            "%sLexResult %s_test_rule_%s(const char *input, size_t n,\n"
+            "                              size_t *out_consumed) {\n"
+            "    int rule = -1;\n"
+            "    size_t consumed = 0;\n"
+            "    int ok = %s_match(%s_STATE_%s, input, n,\n"
+            "                      &rule, &consumed);\n"
+            "    if (!ok || rule != %s_RULE_%s) return %s_LEX_ERROR;\n"
+            "    if (out_consumed) *out_consumed = consumed;\n"
+            "    return %s_LEX_OK;\n"
+            "}\n\n",
+            ctx->prefix, ctx->prefix, suffix,
+            ctx->prefix, ctx->PREFIX, STATE_UPPER,
+            ctx->PREFIX, RULE_UPPER, ctx->PREFIX,
+            ctx->PREFIX);
+    }
+    free(suffix);
+    free(RULE_UPPER);
+    free(STATE_UPPER);
+    return 0;
+}
+
+static int emit_test_wrappers(const LimeLexCompiled *c,
+                              const LimeLexSpec *spec,
+                              const char *prefix,
+                              char *PREFIX,
+                              int emit_h,
+                              FILE *out) {
+    if (!spec) return 0;
+    TestWrapperCtx ctx;
+    ctx.out = out;
+    ctx.prefix = prefix;
+    ctx.PREFIX = PREFIX;
+    ctx.emit_h = emit_h;
+    ctx.compiled_state_count = c ? c->n_states : 0;
+    ctx.compiled_states = c ? c->states : NULL;
+    ctx.err = 0;
+    (void)lime_lex_walk_rules(spec, test_wrapper_visit, &ctx);
+    return ctx.err ? -1 : 0;
+}
+
 int lime_lex_emit_h(const LimeLexCompiled *c,
+                    const LimeLexSpec *spec,
                     const char *name_prefix,
                     const char *const *rule_names,
                     int n_rules,
@@ -310,6 +425,25 @@ int lime_lex_emit_h(const LimeLexCompiled *c,
         "** original LexFeedBytes buffer or is idle). */\n"
         "int           %sLexIncludeDepth(const %sLexer *yyl);\n\n",
         prefix, prefix);
+
+    /* M4.3: per-rule test entry-point declarations. */
+    if (spec) {
+        fprintf(out,
+            "/* ===== Per-rule test entry points (M4.3) =====\n"
+            "** One thin wrapper per non-EOF rule, exposing isolated\n"
+            "** rule testing without spinning up the full push-driven\n"
+            "** runtime.  Each wrapper invokes %s_match in the rule's\n"
+            "** first declared state qualifier (or %s_STATE_INITIAL\n"
+            "** for unqualified rules), and returns %s_LEX_OK only\n"
+            "** when that specific rule matches.  *out_consumed is\n"
+            "** written only on success; passing NULL is permitted. */\n",
+            prefix, PREFIX, PREFIX);
+        if (emit_test_wrappers(c, spec, prefix, PREFIX, 1, out) != 0) {
+            free(PREFIX);
+            return -1;
+        }
+        fprintf(out, "\n");
+    }
 
     fprintf(out, "#endif /* %s_LEX_H */\n", PREFIX);
     free(PREFIX);
@@ -818,6 +952,16 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "    return yyl ? yyl->err_msg : 0;\n"
         "}\n",
         prefix, prefix);
+
+    /* M4.3: per-rule test entry-point definitions. */
+    if (spec) {
+        fprintf(out,
+            "\n/* ===== Per-rule test entry points (M4.3) ===== */\n");
+        if (emit_test_wrappers(c, spec, prefix, PREFIX, 0, out) != 0) {
+            free(PREFIX);
+            return -1;
+        }
+    }
 
     free(PREFIX);
     return ferror(out) ? -1 : 0;
