@@ -25,10 +25,11 @@
 | [COMPARISON.md](COMPARISON.md) | Feature comparison with Yacc, Bison, ANTLR, Menhir |
 | [MIGRATION_FROM_BISON.md](MIGRATION_FROM_BISON.md) | Porting Bison grammars to Lime |
 | [MIGRATION_FROM_YACC.md](MIGRATION_FROM_YACC.md) | Porting Yacc grammars to Lime |
+| [MIGRATION_FROM_FLEX.md](MIGRATION_FROM_FLEX.md) | Porting flex scanners to Lime `.lex` grammars |
 | [JIT_ANALYSIS.md](JIT_ANALYSIS.md) | JIT compilation cost-benefit analysis |
 | [PARSER_PLUGIN_DESIGN.md](PARSER_PLUGIN_DESIGN.md) | Plugin system design |
-| [LEXER_DESIGN.md](LEXER_DESIGN.md) | Lexer component design (v0.2 draft, in review) |
-| [LEXER_SCANNER_AUDIT.md](LEXER_SCANNER_AUDIT.md) | Empirical audit of 6 PG flex scanners, evidence base for LEXER_DESIGN.md |
+| [LEXER_DESIGN.md](LEXER_DESIGN.md) | Lexer component design |
+| [LEXER_SCANNER_AUDIT.md](LEXER_SCANNER_AUDIT.md) | Empirical audit of 6 PG flex scanners |
 | [MODULE_FORMAT.md](MODULE_FORMAT.md) | Modular grammar file format |
 | [LITERATE_FORMAT.md](LITERATE_FORMAT.md) | Literate grammar format |
 
@@ -38,6 +39,7 @@ Installed by `meson install` or readable directly:
 
 - `man/lime.1` — command-line reference
 - `man/lime_grammar.5` — grammar file format
+- `man/lime_lex.5` — lexer (`.lex`) file format and runtime API
 
 ## API Documentation (Doxygen)
 

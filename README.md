@@ -48,7 +48,44 @@ generator supports runtime grammar modification.  Lime fills that gap.
 For a detailed comparison with Yacc, Bison, ANTLR, and Menhir, see
 **[docs/COMPARISON.md](docs/COMPARISON.md)**.  Migration guides:
 **[from Bison](docs/MIGRATION_FROM_BISON.md)** ·
-**[from Yacc](docs/MIGRATION_FROM_YACC.md)**.
+**[from Yacc](docs/MIGRATION_FROM_YACC.md)** ·
+**[from Flex](docs/MIGRATION_FROM_FLEX.md)**.
+
+## Lexer subsystem
+
+Since v0.2.0 Lime also generates lexers.  `lime -X foo.lex` produces
+`foo_lex.c` and `foo_lex.h`; the generated pair compiles and links with
+no Lime runtime dependency, the same way the parser side does.  The
+emit callback signature matches `ParseLoc`, so the entire driver loop
+for a paired lexer + parser collapses to one `LexFeedBytes` call.
+
+The lexer is push-driven, reentrant, and zero-globals by construction
+-- no `yytext` / `yyleng` / `yylineno` side channels.  Action bodies
+see typed locals (`matched`, `matched_len`, `loc`, `lex`, `extra`,
+`state`) and a small set of macros (`LEX_EMIT`, `LEX_TRANSITION`,
+`LEX_PUSHBACK`, `LEX_TERMINATE`, `LEX_ERROR_AT`).  Exclusive states
+carry typed local data; an include-buffer stack (`LexInclude`) handles
+ecpg-style splice grammars without `yywrap`.  POSIX-extended regex
+subset; no PCRE assertions, no captures, no REJECT, no `yymore` --
+the PG flex audit (six scanners, ~5,300 lines) found zero uses of any
+of those.
+
+```sh
+lime -X -d. parser.lex          # produces parser_lex.c + parser_lex.h
+cc -c parser_lex.c              # no Lime runtime to link against
+```
+
+Reference docs:
+
+- **[docs/LEXER_DESIGN.md](docs/LEXER_DESIGN.md)** -- design spec,
+  API surface, worked examples.
+- **[docs/MIGRATION_FROM_FLEX.md](docs/MIGRATION_FROM_FLEX.md)** --
+  porting flex `.l` scanners to Lime `.lex`, with directive
+  mapping, action-body translation, and a common-gotchas list.
+- **`man/lime_lex(5)`** -- `.lex` file format and runtime API
+  reference.
+- **[examples/pg_bootscanner/](examples/pg_bootscanner/)** -- PG's
+  `bootscanner.l` ported end-to-end as a worked example.
 
 ## Quick Start
 
@@ -114,7 +151,7 @@ lime/
 ├── examples/               # Example grammars and extensions
 ├── contrib/                # SQL dialect extensions (Oracle, MySQL, ...)
 ├── docs/                   # Reference documentation
-├── man/                    # Man pages: lime(1), lime_grammar(5)
+├── man/                    # Man pages: lime(1), lime_grammar(5), lime_lex(5)
 ├── scripts/                # Validation and coverage scripts
 └── tools/                  # Composition and management utilities
 ```
