@@ -473,6 +473,29 @@ Bounds\-checked: a pushback that exceeds the available
 buffered prefix returns
 .B LEX_ERROR
 to the caller.
+.IP
+.B GOTCHA:
+flex's
+.BR yyless ( n )
+and Lime's
+.BR LEX_PUSHBACK ( n )
+are inverse parameterisations.
+Flex's argument is the number of bytes to
+.IR keep ;
+Lime's is the number of bytes to
+.I return
+to the input.
+Do not translate the literal argument when porting:
+.B yyless(n)
+becomes
+.BR LEX_PUSHBACK(matched_len\ \-\ n) ,
+not
+.BR LEX_PUSHBACK(n) .
+.B yyless(0)
+(redo the whole match) becomes
+.BR LEX_PUSHBACK(matched_len) ;
+.B LEX_PUSHBACK(0)
+is a no\-op.
 .TP
 .B LEX_TERMINATE();
 Stop lexing immediately.

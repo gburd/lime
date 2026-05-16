@@ -602,6 +602,17 @@ The wins:
    `yyless(n)` → `LEX_PUSHBACK(matched_len - n)`.  Mechanical, but
    easy to get wrong.
 
+   > **GOTCHA.**  Do **not** translate the literal argument.  The two
+   > primitives are inverse parameterisations: flex's `n` is the
+   > number of bytes to *keep*, Lime's `n` is the number of bytes to
+   > *return*.  `yyless(0)` (redo the whole match) becomes
+   > `LEX_PUSHBACK(matched_len)`, not `LEX_PUSHBACK(0)` (which is a
+   > no-op).  `yyless(yyleng - 1)` (push back exactly one trailing
+   > byte, e.g. for delimiter peek) becomes `LEX_PUSHBACK(1)`, not
+   > `LEX_PUSHBACK(matched_len - 1)`.  When in doubt, write the
+   > expression `matched_len - <flex's keep count>` literally and
+   > simplify only after the test passes.
+
 2. **Empty action body auto-emits.** A flex `pattern { /* nothing */ }`
    action falls through to the default rule (which echoes by default,
    suppressed by `%option nodefault`).  In Lime, an empty action body
@@ -652,6 +663,46 @@ The wins:
     refactored to take its state through `%lexer_extra_argument`
     before the port will work.  This is usually trivial -- the globals
     become fields of the user-data struct.
+
+11. **Chunked feeds duplicate `<<EOF>>` firings.** Each
+    `LexFeedBytes` call pushes the caller's bytes as a new bottom
+    frame and pops it on EOF, firing the matching `<<EOF>>` rule
+    for the current state once per pop.  Splitting one logical
+    input across two `LexFeedBytes` calls therefore fires the EOF
+    rule **twice**, even though flex would have seen one EOF for
+    the same byte sequence:
+
+    ```c
+    /* Two halves of one logical input.  EOF rule for INITIAL
+    ** fires once per call -- twice total -- not once. */
+    FooLexFeedBytes(yyl, src,         half, emit, user);
+    FooLexFeedBytes(yyl, src + half,  rest, emit, user);
+    ```
+
+    The same effect appears with `LexInclude`: each pushed frame
+    fires its own EOF rule on the auto-pop.  This is correct for
+    ecpg-shape grammars where each include unit is logically its
+    own input but unwanted for grammars that want a single
+    end-of-translation-unit signal.
+
+    Two workarounds, in order of preference:
+
+    - **Concatenate before feeding.**  `LexFeedBytes` does not
+      copy bytes; if the caller can buffer the whole input first,
+      one call fires one EOF.  This is what every PG scanner port
+      should do unless there is a concrete reason to stream.
+    - **Gate the EOF action body on a flag in `extra`.**  When the
+      caller cannot buffer (live ecpg parsing across `\i`-style
+      includes, network-fed inputs), put a `bool eof_seen` in the
+      `%lexer_extra_argument` struct and early-return from the
+      EOF action when it's already set.  See
+      [LEXER_DESIGN.md](LEXER_DESIGN.md) ("End-of-input rules")
+      for the recipe.
+
+    `LexFeedEOF` is a tail signal: by the time it returns, every
+    EOF action that was going to fire for the just-fed bytes has
+    already fired inside the corresponding `LexFeedBytes` call.
+    Calling `LexFeedEOF` after a clean `LexFeedBytes` is a no-op.
 
 ## Rejecting features by design
 
