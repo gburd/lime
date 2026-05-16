@@ -18,6 +18,10 @@ examples/*/*.h
 !examples/*/main_conflicts.c
 !examples/*/*_ext.c
 
+# M5.1: hand-written test driver for the bootscanner port
+!examples/pg_bootscanner/test_bootscanner.c
+!examples/pg_bootscanner/*.lex
+
 # Compiled example binaries
 examples/bootstrap/boot_parser
 examples/datalog/datalog_parser

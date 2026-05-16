@@ -114,6 +114,12 @@ subdir('tests')
 # Build benchmarks
 subdir('bench')
 
+# M5.1: PG bootscanner port (end-to-end demo + test).  Lives
+# under examples/ but is wired as a meson test so the example
+# stays compiled and the .lex -> .c+.h codegen path is
+# exercised on every CI run.
+subdir('examples/pg_bootscanner')
+
 # API documentation via Doxygen
 doxygen = find_program('doxygen', required : false)
 if doxygen.found()
