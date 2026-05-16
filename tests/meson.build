@@ -513,6 +513,18 @@ test_lex_lexer_include = executable('test_lex_lexer_include',
 
 test('lex_lexer_include', test_lex_lexer_include)
 
+# M4.2 of the lexer subsystem: lime_lex_compiled_to_text
+# introspection serializer.  Round-trippable .lex dump of a
+# compiled lexer paired with its source spec, prefixed by a
+# comment block of per-state DFA stats.
+test_lex_introspect = executable('test_lex_introspect',
+  'test_lex_introspect.c',
+  dependencies : lime_lex_compiler_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_introspect', test_lex_introspect)
+
 # M3.1 of the lexer subsystem: emit DFA tables + longest-match
 # driver as compilable C source.  Foundation for the M3.2+
 # runtime API layer.
