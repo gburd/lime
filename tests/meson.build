@@ -591,6 +591,33 @@ test_lex_include = executable('test_lex_include',
 
 test('lex_include', test_lex_include)
 
+# M3.4 + M3.5 merge bridge: cross-feature integration test
+# verifying LEX_PUSHBACK in an action body (M3.4 macro contract)
+# correctly delegates to LexPushback (M3.5 runtime) and the
+# rewound buffer-stack frame is re-matched on the next
+# iteration.  Also verifies caller-driven LexInclude composes
+# with LexFeedBytes when the include sits on top of the stack
+# before the feed begins.
+test_lex_m3_integration_gen = custom_target('test_lex_m3_integration_lex',
+  input   : ['test_lex_m3_integration_grammar.lex'],
+  output  : ['test_lex_m3_integration_grammar_lex.c',
+             'test_lex_m3_integration_grammar_lex.h'],
+  command : [
+    lime_exe,
+    '-X',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_lex_m3_integration = executable('test_lex_m3_integration',
+  'test_lex_m3_integration.c',
+  test_lex_m3_integration_gen,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_m3_integration', test_lex_m3_integration)
+
 # P0-NEW-8: opt-in eager default-reduce drain.  Discriminator
 # mirrors ecpg's lex-time-vs-reduce-time channel interleaving:
 # the driver appends a marker between Parse() calls (simulating
