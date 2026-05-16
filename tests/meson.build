@@ -643,6 +643,39 @@ test_lex_m3_integration = executable('test_lex_m3_integration',
 
 test('lex_m3_integration', test_lex_m3_integration)
 
+# M3.7 + P0-NEW-9 of the lexer subsystem: %literal_buffer
+# runtime emission and %include block emission.  Same generator
+# pipeline as test_lex_runtime: lime -X compiles the .lex grammar
+# to .c + .h, the test driver compiles against the generated
+# header and exercises:
+#   - LEX_BUF_START / APPEND / APPEND_CH / TAKE / LEN / PEEK
+#     macros under both *N (multiplicative) and +N (additive)
+#     growth policies
+#   - the %include block's static helper called from an action
+#     body (the compile would fail if include emission missed)
+#   - two %literal_buffer declarations operating independently
+#   - LexFree cleanup of a dangling buffer (caller never
+#     invoked LEX_BUF_TAKE)
+test_lex_buf_gen = custom_target('test_lex_buf_lex',
+  input   : ['test_lex_buf_grammar.lex'],
+  output  : ['test_lex_buf_grammar_lex.c',
+             'test_lex_buf_grammar_lex.h'],
+  command : [
+    lime_exe,
+    '-X',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_lex_buf = executable('test_lex_buf',
+  'test_lex_buf.c',
+  test_lex_buf_gen,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_buf', test_lex_buf)
+
 # M3.6 of the lexer subsystem: <<EOF>> rule dispatch in the
 # LexFeedBytes auto-pop branch.  Two grammars feed one driver:
 #   - test_lex_eof_grammar.lex declares both an unqualified

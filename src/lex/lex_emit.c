@@ -65,6 +65,197 @@ static void sanitise_ident(char *s) {
 }
 
 /* ============================================================
+** %literal_buffer helpers (M3.7)
+** ============================================================ */
+
+/* Effective C element type for a buffer (default "char"). */
+static const char *eff_buf_type(const LimeLexLiteralBuffer *lb) {
+    if (lb && lb->element_type && *lb->element_type) return lb->element_type;
+    return "char";
+}
+
+/* Effective initial capacity (default 64; 0 / negative -> 64). */
+static int eff_buf_initial(const LimeLexLiteralBuffer *lb) {
+    if (lb && lb->initial_capacity > 0) return lb->initial_capacity;
+    return 64;
+}
+
+/* Parse the grow_policy string ("*N" or "+N"; default "*2"
+** when missing or malformed) and emit one C statement that
+** advances `new_cap` for one iteration of the grow loop.  The
+** caller wraps it in a no-progress / overflow guard. */
+static void emit_buf_grow_step(const LimeLexLiteralBuffer *lb, FILE *out) {
+    char op = '*';
+    long n = 2;
+    const char *s = lb ? lb->grow_policy : NULL;
+    if (s && (*s == '*' || *s == '+')) {
+        char *end = NULL;
+        long parsed = strtol(s + 1, &end, 10);
+        if (end != s + 1 && parsed > 0) {
+            op = *s;
+            n = parsed;
+        }
+    }
+    if (op == '*') {
+        fprintf(out, "            new_cap = new_cap * %ld;\n", n);
+    } else {
+        fprintf(out, "            new_cap = new_cap + %ld;\n", n);
+    }
+}
+
+/* True when at least one %literal_buffer was declared. */
+static int has_literal_buffers(const LimeLexSpec *spec) {
+    return spec && spec->literal_buffers != NULL;
+}
+
+/* Emit `#error` guards for any buffer that is missing a
+** required allocator function.  The directive declares intent
+** to use the LEX_BUF_* macros, which is impossible without
+** matched alloc/realloc/free entries.  We surface this at
+** generated-code-compile time rather than silently emit
+** unresolved references.  Returns 0 on success (always). */
+static void emit_buf_alloc_guards(const LimeLexSpec *spec, FILE *out) {
+    if (!has_literal_buffers(spec)) return;
+    for (const LimeLexLiteralBuffer *lb = spec->literal_buffers;
+         lb; lb = lb->next) {
+        if (!lb->alloc_fn) {
+            fprintf(out,
+                "#error \"%%literal_buffer %s: missing 'alloc' function\"\n",
+                lb->name);
+        }
+        if (!lb->realloc_fn) {
+            fprintf(out,
+                "#error \"%%literal_buffer %s: missing 'realloc' function\"\n",
+                lb->name);
+        }
+        if (!lb->free_fn) {
+            fprintf(out,
+                "#error \"%%literal_buffer %s: missing 'free' function\"\n",
+                lb->name);
+        }
+    }
+}
+
+/* Emit per-buffer struct fields (buf/len/cap) inside FooLexer. */
+static void emit_buf_struct_fields(const LimeLexSpec *spec, FILE *out) {
+    if (!has_literal_buffers(spec)) return;
+    fprintf(out,
+        "    /* M3.7: %%literal_buffer storage, one block per buffer. */\n");
+    for (const LimeLexLiteralBuffer *lb = spec->literal_buffers;
+         lb; lb = lb->next) {
+        fprintf(out,
+            "    %s    *%s_buf;\n"
+            "    size_t  %s_len;\n"
+            "    size_t  %s_cap;\n",
+            eff_buf_type(lb), lb->name,
+            lb->name, lb->name);
+    }
+}
+
+/* Emit LexAlloc init lines (zero buf/len/cap for each buffer). */
+static void emit_buf_alloc_init(const LimeLexSpec *spec, FILE *out) {
+    if (!has_literal_buffers(spec)) return;
+    for (const LimeLexLiteralBuffer *lb = spec->literal_buffers;
+         lb; lb = lb->next) {
+        fprintf(out,
+            "    yyl->%s_buf = 0;\n"
+            "    yyl->%s_len = 0;\n"
+            "    yyl->%s_cap = 0;\n",
+            lb->name, lb->name, lb->name);
+    }
+}
+
+/* Emit per-buffer cleanup inside LexFree.  Each buffer is
+** freed via the user-declared `<free>` function (NOT freeProc)
+** because allocation went through `<alloc>`/`<realloc>`. */
+static void emit_buf_free_walk(const LimeLexSpec *spec, FILE *out) {
+    if (!has_literal_buffers(spec)) return;
+    for (const LimeLexLiteralBuffer *lb = spec->literal_buffers;
+         lb; lb = lb->next) {
+        if (!lb->free_fn) continue;   /* #error guard above */
+        fprintf(out,
+            "        if (yyl->%s_buf) {\n"
+            "            %s(yyl->%s_buf);\n"
+            "            yyl->%s_buf = 0;\n"
+            "            yyl->%s_len = 0;\n"
+            "            yyl->%s_cap = 0;\n"
+            "        }\n",
+            lb->name,
+            lb->free_fn, lb->name,
+            lb->name, lb->name, lb->name);
+    }
+}
+
+/* Emit the per-buffer static helpers: grow + take.  These
+** keep the LEX_BUF_* macros small so action bodies don't bloat
+** the FeedBytes function. */
+static void emit_buf_helpers(const LimeLexSpec *spec, const char *prefix,
+                             FILE *out) {
+    if (!has_literal_buffers(spec)) return;
+    fprintf(out,
+        "/* ===== M3.7: per-buffer grow / take helpers ===== */\n");
+    for (const LimeLexLiteralBuffer *lb = spec->literal_buffers;
+         lb; lb = lb->next) {
+        const char *type = eff_buf_type(lb);
+        const char *alloc = lb->alloc_fn ? lb->alloc_fn : "/*missing-alloc*/";
+        const char *realloc_fn =
+            lb->realloc_fn ? lb->realloc_fn : "/*missing-realloc*/";
+        int initial = eff_buf_initial(lb);
+
+        /* grow(): ensure capacity >= need; returns 0 ok / -1 fail. */
+        fprintf(out,
+            "static int %s_buf_%s_grow(%sLexer *lex, size_t need) {\n"
+            "    if (lex->%s_cap >= need) return 0;\n"
+            "    size_t new_cap = lex->%s_cap;\n"
+            "    if (new_cap == 0) new_cap = %d;\n"
+            "    while (new_cap < need) {\n"
+            "        size_t prev = new_cap;\n",
+            prefix, lb->name, prefix,
+            lb->name,
+            lb->name,
+            initial);
+        emit_buf_grow_step(lb, out);
+        fprintf(out,
+            "        if (new_cap <= prev) { new_cap = need; break; }\n"
+            "    }\n"
+            "    void *p = lex->%s_buf\n"
+            "        ? %s(lex->%s_buf, new_cap * sizeof(%s))\n"
+            "        : %s(new_cap * sizeof(%s));\n"
+            "    if (!p) return -1;\n"
+            "    lex->%s_buf = (%s*)p;\n"
+            "    lex->%s_cap = new_cap;\n"
+            "    return 0;\n"
+            "}\n",
+            lb->name,
+            realloc_fn, lb->name, type,
+            alloc, type,
+            lb->name, type,
+            lb->name);
+
+        /* take(): grow for trailing NUL, NUL-terminate, transfer
+        ** ownership to caller (returned pointer), reset state. */
+        fprintf(out,
+            "static %s *%s_buf_%s_take(%sLexer *lex) {\n"
+            "    if (%s_buf_%s_grow(lex, lex->%s_len + 1) != 0) {\n"
+            "        lex->err_msg = \"literal buffer alloc failed\";\n"
+            "        return 0;\n"
+            "    }\n"
+            "    lex->%s_buf[lex->%s_len] = 0;\n"
+            "    %s *p = lex->%s_buf;\n"
+            "    lex->%s_buf = 0;\n"
+            "    lex->%s_len = 0;\n"
+            "    lex->%s_cap = 0;\n"
+            "    return p;\n"
+            "}\n\n",
+            type, prefix, lb->name, prefix,
+            prefix, lb->name, lb->name,
+            lb->name, lb->name,
+            type, lb->name,
+            lb->name, lb->name, lb->name);
+    }
+}
+
+/* ============================================================
 ** Action-body emission helpers (M3.4)
 ** ============================================================ */
 
@@ -523,7 +714,28 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     if (header_basename && *header_basename) {
         fprintf(out, "#include \"%s\"\n", header_basename);
     }
-    fprintf(out, "#include <stddef.h>\n\n");
+    fprintf(out, "#include <stddef.h>\n");
+    /* M3.7: LEX_BUF_APPEND uses memcpy().  String.h is also a
+    ** harmless include for grammars without literal buffers. */
+    fprintf(out, "#include <string.h>\n\n");
+
+    /* P0-NEW-9: %include { ... } body emitted verbatim BEFORE
+    ** any generated declarations so user typedefs / static
+    ** helpers / extra #include lines are visible to every
+    ** subsequent emission (DFA tables, action bodies, runtime
+    ** macros).  The unwrapped body has no surrounding braces;
+    ** the user wrote it in their preferred style. */
+    if (spec && spec->include_block) {
+        fprintf(out,
+            "/* ===== %%include { ... } block (P0-NEW-9) ===== */\n");
+        fprintf(out, "%s\n\n", spec->include_block);
+    }
+
+    /* M3.7: alloc-function presence guards.  A %literal_buffer
+    ** declaration without alloc/realloc/free is unusable; emit
+    ** #error so the failure surfaces at the user's `cc` step
+    ** rather than as an unresolved symbol at link time. */
+    emit_buf_alloc_guards(spec, out);
 
     /* Rule-name table. */
     fprintf(out, "const char *const %sRuleNames[] = {\n", prefix);
@@ -628,9 +840,17 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "        const char *bytes;\n"
         "        size_t      len;\n"
         "        size_t      pos;\n"
-        "    } stack[%s_LEX_MAX_INCLUDE_DEPTH];\n"
-        "};\n\n",
+        "    } stack[%s_LEX_MAX_INCLUDE_DEPTH];\n",
         prefix, PREFIX);
+    /* M3.7: per-buffer storage fields. */
+    emit_buf_struct_fields(spec, out);
+    fprintf(out, "};\n\n");
+
+    /* M3.7: per-buffer grow + take static helpers (defined now
+    ** because LexAlloc / LexFree don't reference them, but the
+    ** LEX_BUF_* macros emitted before LexFeedBytes do). */
+    emit_buf_helpers(spec, prefix, out);
+
     fprintf(out,
         "%sLexer *%sLexAlloc(void *(*mallocProc)(size_t)) {\n"
         "    if (!mallocProc) return 0;\n"
@@ -638,15 +858,26 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "    if (!yyl) return 0;\n"
         "    yyl->state = 0;          /* INITIAL */\n"
         "    yyl->err_msg = 0;\n"
-        "    yyl->depth = 0;\n"
-        "    return yyl;\n"
-        "}\n\n",
+        "    yyl->depth = 0;\n",
         prefix, prefix, prefix, prefix);
+    /* M3.7: zero-initialise per-buffer storage. */
+    emit_buf_alloc_init(spec, out);
+    fprintf(out,
+        "    return yyl;\n"
+        "}\n\n");
     fprintf(out,
         "void %sLexFree(%sLexer *yyl, void (*freeProc)(void *)) {\n"
-        "    if (yyl && freeProc) freeProc(yyl);\n"
-        "}\n\n",
+        "    if (yyl) {\n",
         prefix, prefix);
+    /* M3.7: walk every declared buffer and free anything still
+    ** alive (e.g. accumulator filled but LEX_BUF_TAKE never run
+    ** before the caller dropped the lexer).  Each buffer uses
+    ** the user-declared <free> function paired with its alloc. */
+    emit_buf_free_walk(spec, out);
+    fprintf(out,
+        "    }\n"
+        "    if (yyl && freeProc) freeProc(yyl);\n"
+        "}\n\n");
 
     /* M3.4: action-body inlining + LEX_* macros.
     **
@@ -724,8 +955,47 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "    _error = 1;                                               \\\n"
         "    lex->err_msg = (msg);                                     \\\n"
         "} while (0)\n"
-        "#define LEX_PUSHBACK(n) (void)%sLexPushback(lex, (size_t)(n))\n\n",
+        "#define LEX_PUSHBACK(n) (void)%sLexPushback(lex, (size_t)(n))\n",
         prefix, prefix);
+    /* M3.7: literal-buffer macros.  Each one references the
+    ** function-locals lex / _error / lex->err_msg in scope
+    ** inside LexFeedBytes, plus the per-buffer grow/take
+    ** static helpers emitted above.  All buffers share the
+    ** same macro family -- the buffer-name token is the
+    ** distinguishing identifier via paste.  Pairs with the
+    ** #undef block after LexFeedBytes. */
+    if (has_literal_buffers(spec)) {
+        fprintf(out,
+            "/* ===== Literal buffer primitives (M3.7) ===== */\n"
+            "#define LEX_BUF_START(name) do {                              \\\n"
+            "    lex->name##_len = 0;                                      \\\n"
+            "} while (0)\n"
+            "#define LEX_BUF_APPEND(name, ptr, n) do {                     \\\n"
+            "    size_t _need = lex->name##_len + (size_t)(n);             \\\n"
+            "    if (%s_buf_##name##_grow(lex, _need) == 0) {              \\\n"
+            "        memcpy(lex->name##_buf + lex->name##_len,             \\\n"
+            "               (ptr), (size_t)(n));                           \\\n"
+            "        lex->name##_len = _need;                              \\\n"
+            "    } else {                                                  \\\n"
+            "        _error = 1;                                           \\\n"
+            "        lex->err_msg = \"literal buffer alloc failed\";        \\\n"
+            "    }                                                         \\\n"
+            "} while (0)\n"
+            "#define LEX_BUF_APPEND_CH(name, c) do {                       \\\n"
+            "    if (%s_buf_##name##_grow(lex, lex->name##_len + 1) == 0) {\\\n"
+            "        lex->name##_buf[lex->name##_len++] = (c);             \\\n"
+            "    } else {                                                  \\\n"
+            "        _error = 1;                                           \\\n"
+            "        lex->err_msg = \"literal buffer alloc failed\";        \\\n"
+            "    }                                                         \\\n"
+            "} while (0)\n"
+            "#define LEX_BUF_TAKE(name) (%s_buf_##name##_take(lex))\n"
+            "#define LEX_BUF_LEN(name)  (lex->name##_len)\n"
+            "#define LEX_BUF_PEEK(name) (lex->name##_buf)\n\n",
+            prefix, prefix, prefix);
+    } else {
+        fprintf(out, "\n");
+    }
 
     /* M3.6: emit the per-state EOF-rule lookup table.  The
     ** auto-pop branch of LexFeedBytes indexes this with the
@@ -918,7 +1188,17 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "#undef LEX_TRANSITION\n"
         "#undef LEX_TERMINATE\n"
         "#undef LEX_ERROR_AT\n"
-        "#undef LEX_PUSHBACK\n\n");
+        "#undef LEX_PUSHBACK\n");
+    if (has_literal_buffers(spec)) {
+        fprintf(out,
+            "#undef LEX_BUF_START\n"
+            "#undef LEX_BUF_APPEND\n"
+            "#undef LEX_BUF_APPEND_CH\n"
+            "#undef LEX_BUF_TAKE\n"
+            "#undef LEX_BUF_LEN\n"
+            "#undef LEX_BUF_PEEK\n");
+    }
+    fprintf(out, "\n");
 
     free(rule_actions);
     free(rule_is_eof);
