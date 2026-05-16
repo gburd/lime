@@ -68,12 +68,43 @@ static void sanitise_ident(char *s) {
 ** Action-body emission helpers (M3.4)
 ** ============================================================ */
 
-/* Walk the spec's rules in the same declaration order as
-** lime_lex_collect_rule_names (top-level rules first, then
-** ruleset rules in declaration order) and populate parallel
-** action / is_eof arrays.  *actions_out[i] points into the
-** spec; do NOT free the strings -- only the arrays.  Returns 0
-** on success, -1 on alloc failure or count mismatch. */
+typedef struct {
+    const char **actions;
+    int         *is_eof;
+    int          n;
+    int          cap;
+    int          oom;
+} ActionVec;
+
+static int action_visit(const LimeLexRule *r, void *user) {
+    ActionVec *v = (ActionVec *)user;
+    if (v->n == v->cap) {
+        int nc = v->cap ? v->cap * 2 : 16;
+        const char **na = realloc(v->actions, (size_t)nc * sizeof(*na));
+        int *ne = realloc(v->is_eof, (size_t)nc * sizeof(*ne));
+        if (!na || !ne) {
+            free(na ? na : v->actions);
+            free(ne ? ne : v->is_eof);
+            v->actions = NULL;
+            v->is_eof = NULL;
+            v->oom = 1;
+            return -1;
+        }
+        v->actions = na;
+        v->is_eof = ne;
+        v->cap = nc;
+    }
+    v->actions[v->n] = r->action ? r->action : "";
+    v->is_eof[v->n] = r->is_eof;
+    v->n++;
+    return 0;
+}
+
+/* Walk the spec's rules in compile order (M4.1: subject to
+** %lexer_include filtering) and populate parallel action /
+** is_eof arrays.  *actions_out[i] points into the spec; do NOT
+** free the strings -- only the arrays.  Returns 0 on success,
+** -1 on alloc failure or count mismatch. */
 static int collect_rule_actions(const LimeLexSpec *spec,
                                 int expected_n,
                                 const char ***actions_out,
@@ -81,34 +112,19 @@ static int collect_rule_actions(const LimeLexSpec *spec,
     *actions_out = NULL;
     *is_eof_out = NULL;
     if (!spec) return -1;
-    int n = 0;
-    for (const LimeLexRule *r = spec->rules; r; r = r->next) n++;
-    for (const LimeLexRuleset *rs = spec->rulesets; rs; rs = rs->next) {
-        for (const LimeLexRule *r = rs->rules; r; r = r->next) n++;
-    }
-    if (n != expected_n) return -1;
-    if (n == 0) return 0;
-    const char **actions = calloc((size_t)n, sizeof(*actions));
-    int *is_eof = calloc((size_t)n, sizeof(*is_eof));
-    if (!actions || !is_eof) {
-        free(actions); free(is_eof);
+    ActionVec v = {0};
+    if (lime_lex_walk_rules(spec, action_visit, &v) != 0) {
+        free(v.actions);
+        free(v.is_eof);
         return -1;
     }
-    int i = 0;
-    for (const LimeLexRule *r = spec->rules; r; r = r->next) {
-        actions[i] = r->action ? r->action : "";
-        is_eof[i] = r->is_eof;
-        i++;
+    if (v.oom || v.n != expected_n) {
+        free(v.actions);
+        free(v.is_eof);
+        return -1;
     }
-    for (const LimeLexRuleset *rs = spec->rulesets; rs; rs = rs->next) {
-        for (const LimeLexRule *r = rs->rules; r; r = r->next) {
-            actions[i] = r->action ? r->action : "";
-            is_eof[i] = r->is_eof;
-            i++;
-        }
-    }
-    *actions_out = actions;
-    *is_eof_out = is_eof;
+    *actions_out = v.actions;
+    *is_eof_out = v.is_eof;
     return 0;
 }
 
@@ -116,45 +132,48 @@ static int collect_rule_actions(const LimeLexSpec *spec,
 ** Rule-name collection
 ** ============================================================ */
 
+typedef struct {
+    char **names;
+    int    n;
+    int    cap;
+    int    oom;
+} NameVec;
+
+static int name_visit(const LimeLexRule *r, void *user) {
+    NameVec *v = (NameVec *)user;
+    if (v->n == v->cap) {
+        int nc = v->cap ? v->cap * 2 : 16;
+        char **nn = realloc(v->names, (size_t)nc * sizeof(*nn));
+        if (!nn) { v->oom = 1; return -1; }
+        v->names = nn;
+        v->cap = nc;
+    }
+    v->names[v->n] = strdup(r->name ? r->name : "anon");
+    if (!v->names[v->n]) { v->oom = 1; return -1; }
+    sanitise_ident(v->names[v->n]);
+    v->n++;
+    return 0;
+}
+
 int lime_lex_collect_rule_names(const LimeLexSpec *spec,
                                 char ***names_out,
                                 int *n_rules_out) {
     if (!spec || !names_out || !n_rules_out) return -1;
-    /* Count rules: top-level + each ruleset. */
-    int n = 0;
-    for (const LimeLexRule *r = spec->rules; r; r = r->next) n++;
-    for (const LimeLexRuleset *rs = spec->rulesets; rs; rs = rs->next) {
-        for (const LimeLexRule *r = rs->rules; r; r = r->next) n++;
+    NameVec v = {0};
+    if (lime_lex_walk_rules(spec, name_visit, &v) != 0) {
+        for (int k = 0; k < v.n; k++) free(v.names[k]);
+        free(v.names);
+        return -1;
     }
-    if (n == 0) {
+    if (v.n == 0) {
+        free(v.names);
         *names_out = NULL;
         *n_rules_out = 0;
         return 0;
     }
-    char **names = calloc(n, sizeof(char *));
-    if (!names) return -1;
-    int i = 0;
-    for (const LimeLexRule *r = spec->rules; r; r = r->next) {
-        names[i] = strdup(r->name ? r->name : "anon");
-        if (!names[i]) goto fail;
-        sanitise_ident(names[i]);
-        i++;
-    }
-    for (const LimeLexRuleset *rs = spec->rulesets; rs; rs = rs->next) {
-        for (const LimeLexRule *r = rs->rules; r; r = r->next) {
-            names[i] = strdup(r->name ? r->name : "anon");
-            if (!names[i]) goto fail;
-            sanitise_ident(names[i]);
-            i++;
-        }
-    }
-    *names_out = names;
-    *n_rules_out = n;
+    *names_out = v.names;
+    *n_rules_out = v.n;
     return 0;
-fail:
-    for (int k = 0; k < n; k++) free(names[k]);
-    free(names);
-    return -1;
 }
 
 /* ============================================================

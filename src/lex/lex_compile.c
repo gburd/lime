@@ -43,17 +43,66 @@ static int rv_push(RuleVec *v, const LimeLexRule *r) {
     return 0;
 }
 
-static int rv_collect(const LimeLexSpec *spec, RuleVec *out) {
+/* Look up a ruleset by name; returns NULL if absent. */
+static const LimeLexRuleset *find_ruleset(const LimeLexSpec *spec,
+                                          const char *name) {
+    for (const LimeLexRuleset *rs = spec->rulesets; rs; rs = rs->next) {
+        if (strcmp(rs->name, name) == 0) return rs;
+    }
+    return NULL;
+}
+
+/* Collect rules from the spec subject to %lexer_include filtering.
+**
+** When n_lexer_includes == 0, behave the legacy way: pull every
+** ruleset's rules in declaration order.  Existing grammars (and
+** the M2/M3 test suite) depend on this fallback.
+**
+** When %lexer_include is present, only the named rulesets
+** contribute -- in %lexer_include order, not ruleset declaration
+** order, so callers can express priority (the design's
+** "%lexer_include order wins on length ties" rule).  An undefined
+** name is a hard error: `bad_count` is incremented and the entry
+** is silently skipped (so we still emit a usable AST for the
+** rest of the pipeline).
+**
+** Top-level rules ALWAYS go first regardless of include filtering.
+** Top-level rules aren't in any ruleset, so there's nothing to
+** include or exclude. */
+static int rv_collect(const LimeLexSpec *spec,
+                      RuleVec *out,
+                      int *bad_includes_out) {
     /* Top-level rules first, in declaration order. */
     for (const LimeLexRule *r = spec->rules; r; r = r->next) {
         if (rv_push(out, r) < 0) return -1;
     }
-    /* Then ruleset rules, by ruleset declaration order. */
-    for (const LimeLexRuleset *rs = spec->rulesets; rs; rs = rs->next) {
+    if (spec->n_lexer_includes == 0) {
+        /* Legacy: every ruleset, declaration order. */
+        for (const LimeLexRuleset *rs = spec->rulesets; rs; rs = rs->next) {
+            for (const LimeLexRule *r = rs->rules; r; r = r->next) {
+                if (rv_push(out, r) < 0) return -1;
+            }
+        }
+        return 0;
+    }
+    /* Filtered: only named rulesets, in include order. */
+    int bad = 0;
+    for (int i = 0; i < spec->n_lexer_includes; i++) {
+        const char *name = spec->lexer_includes[i];
+        const LimeLexRuleset *rs = find_ruleset(spec, name);
+        if (!rs) {
+            fprintf(stderr,
+                "%s: %%lexer_include references undefined ruleset '%s'\n",
+                spec->filename ? spec->filename : "<input>",
+                name);
+            bad++;
+            continue;
+        }
         for (const LimeLexRule *r = rs->rules; r; r = r->next) {
             if (rv_push(out, r) < 0) return -1;
         }
     }
+    if (bad_includes_out) *bad_includes_out = bad;
     return 0;
 }
 
@@ -261,11 +310,13 @@ LimeLexCompiled *lime_lex_compile(const LimeLexSpec *spec) {
     if (!out) return NULL;
 
     RuleVec all = {0};
-    if (rv_collect(spec, &all) < 0) {
+    int bad_includes = 0;
+    if (rv_collect(spec, &all, &bad_includes) < 0) {
         free(all.rules);
         lime_lex_compiled_free(out);
         return NULL;
     }
+    out->error_count += bad_includes;
 
     /* Always compile INITIAL first. */
     if (compile_one(spec, &all, "INITIAL", /*exclusive=*/0, out) < 0) {
@@ -309,4 +360,34 @@ const LimeLexCompiledState *lime_lex_compiled_find_state(
         }
     }
     return NULL;
+}
+
+int lime_lex_walk_rules(const LimeLexSpec *spec,
+                        LimeLexRuleVisitor cb,
+                        void *user) {
+    if (!spec || !cb) return 0;
+    /* Top-level rules first, declaration order. */
+    for (const LimeLexRule *r = spec->rules; r; r = r->next) {
+        int rc = cb(r, user);
+        if (rc) return rc;
+    }
+    if (spec->n_lexer_includes == 0) {
+        for (const LimeLexRuleset *rs = spec->rulesets; rs; rs = rs->next) {
+            for (const LimeLexRule *r = rs->rules; r; r = r->next) {
+                int rc = cb(r, user);
+                if (rc) return rc;
+            }
+        }
+        return 0;
+    }
+    for (int i = 0; i < spec->n_lexer_includes; i++) {
+        const LimeLexRuleset *rs = find_ruleset(spec,
+                                                spec->lexer_includes[i]);
+        if (!rs) continue;   /* diagnosed in lime_lex_compile */
+        for (const LimeLexRule *r = rs->rules; r; r = r->next) {
+            int rc = cb(r, user);
+            if (rc) return rc;
+        }
+    }
+    return 0;
 }

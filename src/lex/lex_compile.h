@@ -60,4 +60,24 @@ void lime_lex_compiled_free(LimeLexCompiled *c);
 const LimeLexCompiledState *lime_lex_compiled_find_state(
     const LimeLexCompiled *c, const char *state_name);
 
+/* Walk the spec's rules in compile order: top-level rules first,
+** then -- subject to %lexer_include filtering -- the named
+** rulesets in include order, or every ruleset in declaration
+** order when no %lexer_include is present.
+**
+** This is the canonical order used to assign each rule its global
+** compile index (the value `Foo_match` reports via *out_rule and
+** the index emit_h writes into FOO_RULE_<NAME>).  Both rule-name
+** and action-body collection in lex_emit.c walk in this order so
+** the indices agree with what lime_lex_compile produced.
+**
+** The walker invokes `cb(rule, user)` for each rule.  Returning
+** non-zero from `cb` aborts the walk and propagates the value.
+** Undefined %lexer_include names are silently skipped here
+** (they're diagnosed at compile time). */
+typedef int (*LimeLexRuleVisitor)(const LimeLexRule *r, void *user);
+int lime_lex_walk_rules(const LimeLexSpec *spec,
+                        LimeLexRuleVisitor cb,
+                        void *user);
+
 #endif /* LIME_LEX_COMPILE_H */

@@ -500,6 +500,19 @@ test_lex_compile = executable('test_lex_compile',
 
 test('lex_compile', test_lex_compile)
 
+# M4.1 of the lexer subsystem: %lexer_include filtering.
+# When %lexer_include is present, only the named rulesets
+# contribute rules to the compiled DFA, in include-list order.
+# When absent, every ruleset's rules are pulled (legacy).  An
+# undefined ruleset name in %lexer_include bumps error_count.
+test_lex_lexer_include = executable('test_lex_lexer_include',
+  'test_lex_lexer_include.c',
+  dependencies : lime_lex_compiler_dep,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_lexer_include', test_lex_lexer_include)
+
 # M3.1 of the lexer subsystem: emit DFA tables + longest-match
 # driver as compilable C source.  Foundation for the M3.2+
 # runtime API layer.
