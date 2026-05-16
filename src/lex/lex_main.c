@@ -167,7 +167,7 @@ static int emit_files(LimeLexCompiled *c,
         free(stem); free(h_path); free(c_path);
         return 2;
     }
-    rc = lime_lex_emit_c(c, prefix,
+    rc = lime_lex_emit_c(c, spec, prefix,
                          h_basename ? h_basename : "lex.h",
                          (const char *const *)rule_names, n_rules, fc);
     fclose(fc);

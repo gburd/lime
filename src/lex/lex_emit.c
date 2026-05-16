@@ -65,6 +65,54 @@ static void sanitise_ident(char *s) {
 }
 
 /* ============================================================
+** Action-body emission helpers (M3.4)
+** ============================================================ */
+
+/* Walk the spec's rules in the same declaration order as
+** lime_lex_collect_rule_names (top-level rules first, then
+** ruleset rules in declaration order) and populate parallel
+** action / is_eof arrays.  *actions_out[i] points into the
+** spec; do NOT free the strings -- only the arrays.  Returns 0
+** on success, -1 on alloc failure or count mismatch. */
+static int collect_rule_actions(const LimeLexSpec *spec,
+                                int expected_n,
+                                const char ***actions_out,
+                                int **is_eof_out) {
+    *actions_out = NULL;
+    *is_eof_out = NULL;
+    if (!spec) return -1;
+    int n = 0;
+    for (const LimeLexRule *r = spec->rules; r; r = r->next) n++;
+    for (const LimeLexRuleset *rs = spec->rulesets; rs; rs = rs->next) {
+        for (const LimeLexRule *r = rs->rules; r; r = r->next) n++;
+    }
+    if (n != expected_n) return -1;
+    if (n == 0) return 0;
+    const char **actions = calloc((size_t)n, sizeof(*actions));
+    int *is_eof = calloc((size_t)n, sizeof(*is_eof));
+    if (!actions || !is_eof) {
+        free(actions); free(is_eof);
+        return -1;
+    }
+    int i = 0;
+    for (const LimeLexRule *r = spec->rules; r; r = r->next) {
+        actions[i] = r->action ? r->action : "";
+        is_eof[i] = r->is_eof;
+        i++;
+    }
+    for (const LimeLexRuleset *rs = spec->rulesets; rs; rs = rs->next) {
+        for (const LimeLexRule *r = rs->rules; r; r = r->next) {
+            actions[i] = r->action ? r->action : "";
+            is_eof[i] = r->is_eof;
+            i++;
+        }
+    }
+    *actions_out = actions;
+    *is_eof_out = is_eof;
+    return 0;
+}
+
+/* ============================================================
 ** Rule-name collection
 ** ============================================================ */
 
@@ -307,6 +355,7 @@ static void emit_state_tables(const LimeLexCompiledState *cs,
 }
 
 int lime_lex_emit_c(const LimeLexCompiled *c,
+                    const LimeLexSpec *spec,
                     const char *name_prefix,
                     const char *header_basename,
                     const char *const *rule_names,
@@ -445,6 +494,55 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "    if (yyl && freeProc) freeProc(yyl);\n"
         "}\n\n",
         prefix, prefix);
+
+    /* M3.4: action-body inlining + LEX_* macros.
+    **
+    ** Collect each rule's action body in declaration order so
+    ** we can emit one switch case per rule inside FeedBytes.
+    ** EOF rules are kept in the parallel array for index
+    ** alignment but skipped from the switch (their bodies fire
+    ** at LexFeedEOF time, not yet implemented -- see M3.5+).
+    ** When spec is NULL (legacy entry point, e.g. from a unit
+    ** test that doesn't need actions), the switch degrades to
+    ** the empty default branch and every match falls through
+    ** to the auto-emit path -- the M3.3 contract verbatim. */
+    const char **rule_actions = NULL;
+    int *rule_is_eof = NULL;
+    int have_actions = 0;
+    if (spec) {
+        if (collect_rule_actions(spec, n_rules,
+                                 &rule_actions, &rule_is_eof) == 0) {
+            have_actions = 1;
+        }
+    }
+
+    /* Macro definitions: scoped to LexFeedBytes by paired
+    ** #define / #undef.  They reference the function-locals
+    ** matched, matched_len, lex, state, _action_emitted,
+    ** _terminate, _error, emit, user. */
+    fprintf(out,
+        "/* ===== Action-body primitives (M3.4) =====\n"
+        "** Defined immediately before %sLexFeedBytes and undefined\n"
+        "** immediately after.  They drive the per-iteration switch\n"
+        "** that dispatches each match to its action body. */\n"
+        "#define LEX_EMIT(rule_code) do {                              \\\n"
+        "    if (emit) emit(user, (int)(rule_code), matched, matched_len); \\\n"
+        "    _action_emitted = 1;                                      \\\n"
+        "} while (0)\n"
+        "#define LEX_SKIP() do { _action_emitted = 1; } while (0)\n"
+        "#define LEX_TRANSITION(state_id) do {                         \\\n"
+        "    int _new_state = (int)(state_id);                          \\\n"
+        "    state = _new_state;                                        \\\n"
+        "    lex->state = _new_state;                                   \\\n"
+        "} while (0)\n"
+        "#define LEX_TERMINATE() do { _terminate = 1; } while (0)\n"
+        "#define LEX_ERROR_AT(msg) do {                                \\\n"
+        "    _error = 1;                                               \\\n"
+        "    lex->err_msg = (msg);                                     \\\n"
+        "} while (0)\n"
+        "#define LEX_PUSHBACK(n) (void)%sLexPushback(lex, (size_t)(n))\n\n",
+        prefix, prefix);
+
     fprintf(out,
         "%sLexResult %sLexInclude(%sLexer *yyl,\n"
         "                            const char *bytes, size_t n) {\n"
@@ -486,11 +584,12 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "                              const char *bytes, size_t n,\n"
         "                              %sEmitFn emit, void *user) {\n"
         "    if (!yyl) return %s_LEX_ERROR;\n"
-        "    /* Push the caller's buffer as a new bottom-of-this-call\n"
-        "    ** frame, then drive top-of-stack until depth drops back\n"
-        "    ** to where it was before the push.  This handles nested\n"
-        "    ** LexInclude calls invoked from inside `emit`: each push\n"
-        "    ** raises the loop bound, each auto-pop lowers it. */\n"
+        "    yyl->err_msg = 0;\n"
+        "    /* M3.5: push the caller's buffer as a new bottom-of-this-call\n"
+        "    ** frame, then drive top-of-stack until depth drops back to\n"
+        "    ** where it was before the push.  Nested LexInclude calls\n"
+        "    ** invoked from inside the user's action body raise the loop\n"
+        "    ** bound; each auto-pop on EOF lowers it. */\n"
         "    if (yyl->depth >= %s_LEX_MAX_INCLUDE_DEPTH) {\n"
         "        yyl->err_msg = \"include depth exceeded\";\n"
         "        return %s_LEX_ERROR;\n"
@@ -500,6 +599,10 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "    yyl->stack[yyl->depth].len   = n;\n"
         "    yyl->stack[yyl->depth].pos   = 0;\n"
         "    yyl->depth++;\n"
+        "    /* M3.4: function-scope flags set by LEX_TERMINATE /\n"
+        "    ** LEX_ERROR_AT inside an action body. */\n"
+        "    int _terminate = 0;\n"
+        "    int _error = 0;\n"
         "    while (yyl->depth > initial_depth) {\n"
         "        int top = yyl->depth - 1;\n"
         "        size_t fpos = yyl->stack[top].pos;\n"
@@ -519,24 +622,64 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "            yyl->err_msg = \"unmatched input\";\n"
         "            return %s_LEX_ERROR;\n"
         "        }\n"
-        "        /* Advance pos BEFORE emit: a recursive LexInclude\n"
-        "        ** issued from inside `emit` must land its new frame\n"
-        "        ** above an already-consumed parent slice, so that on\n"
-        "        ** auto-pop the parent resumes after the just-emitted\n"
-        "        ** token rather than re-matching it. */\n"
+        "        /* M3.5 invariant: advance pos BEFORE the action body\n"
+        "        ** so a LexInclude issued from inside the body lands\n"
+        "        ** its new frame above already-consumed parent bytes,\n"
+        "        ** and so LEX_PUSHBACK can rewind from the post-match\n"
+        "        ** position. */\n"
         "        yyl->stack[top].pos = fpos + consumed;\n"
-        "        if (emit) emit(user, rule, fbytes + fpos, consumed);\n"
+        "        /* M3.4: per-iteration locals + action body switch. */\n"
+        "        const char *matched = fbytes + fpos;\n"
+        "        size_t matched_len = consumed;\n"
+        "        %sLexer *lex = yyl;\n"
+        "        int state = lex->state;\n"
+        "        int _action_emitted = 0;\n"
+        "        switch (rule) {\n",
+        prefix, prefix, prefix, prefix,
+        PREFIX, PREFIX, PREFIX,
+        prefix, PREFIX, prefix);
+
+    if (have_actions) {
+        for (int i = 0; i < n_rules; i++) {
+            if (rule_is_eof[i]) continue;
+            const char *body = rule_actions[i] ? rule_actions[i] : "";
+            fprintf(out,
+                "        case %d: {\n"
+                "%s\n"
+                "        } break;\n",
+                i, body);
+        }
+    }
+
+    fprintf(out,
+        "        default: break;\n"
+        "        }\n"
+        "        lex->state = state;\n"
+        "        if (!_action_emitted && !_error) {\n"
+        "            if (emit) emit(user, rule, matched, matched_len);\n"
+        "        }\n"
+        "        if (_error) return %s_LEX_ERROR;\n"
+        "        if (_terminate) return %s_LEX_OK;\n"
         "    }\n"
         "    return %s_LEX_OK;\n"
         "}\n\n",
-        prefix, prefix, prefix, prefix,
-        PREFIX, PREFIX, PREFIX,
-        prefix, PREFIX, PREFIX);
+        PREFIX, PREFIX, PREFIX);
+
+    fprintf(out,
+        "#undef LEX_EMIT\n"
+        "#undef LEX_SKIP\n"
+        "#undef LEX_TRANSITION\n"
+        "#undef LEX_TERMINATE\n"
+        "#undef LEX_ERROR_AT\n"
+        "#undef LEX_PUSHBACK\n\n");
+
+    free(rule_actions);
+    free(rule_is_eof);
     fprintf(out,
         "%sLexResult %sLexFeedEOF(%sLexer *yyl,\n"
         "                            %sEmitFn emit, void *user) {\n"
         "    /* M3.5: no <<EOF>> rule dispatch yet (deferred to M3.6).\n"
-        "    ** Auto-pop of included buffers is already handled inside\n"
+        "    ** Auto-pop of included buffers is handled inside\n"
         "    ** LexFeedBytes; this entry point becomes meaningful once\n"
         "    ** EOF actions can fire user code. */\n"
         "    (void)yyl; (void)emit; (void)user;\n"

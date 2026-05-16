@@ -51,8 +51,16 @@ int lime_lex_emit_h(const LimeLexCompiled *c,
 
 /* Emit the `.c` content.  `header_basename` is the relative
 ** include path the .c file uses to find its own .h (typically
-** "foo_lex.h"). */
+** "foo_lex.h").  `spec` is the parsed (and pattern-resolved)
+** lexer spec; its rules drive M3.4 action-body inlining inside
+** the generated `LexFeedBytes`.  Pass NULL to fall back to the
+** M3.3 behavior (auto-emit the matched rule for every match,
+** ignoring action bodies); the auto-emit fallback also fires
+** per-rule when an action body neither calls LEX_EMIT nor
+** LEX_SKIP, so existing M3.3 grammars with empty action bodies
+** keep working. */
 int lime_lex_emit_c(const LimeLexCompiled *c,
+                    const LimeLexSpec *spec,
                     const char *name_prefix,
                     const char *header_basename,
                     const char *const *rule_names,

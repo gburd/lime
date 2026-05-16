@@ -537,6 +537,32 @@ test_lex_runtime = executable('test_lex_runtime',
 
 test('lex_runtime', test_lex_runtime)
 
+# M3.4 of the lexer subsystem: action-body inlining + LEX_*
+# macros.  Same end-to-end shape as test_lex_runtime, but the
+# generated FeedBytes inlines each rule's action body inside a
+# switch and exposes LEX_EMIT/LEX_SKIP/LEX_TRANSITION/
+# LEX_TERMINATE/LEX_ERROR_AT to user code.  Empty action bodies
+# still auto-emit -- preserves the M3.3 contract.
+test_lex_actions_gen = custom_target('test_lex_actions_lex',
+  input   : ['test_lex_actions_grammar.lex'],
+  output  : ['test_lex_actions_grammar_lex.c',
+             'test_lex_actions_grammar_lex.h'],
+  command : [
+    lime_exe,
+    '-X',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_lex_actions = executable('test_lex_actions',
+  'test_lex_actions.c',
+  test_lex_actions_gen,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_actions', test_lex_actions)
+
 # M3.5 of the lexer subsystem: LexInclude buffer-stack +
 # LexPushback runtime support.  Mirrors the M3.3 wiring: lime -X
 # generates the lexer .c+.h pair, the test driver compiles

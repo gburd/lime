@@ -82,7 +82,7 @@ static int emit_for(const char *src, char **h_out, char **c_out) {
     char *c_buf = NULL;
     size_t c_size = 0;
     FILE *c_f = open_memstream(&c_buf, &c_size);
-    int c_rc = lime_lex_emit_c(c, name_prefix, "foo_lex.h",
+    int c_rc = lime_lex_emit_c(c, spec, name_prefix, "foo_lex.h",
                                (const char *const *)rule_names, n_rules, c_f);
     fclose(c_f);
 
