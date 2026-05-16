@@ -1,0 +1,924 @@
+.\" lime_lex.5 - manual page for the Lime lexer file format
+.\" Copyright (c) 2024-2026 Lime Parser Generator Project
+.\" Public Domain
+.\"
+.TH LIME_LEX 5 "May 2026" "Lime 1.0" "File Formats"
+.SH NAME
+lime_lex \- Lime parser generator lexer file format
+.SH DESCRIPTION
+A Lime lexer file defines a scanner: a state machine that consumes
+a stream of bytes and emits a stream of tokens.
+The compiled lexer is push-driven, reentrant, and pairs with a
+Lime-generated parser by feeding tokens to its
+.BR ParseLoc ()
+entry point.
+.PP
+Lexer files conventionally use the
+.B .lex
+file extension and are processed with
+.B "lime \-X"
+to produce
+.IB stem _lex.c
+and
+.IB stem _lex.h
+in the directory specified by the
+.B \-d
+flag (default: current directory).
+.PP
+A lexer file consists of:
+.IP \(bu 2
+Directive declarations (lines beginning with
+.BR % )
+.IP \(bu 2
+Rule definitions
+.RB ( "rule " name " matches " /pattern/ " { " action " }" )
+.IP \(bu 2
+C\-language and C++\-style comments
+.RB ( "/* ... */" " and " "// ..." )
+outside action and code blocks.
+.SH "RULE SYNTAX"
+A rule defines what input pattern fires which action.
+The general form is:
+.PP
+.RS
+.EX
+[<state-list>] rule name matches /pattern/ { action }
+.EE
+.RE
+.PP
+.TP
+.I <state-list>
+Optional state qualifier.
+When present, the rule fires only when the lexer is in one of
+the listed states.
+The list is comma\-separated:
+.B <xq>
+or
+.BR "<xq, xqc, xe>" .
+When absent, the rule fires in
+.BR INITIAL .
+.TP
+.I name
+A stable identifier used in the generated rule\-id constant
+.RI ( <PREFIX> _RULE_ <UPPER_NAME> ),
+in trace output, and in introspection.
+Required.
+.TP
+.IB / pattern /
+A POSIX\-extended regex.
+Patterns are delimited by
+.B /
+characters (no embedded
+.B /
+allowed; use
+.BR \e/ ).
+Named pattern fragments declared by
+.B %pattern
+are referenced as
+.BI { name } .
+.TP
+.BI { " action " }
+A C action body executed when the pattern matches.
+Inside the body, several typed locals and macros are
+available; see
+.B "ACTION BODY"
+below.
+An empty action body
+.RB ( "{ }" )
+auto\-emits the matched rule\-id to the user's emit callback;
+this is the most common form for tokens with no transformation.
+.PP
+A state\-block shorthand groups many rules under one state
+qualifier:
+.PP
+.RS
+.EX
+<EXPR> {
+    rule plus  matches /\e+/  { LEX_EMIT('+'); }
+    rule minus matches /-/    { LEX_EMIT('-'); }
+}
+.EE
+.RE
+.PP
+The block desugars to per\-rule
+.B <EXPR>
+qualifiers; block\-form and per\-rule forms can be interleaved
+freely in the same file.
+.PP
+A rule whose pattern is the literal token
+.B <<EOF>>
+fires when the input ends in the qualifying state(s).
+End\-of\-input rules in
+.B INITIAL
+state are written without a qualifier.
+.SH DIRECTIVES
+All directives begin with a
+.B %
+character and end with a period
+.RB ( . ).
+.SS "Lexer Configuration"
+.TP
+.BI %name_prefix " identifier" .
+Set the prefix for generated lexer functions and types.
+The default is
+.BR Lex ,
+producing
+.BR LexAlloc ,
+.BR LexFree ,
+.BR LexFeedBytes ,
+.BR LexFeedEOF ,
+and the
+.B Lex_Lexer
+opaque struct.
+With
+.BR "%name_prefix Foo." ,
+they become
+.BR FooLexAlloc ,
+.BR FooLexFree ,
+.BR Foo_Lexer ,
+etc.
+The same prefix governs the
+.BR _RULE_ *
+and
+.BR _STATE_ *
+constants in upper case (so
+.B Foo
+yields
+.BR FOO_RULE_IDENT ,
+.BR FOO_STATE_INITIAL ).
+.TP
+.BI %token_prefix " identifier" .
+Prepend
+.I prefix
+to all token
+.B #define
+names emitted to the generated header (when the lexer also
+emits parser\-side glue; not used for plain
+.B \-X
+output).
+.TP
+.BI %token_type " {" " C-type " "}"
+Declare the C data type of a token's emitted value (the
+third argument to the emit callback).
+The default is implicit
+.B "void *"
+through the type\-erased
+.BR text / len
+form of the callback.
+.TP
+.BI %location_type " {" " C-type " "}"
+Declare the C type used to carry locations.
+The default is
+.BR LimeLocation ,
+matching the parser's default.
+.TP
+.BI %lexer_extra_argument " {" " C-declaration " "}"
+Declare an opaque per\-instance user pointer.
+Read inside any action body as the
+.B extra
+local.
+The pointer is set by
+.BR LexAlloc ()
+and is the lexer\-side analogue of the parser's
+.BR %extra_argument .
+.SS "Pattern Fragments"
+.TP
+.BI %pattern " name " /regex/ .
+Declare a named regex fragment.
+References inside any rule's
+.IB / pattern /
+body as
+.BI { name } .
+Fragments may reference other fragments recursively; cycles
+are detected at parse time and reported as errors.
+Forward references are allowed.
+Replaces the flex definitions section.
+.IP
+Example:
+.RS
+.EX
+%pattern digit       /[0\-9]/.
+%pattern hex         /[0\-9A\-Fa\-f]/.
+%pattern ident_start /[A\-Za\-z_]/.
+%pattern ident       /{ident_start}[A\-Za\-z_0\-9]*/.
+.EE
+.RE
+.SS "State Declarations"
+.TP
+.BI %state " name" .
+Declare an inclusive state.
+Rules without a state qualifier match in inclusive states
+in addition to
+.BR INITIAL .
+.TP
+.BI %exclusive_state " name" .
+Declare an exclusive state.
+Only rules qualified
+.BI < name >
+fire while the lexer is in this state.
+.TP
+.BI %state " name " { " typed-body " }.
+.PD 0
+.TP
+.BI %exclusive_state " name " { " typed-body " }.
+.PD
+Declare a state with typed local data.
+The body is C struct\-member syntax:
+.RS
+.EX
+%exclusive_state DOLLAR_QUOTED {
+    char    *opening_tag;
+    size_t   opening_tag_len;
+}.
+.EE
+.RE
+.IP
+Within rules qualified
+.BR <DOLLAR_QUOTED> ,
+the action body reads
+.B state_data\->opening_tag
+and friends as fields of a typed pointer.
+Setting fields at state entry uses an extended transition:
+.IP
+.RS
+.EX
+LEX_TRANSITION(DOLLAR_QUOTED, .opening_tag = matched + 1,
+                              .opening_tag_len = matched_len \- 2);
+.EE
+.RE
+.IP
+The struct is zeroed when the state is exited via
+.BR LEX_TRANSITION
+to a different state.
+.TP
+.BI %state_destructor " name " { " C-code " }.
+Declare a destructor that runs if the lexer is freed while
+in
+.IR name 's
+state.
+The action body sees
+.B state_data
+as the typed pointer to the state's struct.
+.SS "Keyword Tables"
+.TP
+.B %keyword_table
+.BI " name (" " options " ") {" " strings " }.
+Declare a first\-class keyword set.
+.I options
+is a comma\-separated list of:
+.RS
+.IP \(bu 2
+.B case_insensitive
+or
+.BR case_sensitive
+(default
+.BR case_sensitive ).
+.IP \(bu 2
+.BI prefix= IDENT
+\(em prefix prepended to each keyword's emitted constant
+.RI ( IDENT_SELECT ,
+.IR IDENT_FROM ,
+\&...).
+.RE
+.IP
+The generator picks a lookup implementation based on table
+size: linear scan for \(<= 8 entries, switch+linear for
+9\(en64, perfect hash for 65\(en512, trie for >\|512.
+The lookup function is exposed as
+.BI <name> _lookup() :
+.IP
+.RS
+.EX
+%keyword_table sql_kw (case_insensitive, prefix=K_) {
+    "select", "from", "where", "as"
+}.
+
+rule sql_word matches /[A\-Za\-z_][A\-Za\-z_0\-9]*/ {
+    int k = sql_kw_lookup(matched, matched_len);
+    if (k >= 0) LEX_EMIT(k);
+    else        LEX_EMIT(SQL_RULE_IDENT);
+}
+.EE
+.RE
+.IP
+At the time of writing, keyword tables parse and round\-trip
+through the
+.B %name_prefix
+pretty\-printer but the compile/emit path is not yet wired
+up.
+The same effect is reached by declaring each keyword as a
+single\-pattern rule; declaration\-order ties keep keywords
+ahead of a catch\-all identifier rule.
+See
+.B EXAMPLES
+below.
+.SS "Literal Buffers"
+.TP
+.B %literal_buffer
+.BI " name { " " body " " }."
+Declare a managed character\-accumulation buffer.
+Body fields:
+.RS
+.TP
+.BI type " C-type"
+Element type (typically
+.B char
+or
+.BR "unsigned char" ).
+.TP
+.BI initial " N"
+Initial capacity in elements.
+.TP
+.BI grow " " \fR\(dq\fIpolicy\fR\(dq\fR
+Growth policy as a C expression operating on the current
+capacity (e.g.
+.BR \(dq*2\(dq ,
+.BR \(dq+64\(dq ).
+.TP
+.BI alloc " function"
+.PD 0
+.TP
+.BI realloc " function"
+.TP
+.BI free " function"
+.PD
+Names of the C functions used for memory management
+(typically
+.BR palloc / repalloc / pfree
+in PG, or
+.BR malloc / realloc / free ).
+.RE
+.IP
+The declaration emits state\-private buffer storage plus
+action\-body macros
+.BR LEX_BUF_START ,
+.BR LEX_BUF_APPEND ,
+.BR LEX_BUF_APPEND_CH ,
+.BR LEX_BUF_TAKE ,
+.BR LEX_BUF_LEN ,
+and
+.BR LEX_BUF_PEEK .
+Replaces the per\-scanner
+.BR startlit / addlit / addlitchar / litbufdup
+boilerplate.
+.SS "Composition"
+.TP
+.B %ruleset
+.BI " name { " " rules " " }."
+Group rules into a named, composable set.
+Rulesets do not have an entry state of their own; they
+contribute their rules into any
+.B %lexer
+that includes them.
+.TP
+.BI %lexer_include " name1, name2, ..."  .
+Include the named rulesets into the current lexer in order.
+The first\-included set wins on length\-tie disambiguation;
+two patterns in the same set that match the same input with
+the same length is an error.
+.SS "Code Blocks"
+.TP
+.B %include
+.BI { " C code " }
+Insert C code at the top of the generated source file.
+Typically used for
+.B #include
+directives and helper function definitions referenced from
+action bodies.
+.SH "ACTION BODY"
+The action body is C code with a fixed set of typed locals
+and macros bound.
+The body is inlined inside the generated
+.BR LexFeedBytes ()
+function, so any side effects are visible to the surrounding
+runtime.
+.SS "Locals"
+.TP
+.B matched
+.RB ( "const char *" )
+Pointer into the caller's input buffer; the matched text.
+NOT null\-terminated.
+.TP
+.B matched_len
+.RB ( size_t )
+Length of the matched span.
+.TP
+.B loc
+.RB ( YYLOCATIONTYPE )
+Location of the matched span.
+.TP
+.B lex
+.RB ( <PREFIX>_Lexer\ * )
+The lexer instance handle.
+Pass to runtime API calls
+.RB ( "FooLexInclude(lex, ...)"
+etc.).
+.TP
+.B extra
+(as declared by
+.BR %lexer_extra_argument )
+The opaque per\-instance user pointer set at
+.BR LexAlloc ()
+time.
+.TP
+.B state
+.RB ( int )
+Current state code.
+Read or write; assigning is equivalent to
+.B LEX_TRANSITION(state)
+without state\-local\-data init.
+.TP
+.B state_data
+(state's typed struct pointer)
+For rules qualified by a state with declared local data:
+typed pointer to the state's struct.
+.SS "Macros"
+.TP
+.BI LEX_EMIT( "rule_code" );
+Emit a token with the supplied rule id.
+.I rule_code
+may be a
+.BI <PREFIX>_RULE_ NAME
+constant or any
+.B int
+(char literals like
+.B '+'
+work).
+The user's emit callback is invoked once per call.
+.TP
+.B LEX_SKIP();
+Suppress the auto\-emit for this iteration.
+The matched bytes are still consumed.
+This is the explicit form of flex's
+.B ;
+"skip" action body.
+.TP
+.BI LEX_TRANSITION( "state_id" );
+Switch to
+.IR state_id .
+Clears any prior state\-local data.
+.TP
+.BI LEX_TRANSITION( "state_id" ", " ".field" " = " "value" ", ...);"
+Switch and initialise state\-local data using C99 designated
+initialisers.
+.TP
+.BI LEX_PUSHBACK( "n" );
+Un\-consume the trailing
+.I n
+bytes of the just\-matched text so they will be re\-matched
+on the next iteration.
+Equivalent to flex's
+.BI yyless( matched_len - n ).
+Bounds\-checked: a pushback that exceeds the available
+buffered prefix returns
+.B LEX_ERROR
+to the caller.
+.TP
+.B LEX_TERMINATE();
+Stop lexing immediately.
+The current
+.BR LexFeedBytes ()
+call returns
+.B LEX_OK
+with no further emits.
+Distinct from emitting an EOF token (which the caller
+arranges by pushing a 0 to the parser separately).
+.TP
+.BI LEX_ERROR_AT( "msg" );
+Cause the call to return
+.BR LEX_ERROR .
+.I msg
+is stashed for retrieval via
+.BR LexErrorMessage (),
+which returns a pointer valid until the next
+.BR LexFeed *
+call.
+.SH "<<EOF>> RULES"
+A rule whose pattern is the literal token
+.B <<EOF>>
+fires when the input ends in the qualifying state(s).
+.PP
+.RS
+.EX
+<COMMENT> rule comment_eof matches <<EOF>> {
+    LEX_ERROR_AT("unterminated comment");
+}
+.EE
+.RE
+.PP
+Default behaviour when no
+.B <<EOF>>
+rule is declared for the current state:
+.B INITIAL
+returns
+.B LEX_OK
+(clean end\-of\-input); any other state returns
+.B LEX_ERROR
+on the assumption that the open construct that switched into
+that state should have closed before EOF.
+.PP
+.B Status:
+.B <<EOF>>
+rule
+.I syntax
+parses and the rule is recognised at compile time in
+v0.2.
+Per\-state action
+.I dispatch
+on EOF is wired up by milestone M3.6.
+Until M3.6 ships, declaring an EOF rule has no runtime effect
+beyond the spec'd
+.B LEX_ERROR
+default for non\-INITIAL states.
+.SH "RUNTIME C API"
+The generator emits a push\-driven runtime API.
+All names are renameable via
+.BR %name_prefix ;
+the table below uses the default
+.B Foo
+prefix for clarity.
+.TP
+.BI "Foo_Lexer *" FooLexAlloc( "void *(*mallocProc)(size_t)" );
+Allocate a new lexer instance.
+The first argument is a malloc\-shaped function pointer
+.RB ( malloc ,
+.BR palloc ,
+\&...).
+Returns
+.B NULL
+on allocation failure.
+.TP
+.BI "void " FooLexFree( "Foo_Lexer *yyl, void (*freeProc)(void *)" );
+Free a lexer instance.
+The second argument is a free\-shaped function pointer.
+Safe to pass
+.B NULL
+for either argument; a
+.B NULL
+.I yyl
+is a no\-op.
+.TP
+.B FooLexResult
+A typedef:
+.B FOO_LEX_OK
+(0) on clean completion or
+.B FOO_LEX_ERROR
+(1) on unmatched input, exceeded include depth, pushback
+out of bounds, or
+.BR LEX_ERROR_AT() .
+.TP
+.B FooEmitFn
+A typedef
+.IB ( "void (*)(void *user, int rule, const char *text, size_t len)" )
+.
+The user's emit callback.
+.I user
+is the opaque pointer the caller passed to
+.BR FooLexFeedBytes ();
+.I rule
+is one of the
+.B FOO_RULE_*
+constants;
+.IR text / len
+point into the caller's input buffer (NOT copied).
+.TP
+.BI "FooLexResult " FooLexFeedBytes( "Foo_Lexer *yyl, const char *bytes, size_t n, FooEmitFn emit, void *user" );
+Feed bytes to the lexer.
+Each recognised token invokes
+.IR emit (
+.IR user ", "
+.IR rule_code ", "
+.IR text ", "
+.IR len ).
+Returns
+.B FOO_LEX_OK
+on clean completion or
+.B FOO_LEX_ERROR
+on the conditions described above.
+.TP
+.BI "FooLexResult " FooLexFeedEOF( "Foo_Lexer *yyl, FooEmitFn emit, void *user" );
+Signal end of input.
+Forces dispatch of any
+.B <<EOF>>
+rules for the current state (M3.6) and returns
+.B FOO_LEX_OK
+on clean termination.
+.TP
+.BI "int " FooLexCurrentState( "const Foo_Lexer *yyl" );
+Return the current state code (
+.BR FOO_STATE_INITIAL ,
+.BR FOO_STATE_X ,
+\&...).
+Returns \-1 on a NULL handle.
+.TP
+.BI "void " FooLexSetState( "Foo_Lexer *yyl, int state" );
+Caller\-controlled state switch.
+The action\-body equivalent is
+.BR LEX_TRANSITION ;
+this entry point exposes the same primitive for callers
+that pick a starting state per feed call (PostgreSQL's
+.B exprscan.l
+shape).
+Does
+.B not
+initialise state\-local data; if the target state has
+local\-data fields, the caller is responsible for setting
+them via the
+.BR state_data
+pointer.
+.TP
+.BI "FooLexResult " FooLexInclude( "Foo_Lexer *yyl, const char *bytes, size_t n" );
+Push a new input source onto the lexer's buffer stack.
+The lexer continues from the new source until it hits EOF,
+then automatically resumes the parent buffer.
+The supplied bytes are
+.B not
+copied; the caller retains ownership and must keep the
+buffer alive until the corresponding pop (observable via
+.BR FooLexIncludeDepth() ).
+Returns
+.B FOO_LEX_ERROR
+on
+.B NULL
+handle or maximum include depth reached
+.RB ( FOO_LEX_MAX_INCLUDE_DEPTH ,
+default 64).
+.TP
+.BI "int " FooLexIncludeDepth( "const Foo_Lexer *yyl" );
+Number of
+.BR FooLexInclude ()
+levels currently active.
+0 when no include is on the stack.
+.TP
+.BI "FooLexResult " FooLexPushback( "Foo_Lexer *yyl, size_t n" );
+Un\-consume the last
+.I n
+bytes from the top\-of\-stack buffer.
+The action\-body
+.B LEX_PUSHBACK
+macro delegates to this entry point;
+.BR FooLexPushback ()
+itself is callable from outside an action body.
+Returns
+.B FOO_LEX_ERROR
+if
+.I n
+exceeds the available buffered prefix on the current
+frame.
+.TP
+.BI "const char *" FooLexErrorMessage( "const Foo_Lexer *yyl" );
+On
+.BR FOO_LEX_ERROR ,
+return a stable diagnostic string set by the failing rule
+(via
+.BR LEX_ERROR_AT() )
+or by the runtime's bounds checks.
+The returned pointer is valid until the next
+.BR FooLexFeed *
+call or the lexer is freed.
+Returns
+.B NULL
+when no error has been recorded.
+.SH "PATTERN LANGUAGE"
+Lime patterns are POSIX\-extended regex.
+.SS "Constructs"
+.TP
+.B abc
+Literal characters.
+.TP
+.B [a-z0-9_]
+Character class.
+.TP
+.B [^...]
+Negated class.
+.TP
+.B .
+Any byte except newline.
+.TP
+.B *
+.PD 0
+.TP
+.B +
+.TP
+.B ?
+.PD
+Zero\-or\-more, one\-or\-more, optional.
+.TP
+.BI { n , m }
+Bounded repetition.
+.TP
+.B ( ... )
+Grouping (no capture).
+.TP
+.B |
+Alternation.
+.TP
+.B \e
+Escape.
+.B \en
+.RB \e t ,
+.BR \er ,
+.BR \ef ,
+.BR \ev ,
+.B \e0
+are recognised C\-style escapes;
+.BI \ex { hex }
+is a hex byte escape.
+.TP
+.B ^
+Beginning of input (NOT line; lexers do not track lines
+specially).
+.TP
+.B $
+End of input.
+.PP
+The following constructs are
+.I not
+supported (rejected for v1):
+backreferences
+.RB ( \e1 ),
+named captures
+.RB ( "(?P<name>...)" ),
+lookahead and lookbehind assertions
+.RB ( "(?=...)" ", " "(?<!...)" ),
+inline flag modifiers
+.RB ( "(?i)..." ),
+trailing context
+.RB ( pattern1 / pattern2 ),
+.B yymore()
+behaviour, and
+.BR REJECT .
+The PG flex audit (six scanners, ~5,300 lines) found zero
+uses of any of these.
+.SS "Match disambiguation"
+Three rules in priority order:
+.IP 1. 4
+Longest match wins (standard lex/flex semantics).
+.IP 2. 4
+Within a length tie, declaration order wins (earlier rules
+beat later rules).
+.IP 3. 4
+Across composed rule sets, first\-included set's rules win
+on length ties.
+.PP
+The
+.B \-X
+output reports cross\-set conflicts in the audit trail.
+.SH EXAMPLES
+A minimal scanner for arithmetic expressions:
+.PP
+.RS
+.EX
+%name_prefix Calc.
+
+%pattern digit /[0\-9]/.
+
+rule ws    matches /[ \et]+/   { LEX_SKIP(); }
+rule num   matches /{digit}+/  { /* auto\-emit */ }
+rule plus  matches /\e+/       { /* auto\-emit */ }
+rule minus matches /\-/        { /* auto\-emit */ }
+rule times matches /\e*/       { /* auto\-emit */ }
+rule div   matches /\e//       { /* auto\-emit */ }
+.EE
+.RE
+.PP
+A stateful scanner for C\-style block comments:
+.PP
+.RS
+.EX
+%name_prefix Cmt.
+
+%exclusive_state COMMENT { int depth; }.
+
+rule open  matches "/\e*"  { LEX_TRANSITION(COMMENT, .depth = 1); }
+<COMMENT> rule nest_open  matches "/\e*"  { state_data\->depth++; }
+<COMMENT> rule nest_close matches "\e*/"  {
+    if (\-\-state_data\->depth == 0) LEX_TRANSITION(INITIAL);
+}
+<COMMENT> rule body matches /([^/*]|\e/[^*]|\e*[^/])+/ { LEX_SKIP(); }
+<COMMENT> rule eof  matches <<EOF>>      {
+    LEX_ERROR_AT("unterminated comment");
+}
+.EE
+.RE
+.PP
+The simplest port of PostgreSQL's
+.B bootscanner.l
+keeps each keyword as a separate rule (declaration\-order
+disambiguation against a generic identifier):
+.PP
+.RS
+.EX
+%name_prefix Boot.
+
+%pattern id  /[\-A\-Za\-z0\-9_]+/.
+%pattern sid /'([^']|'')*'/.
+
+rule whitespace matches /[\er\et ]+/ { LEX_SKIP(); }
+rule newline    matches /\en/        { LEX_SKIP(); }
+rule comment    matches /#[^\en]*/   { LEX_SKIP(); }
+
+rule comma  matches /,/  { /* auto\-emit */ }
+rule lparen matches /\e(/ { /* auto\-emit */ }
+
+rule kw_open      matches /open/      { /* auto\-emit */ }
+rule kw_bootstrap matches /bootstrap/ { /* auto\-emit */ }
+/* ... 20 more keyword rules ... */
+
+rule ident    matches /{id}/  { /* auto\-emit */ }
+rule sqstring matches /{sid}/ { /* auto\-emit */ }
+
+rule unexpected matches /./ {
+    LEX_ERROR_AT("syntax error: unexpected character");
+}
+.EE
+.RE
+.PP
+The full worked example, with a meson\-driven test driver, lives in
+.B examples/pg_bootscanner/
+in the Lime source tree.
+.SH "BUILD INTEGRATION"
+.SS meson
+.PP
+.RS
+.EX
+foo_lex_gen = custom_target('foo_lexer',
+  input   : ['foo.lex'],
+  output  : ['foo_lex.c', 'foo_lex.h'],
+  command : [lime_exe, '\-X', '\-d@OUTDIR@', '@INPUT@'],
+)
+
+executable('foo', ['driver.c'], foo_lex_gen)
+.EE
+.RE
+.SS Make
+.PP
+.RS
+.EX
+foo_lex.c foo_lex.h: foo.lex
+\&\t$(LIME) \-X \-d. foo.lex
+.EE
+.RE
+.PP
+The generated
+.IB stem _lex.c
+includes
+.IB stem _lex.h
+by basename only, so the pair can be moved between directories
+without editing.
+.SH "DRIVER LOOP"
+The simplest driver:
+.PP
+.RS
+.EX
+static void emit(void *user, int rule,
+                 const char *text, size_t len) {
+    /* convert text/len to the parser's value type, then: */
+    Parse(parser, rule, build_value(text, len));
+}
+
+void *lex = FooLexAlloc(malloc);
+void *par = FooParseAlloc(malloc);
+
+FooLexResult r = FooLexFeedBytes(lex, src, src_len, emit, par);
+if (r == FOO_LEX_OK)
+    r = FooLexFeedEOF(lex, emit, par);
+Parse(par, 0, eof_value);   /* push EOF to the parser */
+
+FooLexFree(lex, free);
+FooParseFree(par, free);
+.EE
+.RE
+.PP
+The caller owns the input buffer for its lifetime; the lexer
+does
+.B not
+copy bytes.
+.SH "STATUS"
+The
+.B .lex
+source language and the runtime API documented above are spec
+v0.2.
+The compiler pipeline (parse, resolve, NFA construction, DFA
+subset construction, DFA minimisation, action\-body emission,
+push\-driven runtime, include stack, pushback) is implemented;
+.B <<EOF>>
+rule action dispatch is in milestone M3.6;
+.B %ruleset
+composition,
+.BR lime_lexer_to_text ()
+introspection, and per\-rule test entry points are in
+milestone M4.
+Keyword tables and literal buffers parse and round\-trip but
+the compile/emit paths are deferred to later milestones.
+.SH "SEE ALSO"
+.BR lime (1),
+.BR lime_grammar (5),
+.BR flex (1)
+.SH AUTHORS
+The Lime parser generator is an extension of Lemon (originally
+written by D. Richard Hipp for the SQLite project) with support
+for modular grammars, runtime extensions, and a push\-driven
+lexer subsystem.
+.SH LICENSE
+Public Domain.
