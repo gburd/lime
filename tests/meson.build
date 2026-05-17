@@ -758,6 +758,64 @@ test_lex_per_rule = executable('test_lex_per_rule',
 
 test('lex_per_rule', test_lex_per_rule)
 
+# P0-NEW-13: LexFeedBytes must pop frames pushed during the call
+# on every return path -- normal completion, LEX_TERMINATE,
+# LEX_ERROR_AT, unmatched input.  Without this, an action body
+# that fires LEX_TERMINATE leaks the bottom frame each call;
+# after FOO_LEX_MAX_INCLUDE_DEPTH iterations every subsequent
+# LexFeedBytes returns LEX_ERROR("include depth exceeded").
+# Reproduces ecpg's pgc.c failure mode in isolation: 200
+# back-to-back LexFeedBytes calls on the same input, each
+# action LEX_TERMINATEs after the first token, and depth must
+# stay at 0 between calls.
+test_lex_terminate_frame_gen = custom_target('test_lex_terminate_frame_lex',
+  input   : ['test_lex_terminate_frame_grammar.lex'],
+  output  : ['test_lex_terminate_frame_grammar_lex.c',
+             'test_lex_terminate_frame_grammar_lex.h'],
+  command : [
+    lime_exe,
+    '-X',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_lex_terminate_frame = executable('test_lex_terminate_frame',
+  'test_lex_terminate_frame.c',
+  test_lex_terminate_frame_gen,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_terminate_frame', test_lex_terminate_frame)
+
+# P0-NEW-12: %lexer_extra_argument threads a user-declared
+# parameter through LexFeedBytes() into action bodies.  Replaces
+# the file-scope-extern workaround the PG migration team used
+# (loses thread-safety + per-instance isolation).  The parameter
+# lands at the END of the LexFeedBytes argument list, after
+# user_ctx.  Two sub-tests: basic threading (action body reads
+# and mutates extra), and per-instance isolation (two lexers
+# each with their own extra struct).
+test_lex_extra_arg_gen = custom_target('test_lex_extra_arg_lex',
+  input   : ['test_lex_extra_arg_grammar.lex'],
+  output  : ['test_lex_extra_arg_grammar_lex.c',
+             'test_lex_extra_arg_grammar_lex.h'],
+  command : [
+    lime_exe,
+    '-X',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_lex_extra_arg = executable('test_lex_extra_arg',
+  'test_lex_extra_arg.c',
+  test_lex_extra_arg_gen,
+  c_args : ['-Wno-unused-parameter'],
+)
+
+test('lex_extra_arg', test_lex_extra_arg)
+
 # P0-NEW-8: opt-in eager default-reduce drain.  Discriminator
 # mirrors ecpg's lex-time-vs-reduce-time channel interleaving:
 # the driver appends a marker between Parse() calls (simulating

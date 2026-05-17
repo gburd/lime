@@ -173,14 +173,25 @@ The default is
 matching the parser's default.
 .TP
 .BI %lexer_extra_argument " {" " C-declaration " "}"
-Declare an opaque per\-instance user pointer.
-Read inside any action body as the
-.B extra
-local.
-The pointer is set by
-.BR LexAlloc ()
-and is the lexer\-side analogue of the parser's
-.BR %extra_argument .
+Declare a user-supplied parameter that is threaded through
+.BR LexFeedBytes ()
+and bound as a local in every action body.
+The identifier you choose in the declaration
+(e.g.
+.B ext
+in
+.RB "%lexer_extra_argument { struct test_extra *ext }" )
+is what action bodies dereference; the parameter is appended
+to the
+.BR LexFeedBytes ()
+argument list after the
+.B emit
+callback's
+.B user_ctx
+pointer.
+This is the lexer\-side analogue of the parser's
+.BR %extra_argument :
+per\-instance, thread\-safe, no file\-scope state.
 .SS "Pattern Fragments"
 .TP
 .BI %pattern " name " /regex/ .

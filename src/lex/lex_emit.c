@@ -569,19 +569,62 @@ int lime_lex_emit_h(const LimeLexCompiled *c,
         PREFIX, prefix);
     fprintf(out,
         "%sLexer    *%sLexAlloc(void *(*mallocProc)(size_t));\n"
-        "void          %sLexFree(%sLexer *yyl, void (*freeProc)(void *));\n"
-        "%sLexResult  %sLexFeedBytes(%sLexer *yyl,\n"
-        "                              const char *bytes, size_t n,\n"
-        "                              %sEmitFn emit, void *user);\n"
+        "void          %sLexFree(%sLexer *yyl, void (*freeProc)(void *));\n",
+        prefix, prefix,
+        prefix, prefix);
+    /* P0-NEW-12: %lexer_extra_argument threads a user-declared
+    ** parameter through LexFeedBytes; the user's name is in scope
+    ** inside every action body via standard C parameter binding. */
+    const char *extra_arg = (spec && spec->extra_argument) ? spec->extra_argument : 0;
+    /* If the type begins with `struct <tag>` or `union <tag>`, emit a
+    ** file-scope forward declaration before the prototype.  Without
+    ** it, a tag first mentioned inside the parameter list would have
+    ** prototype scope, conflicting with the file-scope tag the user
+    ** defines (typically inside %include) at the function-definition
+    ** site.  Plain typedef / pointer-to-typedef parameters do not
+    ** need this and pass through untouched. */
+    if (extra_arg) {
+        const char *p = extra_arg;
+        while (*p == ' ' || *p == '\t' || *p == '\n') p++;
+        const char *kw = 0;
+        size_t kw_len = 0;
+        if (strncmp(p, "struct", 6) == 0 && (p[6] == ' ' || p[6] == '\t')) {
+            kw = "struct"; kw_len = 6;
+        } else if (strncmp(p, "union", 5) == 0 && (p[5] == ' ' || p[5] == '\t')) {
+            kw = "union"; kw_len = 5;
+        }
+        if (kw) {
+            const char *q = p + kw_len;
+            while (*q == ' ' || *q == '\t') q++;
+            const char *tag_start = q;
+            while ((*q >= 'a' && *q <= 'z') || (*q >= 'A' && *q <= 'Z') ||
+                   (*q >= '0' && *q <= '9') || *q == '_') q++;
+            if (q > tag_start) {
+                fprintf(out, "%s %.*s;\n\n",
+                        kw, (int)(q - tag_start), tag_start);
+            }
+        }
+    }
+    if (extra_arg) {
+        fprintf(out,
+            "%sLexResult  %sLexFeedBytes(%sLexer *yyl,\n"
+            "                              const char *bytes, size_t n,\n"
+            "                              %sEmitFn emit, void *user,\n"
+            "                              %s);\n",
+            prefix, prefix, prefix, prefix, extra_arg);
+    } else {
+        fprintf(out,
+            "%sLexResult  %sLexFeedBytes(%sLexer *yyl,\n"
+            "                              const char *bytes, size_t n,\n"
+            "                              %sEmitFn emit, void *user);\n",
+            prefix, prefix, prefix, prefix);
+    }
+    fprintf(out,
         "%sLexResult  %sLexFeedEOF(%sLexer *yyl,\n"
         "                            %sEmitFn emit, void *user);\n"
         "int           %sLexCurrentState(const %sLexer *yyl);\n"
         "void          %sLexSetState(%sLexer *yyl, int state);\n"
         "const char   *%sLexErrorMessage(const %sLexer *yyl);\n\n",
-        prefix, prefix,
-        prefix, prefix,
-        prefix, prefix, prefix,
-        prefix,
         prefix, prefix, prefix,
         prefix,
         prefix, prefix,
@@ -1052,10 +1095,45 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "    return yyl->depth - 1;\n"
         "}\n\n",
         prefix, prefix);
+    /* P0-NEW-12: optional %lexer_extra_argument parameter, threaded
+    ** through to action bodies as a normal C parameter (the user's
+    ** identifier is in scope in every action body switch case).
+    ** P0-NEW-13: a goto-cleanup pattern below ensures every return
+    ** path -- normal completion, LEX_TERMINATE, LEX_ERROR_AT,
+    ** unmatched-input -- pops back to initial_depth so per-call
+    ** frames never leak across LexFeedBytes invocations. */
+    const char *extra_arg = (spec && spec->extra_argument) ? spec->extra_argument : 0;
+    /* Identifier extraction (mirrors lime.c's %extra_argument trick):
+    ** walk back skipping whitespace, then back-skip ALPHA/_/digits to
+    ** find the trailing identifier.  Used only to suppress the
+    ** -Wunused-parameter warning when no action body references it. */
+    const char *extra_name = 0;
+    if (extra_arg) {
+        size_t L = strlen(extra_arg);
+        while (L > 0 && (extra_arg[L-1] == ' ' || extra_arg[L-1] == '\t' || extra_arg[L-1] == '\n')) L--;
+        size_t E = L;
+        while (L > 0) {
+            char ch = extra_arg[L-1];
+            if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') L--;
+            else break;
+        }
+        if (L < E) extra_name = extra_arg + L;
+    }
+    if (extra_arg) {
+        fprintf(out,
+            "%sLexResult %sLexFeedBytes(%sLexer *yyl,\n"
+            "                              const char *bytes, size_t n,\n"
+            "                              %sEmitFn emit, void *user,\n"
+            "                              %s) {\n",
+            prefix, prefix, prefix, prefix, extra_arg);
+    } else {
+        fprintf(out,
+            "%sLexResult %sLexFeedBytes(%sLexer *yyl,\n"
+            "                              const char *bytes, size_t n,\n"
+            "                              %sEmitFn emit, void *user) {\n",
+            prefix, prefix, prefix, prefix);
+    }
     fprintf(out,
-        "%sLexResult %sLexFeedBytes(%sLexer *yyl,\n"
-        "                              const char *bytes, size_t n,\n"
-        "                              %sEmitFn emit, void *user) {\n"
         "    if (!yyl) return %s_LEX_ERROR;\n"
         "    yyl->err_msg = 0;\n"
         "    /* M3.5: push the caller's buffer as a new bottom-of-this-call\n"
@@ -1076,13 +1154,25 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "    ** LEX_ERROR_AT inside an action body. */\n"
         "    int _terminate = 0;\n"
         "    int _error = 0;\n"
+        "    /* P0-NEW-13: result accumulator + drain label.  Every\n"
+        "    ** abnormal exit (_terminate, _error, unmatched input)\n"
+        "    ** sets _result and jumps to _feed_done; the drain loop\n"
+        "    ** there pops any frames pushed during this call so the\n"
+        "    ** depth invariant on return is yyl->depth == initial_depth. */\n"
+        "    %sLexResult _result = %s_LEX_OK;\n",
+        PREFIX, PREFIX, PREFIX, prefix, PREFIX);
+    if (extra_name) {
+        /* Suppress -Wunused-parameter when no action body references
+        ** the extra arg.  The user's identifier is already in scope
+        ** via standard C parameter binding. */
+        fprintf(out, "    (void)%s;\n", extra_name);
+    }
+    fprintf(out,
         "    while (yyl->depth > initial_depth) {\n"
         "        int top = yyl->depth - 1;\n"
         "        size_t fpos = yyl->stack[top].pos;\n"
         "        size_t flen = yyl->stack[top].len;\n"
-        "        if (fpos >= flen) {\n",
-        prefix, prefix, prefix, prefix,
-        PREFIX, PREFIX, PREFIX);
+        "        if (fpos >= flen) {\n");
 
     /* M3.6: EOF-rule dispatch inside the auto-pop branch.  When
     ** the top-of-stack frame is exhausted, look up the EOF rule
@@ -1122,8 +1212,8 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
             "                lex->state = state;\n"
             "                (void)matched; (void)matched_len;\n"
             "                (void)_action_emitted;\n"
-            "                if (_error) return %s_LEX_ERROR;\n"
-            "                if (_terminate) return %s_LEX_OK;\n"
+            "                if (_error) { _result = %s_LEX_ERROR; goto _feed_done; }\n"
+            "                if (_terminate) { _result = %s_LEX_OK; goto _feed_done; }\n"
             "            }\n",
             PREFIX, PREFIX);
     }
@@ -1139,7 +1229,8 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "                          &rule, &consumed);\n"
         "        if (!ok || consumed == 0) {\n"
         "            yyl->err_msg = \"unmatched input\";\n"
-        "            return %s_LEX_ERROR;\n"
+        "            _result = %s_LEX_ERROR;\n"
+        "            goto _feed_done;\n"
         "        }\n"
         "        /* M3.5 invariant: advance pos BEFORE the action body\n"
         "        ** so a LexInclude issued from inside the body lands\n"
@@ -1175,10 +1266,24 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
         "        if (!_action_emitted && !_error) {\n"
         "            if (emit) emit(user, rule, matched, matched_len);\n"
         "        }\n"
-        "        if (_error) return %s_LEX_ERROR;\n"
-        "        if (_terminate) return %s_LEX_OK;\n"
+        "        if (_error) { _result = %s_LEX_ERROR; goto _feed_done; }\n"
+        "        if (_terminate) { _result = %s_LEX_OK; goto _feed_done; }\n"
         "    }\n"
-        "    return %s_LEX_OK;\n"
+        "    _result = %s_LEX_OK;\n"
+        "_feed_done:\n"
+        "    /* P0-NEW-13: drain any frames pushed during this call.\n"
+        "    ** The main loop's auto-pop already drains on normal\n"
+        "    ** completion, but LEX_TERMINATE / LEX_ERROR_AT /\n"
+        "    ** unmatched-input bail out with frames still live\n"
+        "    ** (including the bottom frame LexFeedBytes itself\n"
+        "    ** pushed).  After this drain, the depth invariant\n"
+        "    ** yyl->depth == initial_depth holds on every return\n"
+        "    ** path.  M3.6: stack[].bytes is caller-owned, so\n"
+        "    ** popping is just a counter decrement. */\n"
+        "    while (yyl->depth > initial_depth) {\n"
+        "        yyl->depth--;\n"
+        "    }\n"
+        "    return _result;\n"
         "}\n\n",
         PREFIX, PREFIX, PREFIX);
 

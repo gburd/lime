@@ -61,7 +61,7 @@ unmaintainable mess.
 | `%{ ... %}` | `%include { ... }` | Same as above; flex distinguishes the two only by where flex emits them.  Lime has one slot. |
 | (no flex equivalent) | `%keyword_table NAME (...) { ... }.` | First-class keyword set; generator picks switch / perfect-hash / trie based on size.  See "Keyword tables" below. |
 | (no flex equivalent) | `%literal_buffer NAME { ... }.` | Managed character-accumulation buffer for quoted strings.  Replaces the per-scanner startlit/addlit/litbufdup boilerplate. |
-| (no flex equivalent) | `%lexer_extra_argument {T *p}` | Per-instance opaque user pointer.  Read inside actions as `extra`. |
+| (no flex equivalent) | `%lexer_extra_argument {T *p}` | Per-instance user-data parameter, threaded through `LexFeedBytes()` and bound by name (`p`) inside every action body. |
 | (no flex equivalent) | `%location_type {T}` | Override the default location struct. |
 | (no flex equivalent) | `%location_advance { ... }` | Per-token line/column update hook (replaces flex's `yylineno` magic). |
 
@@ -83,7 +83,7 @@ explicit primitives.
 | `yytext` | `matched` | `const char *` | Pointer into the caller's input buffer.  NOT null-terminated; use `matched_len`. |
 | `yyleng` | `matched_len` | `size_t` | Length of the matched span. |
 | `yylineno` | (none) | -- | Line tracking is opt-in via `%location_advance` plus a `%location_type` that contains a line field.  See "Locations" below. |
-| `yyextra` | `extra` | as declared by `%lexer_extra_argument` | User-data pointer set at `LexAlloc` time. |
+| `yyextra` | as named in `%lexer_extra_argument` | as declared by `%lexer_extra_argument` | User-data parameter passed to `LexFeedBytes()` and bound by name in every action body. |
 | `yyloc`, `*yylloc` | `loc` | as declared by `%location_type` | Location of the matched span. |
 | `YYSTATE`, `yy_top_state()` | `state` | `int` | Current state code.  Read or write; assigning is equivalent to `LEX_TRANSITION(state)` without state-local-data init. |
 | `yyscanner` | `lex` | `Foo_Lexer *` | The lexer instance.  Pass to runtime API calls (`FooLexInclude(lex, ...)` etc.). |
@@ -741,5 +741,5 @@ the concrete pattern and the use case; the v2 design will reconsider.
 | Multi-state rule | `<a,b,c>pattern { ... }` | `<a, b, c> rule name matches /p/ { ... }` |
 | EOF rule | `<STATE><<EOF>> { ... }` | `<STATE> rule name matches <<EOF>> { ... }` |
 | Driver shape | pull (`yylex` callback) | push (`LexFeedBytes` + emit callback) |
-| User-data slot | `yyextra` | `%lexer_extra_argument` + action-body `extra` |
+| User-data slot | `yyextra` | `%lexer_extra_argument` + identifier of choice, threaded through `LexFeedBytes()` |
 | Build | `flex -o foo_lex.c foo.l` | `lime -X -d. foo.lex` |
