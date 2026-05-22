@@ -1030,6 +1030,21 @@ test_extension_e2e = executable('test_extension_e2e',
 
 test('extension_e2e', test_extension_e2e)
 
+# End-to-end test of lemon_snapshot_create() -- the runtime
+# subprocess pipeline that takes a .y file, runs lime + cc on it,
+# dlopens the result, and returns a ParserSnapshot.  Skipped at
+# runtime when lime/cc are not available.
+test_snapshot_create = executable('test_snapshot_create',
+  'test_snapshot_create.c',
+  include_directories : include_directories('../src'),
+  dependencies : lime_parser_dep,
+)
+
+test('snapshot_create', test_snapshot_create,
+  workdir : meson.project_source_root(),
+  is_parallel : false,
+)
+
 # %destructor smoke test: drives a tiny grammar with %destructor
 # directives, exercises both happy-path and error-recovery code paths,
 # and asserts every allocation has a matching free (proving the

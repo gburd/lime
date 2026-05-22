@@ -81,6 +81,7 @@ LIB_SRC := \
   src/version.c            \
   src/snapshot.c           \
   src/snapshot_build.c     \
+  src/snapshot_create.c    \
   src/snapshot_modify.c    \
   src/token_table.c        \
   src/tokenize.c           \

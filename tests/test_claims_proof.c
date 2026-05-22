@@ -192,18 +192,23 @@ static bool ext_b_get_modifications(void *user_data, const struct ParserSnapshot
 static void test_grammar_file_path(void) {
     SECTION("Claim C3: lemon_snapshot_create(\"file.y\") works");
 
-    /* A generated parser exposes <Prefix>BuildSnapshot() via the
-    ** generator's -n flag.  This is the runtime path: a generated
-    ** parser hands its tables to a snapshot the runtime can drive.
-    ** lemon_snapshot_create() with a grammar file at runtime delegates
-    ** to that registered builder if available; otherwise reports an
-    ** actionable error. */
+    /* lemon_snapshot_create now runs the lime parser generator as a
+    ** subprocess on the grammar file, compiles the resulting
+    ** *_snapshot.c into a shared library, and dlopen()s it to
+    ** retrieve the populated ParserSnapshot.  See src/snapshot_create.c.
+    **
+    ** Test 1a: graceful failure on a missing file.
+    ** Test 1b: real success on a valid grammar (covered by
+    **          tests/test_snapshot_create.c -- not duplicated here
+    **          because that test needs lime + cc on PATH and skips
+    **          cleanly when they are missing). */
     char *err = NULL;
     ParserSnapshot *snap = lemon_snapshot_create("nonexistent.y", &err);
     if (snap == NULL && err != NULL) {
-        printf("  Error returned: \"%s\"\n", err);
+        printf("  Error returned (expected): \"%s\"\n", err);
         VERDICT_OK("lemon_snapshot_create",
-                   "returns an actionable error when no builder is registered");
+                   "returns an actionable error for a missing grammar file "
+                   "(real builds covered by test_snapshot_create)");
         free(err);
     } else if (snap != NULL) {
         VERDICT_OK("lemon_snapshot_create", "actually built a snapshot from a grammar file");

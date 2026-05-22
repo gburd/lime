@@ -100,38 +100,17 @@ void snapshot_release(ParserSnapshot *snap) {
 }
 
 /*
-** Default weak implementation of create_base_snapshot.
+** create_base_snapshot is defined in src/snapshot_create.c.  It runs
+** the lime parser generator as a subprocess on the grammar file,
+** compiles the resulting *_snapshot.c into a shared library, and
+** dlopen()s it to retrieve the populated ParserSnapshot.
 **
-** When meson builds a parser with -n the per-grammar *_snapshot.c
-** file emits <Prefix>BuildSnapshot() which an application can call
-** directly, or register through a future grammar-name dispatch
-** registry.  Without such a registration this default reports an
-** actionable error so callers know to either link a pre-built
-** parser's snapshot file or call snapshot_build_from_tables()
-** themselves.
-**
-** Building a snapshot at runtime by parsing a grammar file directly
-** -- without a pre-compiled <Prefix>BuildSnapshot symbol -- is under
-** construction.  It requires exposing the lime generator's
-** Build()/ReportTable() phases as a library callable from the
-** runtime; the algorithm is fully implemented in lime.c.
+** Removed the weak fallback that previously lived here: when both
+** the weak default and the strong definition are in the same static
+** archive (liblime_parser.a), the linker resolves to whichever it
+** sees first inside snapshot.c.o, which silently shadows the strong
+** def in snapshot_create.c.o.
 */
-__attribute__((weak)) ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
-    (void)grammar_file;
-
-    if (error != NULL) {
-        const char msg[] = "create_base_snapshot: no <Prefix>BuildSnapshot "
-                           "registered for this grammar; build with `lime -n` "
-                           "and link the resulting *_snapshot.c, or call "
-                           "snapshot_build_from_tables() directly";
-        char *buf = malloc(sizeof(msg));
-        if (buf != NULL) {
-            memcpy(buf, msg, sizeof(msg));
-        }
-        *error = buf;
-    }
-    return NULL;
-}
 
 /* ------------------------------------------------------------------ */
 /*  Public lemon_snapshot_* wrappers (declared in parser.h)            */

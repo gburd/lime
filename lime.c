@@ -7003,7 +7003,27 @@ void ReportSnapshotInit(struct lime *lemp)
     "        .nfallback            = 0,\n"
     "    };\n"
     "    return snapshot_build_from_tables(&tables);\n"
-    "}\n",
+    "}\n"
+    "\n"
+    "/*\n"
+    "** Generic entry-point alias used by lemon_snapshot_create() at\n"
+    "** runtime.  Each generated snapshot file emits this symbol so a\n"
+    "** caller that has just dlopen()ed the .so can resolve the\n"
+    "** snapshot builder via dlsym(handle, \"lime_snapshot_entry\")\n"
+    "** without first knowing the grammar's %%name prefix.\n"
+    "**\n"
+    "** When more than one *_snapshot.c is linked into the same image,\n"
+    "** the linker rejects duplicate definitions of\n"
+    "** lime_snapshot_entry; that is intentional -- the runtime\n"
+    "** registry is one snapshot per loaded module, and statically\n"
+    "** linking two grammars together is the wrong shape.  Use\n"
+    "** dlopen() per grammar instead.\n"
+    "*/\n"
+    "#ifndef LIME_NO_SNAPSHOT_ENTRY_ALIAS\n"
+    "ParserSnapshot *lime_snapshot_entry(void) {\n"
+    "    return %sBuildSnapshot();\n"
+    "}\n"
+    "#endif\n",
     lemp->nrule,
     lemp->nsymbol,
     lemp->nterminal,
@@ -7014,7 +7034,8 @@ void ReportSnapshotInit(struct lime *lemp)
     lemp->errAction,
     lemp->accAction,
     lemp->noAction,
-    lemp->minReduce
+    lemp->minReduce,
+    name
   );
 
   fclose(out);

@@ -3,6 +3,7 @@ lib_sources = files(
   'version.c',
   'snapshot.c',
   'snapshot_build.c',
+  'snapshot_create.c',
   'token_table.c',
   'tokenize.c',
   'parse_context.c',

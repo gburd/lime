@@ -20,41 +20,66 @@ register pre-built parsers with the runtime through
 drive them via `parse_begin / parse_token / parse_end` against the
 runtime push parser in `src/parse_engine.c`.
 
-**What is missing.**  The runtime cannot today reconstruct an LALR(1)
-automaton from a merged grammar at runtime.  Specifically:
+`lemon_snapshot_create("foo.y", &err)` is **fully implemented** via
+the subprocess pipeline in `src/snapshot_create.c`: it runs `lime
+-n` on the grammar file, compiles the resulting `*_snapshot.c` to a
+shared library, `dlopen()`s it, and resolves the generic
+`lime_snapshot_entry` symbol the snapshot file emits.  The host
+process gets back a populated `ParserSnapshot` ready for
+`parse_begin()`.  See `tests/test_snapshot_create.c` for the
+end-to-end exercise (8/8 assertions).  Requirements: `lime` and a C
+compiler must be reachable (PATH or `LIME_BIN` / `LIME_CC`); the
+runtime probe at compile time (`LIME_TEMPLATE`,
+`LIME_SNAPSHOT_BUILD_C`) covers source-tree and installed layouts.
 
-- `apply_add_rule()` records new rules in the snapshot's parallel
-  rule-metadata arrays but cannot derive new action-table entries
-  for shift/reduce dispatch on those rules.
-- `rebuild_automaton()` validates rule metadata and bumps the
-  snapshot version, but does not recompute `yy_action`,
-  `yy_lookahead`, `yy_shift_ofst`, `yy_reduce_ofst`, or
-  `yy_default`.
-- `create_base_snapshot("foo.y", &err)` returns a clear error
-  pointing callers at `<Prefix>BuildSnapshot()` rather than parsing
-  the grammar file in-process.
+**What is missing.**  Two things:
 
-**What it would take.**  Refactor `lime.c`'s build phases
-(`FindRulePrecedences`, `FindFirstSets`, `FindStates`, `FindLinks`,
-`FindFollowSets`, `FindActions`, `CompressTables`, `ResortStates`)
-into a public library function `lime_build_tables(symbols[], rules[],
-LimeBuildResult *out)` that does not depend on global state or file
-I/O.  Then wire `apply_*` and `rebuild_automaton` to call it on the
-mutated grammar.  The algorithms exist; the work is purely structural
-refactoring of `lime.c` to expose them.
+- **Cleanup of dlopen handles.**  The snapshot tables we get back
+  are deep-copied out of the .so, so the snapshot itself is
+  independent of the .so once built; but the .so stays mapped into
+  the process for the lifetime of the snapshot.  Memory cost is
+  small (~100 KB per loaded grammar) and acceptable for daemons
+  that load grammars during init, but a long-running process that
+  loads thousands of grammars over its lifetime would accumulate
+  mappings.  Tracker: extend `ParserSnapshot` with a `dlopen` slot
+  and dlclose during `destroy_snapshot`.
+- **In-process LALR rebuild from a base snapshot + extension
+  modifications.**  `apply_add_rule()` records new rules in the
+  snapshot's parallel rule-metadata arrays but cannot derive new
+  action-table entries for shift/reduce dispatch on those rules
+  without re-running the LALR build over the merged grammar.  The
+  subprocess path above only handles "fresh grammar from a file";
+  it does not yet handle "this snapshot plus these mods".
+
+**What it would take.**  For the in-process rebuild, two options:
+
+  1. *Subprocess from a serialised grammar.*  Use
+     `lime_modifications_to_grammar_text()` (already exists in
+     `src/mod_serialize.c`) to turn the mod list into a `.y`
+     fragment, concatenate it after the base grammar text, and run
+     the same subprocess pipeline as `lemon_snapshot_create`.
+     Requires keeping the original grammar text alongside the
+     snapshot (a getter like `<Prefix>GetGrammarSource()` could be
+     emitted by `lime -n`).
+  2. *Refactor `lime.c` Build() phases into a pure library.*  The
+     algorithms are all in `lime.c` already; the work is structural
+     decoupling from file I/O and global state.
+
+Option 1 is the smaller of the two and a reasonable interim path.
+Option 2 is the long-term answer.
 
 **Source-tree references.**
 
 - `src/snapshot.c::create_base_snapshot` -- weak default that emits
-  the actionable error.
-- `src/snapshot_modify.c::apply_add_token / apply_add_rule /
-  rebuild_automaton` -- record metadata; defer table reconstruction.
+  the actionable error; superseded by `snapshot_create.c`.
+- `src/snapshot_create.c` -- subprocess pipeline; the working v1.
+- `src/snapshot_modify.c::apply_add_rule / rebuild_automaton` --
+  metadata-only rebuild, awaits Option 1 or 2.
 - `src/parser_composition.c::compose_snapshots` -- composition
   pipeline reaches `rebuild_automaton` and inherits the same gap.
 
-**Workaround.**  Run `lime` on the merged grammar text and load the
-result via `<Prefix>BuildSnapshot()`.  This is what the `examples/`
-directory does and what the v0.2 release ships.
+**Workaround.**  Build the merged grammar via `lime` directly and
+load via `lemon_snapshot_create("merged.y", &err)`.
 
 ---
 
