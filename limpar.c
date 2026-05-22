@@ -992,9 +992,16 @@ static void yy_syntax_error(
 ){
   ParseARG_FETCH
   ParseCTX_FETCH
+  /* When the user does not supply a %syntax_error block, yymajor /
+  ** yyminor are unused.  Reference them via a (void) cast so generated
+  ** parsers compile cleanly under -Wunused-parameter without forcing
+  ** an explicit pragma in every emitted file. */
+  (void)yymajor;
+  (void)yyminor;
 #define TOKEN yyminor
 #ifdef YYLOCATIONTYPE
 #define TOKEN_LOC yyloc
+  (void)yyloc;
 #endif
 /************ Begin %syntax_error code ****************************************/
 %%
