@@ -9,7 +9,7 @@
 ** actions on a parser instance.
 */
 #include "../include/execution_policy.h"
-#include "../include/disambiguation.h"    /* StrategyResult, LimeContext */
+#include "../include/disambiguation.h" /* StrategyResult, LimeContext */
 
 #include <stdlib.h>
 #include <string.h>
@@ -46,15 +46,10 @@ static ExecutionResult make_success_result(uint32_t ext_id, void *output) {
 /*  execute_parser: run a single parser through the callback           */
 /* ------------------------------------------------------------------ */
 
-static ExecutionResult execute_parser(
-    ParserExecuteFn execute_fn,
-    LimeParserHandle *parser,
-    GrammarExtensionMetadata *ext,
-    void *chain_input
-) {
+static ExecutionResult execute_parser(ParserExecuteFn execute_fn, LimeParserHandle *parser,
+                                      GrammarExtensionMetadata *ext, void *chain_input) {
     if (execute_fn == NULL) {
-        return make_error_result(ext->extension_id,
-                                 "no execute callback provided");
+        return make_error_result(ext->extension_id, "no execute callback provided");
     }
     if (parser == NULL) {
         return make_error_result(ext->extension_id, "NULL parser handle");
@@ -71,7 +66,7 @@ static ExecutionResult execute_parser(
     ExecutionResult r;
     r.extension_id = ext->extension_id;
     r.result = NULL;
-    r.error = error;  /* Ownership transferred from execute_fn */
+    r.error = error; /* Ownership transferred from execute_fn */
     return r;
 }
 
@@ -84,13 +79,10 @@ static ExecutionResult execute_parser(
 ** The disambiguation layer sorts winners by priority, so index 0
 ** is the highest-priority winner.
 */
-static ExecutionResult *exec_first_only(
-    ParserExecuteFn execute_fn,
-    const StrategyResult *disambiguation,
-    LimeParserHandle **parsers,
-    GrammarExtensionMetadata **extensions,
-    int *nresults_out
-) {
+static ExecutionResult *exec_first_only(ParserExecuteFn execute_fn,
+                                        const StrategyResult *disambiguation,
+                                        LimeParserHandle **parsers,
+                                        GrammarExtensionMetadata **extensions, int *nresults_out) {
     *nresults_out = 0;
 
     if (disambiguation->nwinners == 0) {
@@ -114,15 +106,9 @@ static ExecutionResult *exec_first_only(
 ** (no chaining).  If stop_on_error is set, execution halts at the
 ** first failure.
 */
-static ExecutionResult *exec_all(
-    ParserExecuteFn execute_fn,
-    const StrategyResult *disambiguation,
-    LimeParserHandle **parsers,
-    GrammarExtensionMetadata **extensions,
-    bool stop_on_error,
-    int max_executions,
-    int *nresults_out
-) {
+static ExecutionResult *exec_all(ParserExecuteFn execute_fn, const StrategyResult *disambiguation,
+                                 LimeParserHandle **parsers, GrammarExtensionMetadata **extensions,
+                                 bool stop_on_error, int max_executions, int *nresults_out) {
     int nwinners = disambiguation->nwinners;
     *nresults_out = 0;
 
@@ -141,8 +127,7 @@ static ExecutionResult *exec_all(
 
     int count = 0;
     for (int i = 0; i < limit; i++) {
-        results[count] = execute_parser(execute_fn, parsers[i],
-                                        extensions[i], NULL);
+        results[count] = execute_parser(execute_fn, parsers[i], extensions[i], NULL);
         count++;
 
         if (stop_on_error && results[count - 1].error != NULL) {
@@ -165,15 +150,10 @@ static ExecutionResult *exec_all(
 ** On error, if stop_on_error is set, the chain halts and the results
 ** collected so far are returned.
 */
-static ExecutionResult *exec_chain(
-    ParserExecuteFn execute_fn,
-    const StrategyResult *disambiguation,
-    LimeParserHandle **parsers,
-    GrammarExtensionMetadata **extensions,
-    bool stop_on_error,
-    int max_executions,
-    int *nresults_out
-) {
+static ExecutionResult *exec_chain(ParserExecuteFn execute_fn, const StrategyResult *disambiguation,
+                                   LimeParserHandle **parsers,
+                                   GrammarExtensionMetadata **extensions, bool stop_on_error,
+                                   int max_executions, int *nresults_out) {
     int nwinners = disambiguation->nwinners;
     *nresults_out = 0;
 
@@ -194,8 +174,7 @@ static ExecutionResult *exec_chain(
     int count = 0;
 
     for (int i = 0; i < limit; i++) {
-        results[count] = execute_parser(execute_fn, parsers[i],
-                                        extensions[i], chain_input);
+        results[count] = execute_parser(execute_fn, parsers[i], extensions[i], chain_input);
         count++;
 
         if (results[count - 1].error != NULL) {
@@ -224,15 +203,11 @@ static ExecutionResult *exec_chain(
 ** returns true.  Extensions without a should_execute callback are
 ** treated as "always execute".
 */
-static ExecutionResult *exec_conditional(
-    ParserExecuteFn execute_fn,
-    const StrategyResult *disambiguation,
-    LimeParserHandle **parsers,
-    GrammarExtensionMetadata **extensions,
-    bool stop_on_error,
-    int max_executions,
-    int *nresults_out
-) {
+static ExecutionResult *exec_conditional(ParserExecuteFn execute_fn,
+                                         const StrategyResult *disambiguation,
+                                         LimeParserHandle **parsers,
+                                         GrammarExtensionMetadata **extensions, bool stop_on_error,
+                                         int max_executions, int *nresults_out) {
     int nwinners = disambiguation->nwinners;
     *nresults_out = 0;
 
@@ -256,7 +231,7 @@ static ExecutionResult *exec_conditional(
         GrammarExtensionMetadata *ext = extensions[i];
         if (ext->should_execute != NULL) {
             if (!ext->should_execute(ext, disambiguation)) {
-                continue;  /* Extension opted out */
+                continue; /* Extension opted out */
             }
         }
 
@@ -272,8 +247,7 @@ static ExecutionResult *exec_conditional(
 
     /* Shrink allocation if we skipped some winners */
     if (count < nwinners && count > 0) {
-        ExecutionResult *shrunk = realloc(results,
-                                          (size_t)count * sizeof(ExecutionResult));
+        ExecutionResult *shrunk = realloc(results, (size_t)count * sizeof(ExecutionResult));
         if (shrunk != NULL) {
             results = shrunk;
         }
@@ -298,18 +272,15 @@ void execution_policy_config_init(ExecutionPolicyConfig *config) {
     config->max_executions = 0;
 }
 
-ExecutionResult *execute_semantic_actions(
-    const ExecutionPolicyConfig *config,
-    const StrategyResult *disambiguation,
-    LimeParserHandle **parsers,
-    GrammarExtensionMetadata **extensions,
-    int *nresults_out
-) {
+ExecutionResult *execute_semantic_actions(const ExecutionPolicyConfig *config,
+                                          const StrategyResult *disambiguation,
+                                          LimeParserHandle **parsers,
+                                          GrammarExtensionMetadata **extensions,
+                                          int *nresults_out) {
     if (nresults_out == NULL) return NULL;
     *nresults_out = 0;
 
-    if (config == NULL || disambiguation == NULL ||
-        parsers == NULL || extensions == NULL) {
+    if (config == NULL || disambiguation == NULL || parsers == NULL || extensions == NULL) {
         return NULL;
     }
 
@@ -321,43 +292,33 @@ ExecutionResult *execute_semantic_actions(
         /* No execute callback -- return a single error result */
         ExecutionResult *r = malloc(sizeof(ExecutionResult));
         if (r == NULL) return NULL;
-        r[0] = make_error_result(
-            disambiguation->winning_contexts[0].ext_id,
-            "no execute callback configured");
+        r[0] = make_error_result(disambiguation->winning_contexts[0].ext_id,
+                                 "no execute callback configured");
         *nresults_out = 1;
         return r;
     }
 
     switch (config->policy) {
     case EXEC_FIRST_ONLY:
-        return exec_first_only(config->execute_fn, disambiguation,
-                               parsers, extensions, nresults_out);
+        return exec_first_only(config->execute_fn, disambiguation, parsers, extensions,
+                               nresults_out);
 
     case EXEC_ALL:
-        return exec_all(config->execute_fn, disambiguation,
-                        parsers, extensions,
-                        config->stop_on_error,
-                        config->max_executions,
-                        nresults_out);
+        return exec_all(config->execute_fn, disambiguation, parsers, extensions,
+                        config->stop_on_error, config->max_executions, nresults_out);
 
     case EXEC_CHAIN:
-        return exec_chain(config->execute_fn, disambiguation,
-                          parsers, extensions,
-                          config->stop_on_error,
-                          config->max_executions,
-                          nresults_out);
+        return exec_chain(config->execute_fn, disambiguation, parsers, extensions,
+                          config->stop_on_error, config->max_executions, nresults_out);
 
     case EXEC_CONDITIONAL:
-        return exec_conditional(config->execute_fn, disambiguation,
-                                parsers, extensions,
-                                config->stop_on_error,
-                                config->max_executions,
-                                nresults_out);
+        return exec_conditional(config->execute_fn, disambiguation, parsers, extensions,
+                                config->stop_on_error, config->max_executions, nresults_out);
 
     default:
         /* Unknown policy -- fall back to FIRST_ONLY */
-        return exec_first_only(config->execute_fn, disambiguation,
-                               parsers, extensions, nresults_out);
+        return exec_first_only(config->execute_fn, disambiguation, parsers, extensions,
+                               nresults_out);
     }
 }
 
@@ -372,26 +333,27 @@ void execution_results_free(ExecutionResult *results, int nresults) {
 
 const char *execution_policy_name(LimeExecMode policy) {
     switch (policy) {
-    case EXEC_FIRST_ONLY:   return "first_only";
-    case EXEC_ALL:          return "all";
-    case EXEC_CHAIN:        return "chain";
-    case EXEC_CONDITIONAL:  return "conditional";
-    default:                return "unknown";
+    case EXEC_FIRST_ONLY:
+        return "first_only";
+    case EXEC_ALL:
+        return "all";
+    case EXEC_CHAIN:
+        return "chain";
+    case EXEC_CONDITIONAL:
+        return "conditional";
+    default:
+        return "unknown";
     }
 }
 
-ExecutionResult *execute_first_only(
-    ParserExecuteFn execute_fn,
-    const StrategyResult *disambiguation,
-    LimeParserHandle **parsers,
-    GrammarExtensionMetadata **extensions,
-    int *nresults_out
-) {
+ExecutionResult *execute_first_only(ParserExecuteFn execute_fn,
+                                    const StrategyResult *disambiguation,
+                                    LimeParserHandle **parsers,
+                                    GrammarExtensionMetadata **extensions, int *nresults_out) {
     ExecutionPolicyConfig config;
     execution_policy_config_init(&config);
     config.execute_fn = execute_fn;
     /* policy is already EXEC_FIRST_ONLY from init */
 
-    return execute_semantic_actions(&config, disambiguation,
-                                   parsers, extensions, nresults_out);
+    return execute_semantic_actions(&config, disambiguation, parsers, extensions, nresults_out);
 }

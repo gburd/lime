@@ -66,13 +66,13 @@ typedef struct ParserSnapshot ParserSnapshot;
  * @brief Grammar mode identifiers.
  */
 typedef enum GrammarMode {
-    MODE_SQL = 0,             /**< Standard SQL (root grammar) */
-    MODE_XQUERY,              /**< XQuery embedded expression */
-    MODE_XPATH,               /**< XPath embedded expression */
-    MODE_EDN,                 /**< EDN (Extensible Data Notation) */
-    MODE_JSON,                /**< JSON embedded literal */
-    MODE_CUSTOM,              /**< User-defined / extension grammar */
-    MODE_COUNT_               /**< Sentinel (number of built-in modes) */
+    MODE_SQL = 0, /**< Standard SQL (root grammar) */
+    MODE_XQUERY,  /**< XQuery embedded expression */
+    MODE_XPATH,   /**< XPath embedded expression */
+    MODE_EDN,     /**< EDN (Extensible Data Notation) */
+    MODE_JSON,    /**< JSON embedded literal */
+    MODE_CUSTOM,  /**< User-defined / extension grammar */
+    MODE_COUNT_   /**< Sentinel (number of built-in modes) */
 } GrammarMode;
 
 /** @} */ /* end grammar_modes */
@@ -88,11 +88,11 @@ typedef enum GrammarMode {
  * @brief One level of the grammar context stack.
  */
 typedef struct GrammarContextEntry {
-    GrammarMode mode;                 /**< Active grammar mode */
-    const char *mode_name;            /**< Human-readable name (borrowed) */
-    ParserSnapshot *snapshot;         /**< Snapshot for this grammar */
-    int depth;                        /**< Nesting depth (for bracket matching) */
-    uint32_t start_offset;            /**< Input offset where mode began */
+    GrammarMode mode;         /**< Active grammar mode */
+    const char *mode_name;    /**< Human-readable name (borrowed) */
+    ParserSnapshot *snapshot; /**< Snapshot for this grammar */
+    int depth;                /**< Nesting depth (for bracket matching) */
+    uint32_t start_offset;    /**< Input offset where mode began */
 } GrammarContextEntry;
 
 /** @} */ /* end ctx_entry */
@@ -110,9 +110,9 @@ typedef struct GrammarContextEntry {
  * Registered with grammar_context_register_mode().
  */
 typedef struct GrammarModeInfo {
-    GrammarMode mode;                 /**< Which mode this describes */
-    const char *name;                 /**< Human-readable name */
-    ParserSnapshot *snapshot;         /**< Snapshot to use (reference acquired) */
+    GrammarMode mode;         /**< Which mode this describes */
+    const char *name;         /**< Human-readable name */
+    ParserSnapshot *snapshot; /**< Snapshot to use (reference acquired) */
 
     /**
      * @brief Entry trigger: token code that initiates this mode.
@@ -169,9 +169,7 @@ typedef struct GrammarContextStack GrammarContextStack;
  * @retval true  Allow the switch.
  * @retval false Veto the switch (context remains unchanged).
  */
-typedef bool (*ContextSwitchCallback)(GrammarMode prev_mode,
-                                      GrammarMode new_mode,
-                                      void *user_data);
+typedef bool (*ContextSwitchCallback)(GrammarMode prev_mode, GrammarMode new_mode, void *user_data);
 
 /** @} */ /* end ctx_switch_cb */
 
@@ -211,8 +209,7 @@ void grammar_context_destroy(GrammarContextStack *stack);
  * @retval true  Registration succeeded.
  * @retval false Mode already registered or allocation failed.
  */
-bool grammar_context_register_mode(GrammarContextStack *stack,
-                                   const GrammarModeInfo *info);
+bool grammar_context_register_mode(GrammarContextStack *stack, const GrammarModeInfo *info);
 
 /**
  * @brief Detect whether a context switch should occur.
@@ -228,9 +225,7 @@ bool grammar_context_register_mode(GrammarContextStack *stack,
  * @retval true  A context switch occurred; new mode is active.
  * @retval false No switch; continue with the current mode.
  */
-bool grammar_context_detect_switch(GrammarContextStack *stack,
-                                   int token_code,
-                                   const char *lexeme,
+bool grammar_context_detect_switch(GrammarContextStack *stack, int token_code, const char *lexeme,
                                    uint32_t offset);
 
 /**
@@ -244,8 +239,7 @@ bool grammar_context_detect_switch(GrammarContextStack *stack,
  * @retval true  Context was popped; previous mode is now active.
  * @retval false No exit detected; continue in the current mode.
  */
-bool grammar_context_detect_exit(GrammarContextStack *stack,
-                                 int token_code);
+bool grammar_context_detect_exit(GrammarContextStack *stack, int token_code);
 
 /**
  * @brief Explicitly push a grammar mode onto the context stack.
@@ -256,9 +250,7 @@ bool grammar_context_detect_exit(GrammarContextStack *stack,
  * @retval true  Push succeeded.
  * @retval false Mode not registered or allocation failed.
  */
-bool grammar_context_push(GrammarContextStack *stack,
-                          GrammarMode mode,
-                          uint32_t offset);
+bool grammar_context_push(GrammarContextStack *stack, GrammarMode mode, uint32_t offset);
 
 /**
  * @brief Pop the current grammar context.
@@ -275,8 +267,7 @@ bool grammar_context_pop(GrammarContextStack *stack);
  * @param stack The context stack.
  * @return Current snapshot.  Valid until the next push/pop.
  */
-ParserSnapshot *grammar_context_current_snapshot(
-    const GrammarContextStack *stack);
+ParserSnapshot *grammar_context_current_snapshot(const GrammarContextStack *stack);
 
 /**
  * @brief Return the current grammar mode.
@@ -284,8 +275,7 @@ ParserSnapshot *grammar_context_current_snapshot(
  * @param stack The context stack.
  * @return Current GrammarMode value.
  */
-GrammarMode grammar_context_current_mode(
-    const GrammarContextStack *stack);
+GrammarMode grammar_context_current_mode(const GrammarContextStack *stack);
 
 /**
  * @brief Return the current nesting depth (0 = root).
@@ -302,8 +292,7 @@ uint32_t grammar_context_depth(const GrammarContextStack *stack);
  * @param cb        Callback function (may be NULL to unregister).
  * @param user_data Opaque pointer forwarded to @p cb.
  */
-void grammar_context_set_switch_callback(GrammarContextStack *stack,
-                                         ContextSwitchCallback cb,
+void grammar_context_set_switch_callback(GrammarContextStack *stack, ContextSwitchCallback cb,
                                          void *user_data);
 
 /**

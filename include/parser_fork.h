@@ -57,11 +57,11 @@ struct ParserSnapshot;
  * @brief Status of a forked parse attempt.
  */
 typedef enum ParseForkStatus {
-    FORK_PENDING = 0,     /**< Fork created, not yet started/completed */
-    FORK_RUNNING,         /**< Fork is actively consuming tokens */
-    FORK_COMPLETED,       /**< Fork reached accept state */
-    FORK_FAILED,          /**< Fork encountered an unrecoverable error */
-    FORK_ABANDONED,       /**< Fork was pruned (lower priority or timeout) */
+    FORK_PENDING = 0, /**< Fork created, not yet started/completed */
+    FORK_RUNNING,     /**< Fork is actively consuming tokens */
+    FORK_COMPLETED,   /**< Fork reached accept state */
+    FORK_FAILED,      /**< Fork encountered an unrecoverable error */
+    FORK_ABANDONED,   /**< Fork was pruned (lower priority or timeout) */
 } ParseForkStatus;
 
 /** @} */ /* end fork_status */
@@ -81,15 +81,15 @@ typedef enum ParseForkStatus {
  * byte buffer plus metadata about its layout.
  */
 typedef struct ClonedParserState {
-    void *state_data;       /**< Deep copy of the yyParser struct (malloc'd) */
-    size_t state_size;      /**< sizeof(yyParser) for this grammar */
+    void *state_data;  /**< Deep copy of the yyParser struct (malloc'd) */
+    size_t state_size; /**< sizeof(yyParser) for this grammar */
 
-    void *stack_data;       /**< Separately allocated stack (if stack was on heap) */
-    size_t stack_size;      /**< Number of bytes in the cloned stack */
-    uint32_t stack_depth;   /**< Number of entries currently on the stack */
-    uint32_t stack_capacity;/**< Total entry slots in the cloned stack */
+    void *stack_data;        /**< Separately allocated stack (if stack was on heap) */
+    size_t stack_size;       /**< Number of bytes in the cloned stack */
+    uint32_t stack_depth;    /**< Number of entries currently on the stack */
+    uint32_t stack_capacity; /**< Total entry slots in the cloned stack */
 
-    bool stack_is_inline;   /**< True if stack lives inside state_data (yystk0) */
+    bool stack_is_inline; /**< True if stack lives inside state_data (yystk0) */
 } ClonedParserState;
 
 /** @} */ /* end cloned_state */
@@ -109,7 +109,7 @@ typedef struct ClonedParserState {
  * with.
  */
 typedef struct ParseFork {
-    ClonedParserState cloned_state;  /**< Deep copy of parser state */
+    ClonedParserState cloned_state; /**< Deep copy of parser state */
 
     struct ParserSnapshot *snapshot; /**< Grammar snapshot (ref acquired) */
 
@@ -121,7 +121,7 @@ typedef struct ParseFork {
      */
     int priority;
 
-    ParseForkStatus status;    /**< Current status of this fork */
+    ParseForkStatus status; /**< Current status of this fork */
 
     /**
      * @brief Result produced by semantic actions.
@@ -139,10 +139,10 @@ typedef struct ParseFork {
      */
     void (*free_result)(void *);
 
-    uint32_t tokens_consumed;  /**< Number of tokens fed to this fork */
-    uint32_t error_count;      /**< Cumulative error count */
+    uint32_t tokens_consumed; /**< Number of tokens fed to this fork */
+    uint32_t error_count;     /**< Cumulative error count */
 
-    uint64_t fork_id;          /**< Unique identifier for tracing/debugging */
+    uint64_t fork_id; /**< Unique identifier for tracing/debugging */
 } ParseFork;
 
 /** @} */ /* end parse_fork */
@@ -196,17 +196,10 @@ uint64_t parser_fork_next_id(void);
  * @see PARSER_FORK_LAYOUT_PARAMS()
  * @see cloned_parser_state_destroy()
  */
-bool clone_parser_state(
-    const void *parser,
-    size_t parser_size,
-    size_t stack_entry_size,
-    size_t inline_stack_offset,
-    uint32_t inline_stack_count,
-    size_t stack_field_offset,
-    size_t tos_field_offset,
-    size_t stack_end_offset,
-    ClonedParserState *out
-);
+bool clone_parser_state(const void *parser, size_t parser_size, size_t stack_entry_size,
+                        size_t inline_stack_offset, uint32_t inline_stack_count,
+                        size_t stack_field_offset, size_t tos_field_offset, size_t stack_end_offset,
+                        ClonedParserState *out);
 
 /**
  * @brief Free a cloned parser state.
@@ -248,18 +241,10 @@ void cloned_parser_state_destroy(ClonedParserState *cloned);
  * @see free_parse_fork()
  * @see PARSER_FORK_LAYOUT_PARAMS()
  */
-ParseFork *fork_parser(
-    const void *parser,
-    size_t parser_size,
-    size_t stack_entry_size,
-    size_t inline_stack_offset,
-    uint32_t inline_stack_count,
-    size_t stack_field_offset,
-    size_t tos_field_offset,
-    size_t stack_end_offset,
-    struct ParserSnapshot *snapshot,
-    int priority
-);
+ParseFork *fork_parser(const void *parser, size_t parser_size, size_t stack_entry_size,
+                       size_t inline_stack_offset, uint32_t inline_stack_count,
+                       size_t stack_field_offset, size_t tos_field_offset, size_t stack_end_offset,
+                       struct ParserSnapshot *snapshot, int priority);
 
 /**
  * @brief Destroy a fork and release all resources.
@@ -310,8 +295,7 @@ struct ParserSnapshot *parse_fork_get_snapshot(const ParseFork *fork);
  * @param result  Semantic action output.
  * @param free_fn Destructor for @p result (NULL to use free()).
  */
-void parse_fork_complete(ParseFork *fork, void *result,
-                         void (*free_fn)(void *));
+void parse_fork_complete(ParseFork *fork, void *result, void (*free_fn)(void *));
 
 /**
  * @brief Mark a fork as failed.
@@ -342,10 +326,10 @@ void parse_fork_abandon(ParseFork *fork);
  * Used by the fork-resolve disambiguation strategy.
  */
 typedef struct ParseForkSet {
-    ParseFork **forks;       /**< Dynamic array of fork pointers */
-    uint32_t count;          /**< Number of forks in the set */
-    uint32_t capacity;       /**< Allocated slots */
-    uint32_t max_forks;      /**< Upper bound (0 = unlimited) */
+    ParseFork **forks;  /**< Dynamic array of fork pointers */
+    uint32_t count;     /**< Number of forks in the set */
+    uint32_t capacity;  /**< Allocated slots */
+    uint32_t max_forks; /**< Upper bound (0 = unlimited) */
 } ParseForkSet;
 
 /**
@@ -435,15 +419,11 @@ uint32_t parse_fork_set_active_count(const ParseForkSet *set);
  *                              snapshot, priority);
  * @endcode
  */
-#define PARSER_FORK_LAYOUT_PARAMS(ParserType, StackEntryType) \
-    sizeof(ParserType),                                       \
-    sizeof(StackEntryType),                                   \
-    offsetof(ParserType, yystk0),                             \
-    (uint32_t)(sizeof(((ParserType*)0)->yystk0)               \
-               / sizeof(StackEntryType)),                     \
-    offsetof(ParserType, yystack),                            \
-    offsetof(ParserType, yytos),                              \
-    offsetof(ParserType, yystackEnd)
+#define PARSER_FORK_LAYOUT_PARAMS(ParserType, StackEntryType)                                      \
+    sizeof(ParserType), sizeof(StackEntryType), offsetof(ParserType, yystk0),                      \
+        (uint32_t)(sizeof(((ParserType *)0)->yystk0) / sizeof(StackEntryType)),                    \
+        offsetof(ParserType, yystack), offsetof(ParserType, yytos),                                \
+        offsetof(ParserType, yystackEnd)
 
 /** @} */ /* end fork_macro */
 

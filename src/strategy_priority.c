@@ -39,8 +39,8 @@
 #define PRIORITY_METADATA_MAGIC 0x50524F49u /* "PROI" */
 
 typedef struct PriorityMetadata {
-    uint32_t magic;       /* Must be PRIORITY_METADATA_MAGIC            */
-    int32_t priority;     /* Higher value = higher priority             */
+    uint32_t magic;   /* Must be PRIORITY_METADATA_MAGIC            */
+    int32_t priority; /* Higher value = higher priority             */
 } PriorityMetadata;
 
 /* ------------------------------------------------------------------ */
@@ -57,9 +57,9 @@ typedef struct PriorityEntry {
 /* ------------------------------------------------------------------ */
 
 typedef struct PriorityContext {
-    PriorityEntry *entries;     /* Array of extension priorities        */
-    uint32_t nentries;          /* Number of entries                    */
-    uint32_t capacity;          /* Allocated slots                      */
+    PriorityEntry *entries; /* Array of extension priorities        */
+    uint32_t nentries;      /* Number of entries                    */
+    uint32_t capacity;      /* Allocated slots                      */
 } PriorityContext;
 
 /* ------------------------------------------------------------------ */
@@ -117,9 +117,7 @@ static int32_t lookup_priority(const PriorityContext *pc, uint32_t ext_id) {
 /*  VTable callbacks                                                    */
 /* ------------------------------------------------------------------ */
 
-static void *priority_init(const Extension *const *extensions,
-                           uint32_t nextensions)
-{
+static void *priority_init(const Extension *const *extensions, uint32_t nextensions) {
     PriorityContext *pc = calloc(1, sizeof(PriorityContext));
     if (pc == NULL) return NULL;
 
@@ -147,12 +145,9 @@ static void *priority_init(const Extension *const *extensions,
     return pc;
 }
 
-static bool priority_resolve(void *strategy_context,
-                             const ConflictPoint *conflict,
-                             struct ParseContext *parse_ctx,
-                             int lookahead,
-                             StrategyResult *result)
-{
+static bool priority_resolve(void *strategy_context, const ConflictPoint *conflict,
+                             struct ParseContext *parse_ctx, int lookahead,
+                             StrategyResult *result) {
     (void)parse_ctx;
     (void)lookahead;
 
@@ -190,8 +185,7 @@ static bool priority_resolve(void *strategy_context,
                 best_idx = i;
             } else if (p == best_prio) {
                 /* Tie-break: prefer lower ext_id (registered first) */
-                if (conflict->contexts[i].ext_id <
-                    conflict->contexts[best_idx].ext_id) {
+                if (conflict->contexts[i].ext_id < conflict->contexts[best_idx].ext_id) {
                     best_idx = i;
                 }
             }
@@ -205,8 +199,7 @@ static bool priority_resolve(void *strategy_context,
                 best_prio = p;
                 best_idx = i;
             } else if (p == best_prio) {
-                if (conflict->contexts[i].ext_id <
-                    conflict->contexts[best_idx].ext_id) {
+                if (conflict->contexts[i].ext_id < conflict->contexts[best_idx].ext_id) {
                     best_idx = i;
                 }
             }
@@ -223,20 +216,15 @@ static bool priority_resolve(void *strategy_context,
     result->confidence = 1.0f;
 
     char buf[256];
-    snprintf(buf, sizeof(buf),
-             "priority: ext %u (prio %d, grammar '%s') wins among %d candidates",
-             (unsigned)winner->ext_id,
-             (int)best_prio,
-             winner->grammar_name ? winner->grammar_name : "(unknown)",
-             conflict->ncontexts);
+    snprintf(buf, sizeof(buf), "priority: ext %u (prio %d, grammar '%s') wins among %d candidates",
+             (unsigned)winner->ext_id, (int)best_prio,
+             winner->grammar_name ? winner->grammar_name : "(unknown)", conflict->ncontexts);
     result->explanation = dup_str(buf);
     return true;
 }
 
-static void priority_update(void *strategy_context,
-                            struct ExtensionRegistry *registry,
-                            bool success)
-{
+static void priority_update(void *strategy_context, struct ExtensionRegistry *registry,
+                            bool success) {
     /* Priority strategy is static -- no learning needed */
     (void)strategy_context;
     (void)registry;
@@ -255,8 +243,8 @@ static void priority_destroy(void *strategy_context) {
 /* ------------------------------------------------------------------ */
 
 const DisambiguationStrategyVTable strategy_priority_vtable = {
-    .init    = priority_init,
+    .init = priority_init,
     .resolve = priority_resolve,
-    .update  = priority_update,
+    .update = priority_update,
     .destroy = priority_destroy,
 };

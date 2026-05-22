@@ -39,11 +39,10 @@ static int new_state(LimeNfa *n) {
 
 /* Add an outgoing edge to state `from`.  Returns 0 on success,
 ** -1 on alloc failure. */
-static int add_edge(LimeNfa *n, int from, LimeNfaEdgeKind kind,
-                    int target, const void *data) {
+static int add_edge(LimeNfa *n, int from, LimeNfaEdgeKind kind, int target, const void *data) {
     LimeNfaEdge *e = calloc(1, sizeof(*e));
     if (!e) return -1;
-    e->kind   = kind;
+    e->kind = kind;
     e->target = target;
     if (kind == LIME_NFA_BYTE) {
         e->u.byte = *(const unsigned char *)data;
@@ -65,8 +64,7 @@ static int add_byte(LimeNfa *n, int from, int target, unsigned char b) {
     return add_edge(n, from, LIME_NFA_BYTE, target, &b);
 }
 
-static int add_class(LimeNfa *n, int from, int target,
-                     const unsigned char *bits32, int negate) {
+static int add_class(LimeNfa *n, int from, int target, const unsigned char *bits32, int negate) {
     unsigned char tmp[33];
     memcpy(tmp, bits32, 32);
     tmp[32] = (unsigned char)(negate ? 1 : 0);
@@ -113,20 +111,25 @@ static int build(LimeNfa *n, const LimeReNode *node, Frag *out);
 
 /* Literal -- two states with a byte edge between. */
 static int build_literal(LimeNfa *n, unsigned char byte, Frag *out) {
-    int s = new_state(n); if (s < 0) return -1;
-    int e = new_state(n); if (e < 0) return -1;
+    int s = new_state(n);
+    if (s < 0) return -1;
+    int e = new_state(n);
+    if (e < 0) return -1;
     if (add_byte(n, s, e, byte) < 0) return -1;
-    out->start = s; out->end = e;
+    out->start = s;
+    out->end = e;
     return 0;
 }
 
 /* Char class -- two states with a class edge. */
-static int build_char_class(LimeNfa *n, const unsigned char *bits,
-                            int negate, Frag *out) {
-    int s = new_state(n); if (s < 0) return -1;
-    int e = new_state(n); if (e < 0) return -1;
+static int build_char_class(LimeNfa *n, const unsigned char *bits, int negate, Frag *out) {
+    int s = new_state(n);
+    if (s < 0) return -1;
+    int e = new_state(n);
+    if (e < 0) return -1;
     if (add_class(n, s, e, bits, negate) < 0) return -1;
-    out->start = s; out->end = e;
+    out->start = s;
+    out->end = e;
     return 0;
 }
 
@@ -143,8 +146,10 @@ static int build_any(LimeNfa *n, Frag *out) {
 /* Empty -- single state with epsilon to itself; effectively a
 ** zero-width match.  Implemented as start == end. */
 static int build_empty(LimeNfa *n, Frag *out) {
-    int s = new_state(n); if (s < 0) return -1;
-    out->start = s; out->end = s;
+    int s = new_state(n);
+    if (s < 0) return -1;
+    out->start = s;
+    out->end = s;
     return 0;
 }
 
@@ -152,21 +157,27 @@ static int build_empty(LimeNfa *n, Frag *out) {
 ** The DFA construction will lift the flag into a state property;
 ** the simulator treats it as zero-width. */
 static int build_anchor_start(LimeNfa *n, Frag *out) {
-    int s = new_state(n); if (s < 0) return -1;
-    int e = new_state(n); if (e < 0) return -1;
+    int s = new_state(n);
+    if (s < 0) return -1;
+    int e = new_state(n);
+    if (e < 0) return -1;
     n->states[s].anchor_start = 1;
     if (add_eps(n, s, e) < 0) return -1;
-    out->start = s; out->end = e;
+    out->start = s;
+    out->end = e;
     return 0;
 }
 
 /* Anchor end (\$) -- analogous to start. */
 static int build_anchor_end(LimeNfa *n, Frag *out) {
-    int s = new_state(n); if (s < 0) return -1;
-    int e = new_state(n); if (e < 0) return -1;
+    int s = new_state(n);
+    if (s < 0) return -1;
+    int e = new_state(n);
+    if (e < 0) return -1;
     n->states[e].anchor_end = 1;
     if (add_eps(n, s, e) < 0) return -1;
-    out->start = s; out->end = e;
+    out->start = s;
+    out->end = e;
     return 0;
 }
 
@@ -174,62 +185,74 @@ static int build_anchor_end(LimeNfa *n, Frag *out) {
 ** to right.start.  Result frag is {left.start, right.end}. */
 static int build_concat(LimeNfa *n, const LimeReNode *node, Frag *out) {
     Frag a, b;
-    if (build(n, node->u.binary.left, &a)  < 0) return -1;
+    if (build(n, node->u.binary.left, &a) < 0) return -1;
     if (build(n, node->u.binary.right, &b) < 0) return -1;
     if (add_eps(n, a.end, b.start) < 0) return -1;
-    out->start = a.start; out->end = b.end;
+    out->start = a.start;
+    out->end = b.end;
     return 0;
 }
 
 /* Alternation: new start, eps to left.start and right.start;
 ** left.end and right.end eps to new end. */
 static int build_alt(LimeNfa *n, const LimeReNode *node, Frag *out) {
-    int s = new_state(n); if (s < 0) return -1;
-    int e = new_state(n); if (e < 0) return -1;
+    int s = new_state(n);
+    if (s < 0) return -1;
+    int e = new_state(n);
+    if (e < 0) return -1;
     Frag a, b;
-    if (build(n, node->u.binary.left, &a)  < 0) return -1;
+    if (build(n, node->u.binary.left, &a) < 0) return -1;
     if (build(n, node->u.binary.right, &b) < 0) return -1;
     if (add_eps(n, s, a.start) < 0) return -1;
     if (add_eps(n, s, b.start) < 0) return -1;
-    if (add_eps(n, a.end, e)   < 0) return -1;
-    if (add_eps(n, b.end, e)   < 0) return -1;
-    out->start = s; out->end = e;
+    if (add_eps(n, a.end, e) < 0) return -1;
+    if (add_eps(n, b.end, e) < 0) return -1;
+    out->start = s;
+    out->end = e;
     return 0;
 }
 
 /* Star, plus, question. */
 static int build_star(LimeNfa *n, const LimeReNode *node, Frag *out) {
-    int s = new_state(n); if (s < 0) return -1;
-    int e = new_state(n); if (e < 0) return -1;
+    int s = new_state(n);
+    if (s < 0) return -1;
+    int e = new_state(n);
+    if (e < 0) return -1;
     Frag a;
     if (build(n, node->u.unary.child, &a) < 0) return -1;
     if (add_eps(n, s, a.start) < 0) return -1;
-    if (add_eps(n, s, e)       < 0) return -1;
+    if (add_eps(n, s, e) < 0) return -1;
     if (add_eps(n, a.end, a.start) < 0) return -1;
-    if (add_eps(n, a.end, e)       < 0) return -1;
-    out->start = s; out->end = e;
+    if (add_eps(n, a.end, e) < 0) return -1;
+    out->start = s;
+    out->end = e;
     return 0;
 }
 
 static int build_plus(LimeNfa *n, const LimeReNode *node, Frag *out) {
     Frag a;
     if (build(n, node->u.unary.child, &a) < 0) return -1;
-    int e = new_state(n); if (e < 0) return -1;
+    int e = new_state(n);
+    if (e < 0) return -1;
     if (add_eps(n, a.end, a.start) < 0) return -1;
-    if (add_eps(n, a.end, e)       < 0) return -1;
-    out->start = a.start; out->end = e;
+    if (add_eps(n, a.end, e) < 0) return -1;
+    out->start = a.start;
+    out->end = e;
     return 0;
 }
 
 static int build_question(LimeNfa *n, const LimeReNode *node, Frag *out) {
-    int s = new_state(n); if (s < 0) return -1;
-    int e = new_state(n); if (e < 0) return -1;
+    int s = new_state(n);
+    if (s < 0) return -1;
+    int e = new_state(n);
+    if (e < 0) return -1;
     Frag a;
     if (build(n, node->u.unary.child, &a) < 0) return -1;
     if (add_eps(n, s, a.start) < 0) return -1;
-    if (add_eps(n, s, e)       < 0) return -1;
-    if (add_eps(n, a.end, e)   < 0) return -1;
-    out->start = s; out->end = e;
+    if (add_eps(n, s, e) < 0) return -1;
+    if (add_eps(n, a.end, e) < 0) return -1;
+    out->start = s;
+    out->end = e;
     return 0;
 }
 
@@ -267,23 +290,27 @@ static int build_repeat(LimeNfa *n, const LimeReNode *node, Frag *out) {
         /* Append a star fragment built around the child. */
         Frag a;
         if (build(n, node->u.repeat.child, &a) < 0) return -1;
-        int s = new_state(n); if (s < 0) return -1;
-        int e = new_state(n); if (e < 0) return -1;
+        int s = new_state(n);
+        if (s < 0) return -1;
+        int e = new_state(n);
+        if (e < 0) return -1;
         if (add_eps(n, s, a.start) < 0) return -1;
-        if (add_eps(n, s, e)       < 0) return -1;
+        if (add_eps(n, s, e) < 0) return -1;
         if (add_eps(n, a.end, a.start) < 0) return -1;
-        if (add_eps(n, a.end, e)       < 0) return -1;
+        if (add_eps(n, a.end, e) < 0) return -1;
         if (add_eps(n, acc.end, s) < 0) return -1;
         acc.end = e;
     } else {
         for (int i = 0; i < max - min; i++) {
             Frag a;
             if (build(n, node->u.repeat.child, &a) < 0) return -1;
-            int s = new_state(n); if (s < 0) return -1;
-            int e = new_state(n); if (e < 0) return -1;
+            int s = new_state(n);
+            if (s < 0) return -1;
+            int e = new_state(n);
+            if (e < 0) return -1;
             if (add_eps(n, s, a.start) < 0) return -1;
-            if (add_eps(n, s, e)       < 0) return -1;
-            if (add_eps(n, a.end, e)   < 0) return -1;
+            if (add_eps(n, s, e) < 0) return -1;
+            if (add_eps(n, a.end, e) < 0) return -1;
             if (add_eps(n, acc.end, s) < 0) return -1;
             acc.end = e;
         }
@@ -295,31 +322,30 @@ static int build_repeat(LimeNfa *n, const LimeReNode *node, Frag *out) {
 
 static int build(LimeNfa *n, const LimeReNode *node, Frag *out) {
     switch (node->kind) {
-        case LIME_RE_LITERAL:
-            return build_literal(n, node->u.literal, out);
-        case LIME_RE_CHAR_CLASS:
-            return build_char_class(n, node->u.char_class.bits,
-                                    node->u.char_class.negate, out);
-        case LIME_RE_ANY:
-            return build_any(n, out);
-        case LIME_RE_CONCAT:
-            return build_concat(n, node, out);
-        case LIME_RE_ALT:
-            return build_alt(n, node, out);
-        case LIME_RE_STAR:
-            return build_star(n, node, out);
-        case LIME_RE_PLUS:
-            return build_plus(n, node, out);
-        case LIME_RE_QUESTION:
-            return build_question(n, node, out);
-        case LIME_RE_REPEAT:
-            return build_repeat(n, node, out);
-        case LIME_RE_ANCHOR_START:
-            return build_anchor_start(n, out);
-        case LIME_RE_ANCHOR_END:
-            return build_anchor_end(n, out);
-        case LIME_RE_EMPTY:
-            return build_empty(n, out);
+    case LIME_RE_LITERAL:
+        return build_literal(n, node->u.literal, out);
+    case LIME_RE_CHAR_CLASS:
+        return build_char_class(n, node->u.char_class.bits, node->u.char_class.negate, out);
+    case LIME_RE_ANY:
+        return build_any(n, out);
+    case LIME_RE_CONCAT:
+        return build_concat(n, node, out);
+    case LIME_RE_ALT:
+        return build_alt(n, node, out);
+    case LIME_RE_STAR:
+        return build_star(n, node, out);
+    case LIME_RE_PLUS:
+        return build_plus(n, node, out);
+    case LIME_RE_QUESTION:
+        return build_question(n, node, out);
+    case LIME_RE_REPEAT:
+        return build_repeat(n, node, out);
+    case LIME_RE_ANCHOR_START:
+        return build_anchor_start(n, out);
+    case LIME_RE_ANCHOR_END:
+        return build_anchor_end(n, out);
+    case LIME_RE_EMPTY:
+        return build_empty(n, out);
     }
     return -1;
 }
@@ -353,19 +379,23 @@ LimeNfa *lime_lex_nfa_combine(LimeNfa **nfas, int n_nfas) {
     }
     /* Total state count = sum of inputs + 1 for new start. */
     int total = 1;
-    for (int i = 0; i < n_nfas; i++) total += nfas[i]->n_states;
+    for (int i = 0; i < n_nfas; i++)
+        total += nfas[i]->n_states;
 
     LimeNfa *out = calloc(1, sizeof(*out));
     if (!out) return NULL;
     out->states = calloc(total, sizeof(*out->states));
-    if (!out->states) { free(out); return NULL; }
+    if (!out->states) {
+        free(out);
+        return NULL;
+    }
     out->cap = out->n_states = total;
 
     /* New start = state 0. */
     int new_start = 0;
     out->states[0].id = 0;
     out->start = new_start;
-    out->accept = -1;          /* no single accept; per-rule */
+    out->accept = -1; /* no single accept; per-rule */
 
     /* Append each input NFA, remapping state ids by adding the
     ** current offset. */
@@ -375,17 +405,17 @@ LimeNfa *lime_lex_nfa_combine(LimeNfa **nfas, int n_nfas) {
         int base = next_id;
         for (int s = 0; s < src->n_states; s++) {
             int dst_id = base + s;
-            out->states[dst_id].id          = dst_id;
-            out->states[dst_id].is_accept   = src->states[s].is_accept;
+            out->states[dst_id].id = dst_id;
+            out->states[dst_id].is_accept = src->states[s].is_accept;
             out->states[dst_id].accept_rule = src->states[s].accept_rule;
-            out->states[dst_id].anchor_start= src->states[s].anchor_start;
-            out->states[dst_id].anchor_end  = src->states[s].anchor_end;
+            out->states[dst_id].anchor_start = src->states[s].anchor_start;
+            out->states[dst_id].anchor_end = src->states[s].anchor_end;
             /* Steal the edges list verbatim, remapping targets. */
             out->states[dst_id].edges = src->states[s].edges;
             for (LimeNfaEdge *e = out->states[dst_id].edges; e; e = e->next) {
                 e->target += base;
             }
-            src->states[s].edges = NULL;   /* prevent free in next loop */
+            src->states[s].edges = NULL; /* prevent free in next loop */
         }
         /* Add epsilon edge from new start to this NFA's start. */
         LimeNfaEdge *eps = calloc(1, sizeof(*eps));
@@ -395,9 +425,9 @@ LimeNfa *lime_lex_nfa_combine(LimeNfa **nfas, int n_nfas) {
             lime_lex_nfa_free(out);
             return NULL;
         }
-        eps->kind   = LIME_NFA_EPS;
+        eps->kind = LIME_NFA_EPS;
         eps->target = base + src->start;
-        eps->next   = out->states[new_start].edges;
+        eps->next = out->states[new_start].edges;
         out->states[new_start].edges = eps;
         next_id += src->n_states;
     }
@@ -417,8 +447,12 @@ LimeNfa *lime_lex_nfa_combine(LimeNfa **nfas, int n_nfas) {
 #define LIME_NFA_MAX_STATES 4096
 #define LIME_NFA_BMAP_BYTES (LIME_NFA_MAX_STATES / 8)
 
-static void bmap_set(unsigned char *b, int i)   { b[i >> 3] |= (unsigned char)(1u << (i & 7)); }
-static int  bmap_has(const unsigned char *b, int i) { return (b[i >> 3] >> (i & 7)) & 1; }
+static void bmap_set(unsigned char *b, int i) {
+    b[i >> 3] |= (unsigned char)(1u << (i & 7));
+}
+static int bmap_has(const unsigned char *b, int i) {
+    return (b[i >> 3] >> (i & 7)) & 1;
+}
 
 /* Compute epsilon closure of `set`, in place.  Adds all states
 ** reachable via epsilon-edges from any state in `set`. */

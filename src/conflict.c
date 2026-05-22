@@ -26,17 +26,27 @@ static char *dup_string(const char *s) {
 /*
 ** Build a human-readable conflict description.  Returns a malloc'd string.
 */
-static char *format_conflict(ConflictType type,
-                             const char *detail_a,
-                             const char *detail_b) {
+static char *format_conflict(ConflictType type, const char *detail_a, const char *detail_b) {
     const char *type_str;
     switch (type) {
-        case CONFLICT_TOKEN_COLLISION:  type_str = "token collision";    break;
-        case CONFLICT_DUPLICATE_RULE:   type_str = "duplicate rule";     break;
-        case CONFLICT_PRECEDENCE_CLASH: type_str = "precedence clash";   break;
-        case CONFLICT_SHIFT_REDUCE:     type_str = "shift/reduce";       break;
-        case CONFLICT_REDUCE_REDUCE:    type_str = "reduce/reduce";      break;
-        default:                        type_str = "unknown conflict";   break;
+    case CONFLICT_TOKEN_COLLISION:
+        type_str = "token collision";
+        break;
+    case CONFLICT_DUPLICATE_RULE:
+        type_str = "duplicate rule";
+        break;
+    case CONFLICT_PRECEDENCE_CLASH:
+        type_str = "precedence clash";
+        break;
+    case CONFLICT_SHIFT_REDUCE:
+        type_str = "shift/reduce";
+        break;
+    case CONFLICT_REDUCE_REDUCE:
+        type_str = "reduce/reduce";
+        break;
+    default:
+        type_str = "unknown conflict";
+        break;
     }
 
     /* Upper bound on output size */
@@ -46,9 +56,7 @@ static char *format_conflict(ConflictType type,
     char *buf = malloc(buf_sz);
     if (buf == NULL) return NULL;
 
-    snprintf(buf, buf_sz, "%s: '%s' vs '%s'",
-             type_str,
-             detail_a ? detail_a : "(unknown)",
+    snprintf(buf, buf_sz, "%s: '%s' vs '%s'", type_str, detail_a ? detail_a : "(unknown)",
              detail_b ? detail_b : "(unknown)");
     return buf;
 }
@@ -82,15 +90,9 @@ void conflict_set_destroy(ConflictSet *cs) {
     free(cs);
 }
 
-bool conflict_set_add(
-    ConflictSet *cs,
-    ConflictType type,
-    uint32_t mod_index_a,
-    uint32_t mod_index_b,
-    ExtensionID ext_id_a,
-    ExtensionID ext_id_b,
-    const char *description
-) {
+bool conflict_set_add(ConflictSet *cs, ConflictType type, uint32_t mod_index_a,
+                      uint32_t mod_index_b, ExtensionID ext_id_a, ExtensionID ext_id_b,
+                      const char *description) {
     if (cs == NULL) return false;
 
     /* Grow if needed */
@@ -131,8 +133,7 @@ uint32_t conflict_set_unresolved_count(const ConflictSet *cs) {
 /*
 ** Check if two MOD_ADD_RULE modifications produce identical rules.
 */
-static bool rules_identical(const GrammarModification *a,
-                            const GrammarModification *b) {
+static bool rules_identical(const GrammarModification *a, const GrammarModification *b) {
     if (a->type != MOD_ADD_RULE || b->type != MOD_ADD_RULE) return false;
 
     const char *lhs_a = a->u.add_rule.lhs;
@@ -151,11 +152,7 @@ static bool rules_identical(const GrammarModification *a,
     return true;
 }
 
-bool detect_conflicts(
-    const GrammarModification *mods,
-    uint32_t nmods,
-    ConflictSet *cs
-) {
+bool detect_conflicts(const GrammarModification *mods, uint32_t nmods, ConflictSet *cs) {
     if (mods == NULL || nmods == 0 || cs == NULL) return false;
 
     bool found = false;
@@ -170,12 +167,9 @@ bool detect_conflicts(
             if (a->type == MOD_ADD_TOKEN && b->type == MOD_ADD_TOKEN) {
                 const char *name_a = a->u.add_token.name;
                 const char *name_b = b->u.add_token.name;
-                if (name_a != NULL && name_b != NULL &&
-                    strcmp(name_a, name_b) == 0) {
-                    char *desc = format_conflict(
-                        CONFLICT_TOKEN_COLLISION, name_a, name_b);
-                    conflict_set_add(cs, CONFLICT_TOKEN_COLLISION,
-                                     i, j, 0, 0, desc);
+                if (name_a != NULL && name_b != NULL && strcmp(name_a, name_b) == 0) {
+                    char *desc = format_conflict(CONFLICT_TOKEN_COLLISION, name_a, name_b);
+                    conflict_set_add(cs, CONFLICT_TOKEN_COLLISION, i, j, 0, 0, desc);
                     free(desc);
                     found = true;
                 }
@@ -185,30 +179,22 @@ bool detect_conflicts(
             if (a->type == MOD_ADD_RULE && b->type == MOD_ADD_RULE) {
                 if (rules_identical(a, b)) {
                     const char *lhs = a->u.add_rule.lhs;
-                    char *desc = format_conflict(
-                        CONFLICT_DUPLICATE_RULE, lhs, lhs);
-                    conflict_set_add(cs, CONFLICT_DUPLICATE_RULE,
-                                     i, j, 0, 0, desc);
+                    char *desc = format_conflict(CONFLICT_DUPLICATE_RULE, lhs, lhs);
+                    conflict_set_add(cs, CONFLICT_DUPLICATE_RULE, i, j, 0, 0, desc);
                     free(desc);
                     found = true;
                 }
             }
 
             /* Precedence clash: same symbol, different precedence */
-            if (a->type == MOD_MODIFY_PRECEDENCE &&
-                b->type == MOD_MODIFY_PRECEDENCE) {
+            if (a->type == MOD_MODIFY_PRECEDENCE && b->type == MOD_MODIFY_PRECEDENCE) {
                 const char *sym_a = a->u.modify_prec.symbol;
                 const char *sym_b = b->u.modify_prec.symbol;
-                if (sym_a != NULL && sym_b != NULL &&
-                    strcmp(sym_a, sym_b) == 0) {
-                    if (a->u.modify_prec.new_precedence !=
-                        b->u.modify_prec.new_precedence ||
-                        a->u.modify_prec.new_assoc !=
-                        b->u.modify_prec.new_assoc) {
-                        char *desc = format_conflict(
-                            CONFLICT_PRECEDENCE_CLASH, sym_a, sym_b);
-                        conflict_set_add(cs, CONFLICT_PRECEDENCE_CLASH,
-                                         i, j, 0, 0, desc);
+                if (sym_a != NULL && sym_b != NULL && strcmp(sym_a, sym_b) == 0) {
+                    if (a->u.modify_prec.new_precedence != b->u.modify_prec.new_precedence ||
+                        a->u.modify_prec.new_assoc != b->u.modify_prec.new_assoc) {
+                        char *desc = format_conflict(CONFLICT_PRECEDENCE_CLASH, sym_a, sym_b);
+                        conflict_set_add(cs, CONFLICT_PRECEDENCE_CLASH, i, j, 0, 0, desc);
                         free(desc);
                         found = true;
                     }
@@ -224,17 +210,13 @@ bool detect_conflicts(
 /*  Conflict resolution                                                */
 /* ------------------------------------------------------------------ */
 
-uint32_t resolve_conflicts(
-    ConflictSet *cs,
-    const GrammarModification *mods,
-    uint32_t nmods,
-    ExtensionRegistry *registry
-) {
+uint32_t resolve_conflicts(ConflictSet *cs, const GrammarModification *mods, uint32_t nmods,
+                           ExtensionRegistry *registry) {
     if (cs == NULL || mods == NULL || registry == NULL) {
         return cs ? conflict_set_unresolved_count(cs) : 0;
     }
 
-    (void)nmods;  /* used implicitly via mod indices */
+    (void)nmods; /* used implicitly via mod indices */
 
     for (uint32_t i = 0; i < cs->count; i++) {
         Conflict *c = &cs->conflicts[i];
@@ -250,8 +232,7 @@ uint32_t resolve_conflicts(
                     .existing_mod = &mods[c->mod_index_a],
                     .new_mod = &mods[c->mod_index_b],
                 };
-                ConflictResolution res = ext_a->on_conflict(
-                    ext_a->user_data, &info);
+                ConflictResolution res = ext_a->on_conflict(ext_a->user_data, &info);
                 if (res != CONFLICT_UNRESOLVED) {
                     c->resolved = true;
                     continue;
@@ -269,8 +250,7 @@ uint32_t resolve_conflicts(
                     .existing_mod = &mods[c->mod_index_a],
                     .new_mod = &mods[c->mod_index_b],
                 };
-                ConflictResolution res = ext_b->on_conflict(
-                    ext_b->user_data, &info);
+                ConflictResolution res = ext_b->on_conflict(ext_b->user_data, &info);
                 if (res != CONFLICT_UNRESOLVED) {
                     c->resolved = true;
                     continue;

@@ -77,9 +77,9 @@
 ** How to resolve ties when multiple forks complete successfully.
 */
 typedef enum TiebreakRule {
-    TIEBREAK_PRIORITY = 0,       /* Lowest priority value wins          */
-    TIEBREAK_LONGEST_MATCH,      /* Most tokens consumed wins           */
-    TIEBREAK_FIRST_COMPLETE,     /* First fork to complete wins         */
+    TIEBREAK_PRIORITY = 0,   /* Lowest priority value wins          */
+    TIEBREAK_LONGEST_MATCH,  /* Most tokens consumed wins           */
+    TIEBREAK_FIRST_COMPLETE, /* First fork to complete wins         */
 } TiebreakRule;
 
 /* ================================================================== */
@@ -88,8 +88,8 @@ typedef enum TiebreakRule {
 
 typedef struct ForkExtEntry {
     uint32_t ext_id;
-    int32_t priority;          /* Lower = preferred */
-    const char *grammar_name;  /* Borrowed from Extension (not owned) */
+    int32_t priority;         /* Lower = preferred */
+    const char *grammar_name; /* Borrowed from Extension (not owned) */
 } ForkExtEntry;
 
 /* ================================================================== */
@@ -97,13 +97,13 @@ typedef struct ForkExtEntry {
 /* ================================================================== */
 
 typedef struct ForkResolveContext {
-    ForkExtEntry *entries;     /* Priority table for loaded extensions */
+    ForkExtEntry *entries; /* Priority table for loaded extensions */
     uint32_t nentries;
     uint32_t capacity;
 
-    TiebreakRule tiebreak;     /* How to break ties                   */
-    uint32_t max_forks;        /* Upper bound on concurrent forks     */
-    uint32_t lookahead_depth;  /* Tokens to feed per fork             */
+    TiebreakRule tiebreak;    /* How to break ties                   */
+    uint32_t max_forks;       /* Upper bound on concurrent forks     */
+    uint32_t lookahead_depth; /* Tokens to feed per fork             */
 
     /* Statistics */
     uint64_t total_resolutions;
@@ -143,8 +143,7 @@ static int32_t lookup_priority(const ForkResolveContext *fc, uint32_t ext_id) {
 ** Look up the grammar name for a given extension ID.
 ** Returns NULL if the extension is unknown.
 */
-static const char *lookup_grammar_name(const ForkResolveContext *fc,
-                                        uint32_t ext_id) {
+static const char *lookup_grammar_name(const ForkResolveContext *fc, uint32_t ext_id) {
     if (fc == NULL) return NULL;
     for (uint32_t i = 0; i < fc->nentries; i++) {
         if (fc->entries[i].ext_id == ext_id) {
@@ -159,9 +158,12 @@ static const char *lookup_grammar_name(const ForkResolveContext *fc,
 */
 static const char *tiebreak_name(TiebreakRule rule) {
     switch (rule) {
-    case TIEBREAK_PRIORITY:       return "priority";
-    case TIEBREAK_LONGEST_MATCH:  return "longest-match";
-    case TIEBREAK_FIRST_COMPLETE: return "first-complete";
+    case TIEBREAK_PRIORITY:
+        return "priority";
+    case TIEBREAK_LONGEST_MATCH:
+        return "longest-match";
+    case TIEBREAK_FIRST_COMPLETE:
+        return "first-complete";
     }
     return "unknown";
 }
@@ -266,8 +268,7 @@ static bool is_statement_end(const ParseFork *fork) {
 **   out   - Output array (caller-allocated, at least set->count slots).
 **   nout  - Output: number of completed forks found.
 */
-static void collect_completed_forks(const ParseForkSet *set,
-                                    ParseFork **out, uint32_t *nout) {
+static void collect_completed_forks(const ParseForkSet *set, ParseFork **out, uint32_t *nout) {
     *nout = 0;
     if (set == NULL) return;
 
@@ -289,8 +290,7 @@ static void collect_completed_forks(const ParseForkSet *set,
 **
 ** Returns the index of the winning fork, or -1 if nforks == 0.
 */
-static int apply_tiebreaker(ParseFork **forks, uint32_t nforks,
-                            TiebreakRule rule) {
+static int apply_tiebreaker(ParseFork **forks, uint32_t nforks, TiebreakRule rule) {
     if (nforks == 0) return -1;
     if (nforks == 1) return 0;
 
@@ -307,8 +307,7 @@ static int apply_tiebreaker(ParseFork **forks, uint32_t nforks,
                 if (forks[i]->error_count < forks[best]->error_count) {
                     best = (int)i;
                 } else if (forks[i]->error_count == forks[best]->error_count &&
-                           forks[i]->tokens_consumed <
-                               forks[best]->tokens_consumed) {
+                           forks[i]->tokens_consumed < forks[best]->tokens_consumed) {
                     best = (int)i;
                 }
             }
@@ -320,8 +319,7 @@ static int apply_tiebreaker(ParseFork **forks, uint32_t nforks,
         for (uint32_t i = 1; i < nforks; i++) {
             if (forks[i]->tokens_consumed > forks[best]->tokens_consumed) {
                 best = (int)i;
-            } else if (forks[i]->tokens_consumed ==
-                           forks[best]->tokens_consumed) {
+            } else if (forks[i]->tokens_consumed == forks[best]->tokens_consumed) {
                 /* Sub-tiebreak: lower priority value (higher priority) */
                 if (forks[i]->priority < forks[best]->priority) {
                     best = (int)i;
@@ -347,9 +345,7 @@ static int apply_tiebreaker(ParseFork **forks, uint32_t nforks,
 /*  VTable: init                                                       */
 /* ================================================================== */
 
-static void *fork_resolve_init(const Extension *const *extensions,
-                                uint32_t nextensions)
-{
+static void *fork_resolve_init(const Extension *const *extensions, uint32_t nextensions) {
     ForkResolveContext *fc = calloc(1, sizeof(ForkResolveContext));
     if (fc == NULL) return NULL;
 
@@ -411,12 +407,9 @@ static void *fork_resolve_init(const Extension *const *extensions,
 **   - Runtime mode (parse_ctx != NULL): Creates real parser forks
 **     via fork_parser() and feeds tokens.  (Requires Task #7.)
 */
-static bool fork_resolve_resolve(void *strategy_context,
-                                  const ConflictPoint *conflict,
-                                  struct ParseContext *parse_ctx,
-                                  int lookahead,
-                                  StrategyResult *result)
-{
+static bool fork_resolve_resolve(void *strategy_context, const ConflictPoint *conflict,
+                                 struct ParseContext *parse_ctx, int lookahead,
+                                 StrategyResult *result) {
     (void)parse_ctx;
 
     ForkResolveContext *fc = (ForkResolveContext *)strategy_context;
@@ -438,8 +431,7 @@ static bool fork_resolve_resolve(void *strategy_context,
         result->winning_contexts[0] = conflict->contexts[0];
         result->nwinners = 1;
         result->confidence = 1.0f;
-        result->explanation = dup_str(
-            "fork-resolve: single context, no fork needed");
+        result->explanation = dup_str("fork-resolve: single context, no fork needed");
         return true;
     }
 
@@ -539,8 +531,7 @@ static bool fork_resolve_resolve(void *strategy_context,
         parse_fork_set_destroy(fset);
 
         result->confidence = 0.0f;
-        result->explanation = dup_str(
-            "fork-resolve: all forks failed, conflict unresolvable");
+        result->explanation = dup_str("fork-resolve: all forks failed, conflict unresolvable");
         return false;
     }
 
@@ -618,12 +609,8 @@ static bool fork_resolve_resolve(void *strategy_context,
     snprintf(buf, sizeof(buf),
              "fork-resolve: %u/%u forks completed, winner is ext %u "
              "(%s, prio %d) via %s tiebreak",
-             ncompleted,
-             (uint32_t)conflict->ncontexts,
-             (unsigned)wctx->ext_id,
-             winner_name ? winner_name : "unknown",
-             wctx->priority,
-             tiebreak_name(fc->tiebreak));
+             ncompleted, (uint32_t)conflict->ncontexts, (unsigned)wctx->ext_id,
+             winner_name ? winner_name : "unknown", wctx->priority, tiebreak_name(fc->tiebreak));
     result->explanation = dup_str(buf);
 
     free(completed);
@@ -641,10 +628,8 @@ static bool fork_resolve_resolve(void *strategy_context,
 ** learn which grammars succeed more often and adjust priorities
 ** dynamically, but for now it's a no-op.
 */
-static void fork_resolve_update(void *strategy_context,
-                                 struct ExtensionRegistry *registry,
-                                 bool success)
-{
+static void fork_resolve_update(void *strategy_context, struct ExtensionRegistry *registry,
+                                bool success) {
     (void)strategy_context;
     (void)registry;
     (void)success;
@@ -668,9 +653,9 @@ static void fork_resolve_destroy(void *strategy_context) {
 /* ================================================================== */
 
 const DisambiguationStrategyVTable strategy_fork_resolve_vtable = {
-    .init    = fork_resolve_init,
+    .init = fork_resolve_init,
     .resolve = fork_resolve_resolve,
-    .update  = fork_resolve_update,
+    .update = fork_resolve_update,
     .destroy = fork_resolve_destroy,
 };
 
@@ -703,19 +688,12 @@ const DisambiguationStrategyVTable strategy_fork_resolve_vtable = {
 ** Returns a fork set with one fork per context, or NULL on failure.
 ** Caller must destroy the set with parse_fork_set_destroy().
 */
-ParseForkSet *fork_resolve_create_forks(
-    const ConflictPoint *conflict,
-    const void *parser,
-    size_t parser_size,
-    size_t stack_entry_size,
-    size_t inline_stack_offset,
-    uint32_t inline_stack_count,
-    size_t stack_field_offset,
-    size_t tos_field_offset,
-    size_t stack_end_offset,
-    struct ParserSnapshot **snapshots,
-    uint32_t max_forks)
-{
+ParseForkSet *fork_resolve_create_forks(const ConflictPoint *conflict, const void *parser,
+                                        size_t parser_size, size_t stack_entry_size,
+                                        size_t inline_stack_offset, uint32_t inline_stack_count,
+                                        size_t stack_field_offset, size_t tos_field_offset,
+                                        size_t stack_end_offset, struct ParserSnapshot **snapshots,
+                                        uint32_t max_forks) {
     if (conflict == NULL || parser == NULL || snapshots == NULL) {
         return NULL;
     }
@@ -735,11 +713,9 @@ ParseForkSet *fork_resolve_create_forks(
         const LimeContext *ctx = &conflict->contexts[i];
         int priority = ctx->priority;
 
-        ParseFork *fork = fork_parser(
-            parser, parser_size, stack_entry_size,
-            inline_stack_offset, inline_stack_count,
-            stack_field_offset, tos_field_offset, stack_end_offset,
-            snapshots[i], priority);
+        ParseFork *fork = fork_parser(parser, parser_size, stack_entry_size, inline_stack_offset,
+                                      inline_stack_count, stack_field_offset, tos_field_offset,
+                                      stack_end_offset, snapshots[i], priority);
 
         if (fork == NULL) {
             /* Skip contexts we can't fork for (allocation failure) */
@@ -772,10 +748,7 @@ ParseForkSet *fork_resolve_create_forks(
 ** Returns the number of forks that are still active (RUNNING or
 ** COMPLETED) after all tokens have been consumed.
 */
-uint32_t fork_resolve_feed_tokens(ParseForkSet *fset,
-                                  const int *tokens,
-                                  uint32_t ntokens)
-{
+uint32_t fork_resolve_feed_tokens(ParseForkSet *fset, const int *tokens, uint32_t ntokens) {
     if (fset == NULL || tokens == NULL || ntokens == 0) return 0;
 
     for (uint32_t t = 0; t < ntokens; t++) {
@@ -803,8 +776,7 @@ uint32_t fork_resolve_feed_tokens(ParseForkSet *fset,
         parse_fork_set_prune(fset);
 
         /* Early exit if only one fork remains and it completed */
-        if (fset->count == 1 &&
-            fset->forks[0]->status == FORK_COMPLETED) {
+        if (fset->count == 1 && fset->forks[0]->status == FORK_COMPLETED) {
             break;
         }
     }
@@ -830,9 +802,7 @@ uint32_t fork_resolve_feed_tokens(ParseForkSet *fset,
 **
 ** The fork set is not destroyed by this function.
 */
-int fork_resolve_evaluate(const ParseForkSet *fset,
-                          TiebreakRule tiebreak)
-{
+int fork_resolve_evaluate(const ParseForkSet *fset, TiebreakRule tiebreak) {
     if (fset == NULL || fset->count == 0) return -1;
 
     /* Collect completed forks */
@@ -848,8 +818,7 @@ int fork_resolve_evaluate(const ParseForkSet *fset,
     }
 
     /* Apply tiebreaker */
-    int winner_in_completed = apply_tiebreaker(completed, ncompleted,
-                                               tiebreak);
+    int winner_in_completed = apply_tiebreaker(completed, ncompleted, tiebreak);
     if (winner_in_completed < 0) {
         free(completed);
         return -1;
@@ -897,25 +866,13 @@ int fork_resolve_evaluate(const ParseForkSet *fset,
 ** Returns true if a winner was found, false if all forks failed.
 ** The caller must call strategy_result_cleanup() on the result.
 */
-bool fork_resolve_runtime(
-    const ConflictPoint *conflict,
-    const void *parser,
-    size_t parser_size,
-    size_t stack_entry_size,
-    size_t inline_stack_offset,
-    uint32_t inline_stack_count,
-    size_t stack_field_offset,
-    size_t tos_field_offset,
-    size_t stack_end_offset,
-    struct ParserSnapshot **snapshots,
-    const int *tokens,
-    uint32_t ntokens,
-    TiebreakRule tiebreak,
-    uint32_t max_forks,
-    StrategyResult *result)
-{
-    if (conflict == NULL || parser == NULL || result == NULL ||
-        snapshots == NULL) {
+bool fork_resolve_runtime(const ConflictPoint *conflict, const void *parser, size_t parser_size,
+                          size_t stack_entry_size, size_t inline_stack_offset,
+                          uint32_t inline_stack_count, size_t stack_field_offset,
+                          size_t tos_field_offset, size_t stack_end_offset,
+                          struct ParserSnapshot **snapshots, const int *tokens, uint32_t ntokens,
+                          TiebreakRule tiebreak, uint32_t max_forks, StrategyResult *result) {
+    if (conflict == NULL || parser == NULL || result == NULL || snapshots == NULL) {
         return false;
     }
 
@@ -923,14 +880,11 @@ bool fork_resolve_runtime(
 
     /* Create forks */
     ParseForkSet *fset = fork_resolve_create_forks(
-        conflict, parser, parser_size, stack_entry_size,
-        inline_stack_offset, inline_stack_count,
-        stack_field_offset, tos_field_offset, stack_end_offset,
-        snapshots, max_forks);
+        conflict, parser, parser_size, stack_entry_size, inline_stack_offset, inline_stack_count,
+        stack_field_offset, tos_field_offset, stack_end_offset, snapshots, max_forks);
 
     if (fset == NULL) {
-        result->explanation = dup_str(
-            "fork-resolve (runtime): failed to create any forks");
+        result->explanation = dup_str("fork-resolve (runtime): failed to create any forks");
         return false;
     }
 
@@ -948,8 +902,7 @@ bool fork_resolve_runtime(
     int winner_idx = fork_resolve_evaluate(fset, tiebreak);
     if (winner_idx < 0) {
         parse_fork_set_destroy(fset);
-        result->explanation = dup_str(
-            "fork-resolve (runtime): all forks failed");
+        result->explanation = dup_str("fork-resolve (runtime): all forks failed");
         return false;
     }
 
@@ -966,7 +919,7 @@ bool fork_resolve_runtime(
     }
 
     if (ctx_idx < 0 && winner_idx < conflict->ncontexts) {
-        ctx_idx = winner_idx;  /* Fallback */
+        ctx_idx = winner_idx; /* Fallback */
     }
 
     if (ctx_idx < 0) {
@@ -992,8 +945,7 @@ bool fork_resolve_runtime(
         free(completed);
     }
 
-    result->confidence = (ncompleted <= 1) ? 1.0f :
-                         0.5f + 0.5f / (float)ncompleted;
+    result->confidence = (ncompleted <= 1) ? 1.0f : 0.5f + 0.5f / (float)ncompleted;
 
     /* Build explanation */
     const LimeContext *wctx = &conflict->contexts[ctx_idx];
@@ -1001,10 +953,8 @@ bool fork_resolve_runtime(
     snprintf(buf, sizeof(buf),
              "fork-resolve (runtime): %u forks survived %u tokens, "
              "winner ext %u (grammar '%s', consumed %u tokens) via %s",
-             ncompleted, ntokens,
-             (unsigned)wctx->ext_id,
-             wctx->grammar_name ? wctx->grammar_name : "unknown",
-             (unsigned)winner->tokens_consumed,
+             ncompleted, ntokens, (unsigned)wctx->ext_id,
+             wctx->grammar_name ? wctx->grammar_name : "unknown", (unsigned)winner->tokens_consumed,
              tiebreak_name(tiebreak));
     result->explanation = dup_str(buf);
 

@@ -28,18 +28,18 @@
 #include <stddef.h>
 
 typedef struct {
-    char     *state_name;     /* "INITIAL" or a declared state name */
-    int       exclusive;      /* 0 = inclusive (or INITIAL), 1 = exclusive */
-    LimeDfa  *dfa;            /* compiled DFA for this state */
-    int       n_rules;        /* number of rules included in the DFA */
-    int      *rule_indices;   /* original spec-rule indices in compile order;
+    char *state_name;  /* "INITIAL" or a declared state name */
+    int exclusive;     /* 0 = inclusive (or INITIAL), 1 = exclusive */
+    LimeDfa *dfa;      /* compiled DFA for this state */
+    int n_rules;       /* number of rules included in the DFA */
+    int *rule_indices; /* original spec-rule indices in compile order;
                                ** index = the accept_rule the DFA reports */
 } LimeLexCompiledState;
 
 typedef struct {
     LimeLexCompiledState *states;
-    int                   n_states;
-    int                   error_count;     /* nonzero if compile saw any errors */
+    int n_states;
+    int error_count; /* nonzero if compile saw any errors */
 } LimeLexCompiled;
 
 /* Compile a parsed and pattern-resolved spec into per-state
@@ -57,8 +57,8 @@ LimeLexCompiled *lime_lex_compile(const LimeLexSpec *spec);
 void lime_lex_compiled_free(LimeLexCompiled *c);
 
 /* Find the compiled state by name; returns NULL if absent. */
-const LimeLexCompiledState *lime_lex_compiled_find_state(
-    const LimeLexCompiled *c, const char *state_name);
+const LimeLexCompiledState *lime_lex_compiled_find_state(const LimeLexCompiled *c,
+                                                         const char *state_name);
 
 /* Walk the spec's rules in compile order: top-level rules first,
 ** then -- subject to %lexer_include filtering -- the named
@@ -76,8 +76,6 @@ const LimeLexCompiledState *lime_lex_compiled_find_state(
 ** Undefined %lexer_include names are silently skipped here
 ** (they're diagnosed at compile time). */
 typedef int (*LimeLexRuleVisitor)(const LimeLexRule *r, void *user);
-int lime_lex_walk_rules(const LimeLexSpec *spec,
-                        LimeLexRuleVisitor cb,
-                        void *user);
+int lime_lex_walk_rules(const LimeLexSpec *spec, LimeLexRuleVisitor cb, void *user);
 
 #endif /* LIME_LEX_COMPILE_H */

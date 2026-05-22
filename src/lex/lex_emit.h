@@ -49,12 +49,8 @@
 ** API surface keep working.
 **
 ** Returns 0 on success, non-zero on write error. */
-int lime_lex_emit_h(const LimeLexCompiled *c,
-                    const LimeLexSpec *spec,
-                    const char *name_prefix,
-                    const char *const *rule_names,
-                    int n_rules,
-                    FILE *out);
+int lime_lex_emit_h(const LimeLexCompiled *c, const LimeLexSpec *spec, const char *name_prefix,
+                    const char *const *rule_names, int n_rules, FILE *out);
 
 /* Emit the `.c` content.  `header_basename` is the relative
 ** include path the .c file uses to find its own .h (typically
@@ -66,20 +62,14 @@ int lime_lex_emit_h(const LimeLexCompiled *c,
 ** per-rule when an action body neither calls LEX_EMIT nor
 ** LEX_SKIP, so existing M3.3 grammars with empty action bodies
 ** keep working. */
-int lime_lex_emit_c(const LimeLexCompiled *c,
-                    const LimeLexSpec *spec,
-                    const char *name_prefix,
-                    const char *header_basename,
-                    const char *const *rule_names,
-                    int n_rules,
+int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const char *name_prefix,
+                    const char *header_basename, const char *const *rule_names, int n_rules,
                     FILE *out);
 
 /* Convenience: for a parsed spec, derive the rule-name array
 ** in global compile order (top-level rules first, then ruleset
 ** rules in their declaration order).  Caller-owned: free the
 ** returned `*names_out` array AND each string with `free`. */
-int lime_lex_collect_rule_names(const LimeLexSpec *spec,
-                                char ***names_out,
-                                int *n_rules_out);
+int lime_lex_collect_rule_names(const LimeLexSpec *spec, char ***names_out, int *n_rules_out);
 
 #endif /* LIME_LEX_EMIT_H */

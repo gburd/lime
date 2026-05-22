@@ -32,7 +32,6 @@
 ** (no stats header).  When `spec` is NULL, the result is just the
 ** stats header with no body.  When both are non-NULL the
 ** stats header precedes the spec body. */
-char *lime_lex_compiled_to_text(const LimeLexCompiled *c,
-                                const LimeLexSpec *spec);
+char *lime_lex_compiled_to_text(const LimeLexCompiled *c, const LimeLexSpec *spec);
 
 #endif /* LIME_LEX_INTROSPECT_H */

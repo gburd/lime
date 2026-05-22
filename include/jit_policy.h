@@ -40,8 +40,8 @@ typedef struct JITMetrics {
     atomic_uint_fast64_t total_parse_time_ns; /**< Cumulative parse wall-clock (ns) */
     atomic_uint_fast64_t action_lookup_count; /**< Total action table lookups */
     atomic_uint_fast64_t total_tokens_parsed; /**< Cumulative tokens across all parses */
-    atomic_int           is_jitted;           /**< 1 if JIT code is attached */
-    atomic_int           jit_in_progress;     /**< 1 if background compile active */
+    atomic_int is_jitted;                     /**< 1 if JIT code is attached */
+    atomic_int jit_in_progress;               /**< 1 if background compile active */
 } JITMetrics;
 
 /* ------------------------------------------------------------------ */
@@ -120,9 +120,7 @@ void jit_metrics_init(JITMetrics *m);
 ** Updates parse_count, total_parse_time_ns, and action_lookup_count.
 ** Thread-safe (uses atomic operations).
 */
-void jit_metrics_record_parse(JITMetrics *m,
-                              uint64_t parse_time_ns,
-                              uint64_t action_lookups);
+void jit_metrics_record_parse(JITMetrics *m, uint64_t parse_time_ns, uint64_t action_lookups);
 
 /*
 ** Record the number of tokens processed in a parse session.
@@ -155,9 +153,7 @@ bool jit_should_compile(const JITMetrics *m, const JITPolicyConfig *config);
 ** Thread-safe: uses the jit_in_progress flag to prevent concurrent
 ** compilation attempts on the same snapshot.
 */
-int jit_maybe_compile(ParserSnapshot *snap,
-                      JITMetrics *m,
-                      const JITPolicyConfig *config);
+int jit_maybe_compile(ParserSnapshot *snap, JITMetrics *m, const JITPolicyConfig *config);
 
 /*
 ** Shut down the JIT policy subsystem.

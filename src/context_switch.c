@@ -25,10 +25,10 @@
 /*  Well-known trigger lexemes                                         */
 /* ------------------------------------------------------------------ */
 
-static const char *TRIGGER_XQUERY  = "xmlquery";
-static const char *TRIGGER_XPATH   = "xpath";
-static const char *TRIGGER_EDN     = "{:";
-static const char *TRIGGER_JSON    = "json";
+static const char *TRIGGER_XQUERY = "xmlquery";
+static const char *TRIGGER_XPATH = "xpath";
+static const char *TRIGGER_EDN = "{:";
+static const char *TRIGGER_JSON = "json";
 
 /* ------------------------------------------------------------------ */
 /*  Lexeme classification                                              */
@@ -101,9 +101,7 @@ GrammarMode context_switch_classify_lexeme(const char *lexeme) {
 ** Returns true if the token MIGHT be a language boundary trigger.
 ** False positives are acceptable; false negatives are not.
 */
-bool context_switch_needed(const GrammarContextStack *stack,
-                           int token_code,
-                           const char *lexeme) {
+bool context_switch_needed(const GrammarContextStack *stack, int token_code, const char *lexeme) {
     (void)token_code;
 
     if (stack == NULL) return false;
@@ -116,12 +114,12 @@ bool context_switch_needed(const GrammarContextStack *stack,
         /* Quick first-character check to avoid string comparisons */
         char c = (char)tolower((unsigned char)lexeme[0]);
         switch (c) {
-            case 'x':  /* xmlquery, xpath */
-            case 'j':  /* json */
-            case '{':  /* {: (EDN) */
-                return true;
-            default:
-                return false;
+        case 'x': /* xmlquery, xpath */
+        case 'j': /* json */
+        case '{': /* {: (EDN) */
+            return true;
+        default:
+            return false;
         }
     }
 
@@ -157,12 +155,9 @@ int context_switch_detect_exit(const char *lexeme) {
 ** The caller must provide snapshots for each mode they want to enable;
 ** NULL snapshots are skipped.
 */
-bool context_switch_register_defaults(
-    GrammarContextStack *stack,
-    ParserSnapshot *xquery_snapshot,
-    ParserSnapshot *xpath_snapshot,
-    ParserSnapshot *edn_snapshot,
-    ParserSnapshot *json_snapshot) {
+bool context_switch_register_defaults(GrammarContextStack *stack, ParserSnapshot *xquery_snapshot,
+                                      ParserSnapshot *xpath_snapshot, ParserSnapshot *edn_snapshot,
+                                      ParserSnapshot *json_snapshot) {
     if (stack == NULL) return false;
 
     bool ok = true;
@@ -174,7 +169,7 @@ bool context_switch_register_defaults(
             .snapshot = xquery_snapshot,
             .trigger_token = -1,
             .trigger_lexeme = TRIGGER_XQUERY,
-            .exit_token = -1,  /* exit on bracket depth */
+            .exit_token = -1, /* exit on bracket depth */
         };
         ok = ok && grammar_context_register_mode(stack, &info);
     }
@@ -186,7 +181,7 @@ bool context_switch_register_defaults(
             .snapshot = xpath_snapshot,
             .trigger_token = -1,
             .trigger_lexeme = TRIGGER_XPATH,
-            .exit_token = -1,  /* exit on bracket depth */
+            .exit_token = -1, /* exit on bracket depth */
         };
         ok = ok && grammar_context_register_mode(stack, &info);
     }
@@ -198,7 +193,7 @@ bool context_switch_register_defaults(
             .snapshot = edn_snapshot,
             .trigger_token = -1,
             .trigger_lexeme = TRIGGER_EDN,
-            .exit_token = -1,  /* exit on bracket depth */
+            .exit_token = -1, /* exit on bracket depth */
         };
         ok = ok && grammar_context_register_mode(stack, &info);
     }

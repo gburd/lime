@@ -34,16 +34,16 @@
 /* ------------------------------------------------------------------ */
 
 struct JITContext {
-    LLVMOrcLLJITRef lljit;            /* OrcJIT LLJIT instance           */
-    LLVMContextRef llvm_ctx;          /* Bare LLVM context (for IR gen)  */
+    LLVMOrcLLJITRef lljit;              /* OrcJIT LLJIT instance           */
+    LLVMContextRef llvm_ctx;            /* Bare LLVM context (for IR gen)  */
     LLVMOrcThreadSafeContextRef ts_ctx; /* Thread-safe wrapper of llvm_ctx */
 
-    void *parse_sequence_fn;          /* Monolithic jit_parse_sequence fn */
-    uint32_t nstates;                 /* Number of states                 */
-    uint32_t *state_hit_counts;       /* Per-state hit counting           */
-    uint32_t nstate_functions;        /* Number of per-state functions    */
+    void *parse_sequence_fn;    /* Monolithic jit_parse_sequence fn */
+    uint32_t nstates;           /* Number of states                 */
+    uint32_t *state_hit_counts; /* Per-state hit counting           */
+    uint32_t nstate_functions;  /* Number of per-state functions    */
 
-    JITStats stats;                   /* Compilation statistics           */
+    JITStats stats; /* Compilation statistics           */
 };
 
 /* One-time LLVM initialization flag */
@@ -132,7 +132,7 @@ void jit_destroy(JITContext *ctx) {
 
 JITStats jit_get_stats(const JITContext *ctx) {
     if (ctx == NULL) {
-        JITStats empty = {0};
+        JITStats empty = { 0 };
         return empty;
     }
     return ctx->stats;
@@ -145,10 +145,8 @@ bool jit_is_available(void) {
 /* Defined in jit_codegen.c -- OrcJIT-compatible entry point that
 ** generates IR into an externally-provided module rather than
 ** relying on the JITContext's internal module pointer. */
-extern JITStatus jit_codegen_generate_into(LLVMContextRef llvm_ctx,
-                                            LLVMModuleRef module,
-                                            const ParserSnapshot *snap,
-                                            JITStats *stats_out);
+extern JITStatus jit_codegen_generate_into(LLVMContextRef llvm_ctx, LLVMModuleRef module,
+                                           const ParserSnapshot *snap, JITStats *stats_out);
 
 JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap) {
     if (ctx == NULL || snap == NULL) return JIT_ERR_INVALID_ARG;
@@ -166,8 +164,7 @@ JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap) {
     ** stash the module pointer. The codegen uses ctx->llvm_ctx and ctx->module
     ** through its own copy of the JITContext struct layout. We use the
     ** OrcJIT-aware codegen entry point instead. */
-    JITStatus st = jit_codegen_generate_into(llvm_ctx, module, snap,
-                                              &ctx->stats);
+    JITStatus st = jit_codegen_generate_into(llvm_ctx, module, snap, &ctx->stats);
     if (st != JIT_OK) {
         LLVMDisposeModule(module);
         return st;
@@ -187,8 +184,7 @@ JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap) {
     LIME_JIT_RUN_O2_PASSES(module);
 
     /* Wrap module in a thread-safe module for OrcJIT submission */
-    LLVMOrcThreadSafeModuleRef ts_mod =
-        LLVMOrcCreateNewThreadSafeModule(module, ctx->ts_ctx);
+    LLVMOrcThreadSafeModuleRef ts_mod = LLVMOrcCreateNewThreadSafeModule(module, ctx->ts_ctx);
     /* Note: ts_mod now owns module; do not dispose module separately */
 
     /* Add the module to the LLJIT main JITDylib */
@@ -226,7 +222,8 @@ JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap) {
 
 JITShiftActionFn jit_get_shift_action(const JITContext *ctx, uint32_t state_id) {
     /* No longer used in monolithic JIT approach - per-state functions not generated */
-    (void)ctx; (void)state_id;
+    (void)ctx;
+    (void)state_id;
     return NULL;
 }
 
@@ -269,19 +266,20 @@ void jit_destroy(JITContext *ctx) {
 }
 
 JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap) {
-    (void)ctx; (void)snap;
+    (void)ctx;
+    (void)snap;
     return JIT_ERR_NO_LLVM;
 }
 
-JITShiftActionFn jit_get_shift_action(const JITContext *ctx,
-                                      uint32_t state_id) {
-    (void)ctx; (void)state_id;
+JITShiftActionFn jit_get_shift_action(const JITContext *ctx, uint32_t state_id) {
+    (void)ctx;
+    (void)state_id;
     return NULL;
 }
 
 JITStats jit_get_stats(const JITContext *ctx) {
     (void)ctx;
-    JITStats empty = {0};
+    JITStats empty = { 0 };
     return empty;
 }
 
@@ -290,7 +288,9 @@ bool jit_is_available(void) {
 }
 
 JITStatus jit_warmup(JITContext *ctx, const uint32_t *hot_states, uint32_t n) {
-    (void)ctx; (void)hot_states; (void)n;
+    (void)ctx;
+    (void)hot_states;
+    (void)n;
     return JIT_ERR_NO_LLVM;
 }
 
@@ -302,14 +302,22 @@ JITStatus jit_warmup(JITContext *ctx, const uint32_t *hot_states, uint32_t n) {
 
 const char *jit_status_string(JITStatus status) {
     switch (status) {
-    case JIT_OK:                 return "OK";
-    case JIT_ERR_NO_LLVM:        return "LLVM not available";
-    case JIT_ERR_INIT_FAILED:    return "LLVM initialization failed";
-    case JIT_ERR_CODEGEN_FAILED: return "code generation failed";
-    case JIT_ERR_COMPILE_FAILED: return "JIT compilation failed";
-    case JIT_ERR_LOOKUP_FAILED:  return "symbol lookup failed";
-    case JIT_ERR_INVALID_ARG:    return "invalid argument";
-    case JIT_ERR_ALREADY_COMPILED: return "already compiled";
+    case JIT_OK:
+        return "OK";
+    case JIT_ERR_NO_LLVM:
+        return "LLVM not available";
+    case JIT_ERR_INIT_FAILED:
+        return "LLVM initialization failed";
+    case JIT_ERR_CODEGEN_FAILED:
+        return "code generation failed";
+    case JIT_ERR_COMPILE_FAILED:
+        return "JIT compilation failed";
+    case JIT_ERR_LOOKUP_FAILED:
+        return "symbol lookup failed";
+    case JIT_ERR_INVALID_ARG:
+        return "invalid argument";
+    case JIT_ERR_ALREADY_COMPILED:
+        return "already compiled";
     }
     return "unknown JIT error";
 }
@@ -352,25 +360,21 @@ void jit_detach_from_snapshot(ParserSnapshot *snap) {
 ** operates on the snapshot's dynamically-allocated arrays instead
 ** of static globals.
 */
-static uint16_t table_find_shift_action(const ParserSnapshot *snap,
-                                        uint16_t stateno,
+static uint16_t table_find_shift_action(const ParserSnapshot *snap, uint16_t stateno,
                                         uint16_t iLookAhead) {
     if (snap->yy_shift_ofst == NULL) return 0;
 
     int16_t ofst = snap->yy_shift_ofst[stateno];
     uint32_t idx = (uint32_t)((int32_t)ofst + (int32_t)iLookAhead);
 
-    if (idx < snap->lookahead_count &&
-        snap->yy_lookahead[idx] == iLookAhead) {
+    if (idx < snap->lookahead_count && snap->yy_lookahead[idx] == iLookAhead) {
         return snap->yy_action[idx];
     }
 
     return snap->yy_default[stateno];
 }
 
-uint16_t jit_find_shift_action(const ParserSnapshot *snap,
-                               uint16_t stateno,
-                               uint16_t iLookAhead) {
+uint16_t jit_find_shift_action(const ParserSnapshot *snap, uint16_t stateno, uint16_t iLookAhead) {
     if (snap == NULL) return 0;
 
     /* JIT path disabled for per-token lookups (too much overhead).
@@ -380,9 +384,7 @@ uint16_t jit_find_shift_action(const ParserSnapshot *snap,
     return table_find_shift_action(snap, stateno, iLookAhead);
 }
 
-void jit_parse_batch(const ParserSnapshot *snap,
-                     uint16_t *tokens,
-                     uint32_t count,
+void jit_parse_batch(const ParserSnapshot *snap, uint16_t *tokens, uint32_t count,
                      uint16_t *state_inout) {
     if (snap == NULL || tokens == NULL || count == 0 || state_inout == NULL) {
         return;
@@ -394,7 +396,7 @@ void jit_parse_batch(const ParserSnapshot *snap,
         JITContext *ctx = (JITContext *)snap->jit_ctx;
         if (ctx->parse_sequence_fn != NULL) {
             /* Call monolithic JIT function: void (*)(uint16_t*, uint32_t, uint16_t*) */
-            typedef void (*JITParseSequenceFn)(uint16_t*, uint32_t, uint16_t*);
+            typedef void (*JITParseSequenceFn)(uint16_t *, uint32_t, uint16_t *);
             JITParseSequenceFn jit_fn = (JITParseSequenceFn)ctx->parse_sequence_fn;
             jit_fn(tokens, count, state_inout);
             return;

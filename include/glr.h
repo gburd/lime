@@ -20,16 +20,22 @@ typedef struct LimeArena LimeArena;
  * GLR from standard LR parsing.
  */
 typedef struct GSSNode {
-    uint32_t state;                /**< Parser state number */
+    uint32_t state; /**< Parser state number */
     /** Semantic value (one of int / pointer / double, by convention). */
-    union { int ival; void *pval; double dval; } value;
+    union {
+        int ival;
+        void *pval;
+        double dval;
+    } value;
     struct GSSNode **predecessors; /**< Array of predecessor nodes */
     uint32_t npred;                /**< Number of predecessors */
     uint32_t pred_capacity;        /**< Allocated predecessor slots */
     uint32_t refcount;             /**< Reference count */
 #ifdef YYLOCATIONTYPE
     /** Location tracking; only present when %locations is active. */
-    struct { uint32_t first_line, first_column, last_line, last_column; } location;
+    struct {
+        uint32_t first_line, first_column, last_line, last_column;
+    } location;
 #endif
 } GSSNode;
 
@@ -40,8 +46,7 @@ typedef struct GSSNode {
  * same position (i.e., two GSS heads merge at the same state).
  * Returns 1 to prefer rule1, 2 to prefer rule2, 0 for ambiguity error.
  */
-typedef int (*GLRDisambiguateFn)(uint32_t rule1_index, uint32_t rule2_index,
-                                  void *user_data);
+typedef int (*GLRDisambiguateFn)(uint32_t rule1_index, uint32_t rule2_index, void *user_data);
 
 /**
  * @brief GLR parser context, wrapping an underlying LALR(1) parser.
@@ -50,15 +55,15 @@ typedef int (*GLRDisambiguateFn)(uint32_t rule1_index, uint32_t rule2_index,
  * performs forking on conflicts and merging on convergence.
  */
 typedef struct GLRParser {
-    GSSNode **active_heads;        /**< Array of active stack top nodes */
-    uint32_t nheads;               /**< Number of active heads */
-    uint32_t max_heads;            /**< Capacity of @ref active_heads */
-    LimeArena *arena;              /**< Arena for GSSNode allocation */
-    GLRDisambiguateFn disambiguate;/**< User disambiguation callback */
-    void *disambiguate_data;       /**< User data for callback */
-    uint32_t total_forks;          /**< Statistics: total forks */
-    uint32_t total_merges;         /**< Statistics: total merges */
-    bool has_ambiguity;            /**< True if unresolved ambiguity detected */
+    GSSNode **active_heads;         /**< Array of active stack top nodes */
+    uint32_t nheads;                /**< Number of active heads */
+    uint32_t max_heads;             /**< Capacity of @ref active_heads */
+    LimeArena *arena;               /**< Arena for GSSNode allocation */
+    GLRDisambiguateFn disambiguate; /**< User disambiguation callback */
+    void *disambiguate_data;        /**< User data for callback */
+    uint32_t total_forks;           /**< Statistics: total forks */
+    uint32_t total_merges;          /**< Statistics: total merges */
+    bool has_ambiguity;             /**< True if unresolved ambiguity detected */
 } GLRParser;
 
 /* Create a GLR parser. initial_state is the LALR start state (typically 0).
@@ -103,27 +108,16 @@ void glr_parser_destroy(GLRParser *parser);
 **
 ** Returns 0 on success, -1 on unresolvable ambiguity, -2 on all-heads-dead.
 */
-int glr_parser_feed(GLRParser *parser, uint16_t token,
-                    const uint16_t *yy_action, uint32_t action_count,
-                    const uint16_t *yy_lookahead, uint32_t lookahead_count,
-                    const int16_t *yy_shift_ofst,
-                    const int16_t *yy_reduce_ofst,
-                    const uint16_t *yy_default,
-                    uint32_t nstate,
-                    const uint16_t *yy_rule_lhs,
-                    const int8_t *yy_rule_nrhs,
-                    uint32_t nrule,
-                    uint16_t min_shiftreduce,
-                    uint16_t max_shiftreduce,
-                    uint16_t min_reduce,
-                    uint16_t max_reduce,
-                    uint16_t error_action,
-                    uint16_t accept_action,
-                    uint16_t no_action);
+int glr_parser_feed(GLRParser *parser, uint16_t token, const uint16_t *yy_action,
+                    uint32_t action_count, const uint16_t *yy_lookahead, uint32_t lookahead_count,
+                    const int16_t *yy_shift_ofst, const int16_t *yy_reduce_ofst,
+                    const uint16_t *yy_default, uint32_t nstate, const uint16_t *yy_rule_lhs,
+                    const int8_t *yy_rule_nrhs, uint32_t nrule, uint16_t min_shiftreduce,
+                    uint16_t max_shiftreduce, uint16_t min_reduce, uint16_t max_reduce,
+                    uint16_t error_action, uint16_t accept_action, uint16_t no_action);
 
 /* Set the disambiguation callback. */
-void glr_parser_set_disambiguate(GLRParser *parser,
-                                  GLRDisambiguateFn fn, void *user_data);
+void glr_parser_set_disambiguate(GLRParser *parser, GLRDisambiguateFn fn, void *user_data);
 
 /* Return number of active parse heads (1 for unambiguous, >1 for ambiguous). */
 uint32_t glr_parser_head_count(const GLRParser *parser);

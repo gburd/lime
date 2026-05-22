@@ -4,8 +4,8 @@
 #include <string.h>
 
 #define LIME_ARENA_DEFAULT_SIZE 4096
-#define LIME_ARENA_MIN_BLOCK    256
-#define LIME_ARENA_ALIGNMENT    (sizeof(void *) < 8 ? 8 : sizeof(void *))
+#define LIME_ARENA_MIN_BLOCK 256
+#define LIME_ARENA_ALIGNMENT (sizeof(void *) < 8 ? 8 : sizeof(void *))
 
 static size_t align_up(size_t n, size_t align) {
     return (n + align - 1) & ~(align - 1);

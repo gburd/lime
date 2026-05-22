@@ -46,23 +46,23 @@ static int bmap_has(const unsigned char *b, int i) {
 /* Per-DFA-state record of the NFA state set it represents.
 ** Used for deduplication. */
 typedef struct {
-    unsigned char *set;     /* bitmap, length = nfa_bytes */
+    unsigned char *set; /* bitmap, length = nfa_bytes */
 } DfaSetRec;
 
 typedef struct {
-    const LimeNfa  *nfa;
-    size_t          nfa_bytes;
-    LimeDfa        *dfa;
+    const LimeNfa *nfa;
+    size_t nfa_bytes;
+    LimeDfa *dfa;
 
     /* Set-record table parallel to dfa->states. */
-    DfaSetRec      *records;
-    int             rec_cap;
+    DfaSetRec *records;
+    int rec_cap;
 
     /* Worklist queue (DFA state ids to process). */
-    int            *worklist;
-    int             work_head;
-    int             work_tail;
-    int             work_cap;
+    int *worklist;
+    int work_head;
+    int work_tail;
+    int work_cap;
 } Build;
 
 /* ============================================================
@@ -94,9 +94,8 @@ static int class_matches(const LimeNfaEdge *e, unsigned char byte) {
 /* Compute the move() set: states reachable from any state in
 ** `cur` via a non-epsilon edge consuming byte `b`.  Then apply
 ** epsilon-closure.  Returns 1 if the result is non-empty. */
-static int move_then_eps(const LimeNfa *nfa, const unsigned char *cur,
-                         unsigned char *out, size_t bytes,
-                         unsigned char byte) {
+static int move_then_eps(const LimeNfa *nfa, const unsigned char *cur, unsigned char *out,
+                         size_t bytes, unsigned char byte) {
     memset(out, 0, bytes);
     int any = 0;
     for (int s = 0; s < nfa->n_states; s++) {
@@ -122,12 +121,14 @@ static int move_then_eps(const LimeNfa *nfa, const unsigned char *cur,
 static int dfa_grow(LimeDfa *dfa, int needed) {
     if (dfa->cap >= needed) return 0;
     int newcap = dfa->cap ? dfa->cap : 16;
-    while (newcap < needed) newcap *= 2;
+    while (newcap < needed)
+        newcap *= 2;
     LimeDfaState *ns = realloc(dfa->states, newcap * sizeof(*ns));
     if (!ns) return -1;
     for (int i = dfa->cap; i < newcap; i++) {
         memset(&ns[i], 0, sizeof(ns[i]));
-        for (int b = 0; b < 256; b++) ns[i].trans[b] = -1;
+        for (int b = 0; b < 256; b++)
+            ns[i].trans[b] = -1;
     }
     dfa->states = ns;
     dfa->cap = newcap;
@@ -137,10 +138,12 @@ static int dfa_grow(LimeDfa *dfa, int needed) {
 static int recs_grow(Build *bld, int needed) {
     if (bld->rec_cap >= needed) return 0;
     int newcap = bld->rec_cap ? bld->rec_cap : 16;
-    while (newcap < needed) newcap *= 2;
+    while (newcap < needed)
+        newcap *= 2;
     DfaSetRec *nr = realloc(bld->records, newcap * sizeof(*nr));
     if (!nr) return -1;
-    for (int i = bld->rec_cap; i < newcap; i++) nr[i].set = NULL;
+    for (int i = bld->rec_cap; i < newcap; i++)
+        nr[i].set = NULL;
     bld->records = nr;
     bld->rec_cap = newcap;
     return 0;
@@ -166,8 +169,7 @@ static int worklist_pop(Build *bld, int *out) {
 
 /* Find an existing DFA state matching the NFA set, or create
 ** one.  Returns the DFA state id, or -1 on alloc failure. */
-static int intern_state(Build *bld, const unsigned char *set,
-                        int *created_out) {
+static int intern_state(Build *bld, const unsigned char *set, int *created_out) {
     if (created_out) *created_out = 0;
     /* Linear scan for dedup.  Fine for the corpus size. */
     for (int i = 0; i < bld->dfa->n_states; i++) {
@@ -177,7 +179,7 @@ static int intern_state(Build *bld, const unsigned char *set,
     }
     /* Create new. */
     if (dfa_grow(bld->dfa, bld->dfa->n_states + 1) < 0) return -1;
-    if (recs_grow(bld,     bld->dfa->n_states + 1) < 0) return -1;
+    if (recs_grow(bld, bld->dfa->n_states + 1) < 0) return -1;
     int id = bld->dfa->n_states++;
     bld->dfa->states[id].id = id;
     /* trans[] already initialised to -1 by dfa_grow. */
@@ -222,10 +224,10 @@ LimeDfa *lime_lex_nfa_to_dfa(const LimeNfa *nfa) {
     LimeDfa *dfa = calloc(1, sizeof(*dfa));
     if (!dfa) return NULL;
 
-    Build bld = {0};
-    bld.nfa       = nfa;
+    Build bld = { 0 };
+    bld.nfa = nfa;
     bld.nfa_bytes = bitmap_bytes_for(nfa->n_states);
-    bld.dfa       = dfa;
+    bld.dfa = dfa;
 
     /* Seed with epsilon-closure of {nfa.start}. */
     unsigned char *seed = calloc(bld.nfa_bytes, 1);
@@ -247,8 +249,7 @@ LimeDfa *lime_lex_nfa_to_dfa(const LimeNfa *nfa) {
     while (worklist_pop(&bld, &cur_id)) {
         const unsigned char *cur_set = bld.records[cur_id].set;
         for (int b = 0; b < 256; b++) {
-            if (!move_then_eps(nfa, cur_set, next_set,
-                               bld.nfa_bytes, (unsigned char)b)) {
+            if (!move_then_eps(nfa, cur_set, next_set, bld.nfa_bytes, (unsigned char)b)) {
                 continue;
             }
             int new_state = 0;
@@ -269,14 +270,16 @@ LimeDfa *lime_lex_nfa_to_dfa(const LimeNfa *nfa) {
     free(next_set);
 
     /* Free records (no longer needed once construction completes). */
-    for (int i = 0; i < bld.dfa->n_states; i++) free(bld.records[i].set);
+    for (int i = 0; i < bld.dfa->n_states; i++)
+        free(bld.records[i].set);
     free(bld.records);
     free(bld.worklist);
     return dfa;
 
 fail:
     if (bld.records) {
-        for (int i = 0; i < bld.dfa->n_states; i++) free(bld.records[i].set);
+        for (int i = 0; i < bld.dfa->n_states; i++)
+            free(bld.records[i].set);
         free(bld.records);
     }
     free(bld.worklist);

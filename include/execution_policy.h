@@ -66,10 +66,10 @@ struct LimeContext;
  * execution callbacks.
  */
 typedef struct GrammarExtensionMetadata {
-    uint32_t extension_id;         /**< Extension ID from the registry */
-    const char *name;              /**< Extension name (borrowed pointer) */
-    uint32_t priority;             /**< Higher = more preferred */
-    void *user_data;               /**< Extension-specific data */
+    uint32_t extension_id; /**< Extension ID from the registry */
+    const char *name;      /**< Extension name (borrowed pointer) */
+    uint32_t priority;     /**< Higher = more preferred */
+    void *user_data;       /**< Extension-specific data */
 
     /**
      * @brief Optional callback for EXEC_CONDITIONAL policy.
@@ -107,10 +107,10 @@ typedef struct GrammarExtensionMetadata {
  * mode.
  */
 typedef enum LimeExecMode {
-    EXEC_FIRST_ONLY = 0,   /**< Only highest-priority winner executes */
-    EXEC_ALL,              /**< All winners execute independently */
-    EXEC_CHAIN,            /**< Winners execute in sequence, output chained */
-    EXEC_CONDITIONAL,      /**< Extension-provided callback decides */
+    EXEC_FIRST_ONLY = 0, /**< Only highest-priority winner executes */
+    EXEC_ALL,            /**< All winners execute independently */
+    EXEC_CHAIN,          /**< Winners execute in sequence, output chained */
+    EXEC_CONDITIONAL,    /**< Extension-provided callback decides */
 } LimeExecMode;
 
 /** @} */ /* end exec_policy_enum */
@@ -126,9 +126,9 @@ typedef enum LimeExecMode {
  * @brief Result of executing a single grammar's semantic actions.
  */
 typedef struct ExecutionResult {
-    uint32_t extension_id;         /**< Which extension produced this result */
-    void *result;                  /**< Semantic action output (owned by caller) */
-    char *error;                   /**< NULL on success; malloc'd error on failure */
+    uint32_t extension_id; /**< Which extension produced this result */
+    void *result;          /**< Semantic action output (owned by caller) */
+    char *error;           /**< NULL on success; malloc'd error on failure */
 } ExecutionResult;
 
 /** @} */ /* end exec_result */
@@ -171,11 +171,8 @@ typedef struct LimeParserHandle LimeParserHandle;
  * @retval true  Execution succeeded.
  * @retval false Execution failed; see @p error.
  */
-typedef bool (*ParserExecuteFn)(LimeParserHandle *parser,
-                                const GrammarExtensionMetadata *ext,
-                                void *input,
-                                void **result,
-                                char **error);
+typedef bool (*ParserExecuteFn)(LimeParserHandle *parser, const GrammarExtensionMetadata *ext,
+                                void *input, void **result, char **error);
 
 /** @} */ /* end exec_callback */
 
@@ -190,8 +187,8 @@ typedef bool (*ParserExecuteFn)(LimeParserHandle *parser,
  * @brief Configuration for the execution policy engine.
  */
 typedef struct ExecutionPolicyConfig {
-    LimeExecMode policy;           /**< Which policy to use */
-    ParserExecuteFn execute_fn;    /**< Callback to run a parser */
+    LimeExecMode policy;        /**< Which policy to use */
+    ParserExecuteFn execute_fn; /**< Callback to run a parser */
 
     /**
      * @brief If true, execution stops at the first error.
@@ -245,13 +242,10 @@ void execution_policy_config_init(ExecutionPolicyConfig *config);
  *
  * @see execution_results_free()
  */
-ExecutionResult *execute_semantic_actions(
-    const ExecutionPolicyConfig *config,
-    const struct StrategyResult *disambiguation,
-    LimeParserHandle **parsers,
-    GrammarExtensionMetadata **extensions,
-    int *nresults_out
-);
+ExecutionResult *execute_semantic_actions(const ExecutionPolicyConfig *config,
+                                          const struct StrategyResult *disambiguation,
+                                          LimeParserHandle **parsers,
+                                          GrammarExtensionMetadata **extensions, int *nresults_out);
 
 /**
  * @brief Free an array of execution results.
@@ -287,13 +281,10 @@ const char *execution_policy_name(LimeExecMode policy);
  *
  * @see execute_semantic_actions()
  */
-ExecutionResult *execute_first_only(
-    ParserExecuteFn execute_fn,
-    const struct StrategyResult *disambiguation,
-    LimeParserHandle **parsers,
-    GrammarExtensionMetadata **extensions,
-    int *nresults_out
-);
+ExecutionResult *execute_first_only(ParserExecuteFn execute_fn,
+                                    const struct StrategyResult *disambiguation,
+                                    LimeParserHandle **parsers,
+                                    GrammarExtensionMetadata **extensions, int *nresults_out);
 
 /** @} */ /* end exec_api */
 

@@ -52,9 +52,8 @@ static void rebuild_hash_table(TokenTable *table) {
         table->tokens[i].next_in_chain = INVALID_INDEX;
     }
     for (uint32_t i = 0; i < table->ntokens; i++) {
-        uint32_t bucket = hash_string_ci(table->tokens[i].lexeme,
-                                         table->tokens[i].lexeme_len)
-                          % table->hash_capacity;
+        uint32_t bucket = hash_string_ci(table->tokens[i].lexeme, table->tokens[i].lexeme_len) %
+                          table->hash_capacity;
         table->tokens[i].next_in_chain = table->hash_table[bucket];
         table->hash_table[bucket] = i;
     }
@@ -70,16 +69,14 @@ static bool ensure_capacity(TokenTable *table) {
     uint32_t new_capacity = table->capacity * 2;
     if (new_capacity < 16) new_capacity = 16;
 
-    TokenDefinition *new_tokens =
-        realloc(table->tokens, new_capacity * sizeof(TokenDefinition));
+    TokenDefinition *new_tokens = realloc(table->tokens, new_capacity * sizeof(TokenDefinition));
     if (!new_tokens) return false;
     table->tokens = new_tokens;
     table->capacity = new_capacity;
 
     /* Grow hash table to maintain a load factor <= 0.5. */
     uint32_t new_hash_cap = new_capacity * 2;
-    uint32_t *new_ht = realloc(table->hash_table,
-                               new_hash_cap * sizeof(uint32_t));
+    uint32_t *new_ht = realloc(table->hash_table, new_hash_cap * sizeof(uint32_t));
     if (!new_ht) return false;
     table->hash_table = new_ht;
     table->hash_capacity = new_hash_cap;
@@ -171,8 +168,7 @@ int lookup_token(TokenTable *table, const char *str, size_t len) {
     return -1;
 }
 
-bool add_token(TokenTable *table, const char *lexeme, int token_code,
-               ExtensionID ext_id) {
+bool add_token(TokenTable *table, const char *lexeme, int token_code, ExtensionID ext_id) {
     if (!table || !lexeme) return false;
 
     size_t len = strlen(lexeme);

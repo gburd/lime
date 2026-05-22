@@ -14,11 +14,11 @@ extern "C" {
  * column numbers are 1-based; zero indicates "unknown".
  */
 typedef struct LimeLocation {
-    uint32_t first_line;     /**< First line of the span (1-based) */
-    uint32_t first_column;   /**< First column of the span (1-based) */
-    uint32_t last_line;      /**< Last line of the span (1-based) */
-    uint32_t last_column;    /**< Last column of the span (1-based) */
-    const char *filename;    /**< Borrowed filename pointer, or NULL */
+    uint32_t first_line;   /**< First line of the span (1-based) */
+    uint32_t first_column; /**< First column of the span (1-based) */
+    uint32_t last_line;    /**< Last line of the span (1-based) */
+    uint32_t last_column;  /**< Last column of the span (1-based) */
+    const char *filename;  /**< Borrowed filename pointer, or NULL */
 } LimeLocation;
 
 /* Merge two locations: result spans from start of a to end of b */
@@ -34,7 +34,7 @@ static inline LimeLocation lime_location_merge(LimeLocation a, LimeLocation b) {
 
 /* Create a zero/empty location */
 static inline LimeLocation lime_location_none(void) {
-    LimeLocation loc = {0, 0, 0, 0, 0};
+    LimeLocation loc = { 0, 0, 0, 0, 0 };
     return loc;
 }
 

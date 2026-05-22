@@ -70,11 +70,11 @@ struct ParseContext;
  * rather than the actual runtime strategy.
  */
 typedef enum LimeStrategy {
-    STRAT_PRIORITY      = 0,  /**< Resolve by extension priority metadata */
-    STRAT_FORK_RESOLVE  = 1,  /**< Fork parse, try each, pick survivor */
-    STRAT_BAYESIAN      = 2,  /**< Evidence accumulation (posterior probs) */
-    STRAT_LLM           = 3,  /**< Query LLM oracle for resolution advice */
-    STRAT_CUSTOM        = 4,  /**< User-provided vtable */
+    STRAT_PRIORITY = 0,     /**< Resolve by extension priority metadata */
+    STRAT_FORK_RESOLVE = 1, /**< Fork parse, try each, pick survivor */
+    STRAT_BAYESIAN = 2,     /**< Evidence accumulation (posterior probs) */
+    STRAT_LLM = 3,          /**< Query LLM oracle for resolution advice */
+    STRAT_CUSTOM = 4,       /**< User-provided vtable */
 } LimeStrategy;
 
 /** @} */ /* end strat_ids */
@@ -94,10 +94,10 @@ typedef enum LimeStrategy {
  * explanation.
  */
 typedef struct StrategyResult {
-    LimeContext *winning_contexts;    /**< Array of winners (malloc'd) */
-    int nwinners;                     /**< Number of winners (usually 1) */
-    float confidence;                 /**< Confidence: 0.0 = no idea, 1.0 = certain */
-    char *explanation;                /**< Human-readable reason (malloc'd, may be NULL) */
+    LimeContext *winning_contexts; /**< Array of winners (malloc'd) */
+    int nwinners;                  /**< Number of winners (usually 1) */
+    float confidence;              /**< Confidence: 0.0 = no idea, 1.0 = certain */
+    char *explanation;             /**< Human-readable reason (malloc'd, may be NULL) */
 } StrategyResult;
 
 /**
@@ -145,8 +145,7 @@ typedef struct DisambiguationStrategyVTable {
      * @param nextensions Count of extensions.
      * @return Opaque strategy context pointer, or NULL on failure.
      */
-    void *(*init)(const struct Extension *const *extensions,
-                  uint32_t nextensions);
+    void *(*init)(const struct Extension *const *extensions, uint32_t nextensions);
 
     /**
      * @brief Resolve a single conflict.
@@ -160,11 +159,8 @@ typedef struct DisambiguationStrategyVTable {
      * @retval true  Conflict was resolved.
      * @retval false Resolution failed.
      */
-    bool (*resolve)(void *strategy_context,
-                    const ConflictPoint *conflict,
-                    struct ParseContext *parse_ctx,
-                    int lookahead,
-                    StrategyResult *result);
+    bool (*resolve)(void *strategy_context, const ConflictPoint *conflict,
+                    struct ParseContext *parse_ctx, int lookahead, StrategyResult *result);
 
     /**
      * @brief Provide feedback after a parse completes.
@@ -176,9 +172,7 @@ typedef struct DisambiguationStrategyVTable {
      * @param registry         Extension registry for metadata lookups.
      * @param success          True if the parse succeeded.
      */
-    void (*update)(void *strategy_context,
-                   struct ExtensionRegistry *registry,
-                   bool success);
+    void (*update)(void *strategy_context, struct ExtensionRegistry *registry, bool success);
 
     /**
      * @brief Tear down the strategy and free all resources.
@@ -221,9 +215,7 @@ typedef struct DisambiguationContext DisambiguationContext;
  * @see disambiguation_create_custom() for user-supplied strategies.
  * @see disambiguation_destroy()
  */
-DisambiguationContext *disambiguation_create(
-    LimeStrategy strategy,
-    struct ExtensionRegistry *reg);
+DisambiguationContext *disambiguation_create(LimeStrategy strategy, struct ExtensionRegistry *reg);
 
 /**
  * @brief Create a disambiguation context using a user-supplied vtable.
@@ -234,9 +226,8 @@ DisambiguationContext *disambiguation_create(
  *
  * @see disambiguation_create() for built-in strategies.
  */
-DisambiguationContext *disambiguation_create_custom(
-    const DisambiguationStrategyVTable *vtable,
-    struct ExtensionRegistry *reg);
+DisambiguationContext *disambiguation_create_custom(const DisambiguationStrategyVTable *vtable,
+                                                    struct ExtensionRegistry *reg);
 
 /**
  * @brief Resolve a conflict using the configured strategy.
@@ -247,10 +238,8 @@ DisambiguationContext *disambiguation_create_custom(
  * @return Resolution result.  Caller must call strategy_result_cleanup()
  *         on the returned struct when done.
  */
-StrategyResult disambiguation_resolve(
-    DisambiguationContext *ctx,
-    const ConflictPoint *conflict,
-    struct ParseContext *parse_ctx);
+StrategyResult disambiguation_resolve(DisambiguationContext *ctx, const ConflictPoint *conflict,
+                                      struct ParseContext *parse_ctx);
 
 /**
  * @brief Provide feedback after a parse.
@@ -261,9 +250,7 @@ StrategyResult disambiguation_resolve(
  * @param ctx     The disambiguation context.
  * @param success True if the parse succeeded.
  */
-void disambiguation_update(
-    DisambiguationContext *ctx,
-    bool success);
+void disambiguation_update(DisambiguationContext *ctx, bool success);
 
 /**
  * @brief Get the strategy type used by this context.
@@ -271,8 +258,7 @@ void disambiguation_update(
  * @param ctx The disambiguation context.
  * @return The LimeStrategy enum value.
  */
-LimeStrategy disambiguation_get_strategy(
-    const DisambiguationContext *ctx);
+LimeStrategy disambiguation_get_strategy(const DisambiguationContext *ctx);
 
 /**
  * @brief Get the name of a strategy as a string.

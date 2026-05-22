@@ -49,28 +49,28 @@ typedef uint32_t ExtensionID;
  * @brief Types of conflicts that can occur between grammar extensions.
  */
 typedef enum ConflictType {
-    CONFLICT_TOKEN_COLLISION,     /**< Same token name from different extensions */
-    CONFLICT_DUPLICATE_RULE,      /**< Identical production rule */
-    CONFLICT_PRECEDENCE_CLASH,    /**< Conflicting precedence assignment */
-    CONFLICT_SHIFT_REDUCE,        /**< Shift/reduce in rebuilt automaton */
-    CONFLICT_REDUCE_REDUCE,       /**< Reduce/reduce in rebuilt automaton */
+    CONFLICT_TOKEN_COLLISION,  /**< Same token name from different extensions */
+    CONFLICT_DUPLICATE_RULE,   /**< Identical production rule */
+    CONFLICT_PRECEDENCE_CLASH, /**< Conflicting precedence assignment */
+    CONFLICT_SHIFT_REDUCE,     /**< Shift/reduce in rebuilt automaton */
+    CONFLICT_REDUCE_REDUCE,    /**< Reduce/reduce in rebuilt automaton */
 } ConflictType;
 
 /**
  * @brief Description of a single conflict between modifications.
  */
 typedef struct Conflict {
-    ConflictType type;            /**< What kind of conflict */
+    ConflictType type; /**< What kind of conflict */
 
-    uint32_t mod_index_a;         /**< Index of first conflicting modification */
-    uint32_t mod_index_b;         /**< Index of second conflicting modification */
+    uint32_t mod_index_a; /**< Index of first conflicting modification */
+    uint32_t mod_index_b; /**< Index of second conflicting modification */
 
-    ExtensionID ext_id_a;         /**< Extension owning modification A */
-    ExtensionID ext_id_b;         /**< Extension owning modification B */
+    ExtensionID ext_id_a; /**< Extension owning modification A */
+    ExtensionID ext_id_b; /**< Extension owning modification B */
 
-    char *description;            /**< Human-readable description (malloc'd, owned by ConflictSet) */
+    char *description; /**< Human-readable description (malloc'd, owned by ConflictSet) */
 
-    bool resolved;                /**< Whether this conflict was resolved */
+    bool resolved; /**< Whether this conflict was resolved */
 } Conflict;
 
 /** @} */ /* end conflict_types */
@@ -86,9 +86,9 @@ typedef struct Conflict {
  * @brief Collection of detected conflicts.
  */
 typedef struct ConflictSet {
-    Conflict *conflicts;          /**< Dynamic array of conflicts */
-    uint32_t count;               /**< Number of conflicts in the set */
-    uint32_t capacity;            /**< Allocated slots */
+    Conflict *conflicts; /**< Dynamic array of conflicts */
+    uint32_t count;      /**< Number of conflicts in the set */
+    uint32_t capacity;   /**< Allocated slots */
 } ConflictSet;
 
 /**
@@ -120,15 +120,9 @@ void conflict_set_destroy(ConflictSet *cs);
  * @retval true  Conflict was added.
  * @retval false Allocation failure.
  */
-bool conflict_set_add(
-    ConflictSet *cs,
-    ConflictType type,
-    uint32_t mod_index_a,
-    uint32_t mod_index_b,
-    ExtensionID ext_id_a,
-    ExtensionID ext_id_b,
-    const char *description
-);
+bool conflict_set_add(ConflictSet *cs, ConflictType type, uint32_t mod_index_a,
+                      uint32_t mod_index_b, ExtensionID ext_id_a, ExtensionID ext_id_b,
+                      const char *description);
 
 /**
  * @brief Return the number of unresolved conflicts in the set.
@@ -164,11 +158,7 @@ uint32_t conflict_set_unresolved_count(const ConflictSet *cs);
  * @retval true  At least one conflict was detected.
  * @retval false No conflicts found.
  */
-bool detect_conflicts(
-    const struct GrammarModification *mods,
-    uint32_t nmods,
-    ConflictSet *cs
-);
+bool detect_conflicts(const struct GrammarModification *mods, uint32_t nmods, ConflictSet *cs);
 
 /**
  * @brief Attempt to resolve conflicts via extension callbacks.
@@ -183,12 +173,8 @@ bool detect_conflicts(
  * @param registry Extension registry (for looking up callbacks).
  * @return Number of conflicts that remain unresolved.
  */
-uint32_t resolve_conflicts(
-    ConflictSet *cs,
-    const struct GrammarModification *mods,
-    uint32_t nmods,
-    struct ExtensionRegistry *registry
-);
+uint32_t resolve_conflicts(ConflictSet *cs, const struct GrammarModification *mods, uint32_t nmods,
+                           struct ExtensionRegistry *registry);
 
 /** @} */ /* end conflict_detect */
 
@@ -203,9 +189,9 @@ uint32_t resolve_conflicts(
  * @brief Conflict detection levels for multi-grammar scenarios.
  */
 typedef enum ConflictLevel {
-    CONFLICT_LEVEL_TOKEN    = 0,   /**< Lexer-level ambiguity */
-    CONFLICT_LEVEL_RULE     = 1,   /**< Parser-level ambiguity */
-    CONFLICT_LEVEL_SEMANTIC = 2,   /**< Semantic action ambiguity */
+    CONFLICT_LEVEL_TOKEN = 0,    /**< Lexer-level ambiguity */
+    CONFLICT_LEVEL_RULE = 1,     /**< Parser-level ambiguity */
+    CONFLICT_LEVEL_SEMANTIC = 2, /**< Semantic action ambiguity */
 } ConflictLevel;
 
 /**
@@ -213,11 +199,11 @@ typedef enum ConflictLevel {
  *        within a particular grammar/extension.
  */
 typedef struct LimeContext {
-    ExtensionID ext_id;            /**< Extension providing this context */
-    uint16_t token;                /**< Token code in this grammar's space */
-    int state;                     /**< Parser state where this applies */
-    int priority;                  /**< Higher = preferred (from extension) */
-    const char *grammar_name;      /**< Human-readable grammar name (not owned) */
+    ExtensionID ext_id;       /**< Extension providing this context */
+    uint16_t token;           /**< Token code in this grammar's space */
+    int state;                /**< Parser state where this applies */
+    int priority;             /**< Higher = preferred (from extension) */
+    const char *grammar_name; /**< Human-readable grammar name (not owned) */
 } LimeContext;
 
 /**
@@ -225,28 +211,28 @@ typedef struct LimeContext {
  *        same token in the same parser state.
  */
 typedef struct ConflictPoint {
-    uint16_t token;                /**< The token that triggers the conflict */
-    int state;                     /**< The parser state (-1 if token-level) */
-    ConflictLevel level;           /**< Which level of ambiguity */
+    uint16_t token;      /**< The token that triggers the conflict */
+    int state;           /**< The parser state (-1 if token-level) */
+    ConflictLevel level; /**< Which level of ambiguity */
 
-    LimeContext *contexts;         /**< Array of valid interpretations */
-    int ncontexts;                 /**< Number of entries in contexts[] */
-    int capacity;                  /**< Allocated slots in contexts[] */
+    LimeContext *contexts; /**< Array of valid interpretations */
+    int ncontexts;         /**< Number of entries in contexts[] */
+    int capacity;          /**< Allocated slots in contexts[] */
 
-    char *description;             /**< Human-readable summary (owned) */
+    char *description; /**< Human-readable summary (owned) */
 } ConflictPoint;
 
 /**
  * @brief Result of a multi-grammar conflict scan.
  */
 typedef struct MultiGrammarConflictResult {
-    ConflictPoint *points;         /**< Array of detected conflict points */
-    uint32_t npoints;              /**< Number of conflict points */
-    uint32_t capacity;             /**< Allocated slots in points[] */
+    ConflictPoint *points; /**< Array of detected conflict points */
+    uint32_t npoints;      /**< Number of conflict points */
+    uint32_t capacity;     /**< Allocated slots in points[] */
 
-    uint32_t token_conflicts;      /**< Count of token-level conflicts */
-    uint32_t rule_conflicts;       /**< Count of rule-level conflicts */
-    uint32_t semantic_conflicts;   /**< Count of semantic-level conflicts */
+    uint32_t token_conflicts;    /**< Count of token-level conflicts */
+    uint32_t rule_conflicts;     /**< Count of rule-level conflicts */
+    uint32_t semantic_conflicts; /**< Count of semantic-level conflicts */
 } MultiGrammarConflictResult;
 
 /** @} */ /* end multi_grammar (types) */
@@ -268,8 +254,7 @@ typedef struct MultiGrammarConflictResult {
  * @param state Parser state (-1 for token-level conflicts).
  * @param level Ambiguity level.
  */
-void conflict_point_init(ConflictPoint *cp, uint16_t token, int state,
-                         ConflictLevel level);
+void conflict_point_init(ConflictPoint *cp, uint16_t token, int state, ConflictLevel level);
 
 /**
  * @brief Free resources owned by a ConflictPoint.
@@ -335,10 +320,7 @@ void multi_conflict_result_destroy(MultiGrammarConflictResult *result);
  * @param result Result set to populate (must be pre-created).
  * @return Number of token-level conflicts found.
  */
-uint32_t detect_token_conflicts(
-    struct ExtensionRegistry *reg,
-    MultiGrammarConflictResult *result
-);
+uint32_t detect_token_conflicts(struct ExtensionRegistry *reg, MultiGrammarConflictResult *result);
 
 /**
  * @brief Detect rule-level conflicts for a given token and state.
@@ -352,12 +334,8 @@ uint32_t detect_token_conflicts(
  * @param result Result set to populate (must be pre-created).
  * @return Number of rule-level conflicts found.
  */
-uint32_t detect_rule_conflicts(
-    struct ExtensionRegistry *reg,
-    uint16_t token,
-    int state,
-    MultiGrammarConflictResult *result
-);
+uint32_t detect_rule_conflicts(struct ExtensionRegistry *reg, uint16_t token, int state,
+                               MultiGrammarConflictResult *result);
 
 /**
  * @brief Detect semantic-level conflicts for a given token and state.
@@ -371,12 +349,8 @@ uint32_t detect_rule_conflicts(
  * @param result Result set to populate (must be pre-created).
  * @return Number of semantic-level conflicts found.
  */
-uint32_t detect_semantic_conflicts(
-    struct ExtensionRegistry *reg,
-    uint16_t token,
-    int state,
-    MultiGrammarConflictResult *result
-);
+uint32_t detect_semantic_conflicts(struct ExtensionRegistry *reg, uint16_t token, int state,
+                                   MultiGrammarConflictResult *result);
 
 /**
  * @brief Detect all levels of conflict for a specific token and state.
@@ -390,11 +364,7 @@ uint32_t detect_semantic_conflicts(
  * @param state The parser state to check (-1 for token-only check).
  * @return ConflictPoint (caller must call conflict_point_destroy()).
  */
-ConflictPoint detect_conflict(
-    struct ExtensionRegistry *reg,
-    uint16_t token,
-    int state
-);
+ConflictPoint detect_conflict(struct ExtensionRegistry *reg, uint16_t token, int state);
 
 /**
  * @brief Run a full multi-grammar conflict scan across all loaded extensions.
@@ -407,10 +377,8 @@ ConflictPoint detect_conflict(
  * @retval true  At least one conflict was detected.
  * @retval false No conflicts found.
  */
-bool detect_all_multi_grammar_conflicts(
-    struct ExtensionRegistry *reg,
-    MultiGrammarConflictResult *result
-);
+bool detect_all_multi_grammar_conflicts(struct ExtensionRegistry *reg,
+                                        MultiGrammarConflictResult *result);
 
 /** @} */ /* end multi_detect_api */
 

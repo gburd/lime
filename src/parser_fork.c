@@ -44,8 +44,7 @@
 static atomic_uint_fast64_t g_next_fork_id = 1;
 
 uint64_t parser_fork_next_id(void) {
-    return atomic_fetch_add_explicit(&g_next_fork_id, 1,
-                                     memory_order_relaxed);
+    return atomic_fetch_add_explicit(&g_next_fork_id, 1, memory_order_relaxed);
 }
 
 /* ================================================================== */
@@ -72,19 +71,11 @@ static inline void write_ptr(void *base, size_t offset, void *val) {
 /*  Cloning implementation                                             */
 /* ================================================================== */
 
-bool clone_parser_state(
-    const void *parser,
-    size_t parser_size,
-    size_t stack_entry_size,
-    size_t inline_stack_offset,
-    uint32_t inline_stack_count,
-    size_t stack_field_offset,
-    size_t tos_field_offset,
-    size_t stack_end_offset,
-    ClonedParserState *out)
-{
-    if (parser == NULL || out == NULL || parser_size == 0 ||
-        stack_entry_size == 0) {
+bool clone_parser_state(const void *parser, size_t parser_size, size_t stack_entry_size,
+                        size_t inline_stack_offset, uint32_t inline_stack_count,
+                        size_t stack_field_offset, size_t tos_field_offset, size_t stack_end_offset,
+                        ClonedParserState *out) {
+    if (parser == NULL || out == NULL || parser_size == 0 || stack_entry_size == 0) {
         return false;
     }
 
@@ -110,17 +101,15 @@ bool clone_parser_state(
 
     /* Compute stack metrics. */
     ptrdiff_t tos_index =
-        ((const char *)src_tos - (const char *)src_stack)
-        / (ptrdiff_t)stack_entry_size;
+        ((const char *)src_tos - (const char *)src_stack) / (ptrdiff_t)stack_entry_size;
     ptrdiff_t total_capacity =
-        ((const char *)src_stack_end - (const char *)src_stack)
-        / (ptrdiff_t)stack_entry_size + 1;
+        ((const char *)src_stack_end - (const char *)src_stack) / (ptrdiff_t)stack_entry_size + 1;
 
     if (tos_index < 0 || total_capacity <= 0) {
         return false;
     }
 
-    uint32_t depth = (uint32_t)(tos_index + 1);  /* entries 0..tos inclusive */
+    uint32_t depth = (uint32_t)(tos_index + 1); /* entries 0..tos inclusive */
     uint32_t capacity = (uint32_t)total_capacity;
 
     /* Step 1: Deep copy the yyParser struct. */
@@ -163,12 +152,10 @@ bool clone_parser_state(
     */
     write_ptr(clone, stack_field_offset, new_stack);
 
-    void *new_tos = (char *)new_stack +
-                    (size_t)tos_index * stack_entry_size;
+    void *new_tos = (char *)new_stack + (size_t)tos_index * stack_entry_size;
     write_ptr(clone, tos_field_offset, new_tos);
 
-    void *new_stack_end = (char *)new_stack +
-                          (size_t)(capacity - 1) * stack_entry_size;
+    void *new_stack_end = (char *)new_stack + (size_t)(capacity - 1) * stack_entry_size;
     write_ptr(clone, stack_end_offset, new_stack_end);
 
     /* Fill out the result. */
@@ -178,7 +165,7 @@ bool clone_parser_state(
     out->stack_size = stack_bytes;
     out->stack_depth = depth;
     out->stack_capacity = capacity;
-    out->stack_is_inline = false;  /* We always heap-allocate the clone */
+    out->stack_is_inline = false; /* We always heap-allocate the clone */
 
     return true;
 }
@@ -202,29 +189,19 @@ void cloned_parser_state_destroy(ClonedParserState *cloned) {
 /*  Fork lifecycle                                                     */
 /* ================================================================== */
 
-ParseFork *fork_parser(
-    const void *parser,
-    size_t parser_size,
-    size_t stack_entry_size,
-    size_t inline_stack_offset,
-    uint32_t inline_stack_count,
-    size_t stack_field_offset,
-    size_t tos_field_offset,
-    size_t stack_end_offset,
-    struct ParserSnapshot *snapshot,
-    int priority)
-{
+ParseFork *fork_parser(const void *parser, size_t parser_size, size_t stack_entry_size,
+                       size_t inline_stack_offset, uint32_t inline_stack_count,
+                       size_t stack_field_offset, size_t tos_field_offset, size_t stack_end_offset,
+                       struct ParserSnapshot *snapshot, int priority) {
     if (parser == NULL) return NULL;
 
     ParseFork *fork = calloc(1, sizeof(ParseFork));
     if (fork == NULL) return NULL;
 
     /* Clone the parser state. */
-    bool ok = clone_parser_state(
-        parser, parser_size, stack_entry_size,
-        inline_stack_offset, inline_stack_count,
-        stack_field_offset, tos_field_offset, stack_end_offset,
-        &fork->cloned_state);
+    bool ok = clone_parser_state(parser, parser_size, stack_entry_size, inline_stack_offset,
+                                 inline_stack_count, stack_field_offset, tos_field_offset,
+                                 stack_end_offset, &fork->cloned_state);
 
     if (!ok) {
         free(fork);
@@ -284,8 +261,7 @@ struct ParserSnapshot *parse_fork_get_snapshot(const ParseFork *fork) {
     return fork->snapshot;
 }
 
-void parse_fork_complete(ParseFork *fork, void *result,
-                         void (*free_fn)(void *)) {
+void parse_fork_complete(ParseFork *fork, void *result, void (*free_fn)(void *)) {
     if (fork == NULL) return;
     fork->status = FORK_COMPLETED;
     fork->semantic_result = result;
@@ -357,8 +333,7 @@ bool parse_fork_set_add(ParseForkSet *set, ParseFork *fork) {
             new_cap = set->max_forks;
         }
 
-        ParseFork **new_array = realloc(set->forks,
-                                        new_cap * sizeof(ParseFork *));
+        ParseFork **new_array = realloc(set->forks, new_cap * sizeof(ParseFork *));
         if (new_array == NULL) {
             return false;
         }

@@ -28,8 +28,6 @@
 ** The returned spec is owned by the caller; release with
 ** lime_lex_spec_free.  filename is borrowed for diagnostics
 ** (must outlive the parse call but not the returned spec). */
-LimeLexSpec *lime_lex_parse(const char *filename,
-                            const char *source,
-                            size_t source_len);
+LimeLexSpec *lime_lex_parse(const char *filename, const char *source, size_t source_len);
 
 #endif /* LIME_LEX_PARSE_H */

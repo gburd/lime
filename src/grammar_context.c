@@ -19,8 +19,8 @@
 /*  Internal constants                                                 */
 /* ------------------------------------------------------------------ */
 
-#define MAX_CONTEXT_DEPTH  32   /* Maximum nesting depth               */
-#define MAX_MODES          16   /* Maximum registered grammar modes     */
+#define MAX_CONTEXT_DEPTH 32 /* Maximum nesting depth               */
+#define MAX_MODES 16         /* Maximum registered grammar modes     */
 
 /* ------------------------------------------------------------------ */
 /*  Context stack structure                                            */
@@ -29,7 +29,7 @@
 struct GrammarContextStack {
     /* Stack of context entries.  entries[0] is always the root. */
     GrammarContextEntry entries[MAX_CONTEXT_DEPTH];
-    uint32_t depth;                    /* Current stack depth (1-based count) */
+    uint32_t depth; /* Current stack depth (1-based count) */
 
     /* Registered grammar modes */
     GrammarModeInfo modes[MAX_MODES];
@@ -47,8 +47,7 @@ struct GrammarContextStack {
 /*  Internal helpers                                                   */
 /* ------------------------------------------------------------------ */
 
-static const GrammarModeInfo *find_mode_info(const GrammarContextStack *stack,
-                                              GrammarMode mode) {
+static const GrammarModeInfo *find_mode_info(const GrammarContextStack *stack, GrammarMode mode) {
     for (uint32_t i = 0; i < stack->nmode; i++) {
         if (stack->modes[i].mode == mode) {
             return &stack->modes[i];
@@ -57,21 +56,17 @@ static const GrammarModeInfo *find_mode_info(const GrammarContextStack *stack,
     return NULL;
 }
 
-static const GrammarModeInfo *find_mode_by_token(
-    const GrammarContextStack *stack,
-    int token_code) {
+static const GrammarModeInfo *find_mode_by_token(const GrammarContextStack *stack, int token_code) {
     for (uint32_t i = 0; i < stack->nmode; i++) {
-        if (stack->modes[i].trigger_token >= 0 &&
-            stack->modes[i].trigger_token == token_code) {
+        if (stack->modes[i].trigger_token >= 0 && stack->modes[i].trigger_token == token_code) {
             return &stack->modes[i];
         }
     }
     return NULL;
 }
 
-static const GrammarModeInfo *find_mode_by_lexeme(
-    const GrammarContextStack *stack,
-    const char *lexeme) {
+static const GrammarModeInfo *find_mode_by_lexeme(const GrammarContextStack *stack,
+                                                  const char *lexeme) {
     if (lexeme == NULL) return NULL;
     for (uint32_t i = 0; i < stack->nmode; i++) {
         if (stack->modes[i].trigger_lexeme != NULL) {
@@ -130,8 +125,7 @@ void grammar_context_destroy(GrammarContextStack *stack) {
 /*  Mode registration                                                  */
 /* ------------------------------------------------------------------ */
 
-bool grammar_context_register_mode(GrammarContextStack *stack,
-                                   const GrammarModeInfo *info) {
+bool grammar_context_register_mode(GrammarContextStack *stack, const GrammarModeInfo *info) {
     if (stack == NULL || info == NULL) return false;
     if (stack->nmode >= MAX_MODES) return false;
     if (info->snapshot == NULL) return false;
@@ -150,9 +144,7 @@ bool grammar_context_register_mode(GrammarContextStack *stack,
 /*  Context detection                                                  */
 /* ------------------------------------------------------------------ */
 
-bool grammar_context_detect_switch(GrammarContextStack *stack,
-                                   int token_code,
-                                   const char *lexeme,
+bool grammar_context_detect_switch(GrammarContextStack *stack, int token_code, const char *lexeme,
                                    uint32_t offset) {
     if (stack == NULL) return false;
 
@@ -170,8 +162,7 @@ bool grammar_context_detect_switch(GrammarContextStack *stack,
     return grammar_context_push(stack, mode->mode, offset);
 }
 
-bool grammar_context_detect_exit(GrammarContextStack *stack,
-                                 int token_code) {
+bool grammar_context_detect_exit(GrammarContextStack *stack, int token_code) {
     if (stack == NULL || stack->depth <= 1) return false;
 
     GrammarContextEntry *top = &stack->entries[stack->depth - 1];
@@ -190,9 +181,7 @@ bool grammar_context_detect_exit(GrammarContextStack *stack,
 /*  Explicit push / pop                                                */
 /* ------------------------------------------------------------------ */
 
-bool grammar_context_push(GrammarContextStack *stack,
-                          GrammarMode mode,
-                          uint32_t offset) {
+bool grammar_context_push(GrammarContextStack *stack, GrammarMode mode, uint32_t offset) {
     if (stack == NULL) return false;
     if (stack->depth >= MAX_CONTEXT_DEPTH) return false;
 
@@ -203,7 +192,7 @@ bool grammar_context_push(GrammarContextStack *stack,
     GrammarMode prev = stack->entries[stack->depth - 1].mode;
     if (stack->switch_cb != NULL) {
         if (!stack->switch_cb(prev, mode, stack->switch_cb_data)) {
-            return false;  /* Callback vetoed the switch */
+            return false; /* Callback vetoed the switch */
         }
     }
 
@@ -246,21 +235,19 @@ bool grammar_context_pop(GrammarContextStack *stack) {
 /*  Queries                                                            */
 /* ------------------------------------------------------------------ */
 
-ParserSnapshot *grammar_context_current_snapshot(
-    const GrammarContextStack *stack) {
+ParserSnapshot *grammar_context_current_snapshot(const GrammarContextStack *stack) {
     if (stack == NULL || stack->depth == 0) return NULL;
     return stack->entries[stack->depth - 1].snapshot;
 }
 
-GrammarMode grammar_context_current_mode(
-    const GrammarContextStack *stack) {
+GrammarMode grammar_context_current_mode(const GrammarContextStack *stack) {
     if (stack == NULL || stack->depth == 0) return MODE_SQL;
     return stack->entries[stack->depth - 1].mode;
 }
 
 uint32_t grammar_context_depth(const GrammarContextStack *stack) {
     if (stack == NULL) return 0;
-    return stack->depth - 1;  /* 0 = root only */
+    return stack->depth - 1; /* 0 = root only */
 }
 
 bool grammar_context_is_root_only(const GrammarContextStack *stack) {
@@ -272,8 +259,7 @@ bool grammar_context_is_root_only(const GrammarContextStack *stack) {
 /*  Switch callback                                                    */
 /* ------------------------------------------------------------------ */
 
-void grammar_context_set_switch_callback(GrammarContextStack *stack,
-                                         ContextSwitchCallback cb,
+void grammar_context_set_switch_callback(GrammarContextStack *stack, ContextSwitchCallback cb,
                                          void *user_data) {
     if (stack == NULL) return;
     stack->switch_cb = cb;
@@ -305,8 +291,7 @@ bool grammar_context_close_bracket(GrammarContextStack *stack) {
         ** depth records the bracket_depth at push time; when the
         ** matching close bracket is consumed, bracket_depth will go
         ** below that level. */
-        if (info != NULL && info->exit_token == -1 &&
-            stack->bracket_depth < top->depth) {
+        if (info != NULL && info->exit_token == -1 && stack->bracket_depth < top->depth) {
             return grammar_context_pop(stack);
         }
     }

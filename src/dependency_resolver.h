@@ -25,13 +25,13 @@
 /* ------------------------------------------------------------------ */
 
 typedef enum DepResolveResult {
-    DEP_OK = 0,                   /* Resolution succeeded               */
-    DEP_ERR_ALLOC,                /* Memory allocation failure          */
-    DEP_ERR_MISSING_DEP,          /* Required dependency not found      */
-    DEP_ERR_VERSION_MISMATCH,     /* Version constraint not satisfied   */
-    DEP_ERR_CIRCULAR,             /* Circular dependency detected       */
-    DEP_ERR_SYMBOL_MISSING,       /* Imported symbol not exported by any module */
-    DEP_ERR_DUPLICATE_MODULE,     /* Two modules with the same name     */
+    DEP_OK = 0,               /* Resolution succeeded               */
+    DEP_ERR_ALLOC,            /* Memory allocation failure          */
+    DEP_ERR_MISSING_DEP,      /* Required dependency not found      */
+    DEP_ERR_VERSION_MISMATCH, /* Version constraint not satisfied   */
+    DEP_ERR_CIRCULAR,         /* Circular dependency detected       */
+    DEP_ERR_SYMBOL_MISSING,   /* Imported symbol not exported by any module */
+    DEP_ERR_DUPLICATE_MODULE, /* Two modules with the same name     */
 } DepResolveResult;
 
 /* ------------------------------------------------------------------ */
@@ -43,9 +43,9 @@ typedef enum DepResolveResult {
 ** module at to_index.
 */
 typedef struct DepEdge {
-    uint32_t from_index;          /* Index of the dependent module      */
-    uint32_t to_index;            /* Index of the dependency            */
-    bool optional;                /* True if this is an optional dep    */
+    uint32_t from_index; /* Index of the dependent module      */
+    uint32_t to_index;   /* Index of the dependency            */
+    bool optional;       /* True if this is an optional dep    */
 } DepEdge;
 
 /*
@@ -54,10 +54,10 @@ typedef struct DepEdge {
 ** or pass it to resolve_dependencies() for topological sorting.
 */
 typedef struct DependencyGraph {
-    ParserModule **modules;       /* Borrowed pointers to modules       */
+    ParserModule **modules; /* Borrowed pointers to modules       */
     uint32_t nmodules;
 
-    DepEdge *edges;               /* Dynamic array of edges             */
+    DepEdge *edges; /* Dynamic array of edges             */
     uint32_t nedges;
     uint32_t edge_capacity;
 } DependencyGraph;
@@ -72,9 +72,9 @@ typedef struct DependencyGraph {
 */
 typedef struct DepError {
     DepResolveResult code;
-    char *message;                /* malloc'd, caller must free         */
-    char *module_a;               /* Name of first involved module      */
-    char *module_b;               /* Name of second module (or NULL)    */
+    char *message;  /* malloc'd, caller must free         */
+    char *module_a; /* Name of first involved module      */
+    char *module_b; /* Name of second module (or NULL)    */
 } DepError;
 
 /*
@@ -110,12 +110,8 @@ void dep_graph_destroy(DependencyGraph *g);
 **
 ** Returns DEP_OK on success.
 */
-DepResolveResult build_dependency_graph(
-    ParserModule **modules,
-    uint32_t nmodules,
-    DependencyGraph *graph,
-    DepError *err
-);
+DepResolveResult build_dependency_graph(ParserModule **modules, uint32_t nmodules,
+                                        DependencyGraph *graph, DepError *err);
 
 /*
 ** Topological sort of the dependency graph.  On success, *order_out
@@ -133,12 +129,8 @@ DepResolveResult build_dependency_graph(
 **
 ** Returns DEP_OK on success.
 */
-DepResolveResult resolve_dependencies(
-    const DependencyGraph *graph,
-    uint32_t **order_out,
-    uint32_t *norder,
-    DepError *err
-);
+DepResolveResult resolve_dependencies(const DependencyGraph *graph, uint32_t **order_out,
+                                      uint32_t *norder, DepError *err);
 
 /*
 ** Check whether the dependency graph contains any cycles.
@@ -146,10 +138,7 @@ DepResolveResult resolve_dependencies(
 ** non-NULL and a cycle is found, *cycle_path is set to a malloc'd
 ** human-readable description of the cycle (caller must free).
 */
-bool has_circular_dependencies(
-    const DependencyGraph *graph,
-    char **cycle_path
-);
+bool has_circular_dependencies(const DependencyGraph *graph, char **cycle_path);
 
 /*
 ** Validate that all version constraints in the graph are satisfied.
@@ -160,10 +149,7 @@ bool has_circular_dependencies(
 **   graph  - A populated dependency graph
 **   err    - On failure, receives error details (may be NULL)
 */
-DepResolveResult validate_versions(
-    const DependencyGraph *graph,
-    DepError *err
-);
+DepResolveResult validate_versions(const DependencyGraph *graph, DepError *err);
 
 /*
 ** Validate that every symbol imported by a module is exported by at
@@ -175,11 +161,7 @@ DepResolveResult validate_versions(
 **   norder     - Number of entries in order
 **   err        - On failure, receives error details (may be NULL)
 */
-DepResolveResult validate_composition(
-    const DependencyGraph *graph,
-    const uint32_t *order,
-    uint32_t norder,
-    DepError *err
-);
+DepResolveResult validate_composition(const DependencyGraph *graph, const uint32_t *order,
+                                      uint32_t norder, DepError *err);
 
 #endif /* DEPENDENCY_RESOLVER_H */

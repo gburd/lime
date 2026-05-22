@@ -142,10 +142,7 @@ ParseContext *parse_begin(ParserSnapshot *snap);
  * @retval 0     Success.
  * @retval non-zero Parse error.
  */
-int parse_token(ParseContext *ctx,
-                int token_code,
-                void *token_value,
-                int location);
+int parse_token(ParseContext *ctx, int token_code, void *token_value, int location);
 
 /**
  * @brief End the parse session.

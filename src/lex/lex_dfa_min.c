@@ -47,7 +47,9 @@ LimeDfa *lime_lex_dfa_minimize(const LimeDfa *src) {
     int *next_group = malloc(bytes_n);
     Sig *sigs = malloc((size_t)n * sizeof(Sig));
     if (!group || !next_group || !sigs) {
-        free(group); free(next_group); free(sigs);
+        free(group);
+        free(next_group);
+        free(sigs);
         return NULL;
     }
 
@@ -60,8 +62,7 @@ LimeDfa *lime_lex_dfa_minimize(const LimeDfa *src) {
     ** distinguishable. */
     int max_rule = -1;
     for (int i = 0; i < n; i++) {
-        if (src->states[i].is_accept &&
-            src->states[i].accept_rule > max_rule) {
+        if (src->states[i].is_accept && src->states[i].accept_rule > max_rule) {
             max_rule = src->states[i].accept_rule;
         }
     }
@@ -115,10 +116,18 @@ LimeDfa *lime_lex_dfa_minimize(const LimeDfa *src) {
     ** (they all transition to the same target group by
     ** definition). */
     LimeDfa *out = calloc(1, sizeof(*out));
-    if (!out) { free(group); free(next_group); free(sigs); return NULL; }
+    if (!out) {
+        free(group);
+        free(next_group);
+        free(sigs);
+        return NULL;
+    }
     out->states = calloc(max_groups, sizeof(*out->states));
     if (!out->states) {
-        free(out); free(group); free(next_group); free(sigs);
+        free(out);
+        free(group);
+        free(next_group);
+        free(sigs);
         return NULL;
     }
     out->cap = out->n_states = max_groups;
@@ -128,10 +137,13 @@ LimeDfa *lime_lex_dfa_minimize(const LimeDfa *src) {
     int *rep = malloc(max_groups * sizeof(int));
     if (!rep) {
         lime_lex_dfa_free(out);
-        free(group); free(next_group); free(sigs);
+        free(group);
+        free(next_group);
+        free(sigs);
         return NULL;
     }
-    for (int g = 0; g < max_groups; g++) rep[g] = -1;
+    for (int g = 0; g < max_groups; g++)
+        rep[g] = -1;
     for (int i = 0; i < n; i++) {
         if (rep[group[i]] < 0) rep[group[i]] = i;
     }

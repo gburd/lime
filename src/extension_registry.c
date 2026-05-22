@@ -22,8 +22,8 @@
 /*  Internal constants                                                 */
 /* ------------------------------------------------------------------ */
 
-#define INITIAL_CAPACITY    16
-#define HASH_TABLE_FACTOR   2   /* hash table size = capacity * factor */
+#define INITIAL_CAPACITY 16
+#define HASH_TABLE_FACTOR 2 /* hash table size = capacity * factor */
 
 /* ------------------------------------------------------------------ */
 /*  String helpers                                                     */
@@ -46,7 +46,8 @@ static char **dup_string_array(const char **src) {
     if (src == NULL) return NULL;
 
     uint32_t count = 0;
-    while (src[count] != NULL) count++;
+    while (src[count] != NULL)
+        count++;
 
     char **dst = calloc(count + 1, sizeof(char *));
     if (dst == NULL) return NULL;
@@ -54,7 +55,8 @@ static char **dup_string_array(const char **src) {
     for (uint32_t i = 0; i < count; i++) {
         dst[i] = reg_strdup(src[i]);
         if (dst[i] == NULL) {
-            for (uint32_t j = 0; j < i; j++) free(dst[j]);
+            for (uint32_t j = 0; j < i; j++)
+                free(dst[j]);
             free(dst);
             return NULL;
         }
@@ -74,7 +76,8 @@ static void free_string_array(char **arr) {
 static uint32_t string_array_len(const char **arr) {
     if (arr == NULL) return 0;
     uint32_t n = 0;
-    while (arr[n] != NULL) n++;
+    while (arr[n] != NULL)
+        n++;
     return n;
 }
 
@@ -83,15 +86,15 @@ static uint32_t string_array_len(const char **arr) {
 /* ------------------------------------------------------------------ */
 
 typedef struct HashEntry {
-    char *key;           /* Borrowed pointer to RegistryEntry.meta.name */
-    uint32_t index;      /* Index into the entries array                */
+    char *key;      /* Borrowed pointer to RegistryEntry.meta.name */
+    uint32_t index; /* Index into the entries array                */
     bool occupied;
 } HashEntry;
 
 typedef struct HashTable {
     HashEntry *buckets;
-    uint32_t size;       /* Number of buckets (always power of 2)       */
-    uint32_t count;      /* Number of occupied entries                   */
+    uint32_t size;  /* Number of buckets (always power of 2)       */
+    uint32_t count; /* Number of occupied entries                   */
 } HashTable;
 
 static uint32_t hash_string(const char *s) {
@@ -107,7 +110,8 @@ static uint32_t hash_string(const char *s) {
 static bool ht_init(HashTable *ht, uint32_t size) {
     /* Round up to power of 2 */
     uint32_t actual = 16;
-    while (actual < size) actual *= 2;
+    while (actual < size)
+        actual *= 2;
     ht->buckets = calloc(actual, sizeof(HashEntry));
     if (ht->buckets == NULL) return false;
     ht->size = actual;
@@ -157,7 +161,7 @@ static bool ht_insert(HashTable *ht, const char *key, uint32_t index) {
         slot = (slot + 1) & mask;
     }
 
-    ht->buckets[slot].key = (char *)key;  /* borrowed pointer */
+    ht->buckets[slot].key = (char *)key; /* borrowed pointer */
     ht->buckets[slot].index = index;
     ht->buckets[slot].occupied = true;
     ht->count++;
@@ -222,7 +226,7 @@ static bool ht_remove(HashTable *ht, const char *key) {
 /* ------------------------------------------------------------------ */
 
 typedef struct RegistryEntry {
-    GrammarExtensionMetadata meta;   /* Deep-copied metadata            */
+    GrammarExtensionMetadata meta; /* Deep-copied metadata            */
     /* Owned copies of string arrays stored inside meta.requires and
     ** meta.conflicts_with point to these allocations.                  */
 } RegistryEntry;
@@ -301,8 +305,7 @@ void extension_registry_destroy(ExtensionRegistry *reg) {
 /*  Register                                                           */
 /* ------------------------------------------------------------------ */
 
-bool extension_registry_register(ExtensionRegistry *reg,
-                                 const GrammarExtensionMetadata *metadata) {
+bool extension_registry_register(ExtensionRegistry *reg, const GrammarExtensionMetadata *metadata) {
     if (reg == NULL || metadata == NULL) return false;
     if (metadata->name == NULL || metadata->name[0] == '\0') return false;
 
@@ -314,8 +317,7 @@ bool extension_registry_register(ExtensionRegistry *reg,
         uint32_t new_cap = reg->capacity * 2;
         RegistryEntry *p = realloc(reg->entries, new_cap * sizeof(RegistryEntry));
         if (p == NULL) return false;
-        memset(&p[reg->capacity], 0,
-               (new_cap - reg->capacity) * sizeof(RegistryEntry));
+        memset(&p[reg->capacity], 0, (new_cap - reg->capacity) * sizeof(RegistryEntry));
         reg->entries = p;
         reg->capacity = new_cap;
 
@@ -368,9 +370,7 @@ bool extension_registry_register(ExtensionRegistry *reg,
 /*  Find                                                               */
 /* ------------------------------------------------------------------ */
 
-const GrammarExtensionMetadata *extension_registry_find(
-    ExtensionRegistry *reg,
-    const char *name) {
+const GrammarExtensionMetadata *extension_registry_find(ExtensionRegistry *reg, const char *name) {
     if (reg == NULL || name == NULL) return NULL;
 
     uint32_t index;
@@ -382,8 +382,7 @@ const GrammarExtensionMetadata *extension_registry_find(
 /*  Unregister                                                         */
 /* ------------------------------------------------------------------ */
 
-bool extension_registry_unregister(ExtensionRegistry *reg,
-                                   const char *name) {
+bool extension_registry_unregister(ExtensionRegistry *reg, const char *name) {
     if (reg == NULL || name == NULL) return false;
 
     uint32_t index;
@@ -423,8 +422,7 @@ uint32_t extension_registry_count(const ExtensionRegistry *reg) {
 /*  Foreach                                                            */
 /* ------------------------------------------------------------------ */
 
-void extension_registry_foreach(const ExtensionRegistry *reg,
-                                ExtensionVisitorFn visitor,
+void extension_registry_foreach(const ExtensionRegistry *reg, ExtensionVisitorFn visitor,
                                 void *user_data) {
     if (reg == NULL || visitor == NULL) return;
     for (uint32_t i = 0; i < reg->count; i++) {
@@ -443,10 +441,10 @@ void extension_registry_foreach(const ExtensionRegistry *reg,
 ** Returns false and sets *error_out on missing dependencies.
 */
 typedef struct AdjList {
-    uint32_t *neighbors;    /* Flat array of neighbor indices          */
-    uint32_t *offsets;      /* offsets[i] = start of neighbors for i   */
-    uint32_t *in_degree;    /* in_degree[i] = number of incoming edges */
-    uint32_t n;             /* Number of nodes                         */
+    uint32_t *neighbors; /* Flat array of neighbor indices          */
+    uint32_t *offsets;   /* offsets[i] = start of neighbors for i   */
+    uint32_t *in_degree; /* in_degree[i] = number of incoming edges */
+    uint32_t n;          /* Number of nodes                         */
 } AdjList;
 
 static void adjlist_destroy(AdjList *adj) {
@@ -456,9 +454,7 @@ static void adjlist_destroy(AdjList *adj) {
     memset(adj, 0, sizeof(*adj));
 }
 
-static bool build_adjacency(const ExtensionRegistry *reg,
-                            AdjList *adj,
-                            char **error_out) {
+static bool build_adjacency(const ExtensionRegistry *reg, AdjList *adj, char **error_out) {
     uint32_t n = reg->count;
     adj->n = n;
 
@@ -486,8 +482,8 @@ static bool build_adjacency(const ExtensionRegistry *reg,
                 if (error_out) {
                     char buf[512];
                     snprintf(buf, sizeof(buf),
-                             "extension '%s' requires '%s', which is not registered",
-                             meta->name, meta->requires[d]);
+                             "extension '%s' requires '%s', which is not registered", meta->name,
+                             meta->requires[d]);
                     *error_out = reg_strdup(buf);
                 }
                 free(out_degree);
@@ -495,7 +491,7 @@ static bool build_adjacency(const ExtensionRegistry *reg,
                 return false;
             }
             out_degree[i]++;
-            adj->in_degree[dep_index]++;  /* Wait -- edge direction:
+            adj->in_degree[dep_index]++; /* Wait -- edge direction:
                 i requires dep_index, so the edge is dep_index -> i
                 in topological order.  Actually, for topo sort we want
                 "dep before dependent", so edge from dep to dependent.
@@ -511,7 +507,7 @@ static bool build_adjacency(const ExtensionRegistry *reg,
     for (uint32_t i = 0; i < n; i++) {
         const GrammarExtensionMetadata *meta = &reg->entries[i].meta;
         uint32_t ndeps = string_array_len(meta->requires);
-        adj->in_degree[i] += ndeps;  /* i has ndeps incoming edges */
+        adj->in_degree[i] += ndeps; /* i has ndeps incoming edges */
     }
 
     /* Build offsets and neighbor arrays.  We store the adjacency list
@@ -585,11 +581,8 @@ static bool build_adjacency(const ExtensionRegistry *reg,
 ** Kahn's algorithm: produce a topological ordering.
 ** Returns true on success, false if a cycle is detected.
 */
-static bool topological_sort(const AdjList *adj,
-                             uint32_t **order_out,
-                             uint32_t *norder_out,
-                             char **error_out,
-                             const ExtensionRegistry *reg) {
+static bool topological_sort(const AdjList *adj, uint32_t **order_out, uint32_t *norder_out,
+                             char **error_out, const ExtensionRegistry *reg) {
     uint32_t n = adj->n;
 
     uint32_t *in_deg = malloc(n * sizeof(uint32_t));
@@ -654,7 +647,7 @@ static bool topological_sort(const AdjList *adj,
                             off += snprintf(buf + off, sizeof(buf) - off, ", ");
                         }
                         off += snprintf(buf + off, sizeof(buf) - off, "'%s'",
-                                       reg->entries[i].meta.name);
+                                        reg->entries[i].meta.name);
                         first = false;
                     }
                 }
@@ -675,8 +668,7 @@ static bool topological_sort(const AdjList *adj,
 /*  check_dependencies: full validation                                */
 /* ------------------------------------------------------------------ */
 
-bool extension_registry_check_dependencies(ExtensionRegistry *reg,
-                                           char **error_out) {
+bool extension_registry_check_dependencies(ExtensionRegistry *reg, char **error_out) {
     if (error_out) *error_out = NULL;
     if (reg == NULL) return true;
     if (reg->count == 0) return true;
@@ -691,8 +683,8 @@ bool extension_registry_check_dependencies(ExtensionRegistry *reg,
                 if (error_out) {
                     char buf[512];
                     snprintf(buf, sizeof(buf),
-                             "extension '%s' conflicts with registered extension '%s'",
-                             meta->name, meta->conflicts_with[c]);
+                             "extension '%s' conflicts with registered extension '%s'", meta->name,
+                             meta->conflicts_with[c]);
                     *error_out = reg_strdup(buf);
                 }
                 return false;
@@ -723,8 +715,7 @@ bool extension_registry_check_dependencies(ExtensionRegistry *reg,
 /*  get_order: topological ordering                                    */
 /* ------------------------------------------------------------------ */
 
-bool extension_registry_get_order(ExtensionRegistry *reg,
-                                  ExtensionOrder *order_out,
+bool extension_registry_get_order(ExtensionRegistry *reg, ExtensionOrder *order_out,
                                   char **error_out) {
     if (error_out) *error_out = NULL;
     if (order_out) {
@@ -759,7 +750,8 @@ bool extension_registry_get_order(ExtensionRegistry *reg,
     for (uint32_t i = 0; i < nindices; i++) {
         names[i] = reg_strdup(reg->entries[indices[i]].meta.name);
         if (names[i] == NULL) {
-            for (uint32_t j = 0; j < i; j++) free(names[j]);
+            for (uint32_t j = 0; j < i; j++)
+                free(names[j]);
             free(names);
             free(indices);
             if (error_out) *error_out = reg_strdup("allocation failure");

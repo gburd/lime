@@ -35,54 +35,54 @@
 */
 typedef enum {
     /* Terminal markers. */
-    LIME_LEX_TOK_EOF = 0,             /* end of input */
-    LIME_LEX_TOK_ERROR,               /* unrecognised input (lexeme/length
+    LIME_LEX_TOK_EOF = 0, /* end of input */
+    LIME_LEX_TOK_ERROR,   /* unrecognised input (lexeme/length
                                        ** point at the offending byte(s)) */
 
     /* Primitives. */
-    LIME_LEX_TOK_IDENT,               /* [A-Za-z_][A-Za-z0-9_]* */
-    LIME_LEX_TOK_INTEGER,             /* [0-9]+ */
-    LIME_LEX_TOK_STRING,              /* "..." with C-style escapes */
-    LIME_LEX_TOK_REGEX,               /* /.../ regex literal */
-    LIME_LEX_TOK_CODE_BLOCK,          /* { ... } C-code block, balanced
+    LIME_LEX_TOK_IDENT,        /* [A-Za-z_][A-Za-z0-9_]* */
+    LIME_LEX_TOK_INTEGER,      /* [0-9]+ */
+    LIME_LEX_TOK_STRING,       /* "..." with C-style escapes */
+    LIME_LEX_TOK_REGEX,        /* /.../ regex literal */
+    LIME_LEX_TOK_CODE_BLOCK,   /* { ... } C-code block, balanced
                                        ** braces (lexeme INCLUDES the
                                        ** outer braces and embedded
                                        ** comments, strings, char-lits) */
-    LIME_LEX_TOK_CHAR_LITERAL,        /* '.' single-quoted char (e.g. ',') */
+    LIME_LEX_TOK_CHAR_LITERAL, /* '.' single-quoted char (e.g. ',') */
 
     /* Single-char punctuation. */
-    LIME_LEX_TOK_DOT,                 /* . */
-    LIME_LEX_TOK_COMMA,               /* , */
-    LIME_LEX_TOK_SEMICOLON,           /* ; */
-    LIME_LEX_TOK_LANGLE,              /* < */
-    LIME_LEX_TOK_RANGLE,              /* > */
-    LIME_LEX_TOK_LBRACE,              /* { -- when not consumed as CODE_BLOCK */
-    LIME_LEX_TOK_RBRACE,              /* } */
-    LIME_LEX_TOK_LPAREN,              /* ( */
-    LIME_LEX_TOK_RPAREN,              /* ) */
-    LIME_LEX_TOK_EQUALS,              /* = */
+    LIME_LEX_TOK_DOT,       /* . */
+    LIME_LEX_TOK_COMMA,     /* , */
+    LIME_LEX_TOK_SEMICOLON, /* ; */
+    LIME_LEX_TOK_LANGLE,    /* < */
+    LIME_LEX_TOK_RANGLE,    /* > */
+    LIME_LEX_TOK_LBRACE,    /* { -- when not consumed as CODE_BLOCK */
+    LIME_LEX_TOK_RBRACE,    /* } */
+    LIME_LEX_TOK_LPAREN,    /* ( */
+    LIME_LEX_TOK_RPAREN,    /* ) */
+    LIME_LEX_TOK_EQUALS,    /* = */
 
     /* Multi-char marker tokens. */
-    LIME_LEX_TOK_EOF_MARKER,          /* <<EOF>> */
-    LIME_LEX_TOK_KW_MATCHES,          /* the `matches` keyword */
-    LIME_LEX_TOK_KW_RULE,             /* the `rule` keyword */
+    LIME_LEX_TOK_EOF_MARKER, /* <<EOF>> */
+    LIME_LEX_TOK_KW_MATCHES, /* the `matches` keyword */
+    LIME_LEX_TOK_KW_RULE,    /* the `rule` keyword */
 
     /* Directives. */
-    LIME_LEX_TOK_DIR_NAME_PREFIX,           /* %name_prefix */
-    LIME_LEX_TOK_DIR_TOKEN_PREFIX,          /* %token_prefix */
-    LIME_LEX_TOK_DIR_TOKEN_TYPE,            /* %token_type */
-    LIME_LEX_TOK_DIR_LOCATION_TYPE,         /* %location_type */
-    LIME_LEX_TOK_DIR_LEXER_EXTRA_ARGUMENT,  /* %lexer_extra_argument */
-    LIME_LEX_TOK_DIR_INCLUDE,               /* %include */
-    LIME_LEX_TOK_DIR_PATTERN,               /* %pattern */
-    LIME_LEX_TOK_DIR_STATE,                 /* %state */
-    LIME_LEX_TOK_DIR_EXCLUSIVE_STATE,       /* %exclusive_state */
-    LIME_LEX_TOK_DIR_STATE_DESTRUCTOR,      /* %state_destructor */
-    LIME_LEX_TOK_DIR_KEYWORD_TABLE,         /* %keyword_table */
-    LIME_LEX_TOK_DIR_LITERAL_BUFFER,        /* %literal_buffer */
-    LIME_LEX_TOK_DIR_RULESET,               /* %ruleset */
-    LIME_LEX_TOK_DIR_LEXER_INCLUDE,         /* %lexer_include */
-    LIME_LEX_TOK_DIR_UNKNOWN,                /* %something else */
+    LIME_LEX_TOK_DIR_NAME_PREFIX,          /* %name_prefix */
+    LIME_LEX_TOK_DIR_TOKEN_PREFIX,         /* %token_prefix */
+    LIME_LEX_TOK_DIR_TOKEN_TYPE,           /* %token_type */
+    LIME_LEX_TOK_DIR_LOCATION_TYPE,        /* %location_type */
+    LIME_LEX_TOK_DIR_LEXER_EXTRA_ARGUMENT, /* %lexer_extra_argument */
+    LIME_LEX_TOK_DIR_INCLUDE,              /* %include */
+    LIME_LEX_TOK_DIR_PATTERN,              /* %pattern */
+    LIME_LEX_TOK_DIR_STATE,                /* %state */
+    LIME_LEX_TOK_DIR_EXCLUSIVE_STATE,      /* %exclusive_state */
+    LIME_LEX_TOK_DIR_STATE_DESTRUCTOR,     /* %state_destructor */
+    LIME_LEX_TOK_DIR_KEYWORD_TABLE,        /* %keyword_table */
+    LIME_LEX_TOK_DIR_LITERAL_BUFFER,       /* %literal_buffer */
+    LIME_LEX_TOK_DIR_RULESET,              /* %ruleset */
+    LIME_LEX_TOK_DIR_LEXER_INCLUDE,        /* %lexer_include */
+    LIME_LEX_TOK_DIR_UNKNOWN,              /* %something else */
 
     LIME_LEX_TOK__COUNT
 } LimeLexTokKind;
@@ -107,10 +107,10 @@ typedef struct LimeLexTokenizer LimeLexTokenizer;
 ** `line` is 1-indexed at the start of the lexeme.
 */
 typedef struct {
-    LimeLexTokKind  kind;
-    const char     *lexeme;
-    size_t          length;
-    int             line;
+    LimeLexTokKind kind;
+    const char *lexeme;
+    size_t length;
+    int line;
 } LimeLexToken;
 
 /* Allocate a tokenizer for a (source, length) byte buffer.  The
@@ -118,8 +118,7 @@ typedef struct {
 ** until after lime_lex_tokenize_free.  `filename` is borrowed
 ** similarly and used in diagnostics.  Returns NULL on alloc
 ** failure. */
-LimeLexTokenizer *lime_lex_tokenize_init(const char *filename,
-                                         const char *source,
+LimeLexTokenizer *lime_lex_tokenize_init(const char *filename, const char *source,
                                          size_t source_len);
 
 /* Emit the next token.  On EOF the kind is LIME_LEX_TOK_EOF and

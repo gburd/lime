@@ -28,16 +28,16 @@
 
 typedef struct {
     int id;
-    int trans[256];       /* trans[byte] = next state id, or -1 */
+    int trans[256]; /* trans[byte] = next state id, or -1 */
     int is_accept;
-    int accept_rule;      /* populated by M2.5; zero before that */
+    int accept_rule; /* populated by M2.5; zero before that */
 } LimeDfaState;
 
 typedef struct {
     LimeDfaState *states;
-    int           n_states;
-    int           cap;
-    int           start;
+    int n_states;
+    int cap;
+    int start;
 } LimeDfa;
 
 /* Build a DFA from the supplied NFA.  Returns NULL on alloc

@@ -15,9 +15,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define GLR_INITIAL_HEADS    16
-#define GLR_INITIAL_PREDS     4
-#define GLR_DEFAULT_ARENA  (64 * 1024)
+#define GLR_INITIAL_HEADS 16
+#define GLR_INITIAL_PREDS 4
+#define GLR_DEFAULT_ARENA (64 * 1024)
 
 /* ------------------------------------------------------------------ */
 /* GSSNode operations                                                  */
@@ -39,11 +39,8 @@ void gss_node_add_predecessor(GSSNode *node, GSSNode *pred) {
 
     /* Grow predecessors array if needed */
     if (node->npred >= node->pred_capacity) {
-        uint32_t new_cap = node->pred_capacity == 0
-            ? GLR_INITIAL_PREDS
-            : node->pred_capacity * 2;
-        GSSNode **new_preds = (GSSNode **)realloc(
-            node->predecessors, new_cap * sizeof(GSSNode *));
+        uint32_t new_cap = node->pred_capacity == 0 ? GLR_INITIAL_PREDS : node->pred_capacity * 2;
+        GSSNode **new_preds = (GSSNode **)realloc(node->predecessors, new_cap * sizeof(GSSNode *));
         if (!new_preds) return; /* allocation failure - silently drop */
         node->predecessors = new_preds;
         node->pred_capacity = new_cap;
@@ -139,18 +136,14 @@ void glr_parser_destroy(GLRParser *parser) {
 ** Look up the shift action for a terminal token in a given state.
 ** Mirrors the yy_find_shift_action logic in limpar.c.
 */
-static uint16_t find_shift_action(uint32_t stateno, uint16_t token,
-                                   const uint16_t *yy_action,
-                                   const uint16_t *yy_lookahead,
-                                   const int16_t *yy_shift_ofst,
-                                   const uint16_t *yy_default,
-                                   uint32_t lookahead_count,
-                                   uint32_t nstate) {
+static uint16_t find_shift_action(uint32_t stateno, uint16_t token, const uint16_t *yy_action,
+                                  const uint16_t *yy_lookahead, const int16_t *yy_shift_ofst,
+                                  const uint16_t *yy_default, uint32_t lookahead_count,
+                                  uint32_t nstate) {
     if (stateno >= nstate) return yy_default[stateno];
     int32_t ofst = (int32_t)yy_shift_ofst[stateno];
     int32_t idx = ofst + (int32_t)token;
-    if (idx >= 0 && (uint32_t)idx < lookahead_count &&
-        yy_lookahead[idx] == token) {
+    if (idx >= 0 && (uint32_t)idx < lookahead_count && yy_lookahead[idx] == token) {
         return yy_action[idx];
     }
     return yy_default[stateno];
@@ -161,15 +154,12 @@ static uint16_t find_shift_action(uint32_t stateno, uint16_t token,
 ** Mirrors yy_find_reduce_action in limpar.c.
 */
 static uint16_t find_reduce_action(uint32_t stateno, uint16_t nonterminal,
-                                    const uint16_t *yy_action,
-                                    const uint16_t *yy_lookahead,
-                                    const int16_t *yy_reduce_ofst,
-                                    const uint16_t *yy_default,
-                                    uint32_t lookahead_count) {
+                                   const uint16_t *yy_action, const uint16_t *yy_lookahead,
+                                   const int16_t *yy_reduce_ofst, const uint16_t *yy_default,
+                                   uint32_t lookahead_count) {
     int32_t ofst = (int32_t)yy_reduce_ofst[stateno];
     int32_t idx = ofst + (int32_t)nonterminal;
-    if (idx >= 0 && (uint32_t)idx < lookahead_count &&
-        yy_lookahead[idx] == nonterminal) {
+    if (idx >= 0 && (uint32_t)idx < lookahead_count && yy_lookahead[idx] == nonterminal) {
         return yy_action[idx];
     }
     return yy_default[stateno];
@@ -180,8 +170,7 @@ static uint16_t find_reduce_action(uint32_t stateno, uint16_t nonterminal,
 */
 static int glr_grow_heads(GLRParser *parser) {
     uint32_t new_cap = parser->max_heads * 2;
-    GSSNode **new_arr = (GSSNode **)realloc(
-        parser->active_heads, new_cap * sizeof(GSSNode *));
+    GSSNode **new_arr = (GSSNode **)realloc(parser->active_heads, new_cap * sizeof(GSSNode *));
     if (!new_arr) return -1;
     parser->active_heads = new_arr;
     parser->max_heads = new_cap;
@@ -210,8 +199,7 @@ static int glr_merge_heads(GLRParser *parser) {
         if (!parser->active_heads[i]) continue;
         for (uint32_t j = i + 1; j < parser->nheads; j++) {
             if (!parser->active_heads[j]) continue;
-            if (parser->active_heads[i]->state ==
-                parser->active_heads[j]->state) {
+            if (parser->active_heads[i]->state == parser->active_heads[j]->state) {
                 /* Merge j into i: add j's predecessors to i */
                 GSSNode *survivor = parser->active_heads[i];
                 GSSNode *merged = parser->active_heads[j];
@@ -248,23 +236,13 @@ static int glr_merge_heads(GLRParser *parser) {
 /* Main feed function                                                  */
 /* ------------------------------------------------------------------ */
 
-int glr_parser_feed(GLRParser *parser, uint16_t token,
-                    const uint16_t *yy_action, uint32_t action_count,
-                    const uint16_t *yy_lookahead, uint32_t lookahead_count,
-                    const int16_t *yy_shift_ofst,
-                    const int16_t *yy_reduce_ofst,
-                    const uint16_t *yy_default,
-                    uint32_t nstate,
-                    const uint16_t *yy_rule_lhs,
-                    const int8_t *yy_rule_nrhs,
-                    uint32_t nrule,
-                    uint16_t min_shiftreduce,
-                    uint16_t max_shiftreduce,
-                    uint16_t min_reduce,
-                    uint16_t max_reduce,
-                    uint16_t error_action,
-                    uint16_t accept_action,
-                    uint16_t no_action) {
+int glr_parser_feed(GLRParser *parser, uint16_t token, const uint16_t *yy_action,
+                    uint32_t action_count, const uint16_t *yy_lookahead, uint32_t lookahead_count,
+                    const int16_t *yy_shift_ofst, const int16_t *yy_reduce_ofst,
+                    const uint16_t *yy_default, uint32_t nstate, const uint16_t *yy_rule_lhs,
+                    const int8_t *yy_rule_nrhs, uint32_t nrule, uint16_t min_shiftreduce,
+                    uint16_t max_shiftreduce, uint16_t min_reduce, uint16_t max_reduce,
+                    uint16_t error_action, uint16_t accept_action, uint16_t no_action) {
     (void)action_count;
     (void)max_reduce;
     (void)no_action;
@@ -288,10 +266,8 @@ int glr_parser_feed(GLRParser *parser, uint16_t token,
         uint32_t stateno = head->state;
 
         /* Find the primary action for this token in this state */
-        uint16_t action = find_shift_action(
-            stateno, token,
-            yy_action, yy_lookahead, yy_shift_ofst, yy_default,
-            lookahead_count, nstate);
+        uint16_t action = find_shift_action(stateno, token, yy_action, yy_lookahead, yy_shift_ofst,
+                                            yy_default, lookahead_count, nstate);
 
         if (action == error_action) {
             /* This head dies - syntax error on this path */
@@ -354,10 +330,9 @@ int glr_parser_feed(GLRParser *parser, uint16_t token,
                         base = base->predecessors[0];
                     }
                     if (base) {
-                        uint16_t goto_action = find_reduce_action(
-                            base->state, lhs,
-                            yy_action, yy_lookahead, yy_reduce_ofst, yy_default,
-                            lookahead_count);
+                        uint16_t goto_action =
+                            find_reduce_action(base->state, lhs, yy_action, yy_lookahead,
+                                               yy_reduce_ofst, yy_default, lookahead_count);
                         GSSNode *reduced = gss_node_create(parser->arena, goto_action);
                         if (reduced) {
                             gss_node_add_predecessor(reduced, base);
@@ -389,10 +364,9 @@ int glr_parser_feed(GLRParser *parser, uint16_t token,
                     base = base->predecessors[0];
                 }
                 if (base) {
-                    uint16_t goto_action = find_reduce_action(
-                        base->state, lhs,
-                        yy_action, yy_lookahead, yy_reduce_ofst, yy_default,
-                        lookahead_count);
+                    uint16_t goto_action =
+                        find_reduce_action(base->state, lhs, yy_action, yy_lookahead,
+                                           yy_reduce_ofst, yy_default, lookahead_count);
                     GSSNode *reduced = gss_node_create(parser->arena, goto_action);
                     if (reduced) {
                         gss_node_add_predecessor(reduced, base);
@@ -429,10 +403,9 @@ int glr_parser_feed(GLRParser *parser, uint16_t token,
                         base = base->predecessors[0];
                     }
                     if (base) {
-                        uint16_t goto_action = find_reduce_action(
-                            base->state, lhs,
-                            yy_action, yy_lookahead, yy_reduce_ofst, yy_default,
-                            lookahead_count);
+                        uint16_t goto_action =
+                            find_reduce_action(base->state, lhs, yy_action, yy_lookahead,
+                                               yy_reduce_ofst, yy_default, lookahead_count);
                         GSSNode *reduced = gss_node_create(parser->arena, goto_action);
                         if (reduced) {
                             gss_node_add_predecessor(reduced, base);
@@ -465,8 +438,7 @@ int glr_parser_feed(GLRParser *parser, uint16_t token,
 /* Configuration and query                                             */
 /* ------------------------------------------------------------------ */
 
-void glr_parser_set_disambiguate(GLRParser *parser,
-                                  GLRDisambiguateFn fn, void *user_data) {
+void glr_parser_set_disambiguate(GLRParser *parser, GLRDisambiguateFn fn, void *user_data) {
     if (!parser) return;
     parser->disambiguate = fn;
     parser->disambiguate_data = user_data;

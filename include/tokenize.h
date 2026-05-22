@@ -32,11 +32,11 @@ typedef struct TokenTable TokenTable;
  * @brief A single token returned by the tokenizer.
  */
 typedef struct Token {
-    int type;                /**< Token type code (keyword code or generic) */
-    const char *start;       /**< Pointer into source buffer */
-    size_t length;           /**< Length in bytes */
-    uint32_t line;           /**< 1-based line number */
-    uint32_t column;         /**< 1-based column number */
+    int type;          /**< Token type code (keyword code or generic) */
+    const char *start; /**< Pointer into source buffer */
+    size_t length;     /**< Length in bytes */
+    uint32_t line;     /**< 1-based line number */
+    uint32_t column;   /**< 1-based column number */
 } Token;
 
 /* Generic token type codes for non-keyword tokens.
@@ -44,39 +44,39 @@ typedef struct Token {
 ** These codes use negative values to avoid collision with
 ** user-defined token codes (which are positive). */
 enum {
-    TK_EOF         =  0,    /* End of input */
-    TK_IDENTIFIER  = -1,    /* Unrecognized identifier */
-    TK_INTEGER     = -2,    /* Integer literal */
-    TK_FLOAT       = -3,    /* Floating point literal */
-    TK_STRING      = -4,    /* Single-quoted string literal */
-    TK_BLOB        = -5,    /* X'...' blob literal */
-    TK_LPAREN      = -6,    /* ( */
-    TK_RPAREN      = -7,    /* ) */
-    TK_SEMICOLON   = -8,    /* ; */
-    TK_COMMA       = -9,    /* , */
-    TK_DOT         = -10,   /* . */
-    TK_STAR        = -11,   /* * */
-    TK_PLUS        = -12,   /* + */
-    TK_MINUS       = -13,   /* - */
-    TK_SLASH       = -14,   /* / */
-    TK_PERCENT     = -15,   /* % */
-    TK_EQ          = -16,   /* = or == */
-    TK_NE          = -17,   /* != or <> */
-    TK_LT          = -18,   /* < */
-    TK_GT          = -19,   /* > */
-    TK_LE          = -20,   /* <= */
-    TK_GE          = -21,   /* >= */
-    TK_BITAND      = -22,   /* & */
-    TK_BITOR       = -23,   /* | */
-    TK_BITNOT      = -24,   /* ~ */
-    TK_LSHIFT      = -25,   /* << */
-    TK_RSHIFT      = -26,   /* >> */
-    TK_CONCAT      = -27,   /* || */
-    TK_DQUOTE_ID   = -28,   /* "quoted identifier" */
-    TK_BACKTICK_ID = -29,   /* `backtick identifier` */
-    TK_BRACKET_ID  = -30,   /* [bracket identifier] */
-    TK_USTRING     = -31,   /* U&'...' Unicode escape string literal */
-    TK_ILLEGAL     = -32,   /* Unrecognized character */
+    TK_EOF = 0,           /* End of input */
+    TK_IDENTIFIER = -1,   /* Unrecognized identifier */
+    TK_INTEGER = -2,      /* Integer literal */
+    TK_FLOAT = -3,        /* Floating point literal */
+    TK_STRING = -4,       /* Single-quoted string literal */
+    TK_BLOB = -5,         /* X'...' blob literal */
+    TK_LPAREN = -6,       /* ( */
+    TK_RPAREN = -7,       /* ) */
+    TK_SEMICOLON = -8,    /* ; */
+    TK_COMMA = -9,        /* , */
+    TK_DOT = -10,         /* . */
+    TK_STAR = -11,        /* * */
+    TK_PLUS = -12,        /* + */
+    TK_MINUS = -13,       /* - */
+    TK_SLASH = -14,       /* / */
+    TK_PERCENT = -15,     /* % */
+    TK_EQ = -16,          /* = or == */
+    TK_NE = -17,          /* != or <> */
+    TK_LT = -18,          /* < */
+    TK_GT = -19,          /* > */
+    TK_LE = -20,          /* <= */
+    TK_GE = -21,          /* >= */
+    TK_BITAND = -22,      /* & */
+    TK_BITOR = -23,       /* | */
+    TK_BITNOT = -24,      /* ~ */
+    TK_LSHIFT = -25,      /* << */
+    TK_RSHIFT = -26,      /* >> */
+    TK_CONCAT = -27,      /* || */
+    TK_DQUOTE_ID = -28,   /* "quoted identifier" */
+    TK_BACKTICK_ID = -29, /* `backtick identifier` */
+    TK_BRACKET_ID = -30,  /* [bracket identifier] */
+    TK_USTRING = -31,     /* U&'...' Unicode escape string literal */
+    TK_ILLEGAL = -32,     /* Unrecognized character */
 };
 
 /* ------------------------------------------------------------------ */

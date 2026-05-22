@@ -21,7 +21,8 @@
 
 static void free_string_array(char **arr, int n) {
     if (!arr) return;
-    for (int i = 0; i < n; i++) free(arr[i]);
+    for (int i = 0; i < n; i++)
+        free(arr[i]);
     free(arr);
 }
 
@@ -100,7 +101,7 @@ static void free_ruleset_list(LimeLexRuleset *r) {
 LimeLexSpec *lime_lex_spec_new(const char *filename) {
     LimeLexSpec *spec = calloc(1, sizeof(*spec));
     if (!spec) return NULL;
-    spec->filename = filename;   /* borrowed, not owned */
+    spec->filename = filename; /* borrowed, not owned */
     spec->line_count = 0;
     spec->error_count = 0;
     return spec;

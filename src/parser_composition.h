@@ -42,14 +42,14 @@ extern "C" {
 /* ------------------------------------------------------------------ */
 
 typedef enum CompositionResult {
-    COMPOSE_OK = 0,                 /* Composition succeeded              */
-    COMPOSE_ERR_ALLOC,              /* Memory allocation failure          */
-    COMPOSE_ERR_INVALID_INPUT,      /* NULL or otherwise invalid input    */
-    COMPOSE_ERR_SYMBOL_COLLISION,   /* Unresolved symbol name collision   */
-    COMPOSE_ERR_RULE_CONFLICT,      /* Unresolved rule conflict           */
-    COMPOSE_ERR_DEPENDENCY,         /* Dependency not satisfied           */
-    COMPOSE_ERR_BUILD,              /* LALR(1) automaton rebuild failed   */
-    COMPOSE_ERR_CONFLICT,           /* Unresolved conflicts remain        */
+    COMPOSE_OK = 0,               /* Composition succeeded              */
+    COMPOSE_ERR_ALLOC,            /* Memory allocation failure          */
+    COMPOSE_ERR_INVALID_INPUT,    /* NULL or otherwise invalid input    */
+    COMPOSE_ERR_SYMBOL_COLLISION, /* Unresolved symbol name collision   */
+    COMPOSE_ERR_RULE_CONFLICT,    /* Unresolved rule conflict           */
+    COMPOSE_ERR_DEPENDENCY,       /* Dependency not satisfied           */
+    COMPOSE_ERR_BUILD,            /* LALR(1) automaton rebuild failed   */
+    COMPOSE_ERR_CONFLICT,         /* Unresolved conflicts remain        */
 } CompositionResult;
 
 /* ------------------------------------------------------------------ */
@@ -60,23 +60,23 @@ typedef enum CompositionResult {
 ** Flags controlling the composition behaviour.
 */
 typedef enum CompositionFlags {
-    COMPOSE_FLAG_NONE             = 0,
+    COMPOSE_FLAG_NONE = 0,
 
     /* When set, duplicate rules (same LHS and RHS) across snapshots
     ** are silently deduplicated rather than flagged as conflicts. */
-    COMPOSE_FLAG_DEDUP_RULES      = (1 << 0),
+    COMPOSE_FLAG_DEDUP_RULES = (1 << 0),
 
     /* When set, if two snapshots define the same terminal symbol the
     ** later snapshot's definition wins (last-writer-wins). */
-    COMPOSE_FLAG_LAST_WINS        = (1 << 1),
+    COMPOSE_FLAG_LAST_WINS = (1 << 1),
 
     /* When set, skip the dependency validation step.  Useful when
     ** composing raw snapshots that don't carry module metadata. */
-    COMPOSE_FLAG_SKIP_DEPS        = (1 << 2),
+    COMPOSE_FLAG_SKIP_DEPS = (1 << 2),
 
     /* When set, compute a merkle tree over the composed result and
     ** store the root hash in the output snapshot's merkle_root field. */
-    COMPOSE_FLAG_COMPUTE_MERKLE   = (1 << 3),
+    COMPOSE_FLAG_COMPUTE_MERKLE = (1 << 3),
 } CompositionFlags;
 
 typedef struct CompositionOptions {
@@ -97,24 +97,24 @@ typedef struct CompositionOptions {
 ** Detailed information about a symbol unification event.
 */
 typedef struct SymbolMapping {
-    char *name;                     /* Symbol name (owned)                */
-    uint32_t source_snapshot;       /* Index of the originating snapshot  */
-    uint32_t original_index;        /* Symbol index in the source         */
-    uint32_t unified_index;         /* Symbol index in the composed result*/
+    char *name;               /* Symbol name (owned)                */
+    uint32_t source_snapshot; /* Index of the originating snapshot  */
+    uint32_t original_index;  /* Symbol index in the source         */
+    uint32_t unified_index;   /* Symbol index in the composed result*/
 } SymbolMapping;
 
 /*
 ** Diagnostic output from a composition operation.
 */
 typedef struct CompositionDiagnostics {
-    ConflictSet *conflicts;         /* Detected conflicts (owned, may be NULL) */
+    ConflictSet *conflicts; /* Detected conflicts (owned, may be NULL) */
 
-    SymbolMapping *symbol_map;      /* Symbol unification details         */
+    SymbolMapping *symbol_map; /* Symbol unification details         */
     uint32_t nsymbol_mappings;
 
-    MerkleTree *merkle;             /* Content hash tree (owned, may be NULL) */
+    MerkleTree *merkle; /* Content hash tree (owned, may be NULL) */
 
-    char *error;                    /* Error message (owned, may be NULL) */
+    char *error; /* Error message (owned, may be NULL) */
 } CompositionDiagnostics;
 
 /*
@@ -138,12 +138,9 @@ void composition_diagnostics_destroy(CompositionDiagnostics *diag);
 ** Returns COMPOSE_OK if validation passes.  On failure, *diag is
 ** populated with details.
 */
-CompositionResult validate_composition_inputs(
-    ParserSnapshot **snapshots,
-    uint32_t nsnapshots,
-    const CompositionOptions *opts,
-    CompositionDiagnostics *diag
-);
+CompositionResult validate_composition_inputs(ParserSnapshot **snapshots, uint32_t nsnapshots,
+                                              const CompositionOptions *opts,
+                                              CompositionDiagnostics *diag);
 
 /* ------------------------------------------------------------------ */
 /*  Composition operations                                             */
@@ -166,13 +163,9 @@ CompositionResult validate_composition_inputs(
 **
 ** Returns COMPOSE_OK on success.
 */
-CompositionResult compose_snapshots(
-    ParserSnapshot **snapshots,
-    uint32_t nsnapshots,
-    const CompositionOptions *opts,
-    ParserSnapshot **out,
-    CompositionDiagnostics *diag
-);
+CompositionResult compose_snapshots(ParserSnapshot **snapshots, uint32_t nsnapshots,
+                                    const CompositionOptions *opts, ParserSnapshot **out,
+                                    CompositionDiagnostics *diag);
 
 /*
 ** Merge an extension snapshot into a base snapshot.
@@ -189,13 +182,9 @@ CompositionResult compose_snapshots(
 **
 ** Returns COMPOSE_OK on success.
 */
-CompositionResult merge_snapshots(
-    const ParserSnapshot *base,
-    const ParserSnapshot *extension,
-    const CompositionOptions *opts,
-    ParserSnapshot **out,
-    CompositionDiagnostics *diag
-);
+CompositionResult merge_snapshots(const ParserSnapshot *base, const ParserSnapshot *extension,
+                                  const CompositionOptions *opts, ParserSnapshot **out,
+                                  CompositionDiagnostics *diag);
 
 /* ------------------------------------------------------------------ */
 /*  Utility                                                            */

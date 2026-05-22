@@ -61,34 +61,30 @@
 */
 #if LLVM_VERSION_MAJOR >= 16
 
-#define LIME_JIT_RUN_O2_PASSES(module)                                    \
-    do {                                                                  \
-        LLVMModuleRef _lime_mod = (module);                               \
-        LLVMPassBuilderOptionsRef _lime_opts =                            \
-            LLVMCreatePassBuilderOptions();                               \
-        LLVMErrorRef _lime_err =                                          \
-            LLVMRunPasses(_lime_mod, "default<O2>", NULL, _lime_opts);    \
-        if (_lime_err != LLVMErrorSuccess) {                              \
-            char *_lime_msg = LLVMGetErrorMessage(_lime_err);             \
-            LLVMDisposeErrorMessage(_lime_msg);                           \
-        }                                                                 \
-        LLVMDisposePassBuilderOptions(_lime_opts);                        \
+#define LIME_JIT_RUN_O2_PASSES(module)                                                             \
+    do {                                                                                           \
+        LLVMModuleRef _lime_mod = (module);                                                        \
+        LLVMPassBuilderOptionsRef _lime_opts = LLVMCreatePassBuilderOptions();                     \
+        LLVMErrorRef _lime_err = LLVMRunPasses(_lime_mod, "default<O2>", NULL, _lime_opts);        \
+        if (_lime_err != LLVMErrorSuccess) {                                                       \
+            char *_lime_msg = LLVMGetErrorMessage(_lime_err);                                      \
+            LLVMDisposeErrorMessage(_lime_msg);                                                    \
+        }                                                                                          \
+        LLVMDisposePassBuilderOptions(_lime_opts);                                                 \
     } while (0)
 
 #else /* LLVM 14 / 15 -- legacy PassManagerBuilder */
 
-#define LIME_JIT_RUN_O2_PASSES(module)                                    \
-    do {                                                                  \
-        LLVMModuleRef _lime_mod = (module);                               \
-        LLVMPassManagerBuilderRef _lime_pmb =                             \
-            LLVMPassManagerBuilderCreate();                               \
-        LLVMPassManagerBuilderSetOptLevel(_lime_pmb, 2);                  \
-        LLVMPassManagerRef _lime_pm = LLVMCreatePassManager();            \
-        LLVMPassManagerBuilderPopulateModulePassManager(_lime_pmb,        \
-                                                       _lime_pm);         \
-        LLVMRunPassManager(_lime_pm, _lime_mod);                          \
-        LLVMDisposePassManager(_lime_pm);                                 \
-        LLVMPassManagerBuilderDispose(_lime_pmb);                         \
+#define LIME_JIT_RUN_O2_PASSES(module)                                                             \
+    do {                                                                                           \
+        LLVMModuleRef _lime_mod = (module);                                                        \
+        LLVMPassManagerBuilderRef _lime_pmb = LLVMPassManagerBuilderCreate();                      \
+        LLVMPassManagerBuilderSetOptLevel(_lime_pmb, 2);                                           \
+        LLVMPassManagerRef _lime_pm = LLVMCreatePassManager();                                     \
+        LLVMPassManagerBuilderPopulateModulePassManager(_lime_pmb, _lime_pm);                      \
+        LLVMRunPassManager(_lime_pm, _lime_mod);                                                   \
+        LLVMDisposePassManager(_lime_pm);                                                          \
+        LLVMPassManagerBuilderDispose(_lime_pmb);                                                  \
     } while (0)
 
 #endif /* LLVM_VERSION_MAJOR >= 16 */
@@ -114,17 +110,14 @@ typedef LLVMOrcJITTargetAddress LimeJitAddress;
 ** teardown.  Returns false on allocation failure, in which case
 ** neither out-parameter is touched.
 */
-static inline bool lime_jit_create_ts_ctx(
-    LLVMOrcThreadSafeContextRef *ts_ctx_out,
-    LLVMContextRef *llvm_ctx_out)
-{
+static inline bool lime_jit_create_ts_ctx(LLVMOrcThreadSafeContextRef *ts_ctx_out,
+                                          LLVMContextRef *llvm_ctx_out) {
 #if LLVM_VERSION_MAJOR >= 15
     LLVMContextRef llvm_ctx = LLVMContextCreate();
     if (llvm_ctx == NULL) {
         return false;
     }
-    LLVMOrcThreadSafeContextRef ts_ctx =
-        LLVMOrcCreateNewThreadSafeContextFromLLVMContext(llvm_ctx);
+    LLVMOrcThreadSafeContextRef ts_ctx = LLVMOrcCreateNewThreadSafeContextFromLLVMContext(llvm_ctx);
     if (ts_ctx == NULL) {
         LLVMContextDispose(llvm_ctx);
         return false;

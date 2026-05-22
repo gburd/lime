@@ -36,7 +36,7 @@
 ** ============================================================ */
 
 typedef struct {
-    char  *buf;
+    char *buf;
     size_t len;
     size_t cap;
 } Buf;
@@ -44,7 +44,8 @@ typedef struct {
 static int buf_grow(Buf *b, size_t need) {
     if (b->cap >= need) return 1;
     size_t newcap = b->cap ? b->cap : 256;
-    while (newcap < need) newcap *= 2;
+    while (newcap < need)
+        newcap *= 2;
     char *nb = realloc(b->buf, newcap);
     if (!nb) return 0;
     b->buf = nb;
@@ -94,8 +95,7 @@ static int buf_printf(Buf *b, const char *fmt, ...) {
 ** spec in compile order.  This is O(n_rules) per call but the
 ** introspection path is cold, and we don't want to re-allocate
 ** the rule-name table that lex_emit.c builds. */
-static const char *rule_name_for_index(const LimeLexSpec *spec,
-                                        int target_index) {
+static const char *rule_name_for_index(const LimeLexSpec *spec, int target_index) {
     if (!spec) return NULL;
     int i = 0;
     for (const LimeLexRule *r = spec->rules; r; r = r->next) {
@@ -114,9 +114,11 @@ static const char *rule_name_for_index(const LimeLexSpec *spec,
     for (int k = 0; k < spec->n_lexer_includes; k++) {
         const char *name = spec->lexer_includes[k];
         const LimeLexRuleset *rs = NULL;
-        for (const LimeLexRuleset *cand = spec->rulesets;
-             cand; cand = cand->next) {
-            if (strcmp(cand->name, name) == 0) { rs = cand; break; }
+        for (const LimeLexRuleset *cand = spec->rulesets; cand; cand = cand->next) {
+            if (strcmp(cand->name, name) == 0) {
+                rs = cand;
+                break;
+            }
         }
         if (!rs) continue;
         for (const LimeLexRule *r = rs->rules; r; r = r->next) {
@@ -137,20 +139,14 @@ static int count_accept_states(const LimeDfa *dfa) {
     return acc;
 }
 
-static int emit_state_stats(Buf *b,
-                            const LimeLexCompiledState *cs,
-                            const LimeLexSpec *spec) {
+static int emit_state_stats(Buf *b, const LimeLexCompiledState *cs, const LimeLexSpec *spec) {
     const char *kind = cs->exclusive ? "exclusive" : "inclusive";
-    if (!buf_printf(b, "// state %s (%s):\n",
-                    cs->state_name ? cs->state_name : "?", kind)) {
+    if (!buf_printf(b, "// state %s (%s):\n", cs->state_name ? cs->state_name : "?", kind)) {
         return 0;
     }
     if (cs->dfa) {
-        if (!buf_printf(b,
-                "//   dfa: %d states, %d accept, start=%d\n",
-                cs->dfa->n_states,
-                count_accept_states(cs->dfa),
-                cs->dfa->start)) {
+        if (!buf_printf(b, "//   dfa: %d states, %d accept, start=%d\n", cs->dfa->n_states,
+                        count_accept_states(cs->dfa), cs->dfa->start)) {
             return 0;
         }
     } else {
@@ -165,10 +161,7 @@ static int emit_state_stats(Buf *b,
         for (int i = 0; i < cs->n_rules; i++) {
             int gid = cs->rule_indices[i];
             const char *name = rule_name_for_index(spec, gid);
-            if (!buf_printf(b, "%s%s(idx=%d)",
-                            i == 0 ? " " : ", ",
-                            name ? name : "?",
-                            gid)) {
+            if (!buf_printf(b, "%s%s(idx=%d)", i == 0 ? " " : ", ", name ? name : "?", gid)) {
                 return 0;
             }
         }
@@ -177,13 +170,10 @@ static int emit_state_stats(Buf *b,
     return 1;
 }
 
-static int emit_stats_header(Buf *b,
-                             const LimeLexCompiled *c,
-                             const LimeLexSpec *spec) {
+static int emit_stats_header(Buf *b, const LimeLexCompiled *c, const LimeLexSpec *spec) {
     if (!buf_cstr(b, "// lime_lex_compiled_to_text:\n")) return 0;
-    if (!buf_printf(b,
-            "//   %d compiled state(s), %d compile error(s)\n//\n",
-            c->n_states, c->error_count)) {
+    if (!buf_printf(b, "//   %d compiled state(s), %d compile error(s)\n//\n", c->n_states,
+                    c->error_count)) {
         return 0;
     }
     for (int i = 0; i < c->n_states; i++) {
@@ -200,10 +190,9 @@ static int emit_stats_header(Buf *b,
 ** Public entry point
 ** ============================================================ */
 
-char *lime_lex_compiled_to_text(const LimeLexCompiled *c,
-                                const LimeLexSpec *spec) {
+char *lime_lex_compiled_to_text(const LimeLexCompiled *c, const LimeLexSpec *spec) {
     if (!c && !spec) return NULL;
-    Buf b = {0};
+    Buf b = { 0 };
     if (c) {
         if (!emit_stats_header(&b, c, spec)) {
             free(b.buf);
@@ -212,10 +201,16 @@ char *lime_lex_compiled_to_text(const LimeLexCompiled *c,
     }
     if (spec) {
         char *body = lime_lex_spec_to_text(spec);
-        if (!body) { free(b.buf); return NULL; }
+        if (!body) {
+            free(b.buf);
+            return NULL;
+        }
         int ok = buf_cstr(&b, body);
         free(body);
-        if (!ok) { free(b.buf); return NULL; }
+        if (!ok) {
+            free(b.buf);
+            return NULL;
+        }
     }
     if (!b.buf) {
         b.buf = malloc(1);

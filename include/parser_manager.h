@@ -115,11 +115,11 @@ typedef uint32_t LimePluginHandle;
  * these to validate compatibility and optimize dispatch.
  */
 typedef enum LimePluginCaps {
-    LIME_CAP_SNAPSHOT        = (1u << 0), /**< Plugin produces ParserSnapshot objects */
-    LIME_CAP_EXTENSIBLE      = (1u << 1), /**< Plugin supports runtime grammar extension */
-    LIME_CAP_JIT             = (1u << 2), /**< Plugin's snapshots are JIT-compilable */
-    LIME_CAP_INCREMENTAL     = (1u << 3), /**< Plugin can produce incremental snapshots */
-    LIME_CAP_SERIALIZABLE    = (1u << 4), /**< Plugin supports serializing/deserializing state */
+    LIME_CAP_SNAPSHOT = (1u << 0),     /**< Plugin produces ParserSnapshot objects */
+    LIME_CAP_EXTENSIBLE = (1u << 1),   /**< Plugin supports runtime grammar extension */
+    LIME_CAP_JIT = (1u << 2),          /**< Plugin's snapshots are JIT-compilable */
+    LIME_CAP_INCREMENTAL = (1u << 3),  /**< Plugin can produce incremental snapshots */
+    LIME_CAP_SERIALIZABLE = (1u << 4), /**< Plugin supports serializing/deserializing state */
 } LimePluginCaps;
 
 /** @} */ /* end plugin_caps */
@@ -274,8 +274,7 @@ typedef struct LimeParserPlugin {
      *
      * @note Required if LIME_CAP_SNAPSHOT is set in capabilities.
      */
-    ParserSnapshot *(*create_snapshot)(const char *grammar_file,
-                                       char **error);
+    ParserSnapshot *(*create_snapshot)(const char *grammar_file, char **error);
 
     /**
      * @brief Validate that a snapshot is internally consistent.
@@ -303,9 +302,7 @@ typedef struct LimeParserPlugin {
      * @retval true  Serialization succeeded.
      * @retval false Serialization failed.
      */
-    bool (*serialize_snapshot)(const ParserSnapshot *snap,
-                               uint8_t **buf_out,
-                               size_t *len_out);
+    bool (*serialize_snapshot)(const ParserSnapshot *snap, uint8_t **buf_out, size_t *len_out);
 
     /**
      * @brief Deserialize a snapshot from a byte buffer.
@@ -316,9 +313,7 @@ typedef struct LimeParserPlugin {
      * @return New ParserSnapshot with refcount == 1 on success, or NULL
      *         on failure.
      */
-    ParserSnapshot *(*deserialize_snapshot)(const uint8_t *buf,
-                                            size_t len,
-                                            char **error);
+    ParserSnapshot *(*deserialize_snapshot)(const uint8_t *buf, size_t len, char **error);
 
     /* -------------------------------------------------------------- */
     /*  Reserved for future expansion                                  */
@@ -370,9 +365,9 @@ typedef const LimeParserPlugin *(*LimePluginEntryFn)(void);
  * @endcode
  */
 #ifdef _WIN32
-  #define LIME_PLUGIN_EXPORT __declspec(dllexport)
+#define LIME_PLUGIN_EXPORT __declspec(dllexport)
 #else
-  #define LIME_PLUGIN_EXPORT __attribute__((visibility("default")))
+#define LIME_PLUGIN_EXPORT __attribute__((visibility("default")))
 #endif
 
 /** @} */ /* end plugin_entry */
@@ -436,20 +431,20 @@ typedef struct ParserManagerConfig {
  * @brief Status codes returned by ParserManager operations.
  */
 typedef enum ParserManagerStatus {
-    PM_OK = 0,                    /**< Operation succeeded */
-    PM_ERR_INVALID_ARG,           /**< NULL or invalid argument */
-    PM_ERR_ALLOC,                 /**< Memory allocation failed */
-    PM_ERR_PLUGIN_NOT_FOUND,      /**< Handle does not refer to a loaded plugin */
-    PM_ERR_DUPLICATE_NAME,        /**< A plugin with this name is already loaded */
-    PM_ERR_ABI_MISMATCH,          /**< Plugin ABI version incompatible */
-    PM_ERR_INIT_FAILED,           /**< Plugin init() callback returned false */
-    PM_ERR_DLOPEN_FAILED,         /**< Could not open shared library */
-    PM_ERR_NO_ENTRY_POINT,        /**< Shared library missing lime_plugin_entry */
-    PM_ERR_SNAPSHOT_FAILED,       /**< Plugin failed to create a snapshot */
-    PM_ERR_VALIDATION_FAILED,     /**< Snapshot validation failed */
-    PM_ERR_PLUGIN_IN_USE,         /**< Cannot unload: active sessions reference it */
-    PM_ERR_NO_ACTIVE_PLUGIN,      /**< No active plugin set */
-    PM_ERR_CAPABILITY_MISSING,    /**< Plugin lacks a required capability */
+    PM_OK = 0,                 /**< Operation succeeded */
+    PM_ERR_INVALID_ARG,        /**< NULL or invalid argument */
+    PM_ERR_ALLOC,              /**< Memory allocation failed */
+    PM_ERR_PLUGIN_NOT_FOUND,   /**< Handle does not refer to a loaded plugin */
+    PM_ERR_DUPLICATE_NAME,     /**< A plugin with this name is already loaded */
+    PM_ERR_ABI_MISMATCH,       /**< Plugin ABI version incompatible */
+    PM_ERR_INIT_FAILED,        /**< Plugin init() callback returned false */
+    PM_ERR_DLOPEN_FAILED,      /**< Could not open shared library */
+    PM_ERR_NO_ENTRY_POINT,     /**< Shared library missing lime_plugin_entry */
+    PM_ERR_SNAPSHOT_FAILED,    /**< Plugin failed to create a snapshot */
+    PM_ERR_VALIDATION_FAILED,  /**< Snapshot validation failed */
+    PM_ERR_PLUGIN_IN_USE,      /**< Cannot unload: active sessions reference it */
+    PM_ERR_NO_ACTIVE_PLUGIN,   /**< No active plugin set */
+    PM_ERR_CAPABILITY_MISSING, /**< Plugin lacks a required capability */
 } ParserManagerStatus;
 
 /**
@@ -540,9 +535,7 @@ void parser_manager_destroy(ParserManager *mgr);
  * @see parser_manager_register() for statically linked plugins.
  * @see parser_manager_unload()
  */
-ParserManagerStatus parser_manager_load(ParserManager *mgr,
-                                        const char *path,
-                                        void *user_data,
+ParserManagerStatus parser_manager_load(ParserManager *mgr, const char *path, void *user_data,
                                         LimePluginHandle *handle_out);
 
 /**
@@ -558,10 +551,8 @@ ParserManagerStatus parser_manager_load(ParserManager *mgr,
  *
  * @see parser_manager_load() for shared library plugins.
  */
-ParserManagerStatus parser_manager_register(ParserManager *mgr,
-                                            const LimeParserPlugin *plugin,
-                                            void *user_data,
-                                            LimePluginHandle *handle_out);
+ParserManagerStatus parser_manager_register(ParserManager *mgr, const LimeParserPlugin *plugin,
+                                            void *user_data, LimePluginHandle *handle_out);
 
 /**
  * @brief Unload a previously loaded or registered plugin.
@@ -578,8 +569,7 @@ ParserManagerStatus parser_manager_register(ParserManager *mgr,
  * @param handle Handle of the plugin to unload.
  * @return PM_OK on success, or an error code.
  */
-ParserManagerStatus parser_manager_unload(ParserManager *mgr,
-                                          LimePluginHandle handle);
+ParserManagerStatus parser_manager_unload(ParserManager *mgr, LimePluginHandle handle);
 
 /** @} */ /* end plugin_loading */
 
@@ -607,8 +597,7 @@ ParserManagerStatus parser_manager_unload(ParserManager *mgr,
  * @see parser_manager_get_active()
  * @see parser_manager_hot_swap()
  */
-ParserManagerStatus parser_manager_set_active(ParserManager *mgr,
-                                              LimePluginHandle handle,
+ParserManagerStatus parser_manager_set_active(ParserManager *mgr, LimePluginHandle handle,
                                               const char *grammar_file);
 
 /**
@@ -633,8 +622,7 @@ LimePluginHandle parser_manager_get_active(const ParserManager *mgr);
  * @param snap Snapshot to set as active.
  * @return PM_OK on success, or an error code.
  */
-ParserManagerStatus parser_manager_set_snapshot(ParserManager *mgr,
-                                                ParserSnapshot *snap);
+ParserManagerStatus parser_manager_set_snapshot(ParserManager *mgr, ParserSnapshot *snap);
 
 /**
  * @brief Get the current active snapshot.
@@ -665,12 +653,12 @@ ParserSnapshot *parser_manager_get_snapshot(ParserManager *mgr);
  * only while the plugin remains loaded.
  */
 typedef struct LimePluginInfo {
-    LimePluginHandle handle;    /**< Plugin handle */
-    const char *name;           /**< Human-readable plugin name */
-    LimePluginVersion version;  /**< Plugin semantic version */
-    uint32_t capabilities;      /**< Bitmask of LimePluginCaps */
-    bool is_active;             /**< True if this is the active plugin */
-    bool is_dynamic;            /**< True if loaded from shared library */
+    LimePluginHandle handle;   /**< Plugin handle */
+    const char *name;          /**< Human-readable plugin name */
+    LimePluginVersion version; /**< Plugin semantic version */
+    uint32_t capabilities;     /**< Bitmask of LimePluginCaps */
+    bool is_active;            /**< True if this is the active plugin */
+    bool is_dynamic;           /**< True if loaded from shared library */
 } LimePluginInfo;
 
 /**
@@ -682,8 +670,7 @@ typedef struct LimePluginInfo {
  * @return PM_OK on success, or PM_ERR_PLUGIN_NOT_FOUND.
  */
 ParserManagerStatus parser_manager_get_plugin_info(const ParserManager *mgr,
-                                                   LimePluginHandle handle,
-                                                   LimePluginInfo *info);
+                                                   LimePluginHandle handle, LimePluginInfo *info);
 
 /**
  * @brief Enumerate all loaded plugins.
@@ -697,10 +684,8 @@ ParserManagerStatus parser_manager_get_plugin_info(const ParserManager *mgr,
  *                     If greater than @p max_count, some entries were omitted.
  * @return PM_OK on success.
  */
-ParserManagerStatus parser_manager_list_plugins(const ParserManager *mgr,
-                                                LimePluginInfo *infos,
-                                                uint32_t max_count,
-                                                uint32_t *actual_count);
+ParserManagerStatus parser_manager_list_plugins(const ParserManager *mgr, LimePluginInfo *infos,
+                                                uint32_t max_count, uint32_t *actual_count);
 
 /**
  * @brief Look up a plugin by name.
@@ -710,8 +695,7 @@ ParserManagerStatus parser_manager_list_plugins(const ParserManager *mgr,
  * @return Handle of the matching plugin, or LIME_PLUGIN_HANDLE_INVALID
  *         if not found.
  */
-LimePluginHandle parser_manager_find_by_name(const ParserManager *mgr,
-                                             const char *name);
+LimePluginHandle parser_manager_find_by_name(const ParserManager *mgr, const char *name);
 
 /**
  * @brief Get the number of loaded plugins.
@@ -749,8 +733,7 @@ uint32_t parser_manager_plugin_count(const ParserManager *mgr);
  *
  * @see parser_manager_set_active()
  */
-ParserManagerStatus parser_manager_hot_swap(ParserManager *mgr,
-                                            LimePluginHandle new_handle,
+ParserManagerStatus parser_manager_hot_swap(ParserManager *mgr, LimePluginHandle new_handle,
                                             const char *grammar_file);
 
 /** @} */ /* end hot_swap */
@@ -779,8 +762,7 @@ int lime_plugin_version_compare(LimePluginVersion a, LimePluginVersion b);
  * @retval true  @p actual >= @p required.
  * @retval false @p actual < @p required.
  */
-bool lime_plugin_version_satisfies(LimePluginVersion actual,
-                                   LimePluginVersion required);
+bool lime_plugin_version_satisfies(LimePluginVersion actual, LimePluginVersion required);
 
 /**
  * @brief Format a version as a string.
@@ -821,8 +803,7 @@ ParserManagerStatus lime_plugin_validate(const LimeParserPlugin *plugin);
  * @retval true  The plugin advertises @p cap.
  * @retval false The plugin does not have @p cap.
  */
-bool lime_plugin_has_capability(const LimeParserPlugin *plugin,
-                                LimePluginCaps cap);
+bool lime_plugin_has_capability(const LimeParserPlugin *plugin, LimePluginCaps cap);
 
 /**
  * @brief Check if a plugin has all of the specified capabilities.
@@ -832,8 +813,7 @@ bool lime_plugin_has_capability(const LimeParserPlugin *plugin,
  * @retval true  The plugin has every capability in @p required_caps.
  * @retval false At least one required capability is missing.
  */
-bool lime_plugin_has_all_capabilities(const LimeParserPlugin *plugin,
-                                      uint32_t required_caps);
+bool lime_plugin_has_all_capabilities(const LimeParserPlugin *plugin, uint32_t required_caps);
 
 /**
  * @brief Return a human-readable name for a single capability flag.

@@ -54,8 +54,7 @@ static int slurp(const char *path, char **out_buf, size_t *out_len) {
     size_t got = fread(buf, 1, (size_t)sz, f);
     fclose(f);
     if (got != (size_t)sz) {
-        fprintf(stderr, "lime: short read on '%s' (%zu of %ld bytes)\n",
-                path, got, sz);
+        fprintf(stderr, "lime: short read on '%s' (%zu of %ld bytes)\n", path, got, sz);
         free(buf);
         return 2;
     }
@@ -81,9 +80,7 @@ static char *input_stem(const char *path) {
 
 /* Construct an output path: `<output_dir>/<stem>_lex.<suffix>` or
 ** `<stem>_lex.<suffix>` when output_dir is NULL.  Caller frees. */
-static char *make_output_path(const char *output_dir,
-                              const char *stem,
-                              const char *suffix) {
+static char *make_output_path(const char *output_dir, const char *stem, const char *suffix) {
     size_t dn = output_dir ? strlen(output_dir) + 1 : 0;
     size_t sn = strlen(stem);
     size_t xn = strlen(suffix);
@@ -103,9 +100,7 @@ static char *make_output_path(const char *output_dir,
 
 /* Emit `.c` + `.h` files.  Returns 0 on success, 1 on emit
 ** error.  `output_dir` may be NULL (current directory). */
-static int emit_files(LimeLexCompiled *c,
-                      const LimeLexSpec *spec,
-                      const char *input_path,
+static int emit_files(LimeLexCompiled *c, const LimeLexSpec *spec, const char *input_path,
                       const char *output_dir) {
     char *stem = input_stem(input_path);
     if (!stem) {
@@ -116,7 +111,9 @@ static int emit_files(LimeLexCompiled *c,
     char *c_path = make_output_path(output_dir, stem, "c");
     if (!h_path || !c_path) {
         fprintf(stderr, "lime: out of memory computing output paths\n");
-        free(stem); free(h_path); free(c_path);
+        free(stem);
+        free(h_path);
+        free(c_path);
         return 2;
     }
 
@@ -124,7 +121,9 @@ static int emit_files(LimeLexCompiled *c,
     int n_rules = 0;
     if (lime_lex_collect_rule_names(spec, &rule_names, &n_rules) != 0) {
         fprintf(stderr, "lime: out of memory collecting rule names\n");
-        free(stem); free(h_path); free(c_path);
+        free(stem);
+        free(h_path);
+        free(c_path);
         return 2;
     }
 
@@ -133,21 +132,25 @@ static int emit_files(LimeLexCompiled *c,
     /* Header. */
     FILE *fh = fopen(h_path, "w");
     if (!fh) {
-        fprintf(stderr, "lime: cannot open '%s' for writing: %s\n",
-                h_path, strerror(errno));
-        for (int i = 0; i < n_rules; i++) free(rule_names[i]);
+        fprintf(stderr, "lime: cannot open '%s' for writing: %s\n", h_path, strerror(errno));
+        for (int i = 0; i < n_rules; i++)
+            free(rule_names[i]);
         free(rule_names);
-        free(stem); free(h_path); free(c_path);
+        free(stem);
+        free(h_path);
+        free(c_path);
         return 2;
     }
-    int rc = lime_lex_emit_h(c, spec, prefix,
-                             (const char *const *)rule_names, n_rules, fh);
+    int rc = lime_lex_emit_h(c, spec, prefix, (const char *const *)rule_names, n_rules, fh);
     fclose(fh);
     if (rc != 0) {
         fprintf(stderr, "lime: header emit failed for '%s'\n", h_path);
-        for (int i = 0; i < n_rules; i++) free(rule_names[i]);
+        for (int i = 0; i < n_rules; i++)
+            free(rule_names[i]);
         free(rule_names);
-        free(stem); free(h_path); free(c_path);
+        free(stem);
+        free(h_path);
+        free(c_path);
         return 2;
     }
 
@@ -159,16 +162,17 @@ static int emit_files(LimeLexCompiled *c,
     }
     FILE *fc = fopen(c_path, "w");
     if (!fc) {
-        fprintf(stderr, "lime: cannot open '%s' for writing: %s\n",
-                c_path, strerror(errno));
+        fprintf(stderr, "lime: cannot open '%s' for writing: %s\n", c_path, strerror(errno));
         free(h_basename);
-        for (int i = 0; i < n_rules; i++) free(rule_names[i]);
+        for (int i = 0; i < n_rules; i++)
+            free(rule_names[i]);
         free(rule_names);
-        free(stem); free(h_path); free(c_path);
+        free(stem);
+        free(h_path);
+        free(c_path);
         return 2;
     }
-    rc = lime_lex_emit_c(c, spec, prefix,
-                         h_basename ? h_basename : "lex.h",
+    rc = lime_lex_emit_c(c, spec, prefix, h_basename ? h_basename : "lex.h",
                          (const char *const *)rule_names, n_rules, fc);
     fclose(fc);
 
@@ -180,7 +184,8 @@ static int emit_files(LimeLexCompiled *c,
     }
 
     free(h_basename);
-    for (int i = 0; i < n_rules; i++) free(rule_names[i]);
+    for (int i = 0; i < n_rules; i++)
+        free(rule_names[i]);
     free(rule_names);
     free(stem);
     free(h_path);
@@ -201,8 +206,7 @@ int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
         return 2;
     }
     if (spec->error_count > 0) {
-        fprintf(stderr, "lime: %d parse error(s) in '%s'\n",
-                spec->error_count, input_path);
+        fprintf(stderr, "lime: %d parse error(s) in '%s'\n", spec->error_count, input_path);
         lime_lex_spec_free(spec);
         free(src);
         return 1;
@@ -210,8 +214,7 @@ int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
 
     int resolve_rc = lime_lex_resolve_patterns(spec);
     if (resolve_rc != 0 || spec->error_count > 0) {
-        fprintf(stderr, "lime: %d resolve error(s) in '%s'\n",
-                spec->error_count, input_path);
+        fprintf(stderr, "lime: %d resolve error(s) in '%s'\n", spec->error_count, input_path);
         lime_lex_spec_free(spec);
         free(src);
         return 1;
@@ -225,8 +228,7 @@ int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
         return 2;
     }
     if (c->error_count > 0) {
-        fprintf(stderr, "lime: %d compile error(s) in '%s'\n",
-                c->error_count, input_path);
+        fprintf(stderr, "lime: %d compile error(s) in '%s'\n", c->error_count, input_path);
         lime_lex_compiled_free(c);
         lime_lex_spec_free(spec);
         free(src);

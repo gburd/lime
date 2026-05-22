@@ -15,8 +15,7 @@
 ** Duplicate a C string using malloc.  Returns NULL if the input is
 ** NULL or on allocation failure.
 */
-static char *dup_or_null(const char *s)
-{
+static char *dup_or_null(const char *s) {
     if (s == NULL) return NULL;
     size_t n = strlen(s);
     char *out = (char *)malloc(n + 1);
@@ -25,13 +24,8 @@ static char *dup_or_null(const char *s)
     return out;
 }
 
-LimeError *lime_error_append(LimeError *list,
-                             const char *message,
-                             const char *expected,
-                             uint32_t line,
-                             uint32_t column,
-                             const char *filename)
-{
+LimeError *lime_error_append(LimeError *list, const char *message, const char *expected,
+                             uint32_t line, uint32_t column, const char *filename) {
     LimeError *node = (LimeError *)malloc(sizeof(*node));
     if (node == NULL) return list;
 
@@ -54,13 +48,13 @@ LimeError *lime_error_append(LimeError *list,
     if (list == NULL) return node;
 
     LimeError *tail = list;
-    while (tail->next != NULL) tail = tail->next;
+    while (tail->next != NULL)
+        tail = tail->next;
     tail->next = node;
     return list;
 }
 
-size_t lime_error_count(const LimeError *list)
-{
+size_t lime_error_count(const LimeError *list) {
     size_t n = 0;
     while (list != NULL) {
         n++;
@@ -69,8 +63,7 @@ size_t lime_error_count(const LimeError *list)
     return n;
 }
 
-void lime_error_free(LimeError *err)
-{
+void lime_error_free(LimeError *err) {
     while (err != NULL) {
         LimeError *next = err->next;
         free(err->message);

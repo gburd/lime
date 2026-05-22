@@ -35,28 +35,28 @@
 ** A single entry in the plugin registry.
 */
 typedef struct PluginEntry {
-    LimePluginHandle        handle;
+    LimePluginHandle handle;
     const LimeParserPlugin *plugin;
-    void                   *dl_handle;     /* dlopen handle, NULL for static */
-    char                   *library_path;  /* strdup'd path, NULL for static */
-    bool                    is_dynamic;
+    void *dl_handle;    /* dlopen handle, NULL for static */
+    char *library_path; /* strdup'd path, NULL for static */
+    bool is_dynamic;
 } PluginEntry;
 
 /*
 ** The ParserManager struct.
 */
 struct ParserManager {
-    PluginEntry            *entries;
-    uint32_t                count;
-    uint32_t                capacity;
-    LimePluginHandle        next_handle;
+    PluginEntry *entries;
+    uint32_t count;
+    uint32_t capacity;
+    LimePluginHandle next_handle;
 
-    LimePluginHandle        active_handle;
+    LimePluginHandle active_handle;
     _Atomic(ParserSnapshot *) active_snap;
 
-    ParserManagerConfig     config;
+    ParserManagerConfig config;
 
-    pthread_rwlock_t        lock;
+    pthread_rwlock_t lock;
 };
 
 /* ================================================================== */
@@ -112,8 +112,7 @@ static bool grow_entries(ParserManager *mgr) {
     PluginEntry *p = realloc(mgr->entries, new_cap * sizeof(PluginEntry));
     if (p == NULL) return false;
 
-    memset(&p[mgr->capacity], 0,
-           (new_cap - mgr->capacity) * sizeof(PluginEntry));
+    memset(&p[mgr->capacity], 0, (new_cap - mgr->capacity) * sizeof(PluginEntry));
     mgr->entries = p;
     mgr->capacity = new_cap;
     return true;
@@ -150,8 +149,7 @@ static void remove_entry_at(ParserManager *mgr, uint32_t index) {
     /* Shift entries after the removed one */
     uint32_t remaining = mgr->count - index - 1;
     if (remaining > 0) {
-        memmove(&mgr->entries[index], &mgr->entries[index + 1],
-                remaining * sizeof(PluginEntry));
+        memmove(&mgr->entries[index], &mgr->entries[index + 1], remaining * sizeof(PluginEntry));
     }
 
     mgr->count--;
@@ -163,8 +161,7 @@ static void remove_entry_at(ParserManager *mgr, uint32_t index) {
 ** Caller must hold write lock.
 */
 static void release_active_snapshot(ParserManager *mgr) {
-    ParserSnapshot *old = atomic_exchange_explicit(
-        &mgr->active_snap, NULL, memory_order_acq_rel);
+    ParserSnapshot *old = atomic_exchange_explicit(&mgr->active_snap, NULL, memory_order_acq_rel);
     if (old != NULL) {
         snapshot_release(old);
     }
@@ -175,8 +172,7 @@ static void release_active_snapshot(ParserManager *mgr) {
 ** the file exists as given, return a strdup'd copy.  Otherwise search
 ** the configured search paths.  Returns NULL if not found.
 */
-static char *resolve_library_path(const ParserManagerConfig *config,
-                                  const char *path) {
+static char *resolve_library_path(const ParserManagerConfig *config, const char *path) {
     if (path == NULL) return NULL;
 
     /* If the path starts with '/' or '.', use it directly */
@@ -216,20 +212,34 @@ static char *resolve_library_path(const ParserManagerConfig *config,
 
 const char *parser_manager_status_string(ParserManagerStatus status) {
     switch (status) {
-    case PM_OK:                    return "success";
-    case PM_ERR_INVALID_ARG:       return "invalid argument";
-    case PM_ERR_ALLOC:             return "memory allocation failed";
-    case PM_ERR_PLUGIN_NOT_FOUND:  return "plugin not found";
-    case PM_ERR_DUPLICATE_NAME:    return "duplicate plugin name";
-    case PM_ERR_ABI_MISMATCH:      return "ABI version mismatch";
-    case PM_ERR_INIT_FAILED:       return "plugin init() failed";
-    case PM_ERR_DLOPEN_FAILED:     return "dlopen() failed";
-    case PM_ERR_NO_ENTRY_POINT:    return "missing lime_plugin_entry symbol";
-    case PM_ERR_SNAPSHOT_FAILED:   return "snapshot creation failed";
-    case PM_ERR_VALIDATION_FAILED: return "snapshot validation failed";
-    case PM_ERR_PLUGIN_IN_USE:     return "plugin is in use";
-    case PM_ERR_NO_ACTIVE_PLUGIN:  return "no active plugin";
-    case PM_ERR_CAPABILITY_MISSING: return "required capability missing";
+    case PM_OK:
+        return "success";
+    case PM_ERR_INVALID_ARG:
+        return "invalid argument";
+    case PM_ERR_ALLOC:
+        return "memory allocation failed";
+    case PM_ERR_PLUGIN_NOT_FOUND:
+        return "plugin not found";
+    case PM_ERR_DUPLICATE_NAME:
+        return "duplicate plugin name";
+    case PM_ERR_ABI_MISMATCH:
+        return "ABI version mismatch";
+    case PM_ERR_INIT_FAILED:
+        return "plugin init() failed";
+    case PM_ERR_DLOPEN_FAILED:
+        return "dlopen() failed";
+    case PM_ERR_NO_ENTRY_POINT:
+        return "missing lime_plugin_entry symbol";
+    case PM_ERR_SNAPSHOT_FAILED:
+        return "snapshot creation failed";
+    case PM_ERR_VALIDATION_FAILED:
+        return "snapshot validation failed";
+    case PM_ERR_PLUGIN_IN_USE:
+        return "plugin is in use";
+    case PM_ERR_NO_ACTIVE_PLUGIN:
+        return "no active plugin";
+    case PM_ERR_CAPABILITY_MISSING:
+        return "required capability missing";
     }
     return "unknown error";
 }
@@ -256,7 +266,7 @@ ParserManager *parser_manager_create(const ParserManagerConfig *config) {
 
     mgr->capacity = PM_INITIAL_CAPACITY;
     mgr->count = 0;
-    mgr->next_handle = 1;  /* 0 is LIME_PLUGIN_HANDLE_INVALID */
+    mgr->next_handle = 1; /* 0 is LIME_PLUGIN_HANDLE_INVALID */
     mgr->active_handle = LIME_PLUGIN_HANDLE_INVALID;
     atomic_init(&mgr->active_snap, NULL);
 
@@ -276,8 +286,7 @@ void parser_manager_destroy(ParserManager *mgr) {
     pthread_rwlock_wrlock(&mgr->lock);
 
     /* Release active snapshot */
-    ParserSnapshot *snap = atomic_exchange_explicit(
-        &mgr->active_snap, NULL, memory_order_acq_rel);
+    ParserSnapshot *snap = atomic_exchange_explicit(&mgr->active_snap, NULL, memory_order_acq_rel);
     if (snap != NULL) {
         snapshot_release(snap);
     }
@@ -314,15 +323,10 @@ void parser_manager_destroy(ParserManager *mgr) {
 /*
 ** Common registration logic.  Caller must hold write lock.
 */
-static ParserManagerStatus register_plugin_locked(
-    ParserManager *mgr,
-    const LimeParserPlugin *plugin,
-    void *dl_handle,
-    char *library_path,
-    bool is_dynamic,
-    void *user_data,
-    LimePluginHandle *handle_out
-) {
+static ParserManagerStatus register_plugin_locked(ParserManager *mgr,
+                                                  const LimeParserPlugin *plugin, void *dl_handle,
+                                                  char *library_path, bool is_dynamic,
+                                                  void *user_data, LimePluginHandle *handle_out) {
     /* Validate plugin struct */
     ParserManagerStatus st = validate_plugin(plugin);
     if (st != PM_OK) {
@@ -376,9 +380,7 @@ static ParserManagerStatus register_plugin_locked(
 /*  Plugin loading                                                     */
 /* ================================================================== */
 
-ParserManagerStatus parser_manager_load(ParserManager *mgr,
-                                        const char *path,
-                                        void *user_data,
+ParserManagerStatus parser_manager_load(ParserManager *mgr, const char *path, void *user_data,
                                         LimePluginHandle *handle_out) {
     if (mgr == NULL || path == NULL || handle_out == NULL) {
         return PM_ERR_INVALID_ARG;
@@ -403,8 +405,7 @@ ParserManagerStatus parser_manager_load(ParserManager *mgr,
 
     /* Look up entry point */
     dlerror(); /* clear */
-    LimePluginEntryFn entry_fn =
-        (LimePluginEntryFn)dlsym(dl_handle, LIME_PLUGIN_ENTRY_SYMBOL);
+    LimePluginEntryFn entry_fn = (LimePluginEntryFn)dlsym(dl_handle, LIME_PLUGIN_ENTRY_SYMBOL);
     if (entry_fn == NULL) {
         dlclose(dl_handle);
         free(resolved);
@@ -421,8 +422,8 @@ ParserManagerStatus parser_manager_load(ParserManager *mgr,
 
     /* Register under write lock */
     pthread_rwlock_wrlock(&mgr->lock);
-    ParserManagerStatus st = register_plugin_locked(
-        mgr, plugin, dl_handle, resolved, true, user_data, handle_out);
+    ParserManagerStatus st =
+        register_plugin_locked(mgr, plugin, dl_handle, resolved, true, user_data, handle_out);
     pthread_rwlock_unlock(&mgr->lock);
 
     if (st != PM_OK) {
@@ -436,24 +437,21 @@ ParserManagerStatus parser_manager_load(ParserManager *mgr,
 #endif
 }
 
-ParserManagerStatus parser_manager_register(ParserManager *mgr,
-                                            const LimeParserPlugin *plugin,
-                                            void *user_data,
-                                            LimePluginHandle *handle_out) {
+ParserManagerStatus parser_manager_register(ParserManager *mgr, const LimeParserPlugin *plugin,
+                                            void *user_data, LimePluginHandle *handle_out) {
     if (mgr == NULL || plugin == NULL || handle_out == NULL) {
         return PM_ERR_INVALID_ARG;
     }
 
     pthread_rwlock_wrlock(&mgr->lock);
-    ParserManagerStatus st = register_plugin_locked(
-        mgr, plugin, NULL, NULL, false, user_data, handle_out);
+    ParserManagerStatus st =
+        register_plugin_locked(mgr, plugin, NULL, NULL, false, user_data, handle_out);
     pthread_rwlock_unlock(&mgr->lock);
 
     return st;
 }
 
-ParserManagerStatus parser_manager_unload(ParserManager *mgr,
-                                          LimePluginHandle handle) {
+ParserManagerStatus parser_manager_unload(ParserManager *mgr, LimePluginHandle handle) {
     if (mgr == NULL || handle == LIME_PLUGIN_HANDLE_INVALID) {
         return PM_ERR_INVALID_ARG;
     }
@@ -508,8 +506,7 @@ ParserManagerStatus parser_manager_unload(ParserManager *mgr,
 /*  Active parser management                                           */
 /* ================================================================== */
 
-ParserManagerStatus parser_manager_set_active(ParserManager *mgr,
-                                              LimePluginHandle handle,
+ParserManagerStatus parser_manager_set_active(ParserManager *mgr, LimePluginHandle handle,
                                               const char *grammar_file) {
     if (mgr == NULL || handle == LIME_PLUGIN_HANDLE_INVALID) {
         return PM_ERR_INVALID_ARG;
@@ -554,15 +551,14 @@ ParserManagerStatus parser_manager_set_active(ParserManager *mgr,
         }
 
         /* Optionally JIT compile */
-        if (mgr->config.auto_jit &&
-            (e->plugin->get_capabilities() & LIME_CAP_JIT)) {
+        if (mgr->config.auto_jit && (e->plugin->get_capabilities() & LIME_CAP_JIT)) {
             lime_jit_compile(new_snap);
         }
     }
 
     /* Swap the active snapshot atomically */
-    ParserSnapshot *old = atomic_exchange_explicit(
-        &mgr->active_snap, new_snap, memory_order_acq_rel);
+    ParserSnapshot *old =
+        atomic_exchange_explicit(&mgr->active_snap, new_snap, memory_order_acq_rel);
     if (old != NULL) {
         snapshot_release(old);
     }
@@ -586,16 +582,14 @@ LimePluginHandle parser_manager_get_active(const ParserManager *mgr) {
     return h;
 }
 
-ParserManagerStatus parser_manager_set_snapshot(ParserManager *mgr,
-                                                ParserSnapshot *snap) {
+ParserManagerStatus parser_manager_set_snapshot(ParserManager *mgr, ParserSnapshot *snap) {
     if (mgr == NULL || snap == NULL) return PM_ERR_INVALID_ARG;
 
     /* Acquire a reference for the manager */
     snapshot_acquire(snap);
 
     /* Swap */
-    ParserSnapshot *old = atomic_exchange_explicit(
-        &mgr->active_snap, snap, memory_order_acq_rel);
+    ParserSnapshot *old = atomic_exchange_explicit(&mgr->active_snap, snap, memory_order_acq_rel);
     if (old != NULL) {
         snapshot_release(old);
     }
@@ -622,8 +616,7 @@ ParserSnapshot *parser_manager_get_snapshot(ParserManager *mgr) {
     */
     pthread_rwlock_rdlock((pthread_rwlock_t *)&mgr->lock);
 
-    ParserSnapshot *snap = atomic_load_explicit(
-        &mgr->active_snap, memory_order_acquire);
+    ParserSnapshot *snap = atomic_load_explicit(&mgr->active_snap, memory_order_acquire);
     if (snap != NULL) {
         snapshot_acquire(snap);
     }
@@ -636,24 +629,19 @@ ParserSnapshot *parser_manager_get_snapshot(ParserManager *mgr) {
 /*  Plugin enumeration and introspection                               */
 /* ================================================================== */
 
-static void fill_plugin_info(const ParserManager *mgr,
-                             const PluginEntry *e,
-                             LimePluginInfo *info) {
+static void fill_plugin_info(const ParserManager *mgr, const PluginEntry *e, LimePluginInfo *info) {
     info->handle = e->handle;
-    info->name = (e->plugin && e->plugin->get_name)
-                     ? e->plugin->get_name() : NULL;
-    info->version = (e->plugin && e->plugin->get_version)
-                        ? e->plugin->get_version()
-                        : (LimePluginVersion){0, 0, 0};
-    info->capabilities = (e->plugin && e->plugin->get_capabilities)
-                             ? e->plugin->get_capabilities() : 0;
+    info->name = (e->plugin && e->plugin->get_name) ? e->plugin->get_name() : NULL;
+    info->version = (e->plugin && e->plugin->get_version) ? e->plugin->get_version()
+                                                          : (LimePluginVersion){ 0, 0, 0 };
+    info->capabilities =
+        (e->plugin && e->plugin->get_capabilities) ? e->plugin->get_capabilities() : 0;
     info->is_active = (e->handle == mgr->active_handle);
     info->is_dynamic = e->is_dynamic;
 }
 
 ParserManagerStatus parser_manager_get_plugin_info(const ParserManager *mgr,
-                                                   LimePluginHandle handle,
-                                                   LimePluginInfo *info) {
+                                                   LimePluginHandle handle, LimePluginInfo *info) {
     if (mgr == NULL || info == NULL || handle == LIME_PLUGIN_HANDLE_INVALID) {
         return PM_ERR_INVALID_ARG;
     }
@@ -679,10 +667,8 @@ ParserManagerStatus parser_manager_get_plugin_info(const ParserManager *mgr,
     return PM_OK;
 }
 
-ParserManagerStatus parser_manager_list_plugins(const ParserManager *mgr,
-                                                LimePluginInfo *infos,
-                                                uint32_t max_count,
-                                                uint32_t *actual_count) {
+ParserManagerStatus parser_manager_list_plugins(const ParserManager *mgr, LimePluginInfo *infos,
+                                                uint32_t max_count, uint32_t *actual_count) {
     if (mgr == NULL || infos == NULL || actual_count == NULL) {
         return PM_ERR_INVALID_ARG;
     }
@@ -702,8 +688,7 @@ ParserManagerStatus parser_manager_list_plugins(const ParserManager *mgr,
     return PM_OK;
 }
 
-LimePluginHandle parser_manager_find_by_name(const ParserManager *mgr,
-                                             const char *name) {
+LimePluginHandle parser_manager_find_by_name(const ParserManager *mgr, const char *name) {
     if (mgr == NULL || name == NULL) return LIME_PLUGIN_HANDLE_INVALID;
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&mgr->lock);
@@ -729,8 +714,7 @@ uint32_t parser_manager_plugin_count(const ParserManager *mgr) {
 /*  Hot-swap support                                                   */
 /* ================================================================== */
 
-ParserManagerStatus parser_manager_hot_swap(ParserManager *mgr,
-                                            LimePluginHandle new_handle,
+ParserManagerStatus parser_manager_hot_swap(ParserManager *mgr, LimePluginHandle new_handle,
                                             const char *grammar_file) {
     /*
     ** hot_swap has the same semantics as set_active but is explicitly
@@ -752,14 +736,12 @@ int lime_plugin_version_compare(LimePluginVersion a, LimePluginVersion b) {
     return 0;
 }
 
-bool lime_plugin_version_satisfies(LimePluginVersion actual,
-                                   LimePluginVersion required) {
+bool lime_plugin_version_satisfies(LimePluginVersion actual, LimePluginVersion required) {
     return lime_plugin_version_compare(actual, required) >= 0;
 }
 
 char *lime_plugin_version_string(LimePluginVersion v, char *buf, size_t buflen) {
     if (buf == NULL || buflen == 0) return buf;
-    snprintf(buf, buflen, "%u.%u.%u",
-             (unsigned)v.major, (unsigned)v.minor, (unsigned)v.patch);
+    snprintf(buf, buflen, "%u.%u.%u", (unsigned)v.major, (unsigned)v.minor, (unsigned)v.patch);
     return buf;
 }

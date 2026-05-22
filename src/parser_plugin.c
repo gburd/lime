@@ -52,8 +52,7 @@ ParserManagerStatus lime_plugin_validate(const LimeParserPlugin *plugin) {
     /* If the plugin advertises SERIALIZABLE, both serialize and deserialize
     ** must be present */
     if (caps & LIME_CAP_SERIALIZABLE) {
-        if (plugin->serialize_snapshot == NULL ||
-            plugin->deserialize_snapshot == NULL) {
+        if (plugin->serialize_snapshot == NULL || plugin->deserialize_snapshot == NULL) {
             return PM_ERR_CAPABILITY_MISSING;
         }
     }
@@ -68,8 +67,7 @@ ParserManagerStatus lime_plugin_validate(const LimeParserPlugin *plugin) {
 /*
 ** Check if a plugin has a specific capability.
 */
-bool lime_plugin_has_capability(const LimeParserPlugin *plugin,
-                                LimePluginCaps cap) {
+bool lime_plugin_has_capability(const LimeParserPlugin *plugin, LimePluginCaps cap) {
     if (plugin == NULL || plugin->get_capabilities == NULL) return false;
     return (plugin->get_capabilities() & (uint32_t)cap) != 0;
 }
@@ -77,8 +75,7 @@ bool lime_plugin_has_capability(const LimeParserPlugin *plugin,
 /*
 ** Check if a plugin has all of the specified capabilities (bitwise AND).
 */
-bool lime_plugin_has_all_capabilities(const LimeParserPlugin *plugin,
-                                      uint32_t required_caps) {
+bool lime_plugin_has_all_capabilities(const LimeParserPlugin *plugin, uint32_t required_caps) {
     if (plugin == NULL || plugin->get_capabilities == NULL) return false;
     uint32_t caps = plugin->get_capabilities();
     return (caps & required_caps) == required_caps;
@@ -90,11 +87,16 @@ bool lime_plugin_has_all_capabilities(const LimeParserPlugin *plugin,
 */
 const char *lime_plugin_capability_name(LimePluginCaps cap) {
     switch (cap) {
-    case LIME_CAP_SNAPSHOT:     return "snapshot";
-    case LIME_CAP_EXTENSIBLE:   return "extensible";
-    case LIME_CAP_JIT:          return "jit";
-    case LIME_CAP_INCREMENTAL:  return "incremental";
-    case LIME_CAP_SERIALIZABLE: return "serializable";
+    case LIME_CAP_SNAPSHOT:
+        return "snapshot";
+    case LIME_CAP_EXTENSIBLE:
+        return "extensible";
+    case LIME_CAP_JIT:
+        return "jit";
+    case LIME_CAP_INCREMENTAL:
+        return "incremental";
+    case LIME_CAP_SERIALIZABLE:
+        return "serializable";
     }
     return "unknown";
 }
@@ -115,10 +117,10 @@ char *lime_plugin_capabilities_string(uint32_t caps, char *buf, size_t buflen) {
         LimePluginCaps cap;
         const char *name;
     } cap_table[] = {
-        { LIME_CAP_SNAPSHOT,     "snapshot" },
-        { LIME_CAP_EXTENSIBLE,   "extensible" },
-        { LIME_CAP_JIT,          "jit" },
-        { LIME_CAP_INCREMENTAL,  "incremental" },
+        { LIME_CAP_SNAPSHOT, "snapshot" },
+        { LIME_CAP_EXTENSIBLE, "extensible" },
+        { LIME_CAP_JIT, "jit" },
+        { LIME_CAP_INCREMENTAL, "incremental" },
         { LIME_CAP_SERIALIZABLE, "serializable" },
     };
 

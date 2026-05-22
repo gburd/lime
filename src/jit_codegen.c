@@ -38,11 +38,8 @@ static uint64_t now_ns(void) {
 ** Generate the monolithic parse function using stack variables for simplicity.
 ** LLVM's mem2reg optimization pass will promote them to registers/SSA.
 */
-static LLVMValueRef generate_monolithic_parser(
-    LLVMContextRef llvm_ctx,
-    LLVMModuleRef module,
-    const ParserSnapshot *snap)
-{
+static LLVMValueRef generate_monolithic_parser(LLVMContextRef llvm_ctx, LLVMModuleRef module,
+                                               const ParserSnapshot *snap) {
     LLVMTypeRef i16 = LLVMInt16TypeInContext(llvm_ctx);
     LLVMTypeRef i32 = LLVMInt32TypeInContext(llvm_ctx);
     LLVMTypeRef i16_ptr = LLVMPointerType(i16, 0);
@@ -95,7 +92,8 @@ static LLVMValueRef generate_monolithic_parser(
     LLVMPositionBuilderAtEnd(builder, loop_body_bb);
 
     /* Load current token: la = tokens[i] */
-    LLVMValueRef token_ptr = LLVMBuildGEP2(builder, i16, param_tokens, &current_index, 1, "token_ptr");
+    LLVMValueRef token_ptr =
+        LLVMBuildGEP2(builder, i16, param_tokens, &current_index, 1, "token_ptr");
     LLVMValueRef lookahead = LLVMBuildLoad2(builder, i16, token_ptr, "la");
 
     /* Load current state */
@@ -103,9 +101,11 @@ static LLVMValueRef generate_monolithic_parser(
 
     /* State dispatch switch */
     LLVMBasicBlockRef loop_increment_bb = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "loop.inc");
-    LLVMBasicBlockRef default_state_bb = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "state.default");
+    LLVMBasicBlockRef default_state_bb =
+        LLVMAppendBasicBlockInContext(llvm_ctx, fn, "state.default");
 
-    LLVMValueRef state_switch = LLVMBuildSwitch(builder, current_state, default_state_bb, snap->nstate);
+    LLVMValueRef state_switch =
+        LLVMBuildSwitch(builder, current_state, default_state_bb, snap->nstate);
 
     /* Generate a case for each parser state */
     for (uint32_t s = 0; s < snap->nstate; s++) {
@@ -127,7 +127,8 @@ static LLVMValueRef generate_monolithic_parser(
             LLVMBuildBr(builder, loop_increment_bb);
         } else {
             /* Build action lookup as switch on lookahead */
-            LLVMBasicBlockRef action_default_bb = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "action.default");
+            LLVMBasicBlockRef action_default_bb =
+                LLVMAppendBasicBlockInContext(llvm_ctx, fn, "action.default");
 
             /* Count valid actions */
             uint32_t valid_actions = 0;
@@ -144,7 +145,8 @@ static LLVMValueRef generate_monolithic_parser(
             }
 
             if (valid_actions > 0) {
-                LLVMValueRef action_switch = LLVMBuildSwitch(builder, lookahead, action_default_bb, valid_actions);
+                LLVMValueRef action_switch =
+                    LLVMBuildSwitch(builder, lookahead, action_default_bb, valid_actions);
 
                 /* Generate cases for each valid action */
                 for (uint32_t k = idx_lo; k < idx_hi; k++) {
@@ -156,7 +158,8 @@ static LLVMValueRef generate_monolithic_parser(
 
                     char action_name[64];
                     snprintf(action_name, sizeof(action_name), "action.s%u.t%u", s, token);
-                    LLVMBasicBlockRef action_bb = LLVMAppendBasicBlockInContext(llvm_ctx, fn, action_name);
+                    LLVMBasicBlockRef action_bb =
+                        LLVMAppendBasicBlockInContext(llvm_ctx, fn, action_name);
 
                     LLVMAddCase(action_switch, LLVMConstInt(i16, token, 0), action_bb);
 
@@ -207,10 +210,8 @@ static LLVMValueRef generate_monolithic_parser(
 ** codegen from the JIT engine lifetime, which OrcJIT requires since
 ** modules are consumed (moved) into the JIT dylib.
 */
-JITStatus jit_codegen_generate_into(LLVMContextRef llvm_ctx,
-                                     LLVMModuleRef module,
-                                     const ParserSnapshot *snap,
-                                     JITStats *stats_out) {
+JITStatus jit_codegen_generate_into(LLVMContextRef llvm_ctx, LLVMModuleRef module,
+                                    const ParserSnapshot *snap, JITStats *stats_out) {
     if (llvm_ctx == NULL || module == NULL || snap == NULL) {
         return JIT_ERR_INVALID_ARG;
     }

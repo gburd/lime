@@ -43,9 +43,8 @@ static void *stub_init(const Extension *const *extensions, uint32_t n) {
     return (void *)(uintptr_t)1; /* Non-NULL sentinel */
 }
 
-static bool stub_resolve(void *ctx, const ConflictPoint *conflict,
-                         struct ParseContext *parse_ctx, int lookahead,
-                         StrategyResult *result) {
+static bool stub_resolve(void *ctx, const ConflictPoint *conflict, struct ParseContext *parse_ctx,
+                         int lookahead, StrategyResult *result) {
     (void)ctx;
     (void)conflict;
     (void)parse_ctx;
@@ -65,9 +64,9 @@ static void stub_destroy(void *ctx) {
 }
 
 static const DisambiguationStrategyVTable stub_vtable = {
-    .init    = stub_init,
+    .init = stub_init,
     .resolve = stub_resolve,
-    .update  = stub_update,
+    .update = stub_update,
     .destroy = stub_destroy,
 };
 
@@ -97,9 +96,7 @@ void strategy_result_cleanup(StrategyResult *result) {
 /*  Vtable lookup for built-in strategies                              */
 /* ------------------------------------------------------------------ */
 
-static const DisambiguationStrategyVTable *get_builtin_vtable(
-    LimeStrategy strategy)
-{
+static const DisambiguationStrategyVTable *get_builtin_vtable(LimeStrategy strategy) {
     switch (strategy) {
     case STRAT_PRIORITY:
         return &strategy_priority_vtable;
@@ -125,9 +122,7 @@ static const DisambiguationStrategyVTable *get_builtin_vtable(
 ** Caller must free the returned array.  Sets *count_out.
 ** Returns NULL on allocation failure or if no extensions are loaded.
 */
-static const Extension **gather_loaded_extensions(
-    ExtensionRegistry *reg, uint32_t *count_out)
-{
+static const Extension **gather_loaded_extensions(ExtensionRegistry *reg, uint32_t *count_out) {
     *count_out = 0;
     if (reg == NULL) return NULL;
 
@@ -155,10 +150,7 @@ static const Extension **gather_loaded_extensions(
 /*  Public API: creation                                               */
 /* ------------------------------------------------------------------ */
 
-DisambiguationContext *disambiguation_create(
-    LimeStrategy strategy,
-    ExtensionRegistry *reg)
-{
+DisambiguationContext *disambiguation_create(LimeStrategy strategy, ExtensionRegistry *reg) {
     const DisambiguationStrategyVTable *vt = get_builtin_vtable(strategy);
     if (vt == NULL) return NULL;
 
@@ -184,13 +176,10 @@ DisambiguationContext *disambiguation_create(
     return ctx;
 }
 
-DisambiguationContext *disambiguation_create_custom(
-    const DisambiguationStrategyVTable *vtable,
-    ExtensionRegistry *reg)
-{
+DisambiguationContext *disambiguation_create_custom(const DisambiguationStrategyVTable *vtable,
+                                                    ExtensionRegistry *reg) {
     if (vtable == NULL) return NULL;
-    if (vtable->init == NULL || vtable->resolve == NULL ||
-        vtable->destroy == NULL) {
+    if (vtable->init == NULL || vtable->resolve == NULL || vtable->destroy == NULL) {
         return NULL;
     }
 
@@ -220,19 +209,15 @@ DisambiguationContext *disambiguation_create_custom(
 /*  Public API: resolution                                             */
 /* ------------------------------------------------------------------ */
 
-StrategyResult disambiguation_resolve(
-    DisambiguationContext *ctx,
-    const ConflictPoint *conflict,
-    struct ParseContext *parse_ctx)
-{
+StrategyResult disambiguation_resolve(DisambiguationContext *ctx, const ConflictPoint *conflict,
+                                      struct ParseContext *parse_ctx) {
     StrategyResult result;
     strategy_result_init(&result);
 
     if (ctx == NULL || conflict == NULL) return result;
 
     int lookahead = (int)conflict->token;
-    ctx->vtable.resolve(ctx->strategy_context, conflict, parse_ctx,
-                        lookahead, &result);
+    ctx->vtable.resolve(ctx->strategy_context, conflict, parse_ctx, lookahead, &result);
     return result;
 }
 
@@ -247,20 +232,23 @@ void disambiguation_update(DisambiguationContext *ctx, bool success) {
 /*  Public API: introspection                                          */
 /* ------------------------------------------------------------------ */
 
-LimeStrategy disambiguation_get_strategy(
-    const DisambiguationContext *ctx)
-{
+LimeStrategy disambiguation_get_strategy(const DisambiguationContext *ctx) {
     if (ctx == NULL) return STRAT_PRIORITY;
     return ctx->strategy_type;
 }
 
 const char *disambiguation_strategy_name(LimeStrategy strategy) {
     switch (strategy) {
-    case STRAT_PRIORITY:     return "priority";
-    case STRAT_FORK_RESOLVE: return "fork-resolve";
-    case STRAT_BAYESIAN:     return "bayesian";
-    case STRAT_LLM:          return "llm";
-    case STRAT_CUSTOM:       return "custom";
+    case STRAT_PRIORITY:
+        return "priority";
+    case STRAT_FORK_RESOLVE:
+        return "fork-resolve";
+    case STRAT_BAYESIAN:
+        return "bayesian";
+    case STRAT_LLM:
+        return "llm";
+    case STRAT_CUSTOM:
+        return "custom";
     }
     return "unknown";
 }

@@ -31,7 +31,7 @@
 ** ============================================================ */
 
 typedef struct {
-    char  *buf;
+    char *buf;
     size_t len;
     size_t cap;
 } Buf;
@@ -45,7 +45,8 @@ static void buf_init(Buf *b) {
 static int buf_grow(Buf *b, size_t need) {
     if (b->cap >= need) return 1;
     size_t newcap = b->cap ? b->cap : 32;
-    while (newcap < need) newcap *= 2;
+    while (newcap < need)
+        newcap *= 2;
     char *nb = realloc(b->buf, newcap);
     if (!nb) return 0;
     b->buf = nb;
@@ -94,12 +95,10 @@ static int is_digit(int c) {
     return c >= '0' && c <= '9';
 }
 
-static LimeLexPattern *find_pattern(LimeLexSpec *spec,
-                                    const char *name, size_t name_len) {
+static LimeLexPattern *find_pattern(LimeLexSpec *spec, const char *name, size_t name_len) {
     LimeLexPattern *p = spec->patterns;
     while (p) {
-        if (strlen(p->name) == name_len &&
-            memcmp(p->name, name, name_len) == 0) {
+        if (strlen(p->name) == name_len && memcmp(p->name, name, name_len) == 0) {
             return p;
         }
         p = p->next;
@@ -107,12 +106,10 @@ static LimeLexPattern *find_pattern(LimeLexSpec *spec,
     return NULL;
 }
 
-static void resolver_error(LimeLexSpec *spec, int line,
-                           const char *fmt, ...) {
+static void resolver_error(LimeLexSpec *spec, int line, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    fprintf(stderr, "%s:%d: ",
-            spec->filename ? spec->filename : "<input>", line);
+    fprintf(stderr, "%s:%d: ", spec->filename ? spec->filename : "<input>", line);
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
@@ -124,19 +121,16 @@ static void resolver_error(LimeLexSpec *spec, int line,
 ** ============================================================ */
 
 /* Forward declaration -- expand_pattern recurses through this. */
-static int expand_string(LimeLexSpec *spec, const char *src,
-                         int caller_line, Buf *out);
+static int expand_string(LimeLexSpec *spec, const char *src, int caller_line, Buf *out);
 
 /* Expand a pattern declaration's regex.  Memoizes via
 ** pat->expanded_regex.  Sets _resolve_visit to detect cycles.
 ** Returns 1 on success, 0 on cycle (with diagnostic emitted).
 */
 static int expand_pattern(LimeLexSpec *spec, LimeLexPattern *pat) {
-    if (pat->expanded_regex) return 1;   /* already done */
+    if (pat->expanded_regex) return 1; /* already done */
     if (pat->_resolve_visit == 1) {
-        resolver_error(spec, pat->line,
-                       "pattern '%s' is part of a recursive cycle",
-                       pat->name);
+        resolver_error(spec, pat->line, "pattern '%s' is part of a recursive cycle", pat->name);
         /* Set a safe placeholder so subsequent expansions don't
         ** loop indefinitely on the same cycle. */
         pat->expanded_regex = strdup("");
@@ -164,8 +158,7 @@ static int expand_pattern(LimeLexSpec *spec, LimeLexPattern *pat) {
 ** `{N,M}` (digit first) pass through verbatim.  Returns 1 on
 ** success, 0 on any error (caller's error_count increments via
 ** resolver_error). */
-static int expand_string(LimeLexSpec *spec, const char *src,
-                         int caller_line, Buf *out) {
+static int expand_string(LimeLexSpec *spec, const char *src, int caller_line, Buf *out) {
     if (!src) return 1;
     int ok = 1;
     const char *p = src;
@@ -203,7 +196,8 @@ static int expand_string(LimeLexSpec *spec, const char *src,
             if (is_ident_start(*peek)) {
                 /* Interpolation: scan to closing `}`. */
                 const char *name_start = peek;
-                while (is_ident_cont(*peek)) peek++;
+                while (is_ident_cont(*peek))
+                    peek++;
                 if (*peek != '}') {
                     /* Malformed: `{name<garbage>` -- emit the `{`
                     ** verbatim and continue from the next byte. */
@@ -211,12 +205,10 @@ static int expand_string(LimeLexSpec *spec, const char *src,
                     continue;
                 }
                 size_t name_len = (size_t)(peek - name_start);
-                LimeLexPattern *target =
-                    find_pattern(spec, name_start, name_len);
+                LimeLexPattern *target = find_pattern(spec, name_start, name_len);
                 if (!target) {
-                    resolver_error(spec, caller_line,
-                                   "undefined pattern '%.*s'",
-                                   (int)name_len, name_start);
+                    resolver_error(spec, caller_line, "undefined pattern '%.*s'", (int)name_len,
+                                   name_start);
                     /* Pass through verbatim so subsequent passes
                     ** see something rather than nothing. */
                     buf_append(out, p, (size_t)(peek - p) + 1);
@@ -239,7 +231,8 @@ static int expand_string(LimeLexSpec *spec, const char *src,
                 ** through verbatim up to and including the close
                 ** brace. */
                 const char *close = peek;
-                while (*close && *close != '}') close++;
+                while (*close && *close != '}')
+                    close++;
                 if (*close == '}') {
                     buf_append(out, p, (size_t)(close - p) + 1);
                     p = close + 1;

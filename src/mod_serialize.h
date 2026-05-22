@@ -53,11 +53,7 @@
 ** `error` (optional): on any non-allocation failure (currently only
 ** NULL `mods` with `nmods > 0`), receives a malloc'd error message.
 */
-char *lime_modifications_to_grammar_text(
-    const GrammarModification *mods,
-    uint32_t                   nmods,
-    uint32_t                  *skipped_out,
-    char                     **error
-);
+char *lime_modifications_to_grammar_text(const GrammarModification *mods, uint32_t nmods,
+                                         uint32_t *skipped_out, char **error);
 
 #endif /* LIME_MOD_SERIALIZE_H */

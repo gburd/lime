@@ -69,7 +69,7 @@ void semver_destroy(SemVer *v) {
 static int compare_prerelease(const char *a, const char *b) {
     /* Release (NULL) is greater than any prerelease. */
     if (a == NULL && b == NULL) return 0;
-    if (a == NULL) return 1;   /* a is release, b is prerelease */
+    if (a == NULL) return 1; /* a is release, b is prerelease */
     if (b == NULL) return -1;
 
     /* Compare dot-separated identifiers */
@@ -84,10 +84,12 @@ static int compare_prerelease(const char *a, const char *b) {
             if (va < vb) return -1;
             if (va > vb) return 1;
             /* Skip past digits */
-            while (isdigit((unsigned char)*a)) a++;
-            while (isdigit((unsigned char)*b)) b++;
+            while (isdigit((unsigned char)*a))
+                a++;
+            while (isdigit((unsigned char)*b))
+                b++;
         } else if (a_num) {
-            return -1;  /* Numeric identifiers have lower precedence */
+            return -1; /* Numeric identifiers have lower precedence */
         } else if (b_num) {
             return 1;
         } else {
@@ -106,7 +108,7 @@ static int compare_prerelease(const char *a, const char *b) {
             a++;
             b++;
         } else if (*a == '.') {
-            return 1;  /* a has more identifiers */
+            return 1; /* a has more identifiers */
         } else if (*b == '.') {
             return -1;
         }
@@ -118,12 +120,9 @@ static int compare_prerelease(const char *a, const char *b) {
 }
 
 int semver_compare(const SemVer *a, const SemVer *b) {
-    if (a->major != b->major)
-        return (a->major < b->major) ? -1 : 1;
-    if (a->minor != b->minor)
-        return (a->minor < b->minor) ? -1 : 1;
-    if (a->patch != b->patch)
-        return (a->patch < b->patch) ? -1 : 1;
+    if (a->major != b->major) return (a->major < b->major) ? -1 : 1;
+    if (a->minor != b->minor) return (a->minor < b->minor) ? -1 : 1;
+    if (a->patch != b->patch) return (a->patch < b->patch) ? -1 : 1;
 
     return compare_prerelease(a->prerelease, b->prerelease);
 }
@@ -134,31 +133,34 @@ bool semver_satisfies(const SemVer *ver, const VersionConstraint *constraint) {
     int cmp = semver_compare(ver, &constraint->version);
 
     switch (constraint->op) {
-        case VERSION_OP_EQ:    return cmp == 0;
-        case VERSION_OP_GTE:   return cmp >= 0;
-        case VERSION_OP_LTE:   return cmp <= 0;
-        case VERSION_OP_GT:    return cmp > 0;
-        case VERSION_OP_LT:    return cmp < 0;
+    case VERSION_OP_EQ:
+        return cmp == 0;
+    case VERSION_OP_GTE:
+        return cmp >= 0;
+    case VERSION_OP_LTE:
+        return cmp <= 0;
+    case VERSION_OP_GT:
+        return cmp > 0;
+    case VERSION_OP_LT:
+        return cmp < 0;
 
-        case VERSION_OP_CARET:
-            /* ^1.2.3 means >=1.2.3, <2.0.0  (same major)
+    case VERSION_OP_CARET:
+        /* ^1.2.3 means >=1.2.3, <2.0.0  (same major)
             ** ^0.2.3 means >=0.2.3, <0.3.0  (same major.minor when major==0)
             ** ^0.0.3 means >=0.0.3, <0.0.4  (exact patch when 0.0.x) */
-            if (cmp < 0) return false;
-            if (constraint->version.major != 0) {
-                return ver->major == constraint->version.major;
-            } else if (constraint->version.minor != 0) {
-                return ver->major == 0 && ver->minor == constraint->version.minor;
-            } else {
-                return ver->major == 0 && ver->minor == 0 &&
-                       ver->patch == constraint->version.patch;
-            }
+        if (cmp < 0) return false;
+        if (constraint->version.major != 0) {
+            return ver->major == constraint->version.major;
+        } else if (constraint->version.minor != 0) {
+            return ver->major == 0 && ver->minor == constraint->version.minor;
+        } else {
+            return ver->major == 0 && ver->minor == 0 && ver->patch == constraint->version.patch;
+        }
 
-        case VERSION_OP_TILDE:
-            /* ~1.2.3 means >=1.2.3, <1.3.0  (same major.minor) */
-            if (cmp < 0) return false;
-            return ver->major == constraint->version.major &&
-                   ver->minor == constraint->version.minor;
+    case VERSION_OP_TILDE:
+        /* ~1.2.3 means >=1.2.3, <1.3.0  (same major.minor) */
+        if (cmp < 0) return false;
+        return ver->major == constraint->version.major && ver->minor == constraint->version.minor;
     }
 
     return false;
@@ -222,9 +224,8 @@ void dep_error_destroy(DepError *err) {
     err->module_b = NULL;
 }
 
-static void set_error(DepError *err, DepResolveResult code,
-                      const char *msg,
-                      const char *mod_a, const char *mod_b) {
+static void set_error(DepError *err, DepResolveResult code, const char *msg, const char *mod_a,
+                      const char *mod_b) {
     if (err == NULL) return;
     err->code = code;
     err->message = msg ? strdup(msg) : NULL;
@@ -248,8 +249,7 @@ void dep_graph_destroy(DependencyGraph *g) {
     free(g);
 }
 
-static bool graph_add_edge(DependencyGraph *g, uint32_t from, uint32_t to,
-                           bool optional) {
+static bool graph_add_edge(DependencyGraph *g, uint32_t from, uint32_t to, bool optional) {
     if (g->nedges == g->edge_capacity) {
         uint32_t new_cap = g->edge_capacity ? g->edge_capacity * 2 : 16;
         DepEdge *new_edges = realloc(g->edges, new_cap * sizeof(DepEdge));
@@ -275,19 +275,14 @@ static uint32_t find_module_index(DependencyGraph *g, const char *name) {
 /*  build_dependency_graph                                             */
 /* ------------------------------------------------------------------ */
 
-DepResolveResult build_dependency_graph(
-    ParserModule **modules,
-    uint32_t nmodules,
-    DependencyGraph *graph,
-    DepError *err)
-{
+DepResolveResult build_dependency_graph(ParserModule **modules, uint32_t nmodules,
+                                        DependencyGraph *graph, DepError *err) {
     if (graph == NULL) return DEP_ERR_ALLOC;
 
     /* Store module pointers (borrowed) */
     graph->modules = malloc(nmodules * sizeof(ParserModule *));
     if (nmodules > 0 && graph->modules == NULL) {
-        set_error(err, DEP_ERR_ALLOC, "failed to allocate module array",
-                  NULL, NULL);
+        set_error(err, DEP_ERR_ALLOC, "failed to allocate module array", NULL, NULL);
         return DEP_ERR_ALLOC;
     }
     for (uint32_t i = 0; i < nmodules; i++) {
@@ -300,11 +295,9 @@ DepResolveResult build_dependency_graph(
         for (uint32_t j = i + 1; j < nmodules; j++) {
             if (strcmp(modules[i]->name, modules[j]->name) == 0) {
                 char buf[256];
-                snprintf(buf, sizeof(buf),
-                         "duplicate module name '%s' at indices %u and %u",
+                snprintf(buf, sizeof(buf), "duplicate module name '%s' at indices %u and %u",
                          modules[i]->name, i, j);
-                set_error(err, DEP_ERR_DUPLICATE_MODULE, buf,
-                          modules[i]->name, modules[j]->name);
+                set_error(err, DEP_ERR_DUPLICATE_MODULE, buf, modules[i]->name, modules[j]->name);
                 return DEP_ERR_DUPLICATE_MODULE;
             }
         }
@@ -324,15 +317,13 @@ DepResolveResult build_dependency_graph(
                          "module '%s' requires dependency '%s' which is not "
                          "in the module set",
                          mod->name, dep->module_name);
-                set_error(err, DEP_ERR_MISSING_DEP, buf,
-                          mod->name, dep->module_name);
+                set_error(err, DEP_ERR_MISSING_DEP, buf, mod->name, dep->module_name);
                 return DEP_ERR_MISSING_DEP;
             }
 
             if (!graph_add_edge(graph, i, target, dep->optional)) {
-                set_error(err, DEP_ERR_ALLOC,
-                          "failed to allocate dependency edge",
-                          mod->name, dep->module_name);
+                set_error(err, DEP_ERR_ALLOC, "failed to allocate dependency edge", mod->name,
+                          dep->module_name);
                 return DEP_ERR_ALLOC;
             }
         }
@@ -350,9 +341,8 @@ DepResolveResult build_dependency_graph(
 **   0 = white (unvisited), 1 = grey (in current path), 2 = black (done)
 ** If a cycle is found, builds a human-readable path string.
 */
-static bool dfs_find_cycle(const DependencyGraph *g, uint32_t node,
-                           uint8_t *colour, uint32_t *parent,
-                           uint32_t *cycle_start, uint32_t *cycle_end) {
+static bool dfs_find_cycle(const DependencyGraph *g, uint32_t node, uint8_t *colour,
+                           uint32_t *parent, uint32_t *cycle_start, uint32_t *cycle_end) {
     colour[node] = 1; /* grey */
 
     for (uint32_t e = 0; e < g->nedges; e++) {
@@ -368,8 +358,7 @@ static bool dfs_find_cycle(const DependencyGraph *g, uint32_t node,
         }
         if (colour[next] == 0) {
             parent[next] = node;
-            if (dfs_find_cycle(g, next, colour, parent,
-                               cycle_start, cycle_end)) {
+            if (dfs_find_cycle(g, next, colour, parent, cycle_start, cycle_end)) {
                 return true;
             }
         }
@@ -379,8 +368,7 @@ static bool dfs_find_cycle(const DependencyGraph *g, uint32_t node,
     return false;
 }
 
-static char *build_cycle_path(const DependencyGraph *g,
-                              uint32_t start, uint32_t end,
+static char *build_cycle_path(const DependencyGraph *g, uint32_t start, uint32_t end,
                               const uint32_t *parent) {
     /* Reconstruct cycle: walk from end back through parent to start */
     uint32_t path[256];
@@ -421,8 +409,7 @@ static char *build_cycle_path(const DependencyGraph *g,
     return buf;
 }
 
-bool has_circular_dependencies(const DependencyGraph *graph,
-                               char **cycle_path) {
+bool has_circular_dependencies(const DependencyGraph *graph, char **cycle_path) {
     if (graph == NULL || graph->nmodules == 0) return false;
 
     uint8_t *colour = calloc(graph->nmodules, sizeof(uint8_t));
@@ -439,8 +426,7 @@ bool has_circular_dependencies(const DependencyGraph *graph,
     for (uint32_t i = 0; i < graph->nmodules && !found; i++) {
         if (colour[i] == 0) {
             parent[i] = UINT32_MAX;
-            found = dfs_find_cycle(graph, i, colour, parent,
-                                   &cycle_start, &cycle_end);
+            found = dfs_find_cycle(graph, i, colour, parent, &cycle_start, &cycle_end);
         }
     }
 
@@ -457,15 +443,10 @@ bool has_circular_dependencies(const DependencyGraph *graph,
 /*  resolve_dependencies -- topological sort via Kahn's algorithm      */
 /* ------------------------------------------------------------------ */
 
-DepResolveResult resolve_dependencies(
-    const DependencyGraph *graph,
-    uint32_t **order_out,
-    uint32_t *norder,
-    DepError *err)
-{
+DepResolveResult resolve_dependencies(const DependencyGraph *graph, uint32_t **order_out,
+                                      uint32_t *norder, DepError *err) {
     if (graph == NULL || order_out == NULL || norder == NULL) {
-        set_error(err, DEP_ERR_ALLOC, "NULL argument to resolve_dependencies",
-                  NULL, NULL);
+        set_error(err, DEP_ERR_ALLOC, "NULL argument to resolve_dependencies", NULL, NULL);
         return DEP_ERR_ALLOC;
     }
 
@@ -484,8 +465,7 @@ DepResolveResult resolve_dependencies(
         free(in_degree);
         free(queue);
         free(result);
-        set_error(err, DEP_ERR_ALLOC, "allocation failure in topological sort",
-                  NULL, NULL);
+        set_error(err, DEP_ERR_ALLOC, "allocation failure in topological sort", NULL, NULL);
         return DEP_ERR_ALLOC;
     }
 
@@ -552,8 +532,7 @@ DepResolveResult resolve_dependencies(
         has_circular_dependencies(graph, &cycle);
         char buf[512];
         if (cycle != NULL) {
-            snprintf(buf, sizeof(buf), "circular dependency detected: %s",
-                     cycle);
+            snprintf(buf, sizeof(buf), "circular dependency detected: %s", cycle);
             free(cycle);
         } else {
             snprintf(buf, sizeof(buf), "circular dependency detected");
@@ -571,10 +550,7 @@ DepResolveResult resolve_dependencies(
 /*  validate_versions                                                  */
 /* ------------------------------------------------------------------ */
 
-DepResolveResult validate_versions(
-    const DependencyGraph *graph,
-    DepError *err)
-{
+DepResolveResult validate_versions(const DependencyGraph *graph, DepError *err) {
     if (graph == NULL) return DEP_OK;
 
     for (uint32_t e = 0; e < graph->nedges; e++) {
@@ -591,33 +567,42 @@ DepResolveResult validate_versions(
             for (uint32_t c = 0; c < dep->nconstraints; c++) {
                 if (!semver_satisfies(&to->version, &dep->constraints[c])) {
                     char ver_buf[64];
-                    snprintf(ver_buf, sizeof(ver_buf), "%u.%u.%u",
-                             to->version.major, to->version.minor,
-                             to->version.patch);
+                    snprintf(ver_buf, sizeof(ver_buf), "%u.%u.%u", to->version.major,
+                             to->version.minor, to->version.patch);
 
                     char constraint_buf[64];
                     const char *op_str = "==";
                     switch (dep->constraints[c].op) {
-                        case VERSION_OP_EQ:    op_str = "=="; break;
-                        case VERSION_OP_GTE:   op_str = ">="; break;
-                        case VERSION_OP_LTE:   op_str = "<="; break;
-                        case VERSION_OP_GT:    op_str = ">";  break;
-                        case VERSION_OP_LT:    op_str = "<";  break;
-                        case VERSION_OP_CARET: op_str = "^";  break;
-                        case VERSION_OP_TILDE: op_str = "~";  break;
+                    case VERSION_OP_EQ:
+                        op_str = "==";
+                        break;
+                    case VERSION_OP_GTE:
+                        op_str = ">=";
+                        break;
+                    case VERSION_OP_LTE:
+                        op_str = "<=";
+                        break;
+                    case VERSION_OP_GT:
+                        op_str = ">";
+                        break;
+                    case VERSION_OP_LT:
+                        op_str = "<";
+                        break;
+                    case VERSION_OP_CARET:
+                        op_str = "^";
+                        break;
+                    case VERSION_OP_TILDE:
+                        op_str = "~";
+                        break;
                     }
-                    snprintf(constraint_buf, sizeof(constraint_buf),
-                             "%s%u.%u.%u", op_str,
-                             dep->constraints[c].version.major,
-                             dep->constraints[c].version.minor,
+                    snprintf(constraint_buf, sizeof(constraint_buf), "%s%u.%u.%u", op_str,
+                             dep->constraints[c].version.major, dep->constraints[c].version.minor,
                              dep->constraints[c].version.patch);
 
                     char buf[512];
-                    snprintf(buf, sizeof(buf),
-                             "module '%s' requires '%s' %s but found version %s",
+                    snprintf(buf, sizeof(buf), "module '%s' requires '%s' %s but found version %s",
                              from->name, to->name, constraint_buf, ver_buf);
-                    set_error(err, DEP_ERR_VERSION_MISMATCH, buf,
-                              from->name, to->name);
+                    set_error(err, DEP_ERR_VERSION_MISMATCH, buf, from->name, to->name);
                     return DEP_ERR_VERSION_MISMATCH;
                 }
             }
@@ -631,12 +616,8 @@ DepResolveResult validate_versions(
 /*  validate_composition                                               */
 /* ------------------------------------------------------------------ */
 
-DepResolveResult validate_composition(
-    const DependencyGraph *graph,
-    const uint32_t *order,
-    uint32_t norder,
-    DepError *err)
-{
+DepResolveResult validate_composition(const DependencyGraph *graph, const uint32_t *order,
+                                      uint32_t norder, DepError *err) {
     if (graph == NULL || norder == 0) return DEP_OK;
 
     /*
@@ -657,8 +638,7 @@ DepResolveResult validate_composition(
     uint32_t export_count = 0;
     ExportEntry *exports = malloc(export_cap * sizeof(ExportEntry));
     if (exports == NULL) {
-        set_error(err, DEP_ERR_ALLOC, "allocation failure in validate_composition",
-                  NULL, NULL);
+        set_error(err, DEP_ERR_ALLOC, "allocation failure in validate_composition", NULL, NULL);
         return DEP_ERR_ALLOC;
     }
 
@@ -676,8 +656,7 @@ DepResolveResult validate_composition(
                     /* Verify the provider is actually a dependency */
                     uint32_t prov = exports[ex].provider_index;
                     for (uint32_t e = 0; e < graph->nedges; e++) {
-                        if (graph->edges[e].from_index == idx &&
-                            graph->edges[e].to_index == prov) {
+                        if (graph->edges[e].from_index == idx && graph->edges[e].to_index == prov) {
                             found = true;
                             break;
                         }
@@ -703,8 +682,7 @@ DepResolveResult validate_composition(
                          "module '%s' imports symbol '%s' which is not "
                          "exported by any of its dependencies",
                          mod->name, mod->imports[imp]);
-                set_error(err, DEP_ERR_SYMBOL_MISSING, buf,
-                          mod->name, NULL);
+                set_error(err, DEP_ERR_SYMBOL_MISSING, buf, mod->name, NULL);
                 free(exports);
                 return DEP_ERR_SYMBOL_MISSING;
             }
@@ -714,13 +692,11 @@ DepResolveResult validate_composition(
         for (uint32_t ex = 0; ex < mod->nexports; ex++) {
             if (export_count == export_cap) {
                 export_cap *= 2;
-                ExportEntry *new_exp = realloc(exports,
-                    export_cap * sizeof(ExportEntry));
+                ExportEntry *new_exp = realloc(exports, export_cap * sizeof(ExportEntry));
                 if (new_exp == NULL) {
                     free(exports);
-                    set_error(err, DEP_ERR_ALLOC,
-                              "allocation failure growing export table",
-                              NULL, NULL);
+                    set_error(err, DEP_ERR_ALLOC, "allocation failure growing export table", NULL,
+                              NULL);
                     return DEP_ERR_ALLOC;
                 }
                 exports = new_exp;

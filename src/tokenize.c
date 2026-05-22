@@ -19,18 +19,18 @@
 ** ====================================================================== */
 
 struct Tokenizer {
-    const char *input;       /* Full input buffer */
-    size_t length;           /* Length of input */
-    size_t pos;              /* Current byte offset */
-    uint32_t line;           /* Current line (1-based) */
-    uint32_t column;         /* Current column (1-based) */
-    TokenTable *table;       /* Keyword table (may be NULL) */
-    ClassifyFunc classify;   /* SIMD or scalar classifier */
-    bool has_peeked;         /* True if a peeked token is buffered */
-    Token peeked;            /* Buffered peek token */
-    size_t peek_pos;         /* Position after peeked token */
-    uint32_t peek_line;      /* Line after peeked token */
-    uint32_t peek_column;    /* Column after peeked token */
+    const char *input;     /* Full input buffer */
+    size_t length;         /* Length of input */
+    size_t pos;            /* Current byte offset */
+    uint32_t line;         /* Current line (1-based) */
+    uint32_t column;       /* Current column (1-based) */
+    TokenTable *table;     /* Keyword table (may be NULL) */
+    ClassifyFunc classify; /* SIMD or scalar classifier */
+    bool has_peeked;       /* True if a peeked token is buffered */
+    Token peeked;          /* Buffered peek token */
+    size_t peek_pos;       /* Position after peeked token */
+    uint32_t peek_line;    /* Line after peeked token */
+    uint32_t peek_column;  /* Column after peeked token */
 };
 
 /* ======================================================================
@@ -39,17 +39,12 @@ struct Tokenizer {
 
 /* Return true if c is an ASCII identifier start character. */
 static inline bool is_id_start_ascii(unsigned char c) {
-    return (c >= 'A' && c <= 'Z') ||
-           (c >= 'a' && c <= 'z') ||
-           c == '_';
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
 }
 
 /* Return true if c is an ASCII identifier continuation character. */
 static inline bool is_id_char_ascii(unsigned char c) {
-    return (c >= 'A' && c <= 'Z') ||
-           (c >= 'a' && c <= 'z') ||
-           (c >= '0' && c <= '9') ||
-           c == '_';
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
 }
 
 /*
@@ -107,9 +102,7 @@ static inline bool is_digit(unsigned char c) {
 
 /* Return true if c is a hex digit. */
 static inline bool is_hex(unsigned char c) {
-    return (c >= '0' && c <= '9') ||
-           (c >= 'a' && c <= 'f') ||
-           (c >= 'A' && c <= 'F');
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
 /* Count trailing zeros in a 32-bit mask. */
@@ -119,11 +112,25 @@ static inline int ctz32(uint32_t x) {
     return __builtin_ctz(x);
 #else
     int n = 0;
-    if ((x & 0x0000FFFF) == 0) { n += 16; x >>= 16; }
-    if ((x & 0x000000FF) == 0) { n += 8;  x >>= 8;  }
-    if ((x & 0x0000000F) == 0) { n += 4;  x >>= 4;  }
-    if ((x & 0x00000003) == 0) { n += 2;  x >>= 2;  }
-    if ((x & 0x00000001) == 0) { n += 1; }
+    if ((x & 0x0000FFFF) == 0) {
+        n += 16;
+        x >>= 16;
+    }
+    if ((x & 0x000000FF) == 0) {
+        n += 8;
+        x >>= 8;
+    }
+    if ((x & 0x0000000F) == 0) {
+        n += 4;
+        x >>= 4;
+    }
+    if ((x & 0x00000003) == 0) {
+        n += 2;
+        x >>= 2;
+    }
+    if ((x & 0x00000001) == 0) {
+        n += 1;
+    }
     return n;
 #endif
 }
@@ -157,26 +164,22 @@ static void skip_whitespace(Tokenizer *tok) {
         /* Fast path: if current char is not whitespace, return immediately */
         if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
             /* Check for SQL comments */
-            if (c == '-' && tok->pos + 1 < tok->length &&
-                tok->input[tok->pos + 1] == '-') {
+            if (c == '-' && tok->pos + 1 < tok->length && tok->input[tok->pos + 1] == '-') {
                 /* Single-line comment: skip to end of line */
                 tok->pos += 2;
                 tok->column += 2;
-                while (tok->pos < tok->length &&
-                       tok->input[tok->pos] != '\n') {
+                while (tok->pos < tok->length && tok->input[tok->pos] != '\n') {
                     tok->pos++;
                     tok->column++;
                 }
                 continue;
             }
-            if (c == '/' && tok->pos + 1 < tok->length &&
-                tok->input[tok->pos + 1] == '*') {
+            if (c == '/' && tok->pos + 1 < tok->length && tok->input[tok->pos + 1] == '*') {
                 /* C-style block comment: skip to closing */
                 tok->pos += 2;
                 tok->column += 2;
                 while (tok->pos + 1 < tok->length) {
-                    if (tok->input[tok->pos] == '*' &&
-                        tok->input[tok->pos + 1] == '/') {
+                    if (tok->input[tok->pos] == '*' && tok->input[tok->pos + 1] == '/') {
                         tok->pos += 2;
                         tok->column += 2;
                         break;
@@ -337,12 +340,10 @@ static int scan_number(Tokenizer *tok) {
     int type = TK_INTEGER;
 
     /* Check for hex: 0x... */
-    if (tok->input[tok->pos] == '0' &&
-        tok->pos + 1 < tok->length &&
+    if (tok->input[tok->pos] == '0' && tok->pos + 1 < tok->length &&
         (tok->input[tok->pos + 1] == 'x' || tok->input[tok->pos + 1] == 'X')) {
         advance_n(tok, 2);
-        while (tok->pos < tok->length &&
-               is_hex((unsigned char)tok->input[tok->pos])) {
+        while (tok->pos < tok->length && is_hex((unsigned char)tok->input[tok->pos])) {
             tok->pos++;
             tok->column++;
         }
@@ -365,8 +366,7 @@ static int scan_number(Tokenizer *tok) {
     }
 
     /* Scalar tail for digits */
-    while (tok->pos < tok->length &&
-           is_digit((unsigned char)tok->input[tok->pos])) {
+    while (tok->pos < tok->length && is_digit((unsigned char)tok->input[tok->pos])) {
         tok->pos++;
         tok->column++;
     }
@@ -378,16 +378,14 @@ static int scan_number(Tokenizer *tok) {
         tok->column++;
 
         /* Fractional digits */
-        while (tok->pos < tok->length &&
-               is_digit((unsigned char)tok->input[tok->pos])) {
+        while (tok->pos < tok->length && is_digit((unsigned char)tok->input[tok->pos])) {
             tok->pos++;
             tok->column++;
         }
     }
 
     /* Exponent */
-    if (tok->pos < tok->length &&
-        (tok->input[tok->pos] == 'e' || tok->input[tok->pos] == 'E')) {
+    if (tok->pos < tok->length && (tok->input[tok->pos] == 'e' || tok->input[tok->pos] == 'E')) {
         type = TK_FLOAT;
         tok->pos++;
         tok->column++;
@@ -396,8 +394,7 @@ static int scan_number(Tokenizer *tok) {
             tok->pos++;
             tok->column++;
         }
-        while (tok->pos < tok->length &&
-               is_digit((unsigned char)tok->input[tok->pos])) {
+        while (tok->pos < tok->length && is_digit((unsigned char)tok->input[tok->pos])) {
             tok->pos++;
             tok->column++;
         }
@@ -524,12 +521,9 @@ check_uescape:
         /* Check for "UESCAPE" keyword (case-insensitive) */
         if (tok->pos + 7 <= tok->length) {
             const char *kw = tok->input + tok->pos;
-            if ((kw[0] == 'U' || kw[0] == 'u') &&
-                (kw[1] == 'E' || kw[1] == 'e') &&
-                (kw[2] == 'S' || kw[2] == 's') &&
-                (kw[3] == 'C' || kw[3] == 'c') &&
-                (kw[4] == 'A' || kw[4] == 'a') &&
-                (kw[5] == 'P' || kw[5] == 'p') &&
+            if ((kw[0] == 'U' || kw[0] == 'u') && (kw[1] == 'E' || kw[1] == 'e') &&
+                (kw[2] == 'S' || kw[2] == 's') && (kw[3] == 'C' || kw[3] == 'c') &&
+                (kw[4] == 'A' || kw[4] == 'a') && (kw[5] == 'P' || kw[5] == 'p') &&
                 (kw[6] == 'E' || kw[6] == 'e') &&
                 /* UESCAPE must not be followed by an identifier char */
                 (tok->pos + 7 >= tok->length ||
@@ -554,8 +548,7 @@ check_uescape:
                 }
 
                 /* Expect single-quoted single character: 'c' */
-                if (tok->pos + 3 <= tok->length &&
-                    tok->input[tok->pos] == '\'' &&
+                if (tok->pos + 3 <= tok->length && tok->input[tok->pos] == '\'' &&
                     tok->input[tok->pos + 2] == '\'') {
                     advance_n(tok, 3);
                 }
@@ -656,8 +649,7 @@ static bool extract_token(Tokenizer *tok, Token *out) {
     unsigned char c = (unsigned char)tok->input[tok->pos];
 
     /* Unicode escape string: U&'...' -- must check before identifier */
-    if ((c == 'U' || c == 'u') && tok->pos + 2 < tok->length &&
-        tok->input[tok->pos + 1] == '&' &&
+    if ((c == 'U' || c == 'u') && tok->pos + 2 < tok->length && tok->input[tok->pos + 1] == '&' &&
         tok->input[tok->pos + 2] == '\'') {
         tok->pos += 2;
         tok->column += 2;
@@ -671,8 +663,7 @@ static bool extract_token(Tokenizer *tok, Token *out) {
     }
 
     /* Blob literal: X'...' or x'...' -- must check before identifier */
-    if ((c == 'X' || c == 'x') && tok->pos + 1 < tok->length &&
-        tok->input[tok->pos + 1] == '\'') {
+    if ((c == 'X' || c == 'x') && tok->pos + 1 < tok->length && tok->input[tok->pos + 1] == '\'') {
         tok->pos++;
         tok->column++;
         scan_blob(tok);
@@ -921,8 +912,7 @@ static bool extract_token(Tokenizer *tok, Token *out) {
             ** ILLEGAL tokens for each continuation byte. */
             int byte_len = utf8_char_length(c);
             if (byte_len == 0) byte_len = 1;
-            if (tok->pos + (size_t)byte_len > tok->length)
-                byte_len = (int)(tok->length - tok->pos);
+            if (tok->pos + (size_t)byte_len > tok->length) byte_len = (int)(tok->length - tok->pos);
             tok->pos += (size_t)byte_len;
             tok->column++;
             out->length = (size_t)byte_len;

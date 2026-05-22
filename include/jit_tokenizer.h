@@ -31,9 +31,9 @@ typedef struct TokenTable TokenTable;
  * @brief JIT compilation statistics for the tokenizer/keyword trie.
  */
 typedef struct JITTokenizerStats {
-    uint32_t keywords_compiled;  /**< Number of keywords in the compiled trie */
-    uint64_t compile_time_ns;    /**< Wall-clock nanoseconds to compile */
-    uint64_t code_size_bytes;    /**< Approximate generated code size in bytes */
+    uint32_t keywords_compiled; /**< Number of keywords in the compiled trie */
+    uint64_t compile_time_ns;   /**< Wall-clock nanoseconds to compile */
+    uint64_t code_size_bytes;   /**< Approximate generated code size in bytes */
 } JITTokenizerStats;
 
 /* ------------------------------------------------------------------ */
@@ -81,8 +81,7 @@ void jit_tokenizer_destroy(JITTokenizer *tok);
 **   input - Pointer to the keyword string (not necessarily NUL-terminated)
 **   len   - Length of the input string in bytes
 */
-int jit_tokenizer_classify_keyword(const JITTokenizer *tok,
-                                   const char *input, size_t len);
+int jit_tokenizer_classify_keyword(const JITTokenizer *tok, const char *input, size_t len);
 
 /*
 ** Get compilation statistics for the tokenizer.

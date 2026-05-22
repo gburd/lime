@@ -24,14 +24,14 @@
 
 JITPolicyConfig jit_policy_default_config(void) {
     JITPolicyConfig cfg;
-    cfg.min_parse_count           = 200;
-    cfg.min_total_parse_time_ns   = 10000000;  /* 10 ms */
+    cfg.min_parse_count = 200;
+    cfg.min_total_parse_time_ns = 10000000; /* 10 ms */
     cfg.min_avg_lookups_per_parse = 100;
-    cfg.background_compile        = true;
-    cfg.min_grammar_states        = 500;
-    cfg.min_avg_tokens_per_parse  = 200;
-    cfg.enabled                   = true;
-    cfg.tokenizer_jit_enabled     = true;
+    cfg.background_compile = true;
+    cfg.min_grammar_states = 500;
+    cfg.min_avg_tokens_per_parse = 200;
+    cfg.enabled = true;
+    cfg.tokenizer_jit_enabled = true;
     return cfg;
 }
 
@@ -49,21 +49,16 @@ void jit_metrics_init(JITMetrics *m) {
     atomic_init(&m->jit_in_progress, 0);
 }
 
-void jit_metrics_record_parse(JITMetrics *m,
-                              uint64_t parse_time_ns,
-                              uint64_t action_lookups) {
+void jit_metrics_record_parse(JITMetrics *m, uint64_t parse_time_ns, uint64_t action_lookups) {
     if (m == NULL) return;
     atomic_fetch_add_explicit(&m->parse_count, 1, memory_order_relaxed);
-    atomic_fetch_add_explicit(&m->total_parse_time_ns, parse_time_ns,
-                              memory_order_relaxed);
-    atomic_fetch_add_explicit(&m->action_lookup_count, action_lookups,
-                              memory_order_relaxed);
+    atomic_fetch_add_explicit(&m->total_parse_time_ns, parse_time_ns, memory_order_relaxed);
+    atomic_fetch_add_explicit(&m->action_lookup_count, action_lookups, memory_order_relaxed);
 }
 
 void jit_metrics_record_tokens(JITMetrics *m, uint64_t token_count) {
     if (m == NULL) return;
-    atomic_fetch_add_explicit(&m->total_tokens_parsed, token_count,
-                              memory_order_relaxed);
+    atomic_fetch_add_explicit(&m->total_tokens_parsed, token_count, memory_order_relaxed);
 }
 
 /* ------------------------------------------------------------------ */
@@ -84,10 +79,8 @@ bool jit_should_compile(const JITMetrics *m, const JITPolicyConfig *config) {
     if (!jit_is_available()) return false;
 
     uint64_t parses = atomic_load_explicit(&m->parse_count, memory_order_relaxed);
-    uint64_t total_time = atomic_load_explicit(&m->total_parse_time_ns,
-                                               memory_order_relaxed);
-    uint64_t lookups = atomic_load_explicit(&m->action_lookup_count,
-                                            memory_order_relaxed);
+    uint64_t total_time = atomic_load_explicit(&m->total_parse_time_ns, memory_order_relaxed);
+    uint64_t lookups = atomic_load_explicit(&m->action_lookup_count, memory_order_relaxed);
 
     if (parses < config->min_parse_count) return false;
     if (total_time < config->min_total_parse_time_ns) return false;
@@ -97,8 +90,7 @@ bool jit_should_compile(const JITMetrics *m, const JITPolicyConfig *config) {
     if (avg_lookups < config->min_avg_lookups_per_parse) return false;
 
     /* Average tokens per parse session */
-    uint64_t total_tokens = atomic_load_explicit(&m->total_tokens_parsed,
-                                                 memory_order_relaxed);
+    uint64_t total_tokens = atomic_load_explicit(&m->total_tokens_parsed, memory_order_relaxed);
     uint64_t avg_tokens = total_tokens / (parses > 0 ? parses : 1);
     if (avg_tokens < config->min_avg_tokens_per_parse) return false;
 
@@ -167,9 +159,7 @@ static int jit_compile_sync(ParserSnapshot *snap, JITMetrics *metrics) {
 /*  Public API                                                         */
 /* ------------------------------------------------------------------ */
 
-int jit_maybe_compile(ParserSnapshot *snap,
-                      JITMetrics *m,
-                      const JITPolicyConfig *config) {
+int jit_maybe_compile(ParserSnapshot *snap, JITMetrics *m, const JITPolicyConfig *config) {
     if (snap == NULL || m == NULL || config == NULL) return -1;
 
     /* Check if compilation is warranted */
@@ -181,9 +171,8 @@ int jit_maybe_compile(ParserSnapshot *snap,
 
     /* Try to claim the in_progress flag (CAS prevents double-compile) */
     int expected = 0;
-    if (!atomic_compare_exchange_strong_explicit(
-            &m->jit_in_progress, &expected, 1,
-            memory_order_acq_rel, memory_order_relaxed)) {
+    if (!atomic_compare_exchange_strong_explicit(&m->jit_in_progress, &expected, 1,
+                                                 memory_order_acq_rel, memory_order_relaxed)) {
         /* Another thread is already compiling */
         return 0;
     }

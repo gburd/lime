@@ -34,10 +34,7 @@ extern "C" {
 /*  Merkle node                                                        */
 /* ------------------------------------------------------------------ */
 
-typedef enum {
-    MERKLE_NODE_LEAF,
-    MERKLE_NODE_INTERNAL
-} MerkleNodeType;
+typedef enum { MERKLE_NODE_LEAF, MERKLE_NODE_INTERNAL } MerkleNodeType;
 
 typedef struct MerkleNode {
     MerkleNodeType type;
@@ -83,8 +80,7 @@ void merkle_sha256(const void *data, size_t len, uint8_t out[MERKLE_HASH_SIZE]);
 ** *label* is deep-copied into the node.  Returns NULL on allocation
 ** failure.
 */
-MerkleNode *merkle_create_leaf(const void *data, size_t len,
-                               const char *label);
+MerkleNode *merkle_create_leaf(const void *data, size_t len, const char *label);
 
 /*
 ** Create an internal node whose hash is computed from the concatenation
@@ -92,8 +88,7 @@ MerkleNode *merkle_create_leaf(const void *data, size_t len,
 ** shallow-copied; ownership of each child node transfers to this node.
 ** An optional *label* is deep-copied.  Returns NULL on failure.
 */
-MerkleNode *merkle_create_internal(MerkleNode **children, uint32_t nchildren,
-                                   const char *label);
+MerkleNode *merkle_create_internal(MerkleNode **children, uint32_t nchildren, const char *label);
 
 /* ------------------------------------------------------------------ */
 /*  Hash computation                                                    */
@@ -118,8 +113,7 @@ void merkle_compute_hash(MerkleNode *node);
 ** The caller still owns the leaf node pointers; they become children
 ** of the returned tree and are freed when the tree is freed.
 */
-MerkleTree *merkle_build_tree(MerkleNode **leaves, uint32_t nleaves,
-                              const char *root_label);
+MerkleTree *merkle_build_tree(MerkleNode **leaves, uint32_t nleaves, const char *root_label);
 
 /* ------------------------------------------------------------------ */
 /*  Verification and comparison                                         */

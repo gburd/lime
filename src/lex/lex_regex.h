@@ -30,41 +30,41 @@
 /* AST node kinds.  Stable for the lifetime of the project; tests
 ** assert on specific values. */
 typedef enum {
-    LIME_RE_LITERAL = 1,    /* a single byte (literal char) */
-    LIME_RE_CHAR_CLASS,     /* [abc-z] character class (256-bit bitmap) */
-    LIME_RE_ANY,            /* . wildcard (any byte except '\n') */
-    LIME_RE_CONCAT,         /* ab (left then right) */
-    LIME_RE_ALT,            /* a|b (left or right) */
-    LIME_RE_STAR,           /* a* */
-    LIME_RE_PLUS,           /* a+ */
-    LIME_RE_QUESTION,       /* a? */
-    LIME_RE_REPEAT,         /* a{n,m} */
-    LIME_RE_ANCHOR_START,   /* ^ -- begin of input */
-    LIME_RE_ANCHOR_END,     /* $ -- end of input */
-    LIME_RE_EMPTY           /* (empty regex) */
+    LIME_RE_LITERAL = 1,  /* a single byte (literal char) */
+    LIME_RE_CHAR_CLASS,   /* [abc-z] character class (256-bit bitmap) */
+    LIME_RE_ANY,          /* . wildcard (any byte except '\n') */
+    LIME_RE_CONCAT,       /* ab (left then right) */
+    LIME_RE_ALT,          /* a|b (left or right) */
+    LIME_RE_STAR,         /* a* */
+    LIME_RE_PLUS,         /* a+ */
+    LIME_RE_QUESTION,     /* a? */
+    LIME_RE_REPEAT,       /* a{n,m} */
+    LIME_RE_ANCHOR_START, /* ^ -- begin of input */
+    LIME_RE_ANCHOR_END,   /* $ -- end of input */
+    LIME_RE_EMPTY         /* (empty regex) */
 } LimeReKind;
 
 typedef struct LimeReNode LimeReNode;
 struct LimeReNode {
     LimeReKind kind;
     union {
-        unsigned char literal;             /* LITERAL */
-        struct {                           /* CHAR_CLASS */
-            unsigned char bits[32];        /* 256-bit bitmap; bit i set
+        unsigned char literal;      /* LITERAL */
+        struct {                    /* CHAR_CLASS */
+            unsigned char bits[32]; /* 256-bit bitmap; bit i set
                                             ** = byte i is in the class */
-            int           negate;          /* if true, bitmap is complemented */
+            int negate;             /* if true, bitmap is complemented */
         } char_class;
-        struct {                           /* CONCAT, ALT */
+        struct { /* CONCAT, ALT */
             LimeReNode *left;
             LimeReNode *right;
         } binary;
-        struct {                           /* STAR, PLUS, QUESTION */
+        struct { /* STAR, PLUS, QUESTION */
             LimeReNode *child;
         } unary;
-        struct {                           /* REPEAT */
+        struct { /* REPEAT */
             LimeReNode *child;
             int min;
-            int max;                       /* -1 means unbounded */
+            int max; /* -1 means unbounded */
         } repeat;
     } u;
 };
@@ -90,6 +90,6 @@ void lime_lex_regex_class_set(unsigned char *bits, unsigned char byte);
 
 /* Test whether bit `byte` is set in a 256-bit bitmap.  Helper for
 ** tests. */
-int  lime_lex_regex_class_has(const unsigned char *bits, unsigned char byte);
+int lime_lex_regex_class_has(const unsigned char *bits, unsigned char byte);
 
 #endif /* LIME_LEX_REGEX_H */

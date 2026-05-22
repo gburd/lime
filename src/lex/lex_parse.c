@@ -27,17 +27,16 @@
 
 typedef struct {
     LimeLexTokenizer *tok;
-    LimeLexSpec      *spec;
-    LimeLexToken      cur;          /* current lookahead */
-    int               had_cur;      /* 0 until first pull */
-    const char       *filename;
+    LimeLexSpec *spec;
+    LimeLexToken cur; /* current lookahead */
+    int had_cur;      /* 0 until first pull */
+    const char *filename;
 } Parser;
 
-static void parser_init(Parser *p, LimeLexTokenizer *t,
-                        LimeLexSpec *spec, const char *filename) {
-    p->tok      = t;
-    p->spec     = spec;
-    p->had_cur  = 0;
+static void parser_init(Parser *p, LimeLexTokenizer *t, LimeLexSpec *spec, const char *filename) {
+    p->tok = t;
+    p->spec = spec;
+    p->had_cur = 0;
     p->filename = filename;
     memset(&p->cur, 0, sizeof(p->cur));
 }
@@ -78,14 +77,16 @@ static int at(Parser *p, LimeLexTokKind k) {
 }
 
 static int consume(Parser *p, LimeLexTokKind k) {
-    if (at(p, k)) { pull(p); return 1; }
+    if (at(p, k)) {
+        pull(p);
+        return 1;
+    }
     return 0;
 }
 
 static int expect(Parser *p, LimeLexTokKind k, const char *what) {
     if (consume(p, k)) return 1;
-    error_here(p, "expected %s, got %s",
-               what, lime_lex_tok_kind_name(p->cur.kind));
+    error_here(p, "expected %s, got %s", what, lime_lex_tok_kind_name(p->cur.kind));
     return 0;
 }
 
@@ -96,8 +97,7 @@ static int expect(Parser *p, LimeLexTokKind k, const char *what) {
 static void synchronise(Parser *p) {
     while (!at(p, LIME_LEX_TOK_EOF)) {
         LimeLexTokKind k = p->cur.kind;
-        if (k >= LIME_LEX_TOK_DIR_NAME_PREFIX &&
-            k <= LIME_LEX_TOK_DIR_UNKNOWN) return;
+        if (k >= LIME_LEX_TOK_DIR_NAME_PREFIX && k <= LIME_LEX_TOK_DIR_UNKNOWN) return;
         if (k == LIME_LEX_TOK_LANGLE) return;
         if (k == LIME_LEX_TOK_KW_RULE) return;
         pull(p);
@@ -119,23 +119,39 @@ static char *strndup_lexeme(const LimeLexToken *t) {
 ** freshly malloc'd string. */
 static char *unquote_string(const LimeLexToken *t) {
     if (t->length < 2) return strndup_lexeme(t);
-    char *out = malloc(t->length);   /* result <= input length minus 2 quotes */
+    char *out = malloc(t->length); /* result <= input length minus 2 quotes */
     if (!out) return NULL;
     char *o = out;
-    const char *p = t->lexeme + 1;            /* skip opening " */
+    const char *p = t->lexeme + 1;               /* skip opening " */
     const char *end = t->lexeme + t->length - 1; /* skip closing " */
     while (p < end) {
         if (*p == '\\' && p + 1 < end) {
             p++;
             switch (*p) {
-                case 'n':  *o++ = '\n'; break;
-                case 't':  *o++ = '\t'; break;
-                case 'r':  *o++ = '\r'; break;
-                case '\\': *o++ = '\\'; break;
-                case '"':  *o++ = '"';  break;
-                case '\'': *o++ = '\''; break;
-                case '0':  *o++ = '\0'; break;
-                default:   *o++ = *p;   break;   /* unknown escape: pass through */
+            case 'n':
+                *o++ = '\n';
+                break;
+            case 't':
+                *o++ = '\t';
+                break;
+            case 'r':
+                *o++ = '\r';
+                break;
+            case '\\':
+                *o++ = '\\';
+                break;
+            case '"':
+                *o++ = '"';
+                break;
+            case '\'':
+                *o++ = '\'';
+                break;
+            case '0':
+                *o++ = '\0';
+                break;
+            default:
+                *o++ = *p;
+                break; /* unknown escape: pass through */
             }
             p++;
         } else {
@@ -193,12 +209,9 @@ static char *unwrap_code_block(const LimeLexToken *t) {
 ** ruleset).  Returns a fresh tokenizer; caller frees.
 ** ============================================================ */
 
-static LimeLexTokenizer *open_inner(const LimeLexToken *block,
-                                    const char *filename) {
+static LimeLexTokenizer *open_inner(const LimeLexToken *block, const char *filename) {
     if (block->length < 2) return NULL;
-    return lime_lex_tokenize_init(filename,
-                                  block->lexeme + 1,
-                                  block->length - 2);
+    return lime_lex_tokenize_init(filename, block->lexeme + 1, block->length - 2);
 }
 
 /* ============================================================
@@ -207,9 +220,8 @@ static LimeLexTokenizer *open_inner(const LimeLexToken *block,
 
 /* %name_prefix IDENT.   /   %name_prefix STRING.
 ** %token_prefix IDENT.  /   %token_prefix STRING. */
-static void parse_string_or_ident_directive(Parser *p, char **slot,
-                                            const char *what) {
-    pull(p);   /* eat the directive token */
+static void parse_string_or_ident_directive(Parser *p, char **slot, const char *what) {
+    pull(p); /* eat the directive token */
     char *value = NULL;
     if (at(p, LIME_LEX_TOK_IDENT)) {
         value = strndup_lexeme(&p->cur);
@@ -233,10 +245,9 @@ static void parse_string_or_ident_directive(Parser *p, char **slot,
 
 /* %token_type {C type}      /  %location_type {C type}
 ** %lexer_extra_argument {C type *name}  /  %include {C code} */
-static void parse_code_block_directive(Parser *p, char **slot,
-                                       const char *what,
+static void parse_code_block_directive(Parser *p, char **slot, const char *what,
                                        int needs_terminator) {
-    pull(p);   /* eat the directive token */
+    pull(p); /* eat the directive token */
     if (!at(p, LIME_LEX_TOK_CODE_BLOCK)) {
         error_here(p, "expected '{...}' after %s", what);
         synchronise(p);
@@ -248,7 +259,7 @@ static void parse_code_block_directive(Parser *p, char **slot,
         expect(p, LIME_LEX_TOK_DOT, "'.' to terminate directive");
     }
     if (*slot) {
-        if (what[1] == 'i') {  /* %include: append rather than replace */
+        if (what[1] == 'i') { /* %include: append rather than replace */
             size_t a = strlen(*slot);
             size_t b = strlen(body);
             char *combined = malloc(a + b + 2);
@@ -275,7 +286,7 @@ static void parse_code_block_directive(Parser *p, char **slot,
 /* %pattern IDENT REGEX. */
 static void parse_pattern(Parser *p) {
     int line = p->cur.line;
-    pull(p);   /* eat %pattern */
+    pull(p); /* eat %pattern */
     if (!at(p, LIME_LEX_TOK_IDENT)) {
         error_here(p, "expected pattern name after %%pattern");
         synchronise(p);
@@ -294,14 +305,19 @@ static void parse_pattern(Parser *p) {
     expect(p, LIME_LEX_TOK_DOT, "'.' to terminate %pattern");
 
     LimeLexPattern *pat = calloc(1, sizeof(*pat));
-    if (!pat) { free(name); free(regex); return; }
-    pat->name  = name;
+    if (!pat) {
+        free(name);
+        free(regex);
+        return;
+    }
+    pat->name = name;
     pat->regex = regex;
-    pat->line  = line;
+    pat->line = line;
 
     /* Append in declaration order. */
     LimeLexPattern **tail = &p->spec->patterns;
-    while (*tail) tail = &(*tail)->next;
+    while (*tail)
+        tail = &(*tail)->next;
     *tail = pat;
 }
 
@@ -309,8 +325,7 @@ static void parse_pattern(Parser *p) {
 ** %state IDENT { body }.   (inclusive, typed local data)
 ** %exclusive_state IDENT.
 ** %exclusive_state IDENT { body }. */
-static LimeLexState *find_or_create_state(LimeLexSpec *spec,
-                                          const char *name) {
+static LimeLexState *find_or_create_state(LimeLexSpec *spec, const char *name) {
     LimeLexState *s = spec->states;
     while (s) {
         if (strcmp(s->name, name) == 0) return s;
@@ -319,17 +334,21 @@ static LimeLexState *find_or_create_state(LimeLexSpec *spec,
     LimeLexState *ns = calloc(1, sizeof(*ns));
     if (!ns) return NULL;
     ns->name = strdup(name);
-    if (!ns->name) { free(ns); return NULL; }
+    if (!ns->name) {
+        free(ns);
+        return NULL;
+    }
     /* Append to keep declaration order. */
     LimeLexState **tail = &spec->states;
-    while (*tail) tail = &(*tail)->next;
+    while (*tail)
+        tail = &(*tail)->next;
     *tail = ns;
     return ns;
 }
 
 static void parse_state(Parser *p, int exclusive) {
     int line = p->cur.line;
-    pull(p);   /* eat %state or %exclusive_state */
+    pull(p); /* eat %state or %exclusive_state */
     if (!at(p, LIME_LEX_TOK_IDENT)) {
         error_here(p, "expected state name");
         synchronise(p);
@@ -353,14 +372,12 @@ static void parse_state(Parser *p, int exclusive) {
     ** changes the exclusive flag or the local-data body, but
     ** just adding a destructor later is fine. */
     if (st->exclusive && !exclusive) {
-        error_at(p, line, "state '%s' was previously declared exclusive",
-                 st->name);
+        error_at(p, line, "state '%s' was previously declared exclusive", st->name);
     }
     if (exclusive) st->exclusive = 1;
     if (body) {
         if (st->local_body) {
-            error_at(p, line, "state '%s' already has local-data body",
-                     st->name);
+            error_at(p, line, "state '%s' already has local-data body", st->name);
             free(body);
         } else {
             st->local_body = body;
@@ -371,7 +388,7 @@ static void parse_state(Parser *p, int exclusive) {
 /* %state_destructor IDENT { code }. */
 static void parse_state_destructor(Parser *p) {
     int line = p->cur.line;
-    pull(p);   /* eat %state_destructor */
+    pull(p); /* eat %state_destructor */
     if (!at(p, LIME_LEX_TOK_IDENT)) {
         error_here(p, "expected state name after %%state_destructor");
         synchronise(p);
@@ -391,7 +408,10 @@ static void parse_state_destructor(Parser *p) {
 
     LimeLexState *st = find_or_create_state(p->spec, name_buf);
     free(name_buf);
-    if (!st) { free(body); return; }
+    if (!st) {
+        free(body);
+        return;
+    }
     if (st->line == 0) st->line = line;
     if (st->destructor) {
         error_at(p, line, "state '%s' already has a destructor", st->name);
@@ -406,7 +426,7 @@ static void parse_state_destructor(Parser *p) {
 ** `case_sensitive`, `prefix=IDENT`. */
 static void parse_keyword_table(Parser *p) {
     int line = p->cur.line;
-    pull(p);   /* eat %keyword_table */
+    pull(p); /* eat %keyword_table */
     if (!at(p, LIME_LEX_TOK_IDENT)) {
         error_here(p, "expected keyword-table name");
         synchronise(p);
@@ -425,12 +445,11 @@ static void parse_keyword_table(Parser *p) {
                 break;
             }
             const char *opt = p->cur.lexeme;
-            size_t opt_len  = p->cur.length;
+            size_t opt_len = p->cur.length;
             if (opt_len == 16 && memcmp(opt, "case_insensitive", 16) == 0) {
                 case_insensitive = 1;
                 pull(p);
-            } else if (opt_len == 14 &&
-                       memcmp(opt, "case_sensitive", 14) == 0) {
+            } else if (opt_len == 14 && memcmp(opt, "case_sensitive", 14) == 0) {
                 case_insensitive = 0;
                 pull(p);
             } else if (opt_len == 6 && memcmp(opt, "prefix", 6) == 0) {
@@ -453,20 +472,20 @@ static void parse_keyword_table(Parser *p) {
     }
 
     if (!at(p, LIME_LEX_TOK_CODE_BLOCK)) {
-        error_here(p, "expected '{ \"keyword\", ... }' for %%keyword_table %s",
-                   name);
-        free(name); free(prefix);
+        error_here(p, "expected '{ \"keyword\", ... }' for %%keyword_table %s", name);
+        free(name);
+        free(prefix);
         synchronise(p);
         return;
     }
 
     /* Sub-tokenizer over the keyword block's inner bytes. */
     LimeLexTokenizer *inner = open_inner(&p->cur, p->filename);
-    pull(p);   /* eat the CODE_BLOCK */
+    pull(p); /* eat the CODE_BLOCK */
 
     char **kws = NULL;
-    int    n_kws = 0;
-    int    cap = 0;
+    int n_kws = 0;
+    int cap = 0;
     if (inner) {
         for (;;) {
             LimeLexToken t;
@@ -483,8 +502,7 @@ static void parse_keyword_table(Parser *p) {
                 continue;
             }
             if (t.kind == LIME_LEX_TOK_COMMA) continue;
-            error_at(p, line,
-                     "unexpected %s inside %%keyword_table %s",
+            error_at(p, line, "unexpected %s inside %%keyword_table %s",
                      lime_lex_tok_kind_name(t.kind), name);
             break;
         }
@@ -494,20 +512,23 @@ static void parse_keyword_table(Parser *p) {
 
     LimeLexKeywordTable *kt = calloc(1, sizeof(*kt));
     if (!kt) {
-        free(name); free(prefix);
-        for (int i = 0; i < n_kws; i++) free(kws[i]);
+        free(name);
+        free(prefix);
+        for (int i = 0; i < n_kws; i++)
+            free(kws[i]);
         free(kws);
         return;
     }
-    kt->name             = name;
+    kt->name = name;
     kt->case_insensitive = case_insensitive;
-    kt->prefix           = prefix;
-    kt->keywords         = kws;
-    kt->n_keywords       = n_kws;
-    kt->line             = line;
+    kt->prefix = prefix;
+    kt->keywords = kws;
+    kt->n_keywords = n_kws;
+    kt->line = line;
 
     LimeLexKeywordTable **tail = &p->spec->keyword_tables;
-    while (*tail) tail = &(*tail)->next;
+    while (*tail)
+        tail = &(*tail)->next;
     *tail = kt;
 }
 
@@ -518,7 +539,7 @@ static void parse_keyword_table(Parser *p) {
 ** STRING, or operator-prefixed integer for grow). */
 static void parse_literal_buffer(Parser *p) {
     int line = p->cur.line;
-    pull(p);   /* eat %literal_buffer */
+    pull(p); /* eat %literal_buffer */
     if (!at(p, LIME_LEX_TOK_IDENT)) {
         error_here(p, "expected buffer name");
         synchronise(p);
@@ -528,26 +549,29 @@ static void parse_literal_buffer(Parser *p) {
     pull(p);
 
     if (!at(p, LIME_LEX_TOK_CODE_BLOCK)) {
-        error_here(p, "expected '{ ... }' config for %%literal_buffer %s",
-                   name);
+        error_here(p, "expected '{ ... }' config for %%literal_buffer %s", name);
         free(name);
         synchronise(p);
         return;
     }
 
     LimeLexLiteralBuffer *lb = calloc(1, sizeof(*lb));
-    if (!lb) { free(name); pull(p); return; }
-    lb->name             = name;
-    lb->element_type     = NULL;     /* default 'char' applied later */
+    if (!lb) {
+        free(name);
+        pull(p);
+        return;
+    }
+    lb->name = name;
+    lb->element_type = NULL; /* default 'char' applied later */
     lb->initial_capacity = 64;
-    lb->grow_policy      = NULL;
-    lb->alloc_fn         = NULL;
-    lb->realloc_fn       = NULL;
-    lb->free_fn          = NULL;
-    lb->line             = line;
+    lb->grow_policy = NULL;
+    lb->alloc_fn = NULL;
+    lb->realloc_fn = NULL;
+    lb->free_fn = NULL;
+    lb->line = line;
 
     LimeLexTokenizer *inner = open_inner(&p->cur, p->filename);
-    pull(p);   /* eat CODE_BLOCK */
+    pull(p); /* eat CODE_BLOCK */
 
     if (inner) {
         for (;;) {
@@ -572,8 +596,7 @@ static void parse_literal_buffer(Parser *p) {
             } else if (vt.kind == LIME_LEX_TOK_STRING) {
                 val = unquote_string(&vt);
             } else {
-                error_at(p, line,
-                         "missing value for '%s' in %%literal_buffer", key);
+                error_at(p, line, "missing value for '%s' in %%literal_buffer", key);
                 free(key);
                 break;
             }
@@ -607,13 +630,14 @@ static void parse_literal_buffer(Parser *p) {
     expect(p, LIME_LEX_TOK_DOT, "'.' to terminate %literal_buffer");
 
     LimeLexLiteralBuffer **tail = &p->spec->literal_buffers;
-    while (*tail) tail = &(*tail)->next;
+    while (*tail)
+        tail = &(*tail)->next;
     *tail = lb;
 }
 
 /* %lexer_include IDENT, IDENT, ... . */
 static void parse_lexer_include(Parser *p) {
-    pull(p);   /* eat %lexer_include */
+    pull(p); /* eat %lexer_include */
     int cap = p->spec->n_lexer_includes;
     char **arr = p->spec->lexer_includes;
     int n = cap;
@@ -634,7 +658,7 @@ static void parse_lexer_include(Parser *p) {
         if (!consume(p, LIME_LEX_TOK_COMMA)) break;
     }
     expect(p, LIME_LEX_TOK_DOT, "'.' to terminate %lexer_include");
-    p->spec->lexer_includes  = arr;
+    p->spec->lexer_includes = arr;
     p->spec->n_lexer_includes = n;
 }
 
@@ -654,7 +678,8 @@ static int parse_state_list(Parser *p, char ***out, int *out_n) {
         if (!at(p, LIME_LEX_TOK_IDENT)) {
             error_here(p, "expected state name in '<...>' qualifier");
             synchronise(p);
-            for (int i = 0; i < n_states; i++) free(states[i]);
+            for (int i = 0; i < n_states; i++)
+                free(states[i]);
             free(states);
             return 0;
         }
@@ -662,7 +687,8 @@ static int parse_state_list(Parser *p, char ***out, int *out_n) {
             cap = cap ? cap * 2 : 4;
             char **ns = realloc(states, cap * sizeof(char *));
             if (!ns) {
-                for (int i = 0; i < n_states; i++) free(states[i]);
+                for (int i = 0; i < n_states; i++)
+                    free(states[i]);
                 free(states);
                 return 0;
             }
@@ -673,7 +699,8 @@ static int parse_state_list(Parser *p, char ***out, int *out_n) {
         if (!consume(p, LIME_LEX_TOK_COMMA)) break;
     }
     if (!expect(p, LIME_LEX_TOK_RANGLE, "'>' to close state list")) {
-        for (int i = 0; i < n_states; i++) free(states[i]);
+        for (int i = 0; i < n_states; i++)
+            free(states[i]);
         free(states);
         return 0;
     }
@@ -699,17 +726,18 @@ static char **dup_state_array(char **src, int n) {
 ** block's states; single form passes its own state list).  On
 ** success, transfers ownership of `states` to the new rule.  On
 ** error, frees `states` and emits diagnostics. */
-static void parse_rule_body(Parser *p, char **states, int n_states,
-                            int line, LimeLexRule **list) {
+static void parse_rule_body(Parser *p, char **states, int n_states, int line, LimeLexRule **list) {
     if (!expect(p, LIME_LEX_TOK_KW_RULE, "'rule' keyword")) {
-        for (int i = 0; i < n_states; i++) free(states[i]);
+        for (int i = 0; i < n_states; i++)
+            free(states[i]);
         free(states);
         return;
     }
 
     if (!at(p, LIME_LEX_TOK_IDENT)) {
         error_here(p, "expected rule name");
-        for (int i = 0; i < n_states; i++) free(states[i]);
+        for (int i = 0; i < n_states; i++)
+            free(states[i]);
         free(states);
         synchronise(p);
         return;
@@ -719,13 +747,14 @@ static void parse_rule_body(Parser *p, char **states, int n_states,
 
     if (!expect(p, LIME_LEX_TOK_KW_MATCHES, "'matches' keyword")) {
         free(name);
-        for (int i = 0; i < n_states; i++) free(states[i]);
+        for (int i = 0; i < n_states; i++)
+            free(states[i]);
         free(states);
         return;
     }
 
     char *pattern = NULL;
-    int   is_eof  = 0;
+    int is_eof = 0;
     if (at(p, LIME_LEX_TOK_REGEX)) {
         pattern = unwrap_regex(&p->cur);
         pull(p);
@@ -738,7 +767,8 @@ static void parse_rule_body(Parser *p, char **states, int n_states,
     } else {
         error_here(p, "expected /regex/, \"string\", or <<EOF>> after 'matches'");
         free(name);
-        for (int i = 0; i < n_states; i++) free(states[i]);
+        for (int i = 0; i < n_states; i++)
+            free(states[i]);
         free(states);
         synchronise(p);
         return;
@@ -746,8 +776,10 @@ static void parse_rule_body(Parser *p, char **states, int n_states,
 
     if (!at(p, LIME_LEX_TOK_CODE_BLOCK)) {
         error_here(p, "expected '{ action }' for rule '%s'", name);
-        free(name); free(pattern);
-        for (int i = 0; i < n_states; i++) free(states[i]);
+        free(name);
+        free(pattern);
+        for (int i = 0; i < n_states; i++)
+            free(states[i]);
         free(states);
         synchronise(p);
         return;
@@ -757,21 +789,25 @@ static void parse_rule_body(Parser *p, char **states, int n_states,
 
     LimeLexRule *r = calloc(1, sizeof(*r));
     if (!r) {
-        free(name); free(pattern); free(action);
-        for (int i = 0; i < n_states; i++) free(states[i]);
+        free(name);
+        free(pattern);
+        free(action);
+        for (int i = 0; i < n_states; i++)
+            free(states[i]);
         free(states);
         return;
     }
-    r->name     = name;
-    r->states   = states;
+    r->name = name;
+    r->states = states;
     r->n_states = n_states;
-    r->is_eof   = is_eof;
-    r->pattern  = pattern;
-    r->action   = action;
-    r->line     = line;
+    r->is_eof = is_eof;
+    r->pattern = pattern;
+    r->action = action;
+    r->line = line;
 
     LimeLexRule **tail = list;
-    while (*tail) tail = &(*tail)->next;
+    while (*tail)
+        tail = &(*tail)->next;
     *tail = r;
 }
 
@@ -788,7 +824,7 @@ static void parse_rule_body(Parser *p, char **states, int n_states,
 static void parse_rule(Parser *p, LimeLexRule **list) {
     int line = p->cur.line;
     char **outer_states = NULL;
-    int    n_outer = 0;
+    int n_outer = 0;
 
     if (at(p, LIME_LEX_TOK_LANGLE)) {
         if (!parse_state_list(p, &outer_states, &n_outer)) return;
@@ -798,9 +834,10 @@ static void parse_rule(Parser *p, LimeLexRule **list) {
     ** rules that all inherit the outer state qualifier. */
     if (at(p, LIME_LEX_TOK_CODE_BLOCK) && n_outer > 0) {
         LimeLexTokenizer *inner = open_inner(&p->cur, p->filename);
-        pull(p);   /* eat CODE_BLOCK */
+        pull(p); /* eat CODE_BLOCK */
         if (!inner) {
-            for (int i = 0; i < n_outer; i++) free(outer_states[i]);
+            for (int i = 0; i < n_outer; i++)
+                free(outer_states[i]);
             free(outer_states);
             return;
         }
@@ -814,15 +851,16 @@ static void parse_rule(Parser *p, LimeLexRule **list) {
                          "inner rule must not declare its own state qualifier "
                          "(inherits the enclosing block's <...>)");
                 /* Skip the qualifier and continue. */
-                char **dummy = NULL; int dn = 0;
+                char **dummy = NULL;
+                int dn = 0;
                 if (parse_state_list(&inner_p, &dummy, &dn)) {
-                    for (int i = 0; i < dn; i++) free(dummy[i]);
+                    for (int i = 0; i < dn; i++)
+                        free(dummy[i]);
                     free(dummy);
                 }
             }
             if (!at(&inner_p, LIME_LEX_TOK_KW_RULE)) {
-                error_at(p, inner_p.cur.line,
-                         "expected 'rule' inside <...>{...} block");
+                error_at(p, inner_p.cur.line, "expected 'rule' inside <...>{...} block");
                 break;
             }
             int rule_line = inner_p.cur.line;
@@ -831,7 +869,8 @@ static void parse_rule(Parser *p, LimeLexRule **list) {
             parse_rule_body(&inner_p, dup, n_outer, rule_line, list);
         }
         lime_lex_tokenize_free(inner);
-        for (int i = 0; i < n_outer; i++) free(outer_states[i]);
+        for (int i = 0; i < n_outer; i++)
+            free(outer_states[i]);
         free(outer_states);
         return;
     }
@@ -843,7 +882,7 @@ static void parse_rule(Parser *p, LimeLexRule **list) {
 /* %ruleset IDENT { rule ... }. */
 static void parse_ruleset(Parser *p) {
     int line = p->cur.line;
-    pull(p);   /* eat %ruleset */
+    pull(p); /* eat %ruleset */
     if (!at(p, LIME_LEX_TOK_IDENT)) {
         error_here(p, "expected ruleset name");
         synchronise(p);
@@ -860,7 +899,7 @@ static void parse_ruleset(Parser *p) {
     }
 
     LimeLexTokenizer *inner = open_inner(&p->cur, p->filename);
-    pull(p);   /* eat CODE_BLOCK */
+    pull(p); /* eat CODE_BLOCK */
 
     LimeLexRuleset *rs = calloc(1, sizeof(*rs));
     if (!rs) {
@@ -876,10 +915,8 @@ static void parse_ruleset(Parser *p) {
         parser_init(&inner_p, inner, p->spec, p->filename);
         pull(&inner_p);
         while (!at(&inner_p, LIME_LEX_TOK_EOF)) {
-            if (!at(&inner_p, LIME_LEX_TOK_LANGLE) &&
-                !at(&inner_p, LIME_LEX_TOK_KW_RULE)) {
-                error_at(p, inner_p.cur.line,
-                         "expected 'rule' or '<state>' in %%ruleset %s",
+            if (!at(&inner_p, LIME_LEX_TOK_LANGLE) && !at(&inner_p, LIME_LEX_TOK_KW_RULE)) {
+                error_at(p, inner_p.cur.line, "expected 'rule' or '<state>' in %%ruleset %s",
                          rs->name);
                 break;
             }
@@ -890,7 +927,8 @@ static void parse_ruleset(Parser *p) {
     expect(p, LIME_LEX_TOK_DOT, "'.' to terminate %ruleset");
 
     LimeLexRuleset **tail = &p->spec->rulesets;
-    while (*tail) tail = &(*tail)->next;
+    while (*tail)
+        tail = &(*tail)->next;
     *tail = rs;
 }
 
@@ -900,70 +938,62 @@ static void parse_ruleset(Parser *p) {
 
 static void parse_one_top_level(Parser *p) {
     switch (p->cur.kind) {
-        case LIME_LEX_TOK_DIR_NAME_PREFIX:
-            parse_string_or_ident_directive(p, &p->spec->name_prefix,
-                                            "%name_prefix");
-            break;
-        case LIME_LEX_TOK_DIR_TOKEN_PREFIX:
-            parse_string_or_ident_directive(p, &p->spec->token_prefix,
-                                            "%token_prefix");
-            break;
-        case LIME_LEX_TOK_DIR_TOKEN_TYPE:
-            parse_code_block_directive(p, &p->spec->token_type,
-                                       "%token_type", 0);
-            break;
-        case LIME_LEX_TOK_DIR_LOCATION_TYPE:
-            parse_code_block_directive(p, &p->spec->location_type,
-                                       "%location_type", 0);
-            break;
-        case LIME_LEX_TOK_DIR_LEXER_EXTRA_ARGUMENT:
-            parse_code_block_directive(p, &p->spec->extra_argument,
-                                       "%lexer_extra_argument", 0);
-            break;
-        case LIME_LEX_TOK_DIR_INCLUDE:
-            parse_code_block_directive(p, &p->spec->include_block,
-                                       "%include", 0);
-            break;
-        case LIME_LEX_TOK_DIR_PATTERN:
-            parse_pattern(p);
-            break;
-        case LIME_LEX_TOK_DIR_STATE:
-            parse_state(p, /*exclusive=*/0);
-            break;
-        case LIME_LEX_TOK_DIR_EXCLUSIVE_STATE:
-            parse_state(p, /*exclusive=*/1);
-            break;
-        case LIME_LEX_TOK_DIR_STATE_DESTRUCTOR:
-            parse_state_destructor(p);
-            break;
-        case LIME_LEX_TOK_DIR_KEYWORD_TABLE:
-            parse_keyword_table(p);
-            break;
-        case LIME_LEX_TOK_DIR_LITERAL_BUFFER:
-            parse_literal_buffer(p);
-            break;
-        case LIME_LEX_TOK_DIR_RULESET:
-            parse_ruleset(p);
-            break;
-        case LIME_LEX_TOK_DIR_LEXER_INCLUDE:
-            parse_lexer_include(p);
-            break;
-        case LIME_LEX_TOK_DIR_UNKNOWN:
-            error_here(p, "unknown directive '%.*s'",
-                       (int)p->cur.length, p->cur.lexeme);
-            pull(p);
-            synchronise(p);
-            break;
-        case LIME_LEX_TOK_LANGLE:
-        case LIME_LEX_TOK_KW_RULE:
-            parse_rule(p, &p->spec->rules);
-            break;
-        default:
-            error_here(p, "unexpected %s at top level",
-                       lime_lex_tok_kind_name(p->cur.kind));
-            pull(p);
-            synchronise(p);
-            break;
+    case LIME_LEX_TOK_DIR_NAME_PREFIX:
+        parse_string_or_ident_directive(p, &p->spec->name_prefix, "%name_prefix");
+        break;
+    case LIME_LEX_TOK_DIR_TOKEN_PREFIX:
+        parse_string_or_ident_directive(p, &p->spec->token_prefix, "%token_prefix");
+        break;
+    case LIME_LEX_TOK_DIR_TOKEN_TYPE:
+        parse_code_block_directive(p, &p->spec->token_type, "%token_type", 0);
+        break;
+    case LIME_LEX_TOK_DIR_LOCATION_TYPE:
+        parse_code_block_directive(p, &p->spec->location_type, "%location_type", 0);
+        break;
+    case LIME_LEX_TOK_DIR_LEXER_EXTRA_ARGUMENT:
+        parse_code_block_directive(p, &p->spec->extra_argument, "%lexer_extra_argument", 0);
+        break;
+    case LIME_LEX_TOK_DIR_INCLUDE:
+        parse_code_block_directive(p, &p->spec->include_block, "%include", 0);
+        break;
+    case LIME_LEX_TOK_DIR_PATTERN:
+        parse_pattern(p);
+        break;
+    case LIME_LEX_TOK_DIR_STATE:
+        parse_state(p, /*exclusive=*/0);
+        break;
+    case LIME_LEX_TOK_DIR_EXCLUSIVE_STATE:
+        parse_state(p, /*exclusive=*/1);
+        break;
+    case LIME_LEX_TOK_DIR_STATE_DESTRUCTOR:
+        parse_state_destructor(p);
+        break;
+    case LIME_LEX_TOK_DIR_KEYWORD_TABLE:
+        parse_keyword_table(p);
+        break;
+    case LIME_LEX_TOK_DIR_LITERAL_BUFFER:
+        parse_literal_buffer(p);
+        break;
+    case LIME_LEX_TOK_DIR_RULESET:
+        parse_ruleset(p);
+        break;
+    case LIME_LEX_TOK_DIR_LEXER_INCLUDE:
+        parse_lexer_include(p);
+        break;
+    case LIME_LEX_TOK_DIR_UNKNOWN:
+        error_here(p, "unknown directive '%.*s'", (int)p->cur.length, p->cur.lexeme);
+        pull(p);
+        synchronise(p);
+        break;
+    case LIME_LEX_TOK_LANGLE:
+    case LIME_LEX_TOK_KW_RULE:
+        parse_rule(p, &p->spec->rules);
+        break;
+    default:
+        error_here(p, "unexpected %s at top level", lime_lex_tok_kind_name(p->cur.kind));
+        pull(p);
+        synchronise(p);
+        break;
     }
 }
 
@@ -971,9 +1001,7 @@ static void parse_one_top_level(Parser *p) {
 ** Public entry point
 ** ============================================================ */
 
-LimeLexSpec *lime_lex_parse(const char *filename,
-                            const char *source,
-                            size_t source_len) {
+LimeLexSpec *lime_lex_parse(const char *filename, const char *source, size_t source_len) {
     LimeLexSpec *spec = lime_lex_spec_new(filename);
     if (!spec) return NULL;
 

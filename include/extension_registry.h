@@ -62,11 +62,11 @@ struct GrammarModification;
  *        its grammar modifications.
  */
 typedef enum DisambiguationStrategy {
-    DISAMBIG_PRIORITY = 0,    /**< Resolve by numeric priority (higher wins) */
-    DISAMBIG_FORK_RESOLVE,    /**< Fork the parse and resolve after lookahead */
-    DISAMBIG_ORACLE,          /**< Delegate to a runtime oracle callback */
-    DISAMBIG_CONTEXT,         /**< Use grammar context to disambiguate */
-    DISAMBIG_NONE,            /**< No disambiguation; conflicts are errors */
+    DISAMBIG_PRIORITY = 0, /**< Resolve by numeric priority (higher wins) */
+    DISAMBIG_FORK_RESOLVE, /**< Fork the parse and resolve after lookahead */
+    DISAMBIG_ORACLE,       /**< Delegate to a runtime oracle callback */
+    DISAMBIG_CONTEXT,      /**< Use grammar context to disambiguate */
+    DISAMBIG_NONE,         /**< No disambiguation; conflicts are errors */
 } DisambiguationStrategy;
 
 /** @} */ /* end disambig_strategy */
@@ -83,10 +83,10 @@ typedef enum DisambiguationStrategy {
  *        to other extensions.
  */
 typedef enum ExecutionPolicy {
-    EXEC_SEQUENTIAL = 0,      /**< Apply modifications one at a time */
-    EXEC_PARALLEL,            /**< Apply concurrently where safe */
-    EXEC_PIPELINE,            /**< Apply as a pipeline stage */
-    EXEC_LAZY,                /**< Defer application until first use */
+    EXEC_SEQUENTIAL = 0, /**< Apply modifications one at a time */
+    EXEC_PARALLEL,       /**< Apply concurrently where safe */
+    EXEC_PIPELINE,       /**< Apply as a pipeline stage */
+    EXEC_LAZY,           /**< Defer application until first use */
 } ExecutionPolicy;
 
 /** @} */ /* end exec_policy */
@@ -103,11 +103,11 @@ typedef enum ExecutionPolicy {
  *        disambiguation decision.
  */
 typedef struct OracleContext {
-    const char *extension_name;         /**< Extension requesting resolution */
-    const char *conflict_description;   /**< Human-readable conflict info */
-    int candidate_count;                /**< Number of candidate resolutions */
-    const char **candidate_labels;      /**< Labels for each candidate */
-    void *user_data;                    /**< Extension's user_data pointer */
+    const char *extension_name;       /**< Extension requesting resolution */
+    const char *conflict_description; /**< Human-readable conflict info */
+    int candidate_count;              /**< Number of candidate resolutions */
+    const char **candidate_labels;    /**< Labels for each candidate */
+    void *user_data;                  /**< Extension's user_data pointer */
 } OracleContext;
 
 /**
@@ -139,24 +139,24 @@ typedef int (*OracleCallback)(const OracleContext *ctx);
 typedef struct GrammarExtensionMetadata {
     /** @name Identity */
     /** @{ */
-    const char *name;                   /**< Unique extension name (required) */
-    const char *version;                /**< Semver string (required) */
+    const char *name;    /**< Unique extension name (required) */
+    const char *version; /**< Semver string (required) */
     /** @} */
 
     /** @name Disambiguation */
     /** @{ */
-    DisambiguationStrategy strategy;    /**< How to resolve ambiguities */
-    int priority;                       /**< Priority for DISAMBIG_PRIORITY (higher wins) */
+    DisambiguationStrategy strategy; /**< How to resolve ambiguities */
+    int priority;                    /**< Priority for DISAMBIG_PRIORITY (higher wins) */
     /** @} */
 
     /** @name Execution */
     /** @{ */
-    ExecutionPolicy policy;             /**< How to apply modifications */
+    ExecutionPolicy policy; /**< How to apply modifications */
     /** @} */
 
     /** @name Oracle */
     /** @{ */
-    OracleCallback oracle;              /**< Callback for DISAMBIG_ORACLE (may be NULL) */
+    OracleCallback oracle; /**< Callback for DISAMBIG_ORACLE (may be NULL) */
     /** @} */
 
     /**
@@ -174,7 +174,8 @@ typedef struct GrammarExtensionMetadata {
      * NULL-terminated array of extension names that must be registered
      * before this extension can be activated.
      */
-    const char **requires;
+    const char **
+        requires;
 
     /**
      * @brief Conflicts.
@@ -219,8 +220,8 @@ typedef struct ExtensionRegistry ExtensionRegistry;
  *        names in load order (dependencies before dependents).
  */
 typedef struct ExtensionOrder {
-    char **names;               /**< malloc'd array of strdup'd names */
-    uint32_t count;             /**< Number of entries */
+    char **names;   /**< malloc'd array of strdup'd names */
+    uint32_t count; /**< Number of entries */
 } ExtensionOrder;
 
 /**
@@ -260,8 +261,7 @@ ExtensionRegistry *extension_registry_create(void);
  *
  * @see extension_registry_unregister()
  */
-bool extension_registry_register(ExtensionRegistry *reg,
-                                 const GrammarExtensionMetadata *metadata);
+bool extension_registry_register(ExtensionRegistry *reg, const GrammarExtensionMetadata *metadata);
 
 /**
  * @brief Look up an extension by name.
@@ -273,9 +273,7 @@ bool extension_registry_register(ExtensionRegistry *reg,
  * @warning The returned pointer is valid only until the registry is
  *          modified (register/unregister).
  */
-const GrammarExtensionMetadata *extension_registry_find(
-    ExtensionRegistry *reg,
-    const char *name);
+const GrammarExtensionMetadata *extension_registry_find(ExtensionRegistry *reg, const char *name);
 
 /**
  * @brief Validate all dependency and conflict declarations.
@@ -294,8 +292,7 @@ const GrammarExtensionMetadata *extension_registry_find(
  *
  * @see extension_registry_get_order()
  */
-bool extension_registry_check_dependencies(ExtensionRegistry *reg,
-                                           char **error_out);
+bool extension_registry_check_dependencies(ExtensionRegistry *reg, char **error_out);
 
 /**
  * @brief Produce a topological ordering of all registered extensions.
@@ -308,8 +305,7 @@ bool extension_registry_check_dependencies(ExtensionRegistry *reg,
  * @retval true  Ordering succeeded.
  * @retval false Cycle detected or missing dependency; see @p error_out.
  */
-bool extension_registry_get_order(ExtensionRegistry *reg,
-                                  ExtensionOrder *order_out,
+bool extension_registry_get_order(ExtensionRegistry *reg, ExtensionOrder *order_out,
                                   char **error_out);
 
 /**
@@ -320,8 +316,7 @@ bool extension_registry_get_order(ExtensionRegistry *reg,
  * @retval true  Extension was found and removed.
  * @retval false Extension was not found.
  */
-bool extension_registry_unregister(ExtensionRegistry *reg,
-                                   const char *name);
+bool extension_registry_unregister(ExtensionRegistry *reg, const char *name);
 
 /**
  * @brief Return the number of registered extensions.
@@ -339,8 +334,7 @@ uint32_t extension_registry_count(const ExtensionRegistry *reg);
  * @retval true  Continue iteration.
  * @retval false Stop iteration early.
  */
-typedef bool (*ExtensionVisitorFn)(const GrammarExtensionMetadata *meta,
-                                   void *user_data);
+typedef bool (*ExtensionVisitorFn)(const GrammarExtensionMetadata *meta, void *user_data);
 
 /**
  * @brief Iterate over all registered extensions.
@@ -352,8 +346,7 @@ typedef bool (*ExtensionVisitorFn)(const GrammarExtensionMetadata *meta,
  * @param visitor  Callback function.
  * @param user_data Opaque pointer forwarded to @p visitor.
  */
-void extension_registry_foreach(const ExtensionRegistry *reg,
-                                ExtensionVisitorFn visitor,
+void extension_registry_foreach(const ExtensionRegistry *reg, ExtensionVisitorFn visitor,
                                 void *user_data);
 
 /**

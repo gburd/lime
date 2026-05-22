@@ -23,11 +23,11 @@ typedef uint32_t ExtensionID;
  * @brief A single token definition in the table.
  */
 typedef struct TokenDefinition {
-    const char *lexeme;          /**< Token string (e.g., "SELECT") */
-    size_t lexeme_len;           /**< Length of @ref lexeme */
-    int token_code;              /**< Token ID (e.g., TK_SELECT) */
-    ExtensionID extension_id;    /**< Which extension added it (0 = base) */
-    uint32_t next_in_chain;      /**< Hash collision chain link */
+    const char *lexeme;       /**< Token string (e.g., "SELECT") */
+    size_t lexeme_len;        /**< Length of @ref lexeme */
+    int token_code;           /**< Token ID (e.g., TK_SELECT) */
+    ExtensionID extension_id; /**< Which extension added it (0 = base) */
+    uint32_t next_in_chain;   /**< Hash collision chain link */
 } TokenDefinition;
 
 /**
@@ -38,15 +38,15 @@ typedef struct TokenDefinition {
  * is maintained for external change detection.
  */
 typedef struct TokenTable {
-    TokenDefinition *tokens;     /**< Dense array of tokens */
-    uint32_t ntokens;            /**< Number of tokens in @ref tokens */
-    uint32_t capacity;           /**< Allocated slots in @ref tokens */
+    TokenDefinition *tokens; /**< Dense array of tokens */
+    uint32_t ntokens;        /**< Number of tokens in @ref tokens */
+    uint32_t capacity;       /**< Allocated slots in @ref tokens */
 
-    uint32_t *hash_table;        /**< Hash bucket table mapping to indices */
-    uint32_t hash_capacity;      /**< Length of @ref hash_table */
+    uint32_t *hash_table;   /**< Hash bucket table mapping to indices */
+    uint32_t hash_capacity; /**< Length of @ref hash_table */
 
-    atomic_uint_fast32_t version;/**< RCU-style version counter */
-    pthread_rwlock_t lock;       /**< Reader/writer lock guarding the table */
+    atomic_uint_fast32_t version; /**< RCU-style version counter */
+    pthread_rwlock_t lock;        /**< Reader/writer lock guarding the table */
 } TokenTable;
 
 /*
@@ -71,8 +71,7 @@ int lookup_token(TokenTable *table, const char *str, size_t len);
 ** Add a token to the table. Acquires write lock internally.
 ** Returns true on success, false on failure (allocation error or duplicate).
 */
-bool add_token(TokenTable *table, const char *lexeme, int token_code,
-               ExtensionID ext_id);
+bool add_token(TokenTable *table, const char *lexeme, int token_code, ExtensionID ext_id);
 
 /*
 ** Remove all tokens belonging to a given extension.

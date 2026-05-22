@@ -27,8 +27,8 @@
 ** order index is the array index. */
 typedef struct {
     const LimeLexRule **rules;
-    int                 n;
-    int                 cap;
+    int n;
+    int cap;
 } RuleVec;
 
 static int rv_push(RuleVec *v, const LimeLexRule *r) {
@@ -44,8 +44,7 @@ static int rv_push(RuleVec *v, const LimeLexRule *r) {
 }
 
 /* Look up a ruleset by name; returns NULL if absent. */
-static const LimeLexRuleset *find_ruleset(const LimeLexSpec *spec,
-                                          const char *name) {
+static const LimeLexRuleset *find_ruleset(const LimeLexSpec *spec, const char *name) {
     for (const LimeLexRuleset *rs = spec->rulesets; rs; rs = rs->next) {
         if (strcmp(rs->name, name) == 0) return rs;
     }
@@ -69,9 +68,7 @@ static const LimeLexRuleset *find_ruleset(const LimeLexSpec *spec,
 ** Top-level rules ALWAYS go first regardless of include filtering.
 ** Top-level rules aren't in any ruleset, so there's nothing to
 ** include or exclude. */
-static int rv_collect(const LimeLexSpec *spec,
-                      RuleVec *out,
-                      int *bad_includes_out) {
+static int rv_collect(const LimeLexSpec *spec, RuleVec *out, int *bad_includes_out) {
     /* Top-level rules first, in declaration order. */
     for (const LimeLexRule *r = spec->rules; r; r = r->next) {
         if (rv_push(out, r) < 0) return -1;
@@ -91,10 +88,8 @@ static int rv_collect(const LimeLexSpec *spec,
         const char *name = spec->lexer_includes[i];
         const LimeLexRuleset *rs = find_ruleset(spec, name);
         if (!rs) {
-            fprintf(stderr,
-                "%s: %%lexer_include references undefined ruleset '%s'\n",
-                spec->filename ? spec->filename : "<input>",
-                name);
+            fprintf(stderr, "%s: %%lexer_include references undefined ruleset '%s'\n",
+                    spec->filename ? spec->filename : "<input>", name);
             bad++;
             continue;
         }
@@ -112,13 +107,11 @@ static int rv_collect(const LimeLexSpec *spec,
 ** with a qualifier fire only where their state list says.
 **
 ** state_name is "INITIAL" for the implicit start state. */
-static int rule_applies(const LimeLexRule *r,
-                        const char *state_name,
-                        int state_exclusive) {
+static int rule_applies(const LimeLexRule *r, const char *state_name, int state_exclusive) {
     int initial = (strcmp(state_name, "INITIAL") == 0);
     if (r->n_states == 0) {
         /* Unqualified rule: fires in INITIAL and inclusive states. */
-        if (initial)        return 1;
+        if (initial) return 1;
         if (!state_exclusive) return 1;
         return 0;
     }
@@ -136,9 +129,7 @@ static int rule_applies(const LimeLexRule *r,
 /* Build a single state's DFA.  Returns NULL if the state has no
 ** applicable rules (caller represents this as an empty
 ** LimeLexCompiledState rather than calling here). */
-static LimeDfa *compile_state_rules(const LimeLexSpec *spec,
-                                    const LimeLexRule **rules,
-                                    int n_rules,
+static LimeDfa *compile_state_rules(const LimeLexSpec *spec, const LimeLexRule **rules, int n_rules,
                                     int *err_count_out) {
     if (n_rules == 0) return NULL;
 
@@ -157,13 +148,10 @@ static LimeDfa *compile_state_rules(const LimeLexSpec *spec,
             per_rule[i] = NULL;
             continue;
         }
-        const char *src = r->expanded_pattern ?
-                          r->expanded_pattern : r->pattern;
+        const char *src = r->expanded_pattern ? r->expanded_pattern : r->pattern;
         if (!src) {
-            fprintf(stderr,
-                "%s:%d: rule '%s' has no pattern source\n",
-                spec->filename ? spec->filename : "<input>",
-                r->line, r->name);
+            fprintf(stderr, "%s:%d: rule '%s' has no pattern source\n",
+                    spec->filename ? spec->filename : "<input>", r->line, r->name);
             (*err_count_out)++;
             ok = 0;
             continue;
@@ -171,10 +159,9 @@ static LimeDfa *compile_state_rules(const LimeLexSpec *spec,
         char *err = NULL;
         LimeReNode *re = lime_lex_regex_parse(src, &err);
         if (!re) {
-            fprintf(stderr,
-                "%s:%d: rule '%s' regex parse failed: %s\n",
-                spec->filename ? spec->filename : "<input>",
-                r->line, r->name, err ? err : "(no msg)");
+            fprintf(stderr, "%s:%d: rule '%s' regex parse failed: %s\n",
+                    spec->filename ? spec->filename : "<input>", r->line, r->name,
+                    err ? err : "(no msg)");
             free(err);
             (*err_count_out)++;
             ok = 0;
@@ -183,10 +170,8 @@ static LimeDfa *compile_state_rules(const LimeLexSpec *spec,
         LimeNfa *nfa = lime_lex_nfa_from_regex(re);
         lime_lex_regex_free(re);
         if (!nfa) {
-            fprintf(stderr,
-                "%s:%d: rule '%s' NFA construction failed\n",
-                spec->filename ? spec->filename : "<input>",
-                r->line, r->name);
+            fprintf(stderr, "%s:%d: rule '%s' NFA construction failed\n",
+                    spec->filename ? spec->filename : "<input>", r->line, r->name);
             (*err_count_out)++;
             ok = 0;
             continue;
@@ -196,7 +181,8 @@ static LimeDfa *compile_state_rules(const LimeLexSpec *spec,
     }
 
     if (!ok) {
-        for (int i = 0; i < n_rules; i++) lime_lex_nfa_free(per_rule[i]);
+        for (int i = 0; i < n_rules; i++)
+            lime_lex_nfa_free(per_rule[i]);
         free(per_rule);
         return NULL;
     }
@@ -204,7 +190,8 @@ static LimeDfa *compile_state_rules(const LimeLexSpec *spec,
     /* Compact out the EOF placeholders. */
     LimeNfa **non_eof = calloc(n_rules, sizeof(*non_eof));
     if (!non_eof) {
-        for (int i = 0; i < n_rules; i++) lime_lex_nfa_free(per_rule[i]);
+        for (int i = 0; i < n_rules; i++)
+            lime_lex_nfa_free(per_rule[i]);
         free(per_rule);
         return NULL;
     }
@@ -249,8 +236,7 @@ static LimeDfa *compile_state_rules(const LimeLexSpec *spec,
 ** -1 on alloc failure. */
 static int compiled_push(LimeLexCompiled *c, LimeLexCompiledState s) {
     int newcap = c->n_states + 1;
-    LimeLexCompiledState *ns = realloc(c->states,
-                                       newcap * sizeof(*ns));
+    LimeLexCompiledState *ns = realloc(c->states, newcap * sizeof(*ns));
     if (!ns) return -1;
     c->states = ns;
     c->states[c->n_states++] = s;
@@ -259,32 +245,29 @@ static int compiled_push(LimeLexCompiled *c, LimeLexCompiledState s) {
 
 /* For one named state (INITIAL or a %state declaration), gather
 ** applicable rules and compile.  Appends the result to `out`. */
-static int compile_one(const LimeLexSpec *spec,
-                       const RuleVec *all_rules,
-                       const char *state_name,
-                       int exclusive,
-                       LimeLexCompiled *out) {
+static int compile_one(const LimeLexSpec *spec, const RuleVec *all_rules, const char *state_name,
+                       int exclusive, LimeLexCompiled *out) {
     /* Filter rules. */
-    const LimeLexRule **selected = calloc(all_rules->n,
-                                          sizeof(*selected));
+    const LimeLexRule **selected = calloc(all_rules->n, sizeof(*selected));
     int *indices = calloc(all_rules->n, sizeof(int));
     if (!selected || !indices) {
-        free(selected); free(indices);
+        free(selected);
+        free(indices);
         return -1;
     }
     int n_sel = 0;
     for (int i = 0; i < all_rules->n; i++) {
         if (rule_applies(all_rules->rules[i], state_name, exclusive)) {
             selected[n_sel] = all_rules->rules[i];
-            indices[n_sel]  = i;
+            indices[n_sel] = i;
             n_sel++;
         }
     }
 
-    LimeLexCompiledState s = {0};
-    s.state_name   = strdup(state_name);
-    s.exclusive    = exclusive;
-    s.n_rules      = n_sel;
+    LimeLexCompiledState s = { 0 };
+    s.state_name = strdup(state_name);
+    s.exclusive = exclusive;
+    s.n_rules = n_sel;
     s.rule_indices = indices;
     if (n_sel > 0) {
         s.dfa = compile_state_rules(spec, selected, n_sel, &out->error_count);
@@ -309,7 +292,7 @@ LimeLexCompiled *lime_lex_compile(const LimeLexSpec *spec) {
     LimeLexCompiled *out = calloc(1, sizeof(*out));
     if (!out) return NULL;
 
-    RuleVec all = {0};
+    RuleVec all = { 0 };
     int bad_includes = 0;
     if (rv_collect(spec, &all, &bad_includes) < 0) {
         free(all.rules);
@@ -351,8 +334,8 @@ void lime_lex_compiled_free(LimeLexCompiled *c) {
     free(c);
 }
 
-const LimeLexCompiledState *lime_lex_compiled_find_state(
-    const LimeLexCompiled *c, const char *state_name) {
+const LimeLexCompiledState *lime_lex_compiled_find_state(const LimeLexCompiled *c,
+                                                         const char *state_name) {
     if (!c || !state_name) return NULL;
     for (int i = 0; i < c->n_states; i++) {
         if (strcmp(c->states[i].state_name, state_name) == 0) {
@@ -362,9 +345,7 @@ const LimeLexCompiledState *lime_lex_compiled_find_state(
     return NULL;
 }
 
-int lime_lex_walk_rules(const LimeLexSpec *spec,
-                        LimeLexRuleVisitor cb,
-                        void *user) {
+int lime_lex_walk_rules(const LimeLexSpec *spec, LimeLexRuleVisitor cb, void *user) {
     if (!spec || !cb) return 0;
     /* Top-level rules first, declaration order. */
     for (const LimeLexRule *r = spec->rules; r; r = r->next) {
@@ -381,9 +362,8 @@ int lime_lex_walk_rules(const LimeLexSpec *spec,
         return 0;
     }
     for (int i = 0; i < spec->n_lexer_includes; i++) {
-        const LimeLexRuleset *rs = find_ruleset(spec,
-                                                spec->lexer_includes[i]);
-        if (!rs) continue;   /* diagnosed in lime_lex_compile */
+        const LimeLexRuleset *rs = find_ruleset(spec, spec->lexer_includes[i]);
+        if (!rs) continue; /* diagnosed in lime_lex_compile */
         for (const LimeLexRule *r = rs->rules; r; r = r->next) {
             int rc = cb(r, user);
             if (rc) return rc;

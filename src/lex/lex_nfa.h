@@ -27,41 +27,41 @@
 #include <stddef.h>
 
 typedef enum {
-    LIME_NFA_EPS = 1,         /* no input consumed */
-    LIME_NFA_BYTE,            /* single byte */
-    LIME_NFA_CLASS            /* character class (256-bit bitmap) */
+    LIME_NFA_EPS = 1, /* no input consumed */
+    LIME_NFA_BYTE,    /* single byte */
+    LIME_NFA_CLASS    /* character class (256-bit bitmap) */
 } LimeNfaEdgeKind;
 
 typedef struct LimeNfaEdge LimeNfaEdge;
 struct LimeNfaEdge {
     LimeNfaEdgeKind kind;
-    int             target;     /* target state id */
+    int target; /* target state id */
     union {
         unsigned char byte;
         struct {
             unsigned char bits[32];
-            int           negate;
+            int negate;
         } char_class;
     } u;
-    LimeNfaEdge    *next;       /* singly-linked list of outgoing edges */
+    LimeNfaEdge *next; /* singly-linked list of outgoing edges */
 };
 
 typedef struct {
-    int           id;
-    LimeNfaEdge  *edges;
-    int           is_accept;    /* set on accept states */
-    int           accept_rule;  /* rule id (0-based); only meaningful when
+    int id;
+    LimeNfaEdge *edges;
+    int is_accept;    /* set on accept states */
+    int accept_rule;  /* rule id (0-based); only meaningful when
                                  ** is_accept is set.  Set by combiners. */
-    int           anchor_start; /* set on states reachable only after ^ */
-    int           anchor_end;   /* set if this state requires end-of-input */
+    int anchor_start; /* set on states reachable only after ^ */
+    int anchor_end;   /* set if this state requires end-of-input */
 } LimeNfaState;
 
 typedef struct {
-    LimeNfaState *states;       /* array of states, indexed by id */
-    int           n_states;
-    int           cap;
-    int           start;        /* start state id */
-    int           accept;       /* accept state id */
+    LimeNfaState *states; /* array of states, indexed by id */
+    int n_states;
+    int cap;
+    int start;  /* start state id */
+    int accept; /* accept state id */
 } LimeNfa;
 
 /* Build an NFA from the regex AST.  Returns NULL on alloc
@@ -94,7 +94,6 @@ void lime_lex_nfa_free(LimeNfa *nfa);
 ** return -1 (used in tests; production parsers compile the
 ** NFA to a DFA first via M2.3 and don't simulate).
 */
-int lime_lex_nfa_match(const LimeNfa *nfa,
-                       const char *bytes, size_t n);
+int lime_lex_nfa_match(const LimeNfa *nfa, const char *bytes, size_t n);
 
 #endif /* LIME_LEX_NFA_H */

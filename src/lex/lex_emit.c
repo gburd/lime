@@ -116,22 +116,15 @@ static int has_literal_buffers(const LimeLexSpec *spec) {
 ** unresolved references.  Returns 0 on success (always). */
 static void emit_buf_alloc_guards(const LimeLexSpec *spec, FILE *out) {
     if (!has_literal_buffers(spec)) return;
-    for (const LimeLexLiteralBuffer *lb = spec->literal_buffers;
-         lb; lb = lb->next) {
+    for (const LimeLexLiteralBuffer *lb = spec->literal_buffers; lb; lb = lb->next) {
         if (!lb->alloc_fn) {
-            fprintf(out,
-                "#error \"%%literal_buffer %s: missing 'alloc' function\"\n",
-                lb->name);
+            fprintf(out, "#error \"%%literal_buffer %s: missing 'alloc' function\"\n", lb->name);
         }
         if (!lb->realloc_fn) {
-            fprintf(out,
-                "#error \"%%literal_buffer %s: missing 'realloc' function\"\n",
-                lb->name);
+            fprintf(out, "#error \"%%literal_buffer %s: missing 'realloc' function\"\n", lb->name);
         }
         if (!lb->free_fn) {
-            fprintf(out,
-                "#error \"%%literal_buffer %s: missing 'free' function\"\n",
-                lb->name);
+            fprintf(out, "#error \"%%literal_buffer %s: missing 'free' function\"\n", lb->name);
         }
     }
 }
@@ -139,29 +132,25 @@ static void emit_buf_alloc_guards(const LimeLexSpec *spec, FILE *out) {
 /* Emit per-buffer struct fields (buf/len/cap) inside FooLexer. */
 static void emit_buf_struct_fields(const LimeLexSpec *spec, FILE *out) {
     if (!has_literal_buffers(spec)) return;
-    fprintf(out,
-        "    /* M3.7: %%literal_buffer storage, one block per buffer. */\n");
-    for (const LimeLexLiteralBuffer *lb = spec->literal_buffers;
-         lb; lb = lb->next) {
+    fprintf(out, "    /* M3.7: %%literal_buffer storage, one block per buffer. */\n");
+    for (const LimeLexLiteralBuffer *lb = spec->literal_buffers; lb; lb = lb->next) {
         fprintf(out,
-            "    %s    *%s_buf;\n"
-            "    size_t  %s_len;\n"
-            "    size_t  %s_cap;\n",
-            eff_buf_type(lb), lb->name,
-            lb->name, lb->name);
+                "    %s    *%s_buf;\n"
+                "    size_t  %s_len;\n"
+                "    size_t  %s_cap;\n",
+                eff_buf_type(lb), lb->name, lb->name, lb->name);
     }
 }
 
 /* Emit LexAlloc init lines (zero buf/len/cap for each buffer). */
 static void emit_buf_alloc_init(const LimeLexSpec *spec, FILE *out) {
     if (!has_literal_buffers(spec)) return;
-    for (const LimeLexLiteralBuffer *lb = spec->literal_buffers;
-         lb; lb = lb->next) {
+    for (const LimeLexLiteralBuffer *lb = spec->literal_buffers; lb; lb = lb->next) {
         fprintf(out,
-            "    yyl->%s_buf = 0;\n"
-            "    yyl->%s_len = 0;\n"
-            "    yyl->%s_cap = 0;\n",
-            lb->name, lb->name, lb->name);
+                "    yyl->%s_buf = 0;\n"
+                "    yyl->%s_len = 0;\n"
+                "    yyl->%s_cap = 0;\n",
+                lb->name, lb->name, lb->name);
     }
 }
 
@@ -170,88 +159,71 @@ static void emit_buf_alloc_init(const LimeLexSpec *spec, FILE *out) {
 ** because allocation went through `<alloc>`/`<realloc>`. */
 static void emit_buf_free_walk(const LimeLexSpec *spec, FILE *out) {
     if (!has_literal_buffers(spec)) return;
-    for (const LimeLexLiteralBuffer *lb = spec->literal_buffers;
-         lb; lb = lb->next) {
-        if (!lb->free_fn) continue;   /* #error guard above */
+    for (const LimeLexLiteralBuffer *lb = spec->literal_buffers; lb; lb = lb->next) {
+        if (!lb->free_fn) continue; /* #error guard above */
         fprintf(out,
-            "        if (yyl->%s_buf) {\n"
-            "            %s(yyl->%s_buf);\n"
-            "            yyl->%s_buf = 0;\n"
-            "            yyl->%s_len = 0;\n"
-            "            yyl->%s_cap = 0;\n"
-            "        }\n",
-            lb->name,
-            lb->free_fn, lb->name,
-            lb->name, lb->name, lb->name);
+                "        if (yyl->%s_buf) {\n"
+                "            %s(yyl->%s_buf);\n"
+                "            yyl->%s_buf = 0;\n"
+                "            yyl->%s_len = 0;\n"
+                "            yyl->%s_cap = 0;\n"
+                "        }\n",
+                lb->name, lb->free_fn, lb->name, lb->name, lb->name, lb->name);
     }
 }
 
 /* Emit the per-buffer static helpers: grow + take.  These
 ** keep the LEX_BUF_* macros small so action bodies don't bloat
 ** the FeedBytes function. */
-static void emit_buf_helpers(const LimeLexSpec *spec, const char *prefix,
-                             FILE *out) {
+static void emit_buf_helpers(const LimeLexSpec *spec, const char *prefix, FILE *out) {
     if (!has_literal_buffers(spec)) return;
-    fprintf(out,
-        "/* ===== M3.7: per-buffer grow / take helpers ===== */\n");
-    for (const LimeLexLiteralBuffer *lb = spec->literal_buffers;
-         lb; lb = lb->next) {
+    fprintf(out, "/* ===== M3.7: per-buffer grow / take helpers ===== */\n");
+    for (const LimeLexLiteralBuffer *lb = spec->literal_buffers; lb; lb = lb->next) {
         const char *type = eff_buf_type(lb);
         const char *alloc = lb->alloc_fn ? lb->alloc_fn : "/*missing-alloc*/";
-        const char *realloc_fn =
-            lb->realloc_fn ? lb->realloc_fn : "/*missing-realloc*/";
+        const char *realloc_fn = lb->realloc_fn ? lb->realloc_fn : "/*missing-realloc*/";
         int initial = eff_buf_initial(lb);
 
         /* grow(): ensure capacity >= need; returns 0 ok / -1 fail. */
         fprintf(out,
-            "static int %s_buf_%s_grow(%sLexer *lex, size_t need) {\n"
-            "    if (lex->%s_cap >= need) return 0;\n"
-            "    size_t new_cap = lex->%s_cap;\n"
-            "    if (new_cap == 0) new_cap = %d;\n"
-            "    while (new_cap < need) {\n"
-            "        size_t prev = new_cap;\n",
-            prefix, lb->name, prefix,
-            lb->name,
-            lb->name,
-            initial);
+                "static int %s_buf_%s_grow(%sLexer *lex, size_t need) {\n"
+                "    if (lex->%s_cap >= need) return 0;\n"
+                "    size_t new_cap = lex->%s_cap;\n"
+                "    if (new_cap == 0) new_cap = %d;\n"
+                "    while (new_cap < need) {\n"
+                "        size_t prev = new_cap;\n",
+                prefix, lb->name, prefix, lb->name, lb->name, initial);
         emit_buf_grow_step(lb, out);
         fprintf(out,
-            "        if (new_cap <= prev) { new_cap = need; break; }\n"
-            "    }\n"
-            "    void *p = lex->%s_buf\n"
-            "        ? %s(lex->%s_buf, new_cap * sizeof(%s))\n"
-            "        : %s(new_cap * sizeof(%s));\n"
-            "    if (!p) return -1;\n"
-            "    lex->%s_buf = (%s*)p;\n"
-            "    lex->%s_cap = new_cap;\n"
-            "    return 0;\n"
-            "}\n",
-            lb->name,
-            realloc_fn, lb->name, type,
-            alloc, type,
-            lb->name, type,
-            lb->name);
+                "        if (new_cap <= prev) { new_cap = need; break; }\n"
+                "    }\n"
+                "    void *p = lex->%s_buf\n"
+                "        ? %s(lex->%s_buf, new_cap * sizeof(%s))\n"
+                "        : %s(new_cap * sizeof(%s));\n"
+                "    if (!p) return -1;\n"
+                "    lex->%s_buf = (%s*)p;\n"
+                "    lex->%s_cap = new_cap;\n"
+                "    return 0;\n"
+                "}\n",
+                lb->name, realloc_fn, lb->name, type, alloc, type, lb->name, type, lb->name);
 
         /* take(): grow for trailing NUL, NUL-terminate, transfer
         ** ownership to caller (returned pointer), reset state. */
         fprintf(out,
-            "static %s *%s_buf_%s_take(%sLexer *lex) {\n"
-            "    if (%s_buf_%s_grow(lex, lex->%s_len + 1) != 0) {\n"
-            "        lex->err_msg = \"literal buffer alloc failed\";\n"
-            "        return 0;\n"
-            "    }\n"
-            "    lex->%s_buf[lex->%s_len] = 0;\n"
-            "    %s *p = lex->%s_buf;\n"
-            "    lex->%s_buf = 0;\n"
-            "    lex->%s_len = 0;\n"
-            "    lex->%s_cap = 0;\n"
-            "    return p;\n"
-            "}\n\n",
-            type, prefix, lb->name, prefix,
-            prefix, lb->name, lb->name,
-            lb->name, lb->name,
-            type, lb->name,
-            lb->name, lb->name, lb->name);
+                "static %s *%s_buf_%s_take(%sLexer *lex) {\n"
+                "    if (%s_buf_%s_grow(lex, lex->%s_len + 1) != 0) {\n"
+                "        lex->err_msg = \"literal buffer alloc failed\";\n"
+                "        return 0;\n"
+                "    }\n"
+                "    lex->%s_buf[lex->%s_len] = 0;\n"
+                "    %s *p = lex->%s_buf;\n"
+                "    lex->%s_buf = 0;\n"
+                "    lex->%s_len = 0;\n"
+                "    lex->%s_cap = 0;\n"
+                "    return p;\n"
+                "}\n\n",
+                type, prefix, lb->name, prefix, prefix, lb->name, lb->name, lb->name, lb->name,
+                type, lb->name, lb->name, lb->name, lb->name);
     }
 }
 
@@ -261,10 +233,10 @@ static void emit_buf_helpers(const LimeLexSpec *spec, const char *prefix,
 
 typedef struct {
     const char **actions;
-    int         *is_eof;
-    int          n;
-    int          cap;
-    int          oom;
+    int *is_eof;
+    int n;
+    int cap;
+    int oom;
 } ActionVec;
 
 static int action_visit(const LimeLexRule *r, void *user) {
@@ -296,14 +268,12 @@ static int action_visit(const LimeLexRule *r, void *user) {
 ** is_eof arrays.  *actions_out[i] points into the spec; do NOT
 ** free the strings -- only the arrays.  Returns 0 on success,
 ** -1 on alloc failure or count mismatch. */
-static int collect_rule_actions(const LimeLexSpec *spec,
-                                int expected_n,
-                                const char ***actions_out,
+static int collect_rule_actions(const LimeLexSpec *spec, int expected_n, const char ***actions_out,
                                 int **is_eof_out) {
     *actions_out = NULL;
     *is_eof_out = NULL;
     if (!spec) return -1;
-    ActionVec v = {0};
+    ActionVec v = { 0 };
     if (lime_lex_walk_rules(spec, action_visit, &v) != 0) {
         free(v.actions);
         free(v.is_eof);
@@ -325,9 +295,9 @@ static int collect_rule_actions(const LimeLexSpec *spec,
 
 typedef struct {
     char **names;
-    int    n;
-    int    cap;
-    int    oom;
+    int n;
+    int cap;
+    int oom;
 } NameVec;
 
 static int name_visit(const LimeLexRule *r, void *user) {
@@ -335,24 +305,29 @@ static int name_visit(const LimeLexRule *r, void *user) {
     if (v->n == v->cap) {
         int nc = v->cap ? v->cap * 2 : 16;
         char **nn = realloc(v->names, (size_t)nc * sizeof(*nn));
-        if (!nn) { v->oom = 1; return -1; }
+        if (!nn) {
+            v->oom = 1;
+            return -1;
+        }
         v->names = nn;
         v->cap = nc;
     }
     v->names[v->n] = strdup(r->name ? r->name : "anon");
-    if (!v->names[v->n]) { v->oom = 1; return -1; }
+    if (!v->names[v->n]) {
+        v->oom = 1;
+        return -1;
+    }
     sanitise_ident(v->names[v->n]);
     v->n++;
     return 0;
 }
 
-int lime_lex_collect_rule_names(const LimeLexSpec *spec,
-                                char ***names_out,
-                                int *n_rules_out) {
+int lime_lex_collect_rule_names(const LimeLexSpec *spec, char ***names_out, int *n_rules_out) {
     if (!spec || !names_out || !n_rules_out) return -1;
-    NameVec v = {0};
+    NameVec v = { 0 };
     if (lime_lex_walk_rules(spec, name_visit, &v) != 0) {
-        for (int k = 0; k < v.n; k++) free(v.names[k]);
+        for (int k = 0; k < v.n; k++)
+            free(v.names[k]);
         free(v.names);
         return -1;
     }
@@ -384,13 +359,13 @@ int lime_lex_collect_rule_names(const LimeLexSpec *spec,
 ** by hand against the appropriate constant via Foo_match
 ** directly. */
 typedef struct {
-    FILE       *out;
-    const char *prefix;        /* "Foo" */
-    char       *PREFIX;        /* "FOO" -- borrowed, do not free */
-    int         emit_h;        /* 1 = decls only, 0 = bodies */
-    int         compiled_state_count;
+    FILE *out;
+    const char *prefix; /* "Foo" */
+    char *PREFIX;       /* "FOO" -- borrowed, do not free */
+    int emit_h;         /* 1 = decls only, 0 = bodies */
+    int compiled_state_count;
     const LimeLexCompiledState *compiled_states;
-    int         err;
+    int err;
 } TestWrapperCtx;
 
 /* Look up a state name in the compiled state list.  Returns
@@ -398,8 +373,7 @@ typedef struct {
 ** or -1 if the name is not known.  We compare on the original
 ** state name, not the upper-cased variant, since c->states[]
 ** stores the source-form name. */
-static int compiled_state_index(const TestWrapperCtx *ctx,
-                                const char *name) {
+static int compiled_state_index(const TestWrapperCtx *ctx, const char *name) {
     for (int i = 0; i < ctx->compiled_state_count; i++) {
         if (strcmp(ctx->compiled_states[i].state_name, name) == 0) {
             return i;
@@ -414,11 +388,18 @@ static int test_wrapper_visit(const LimeLexRule *r, void *user) {
     if (!r->name) return 0;
 
     char *suffix = strdup(r->name);
-    if (!suffix) { ctx->err = 1; return -1; }
+    if (!suffix) {
+        ctx->err = 1;
+        return -1;
+    }
     sanitise_ident(suffix);
 
     char *RULE_UPPER = upper_dup(suffix);
-    if (!RULE_UPPER) { free(suffix); ctx->err = 1; return -1; }
+    if (!RULE_UPPER) {
+        free(suffix);
+        ctx->err = 1;
+        return -1;
+    }
 
     /* Pick the state for the wrapper.  Unqualified -> INITIAL.
     ** Qualified -> first state.  Defensive: if the named state
@@ -428,37 +409,38 @@ static int test_wrapper_visit(const LimeLexRule *r, void *user) {
     if (r->n_states > 0 && r->states && r->states[0]) {
         state_name = r->states[0];
         if (compiled_state_index(ctx, state_name) < 0) {
-            free(suffix); free(RULE_UPPER);
+            free(suffix);
+            free(RULE_UPPER);
             return 0;
         }
     }
     char *STATE_UPPER = upper_dup(state_name);
     if (!STATE_UPPER) {
-        free(suffix); free(RULE_UPPER);
-        ctx->err = 1; return -1;
+        free(suffix);
+        free(RULE_UPPER);
+        ctx->err = 1;
+        return -1;
     }
 
     if (ctx->emit_h) {
         fprintf(ctx->out,
-            "%sLexResult %s_test_rule_%s(const char *input, size_t n,\n"
-            "                              size_t *out_consumed);\n",
-            ctx->prefix, ctx->prefix, suffix);
+                "%sLexResult %s_test_rule_%s(const char *input, size_t n,\n"
+                "                              size_t *out_consumed);\n",
+                ctx->prefix, ctx->prefix, suffix);
     } else {
         fprintf(ctx->out,
-            "%sLexResult %s_test_rule_%s(const char *input, size_t n,\n"
-            "                              size_t *out_consumed) {\n"
-            "    int rule = -1;\n"
-            "    size_t consumed = 0;\n"
-            "    int ok = %s_match(%s_STATE_%s, input, n,\n"
-            "                      &rule, &consumed);\n"
-            "    if (!ok || rule != %s_RULE_%s) return %s_LEX_ERROR;\n"
-            "    if (out_consumed) *out_consumed = consumed;\n"
-            "    return %s_LEX_OK;\n"
-            "}\n\n",
-            ctx->prefix, ctx->prefix, suffix,
-            ctx->prefix, ctx->PREFIX, STATE_UPPER,
-            ctx->PREFIX, RULE_UPPER, ctx->PREFIX,
-            ctx->PREFIX);
+                "%sLexResult %s_test_rule_%s(const char *input, size_t n,\n"
+                "                              size_t *out_consumed) {\n"
+                "    int rule = -1;\n"
+                "    size_t consumed = 0;\n"
+                "    int ok = %s_match(%s_STATE_%s, input, n,\n"
+                "                      &rule, &consumed);\n"
+                "    if (!ok || rule != %s_RULE_%s) return %s_LEX_ERROR;\n"
+                "    if (out_consumed) *out_consumed = consumed;\n"
+                "    return %s_LEX_OK;\n"
+                "}\n\n",
+                ctx->prefix, ctx->prefix, suffix, ctx->prefix, ctx->PREFIX, STATE_UPPER,
+                ctx->PREFIX, RULE_UPPER, ctx->PREFIX, ctx->PREFIX);
     }
     free(suffix);
     free(RULE_UPPER);
@@ -466,12 +448,8 @@ static int test_wrapper_visit(const LimeLexRule *r, void *user) {
     return 0;
 }
 
-static int emit_test_wrappers(const LimeLexCompiled *c,
-                              const LimeLexSpec *spec,
-                              const char *prefix,
-                              char *PREFIX,
-                              int emit_h,
-                              FILE *out) {
+static int emit_test_wrappers(const LimeLexCompiled *c, const LimeLexSpec *spec, const char *prefix,
+                              char *PREFIX, int emit_h, FILE *out) {
     if (!spec) return 0;
     TestWrapperCtx ctx;
     ctx.out = out;
@@ -485,12 +463,8 @@ static int emit_test_wrappers(const LimeLexCompiled *c,
     return ctx.err ? -1 : 0;
 }
 
-int lime_lex_emit_h(const LimeLexCompiled *c,
-                    const LimeLexSpec *spec,
-                    const char *name_prefix,
-                    const char *const *rule_names,
-                    int n_rules,
-                    FILE *out) {
+int lime_lex_emit_h(const LimeLexCompiled *c, const LimeLexSpec *spec, const char *name_prefix,
+                    const char *const *rule_names, int n_rules, FILE *out) {
     if (!c || !out) return -1;
 
     const char *prefix = eff_prefix(name_prefix);
@@ -506,9 +480,11 @@ int lime_lex_emit_h(const LimeLexCompiled *c,
     fprintf(out, "/* Lexer state constants. */\n");
     for (int i = 0; i < c->n_states; i++) {
         char *upper_state = upper_dup(c->states[i].state_name);
-        if (!upper_state) { free(PREFIX); return -1; }
-        fprintf(out, "#define %s_STATE_%-20s %d\n",
-                PREFIX, upper_state, i);
+        if (!upper_state) {
+            free(PREFIX);
+            return -1;
+        }
+        fprintf(out, "#define %s_STATE_%-20s %d\n", PREFIX, upper_state, i);
         free(upper_state);
     }
     fprintf(out, "\n");
@@ -519,9 +495,11 @@ int lime_lex_emit_h(const LimeLexCompiled *c,
         fprintf(out, "enum {\n");
         for (int i = 0; i < n_rules; i++) {
             char *upper_rule = upper_dup(rule_names[i]);
-            if (!upper_rule) { free(PREFIX); return -1; }
-            fprintf(out, "    %s_RULE_%-20s = %d%s\n",
-                    PREFIX, upper_rule, i,
+            if (!upper_rule) {
+                free(PREFIX);
+                return -1;
+            }
+            fprintf(out, "    %s_RULE_%-20s = %d%s\n", PREFIX, upper_rule, i,
                     i + 1 < n_rules ? "," : "");
             free(upper_rule);
         }
@@ -537,41 +515,39 @@ int lime_lex_emit_h(const LimeLexCompiled *c,
     fprintf(out, "** *out_consumed = number of bytes consumed.\n");
     fprintf(out, "** On no match: returns 0; *out_rule and *out_consumed\n");
     fprintf(out, "** are not modified. */\n");
-    fprintf(out, "int %s_match(int state, const char *bytes, size_t n,\n",
-            prefix);
+    fprintf(out, "int %s_match(int state, const char *bytes, size_t n,\n", prefix);
     fprintf(out, "             int *out_rule, size_t *out_consumed);\n\n");
 
     /* M3.3: push-driven runtime API (extended in M3.5 with the
     ** include buffer stack and pushback). */
     fprintf(out, "/* ===== Push-driven runtime API (M3.3 + M3.5) ===== */\n\n");
     fprintf(out,
-        "/* Maximum nesting depth of LexInclude calls (counting the\n"
-        "** initial LexFeedBytes buffer as the bottom frame).  64 is\n"
-        "** well above any real-world include nesting; if exceeded,\n"
-        "** LexInclude returns LEX_ERROR rather than overflowing. */\n"
-        "#define %s_LEX_MAX_INCLUDE_DEPTH 64\n\n",
-        PREFIX);
+            "/* Maximum nesting depth of LexInclude calls (counting the\n"
+            "** initial LexFeedBytes buffer as the bottom frame).  64 is\n"
+            "** well above any real-world include nesting; if exceeded,\n"
+            "** LexInclude returns LEX_ERROR rather than overflowing. */\n"
+            "#define %s_LEX_MAX_INCLUDE_DEPTH 64\n\n",
+            PREFIX);
     fprintf(out, "typedef struct %sLexer %sLexer;\n\n", prefix, prefix);
     fprintf(out,
-        "typedef enum {\n"
-        "    %s_LEX_OK = 0,\n"
-        "    %s_LEX_ERROR = 1\n"
-        "} %sLexResult;\n\n",
-        PREFIX, PREFIX, prefix);
+            "typedef enum {\n"
+            "    %s_LEX_OK = 0,\n"
+            "    %s_LEX_ERROR = 1\n"
+            "} %sLexResult;\n\n",
+            PREFIX, PREFIX, prefix);
     fprintf(out,
-        "/* Emit callback: invoked once per recognised token.  user is the\n"
-        "** opaque pointer the caller passed to LexFeedBytes; rule is the\n"
-        "** matched rule id (one of %s_RULE_*); text/len point into the\n"
-        "** caller's input buffer (NOT copied -- valid until the buffer\n"
-        "** is freed). */\n"
-        "typedef void (*%sEmitFn)(void *user, int rule,\n"
-        "                         const char *text, size_t len);\n\n",
-        PREFIX, prefix);
+            "/* Emit callback: invoked once per recognised token.  user is the\n"
+            "** opaque pointer the caller passed to LexFeedBytes; rule is the\n"
+            "** matched rule id (one of %s_RULE_*); text/len point into the\n"
+            "** caller's input buffer (NOT copied -- valid until the buffer\n"
+            "** is freed). */\n"
+            "typedef void (*%sEmitFn)(void *user, int rule,\n"
+            "                         const char *text, size_t len);\n\n",
+            PREFIX, prefix);
     fprintf(out,
-        "%sLexer    *%sLexAlloc(void *(*mallocProc)(size_t));\n"
-        "void          %sLexFree(%sLexer *yyl, void (*freeProc)(void *));\n",
-        prefix, prefix,
-        prefix, prefix);
+            "%sLexer    *%sLexAlloc(void *(*mallocProc)(size_t));\n"
+            "void          %sLexFree(%sLexer *yyl, void (*freeProc)(void *));\n",
+            prefix, prefix, prefix, prefix);
     /* P0-NEW-12: %lexer_extra_argument threads a user-declared
     ** parameter through LexFeedBytes; the user's name is in scope
     ** inside every action body via standard C parameter binding. */
@@ -585,93 +561,93 @@ int lime_lex_emit_h(const LimeLexCompiled *c,
     ** need this and pass through untouched. */
     if (extra_arg) {
         const char *p = extra_arg;
-        while (*p == ' ' || *p == '\t' || *p == '\n') p++;
+        while (*p == ' ' || *p == '\t' || *p == '\n')
+            p++;
         const char *kw = 0;
         size_t kw_len = 0;
         if (strncmp(p, "struct", 6) == 0 && (p[6] == ' ' || p[6] == '\t')) {
-            kw = "struct"; kw_len = 6;
+            kw = "struct";
+            kw_len = 6;
         } else if (strncmp(p, "union", 5) == 0 && (p[5] == ' ' || p[5] == '\t')) {
-            kw = "union"; kw_len = 5;
+            kw = "union";
+            kw_len = 5;
         }
         if (kw) {
             const char *q = p + kw_len;
-            while (*q == ' ' || *q == '\t') q++;
+            while (*q == ' ' || *q == '\t')
+                q++;
             const char *tag_start = q;
             while ((*q >= 'a' && *q <= 'z') || (*q >= 'A' && *q <= 'Z') ||
-                   (*q >= '0' && *q <= '9') || *q == '_') q++;
+                   (*q >= '0' && *q <= '9') || *q == '_')
+                q++;
             if (q > tag_start) {
-                fprintf(out, "%s %.*s;\n\n",
-                        kw, (int)(q - tag_start), tag_start);
+                fprintf(out, "%s %.*s;\n\n", kw, (int)(q - tag_start), tag_start);
             }
         }
     }
     if (extra_arg) {
         fprintf(out,
-            "%sLexResult  %sLexFeedBytes(%sLexer *yyl,\n"
-            "                              const char *bytes, size_t n,\n"
-            "                              %sEmitFn emit, void *user,\n"
-            "                              %s);\n",
-            prefix, prefix, prefix, prefix, extra_arg);
+                "%sLexResult  %sLexFeedBytes(%sLexer *yyl,\n"
+                "                              const char *bytes, size_t n,\n"
+                "                              %sEmitFn emit, void *user,\n"
+                "                              %s);\n",
+                prefix, prefix, prefix, prefix, extra_arg);
     } else {
         fprintf(out,
-            "%sLexResult  %sLexFeedBytes(%sLexer *yyl,\n"
-            "                              const char *bytes, size_t n,\n"
-            "                              %sEmitFn emit, void *user);\n",
-            prefix, prefix, prefix, prefix);
+                "%sLexResult  %sLexFeedBytes(%sLexer *yyl,\n"
+                "                              const char *bytes, size_t n,\n"
+                "                              %sEmitFn emit, void *user);\n",
+                prefix, prefix, prefix, prefix);
     }
     fprintf(out,
-        "%sLexResult  %sLexFeedEOF(%sLexer *yyl,\n"
-        "                            %sEmitFn emit, void *user);\n"
-        "int           %sLexCurrentState(const %sLexer *yyl);\n"
-        "void          %sLexSetState(%sLexer *yyl, int state);\n"
-        "const char   *%sLexErrorMessage(const %sLexer *yyl);\n\n",
-        prefix, prefix, prefix,
-        prefix,
-        prefix, prefix,
-        prefix, prefix,
-        prefix, prefix);
+            "%sLexResult  %sLexFeedEOF(%sLexer *yyl,\n"
+            "                            %sEmitFn emit, void *user);\n"
+            "int           %sLexCurrentState(const %sLexer *yyl);\n"
+            "void          %sLexSetState(%sLexer *yyl, int state);\n"
+            "const char   *%sLexErrorMessage(const %sLexer *yyl);\n\n",
+            prefix, prefix, prefix, prefix, prefix, prefix, prefix, prefix, prefix, prefix);
 
     fprintf(out,
-        "/* Push a new input source onto the lexer's buffer stack.\n"
-        "** The lexer continues from the new source until it hits EOF,\n"
-        "** then automatically resumes the parent buffer.  The supplied\n"
-        "** bytes are NOT copied -- the caller retains ownership and\n"
-        "** must keep the buffer alive until the corresponding pop\n"
-        "** (observable via LexIncludeDepth).  Typical use: from inside\n"
-        "** an emit callback that just recognised an INCLUDE directive.\n"
-        "** Returns LEX_ERROR if the lexer is NULL or the maximum\n"
-        "** include depth has been reached. */\n"
-        "%sLexResult  %sLexInclude(%sLexer *yyl,\n"
-        "                            const char *bytes, size_t n);\n\n",
-        prefix, prefix, prefix);
+            "/* Push a new input source onto the lexer's buffer stack.\n"
+            "** The lexer continues from the new source until it hits EOF,\n"
+            "** then automatically resumes the parent buffer.  The supplied\n"
+            "** bytes are NOT copied -- the caller retains ownership and\n"
+            "** must keep the buffer alive until the corresponding pop\n"
+            "** (observable via LexIncludeDepth).  Typical use: from inside\n"
+            "** an emit callback that just recognised an INCLUDE directive.\n"
+            "** Returns LEX_ERROR if the lexer is NULL or the maximum\n"
+            "** include depth has been reached. */\n"
+            "%sLexResult  %sLexInclude(%sLexer *yyl,\n"
+            "                            const char *bytes, size_t n);\n\n",
+            prefix, prefix, prefix);
     fprintf(out,
-        "/* Un-consume the last n bytes from the top-of-stack buffer.\n"
-        "** Equivalent to flex's yyless(yyleng - n) when called outside\n"
-        "** an action body.  Bounds-checked against the available\n"
-        "** buffered prefix in the current frame: returns LEX_ERROR if\n"
-        "** n exceeds the bytes consumed so far in that frame, or the\n"
-        "** buffer stack is empty. */\n"
-        "%sLexResult  %sLexPushback(%sLexer *yyl, size_t n);\n\n",
-        prefix, prefix, prefix);
+            "/* Un-consume the last n bytes from the top-of-stack buffer.\n"
+            "** Equivalent to flex's yyless(yyleng - n) when called outside\n"
+            "** an action body.  Bounds-checked against the available\n"
+            "** buffered prefix in the current frame: returns LEX_ERROR if\n"
+            "** n exceeds the bytes consumed so far in that frame, or the\n"
+            "** buffer stack is empty. */\n"
+            "%sLexResult  %sLexPushback(%sLexer *yyl, size_t n);\n\n",
+            prefix, prefix, prefix);
     fprintf(out,
-        "/* Number of LexInclude levels currently active.  0 when no\n"
-        "** include is on the stack (i.e. the lexer is processing the\n"
-        "** original LexFeedBytes buffer or is idle). */\n"
-        "int           %sLexIncludeDepth(const %sLexer *yyl);\n\n",
-        prefix, prefix);
+            "/* Number of LexInclude levels currently active.  0 when no\n"
+            "** include is on the stack (i.e. the lexer is processing the\n"
+            "** original LexFeedBytes buffer or is idle). */\n"
+            "int           %sLexIncludeDepth(const %sLexer *yyl);\n\n",
+            prefix, prefix);
 
     /* M4.3: per-rule test entry-point declarations. */
     if (spec) {
         fprintf(out,
-            "/* ===== Per-rule test entry points (M4.3) =====\n"
-            "** One thin wrapper per non-EOF rule, exposing isolated\n"
-            "** rule testing without spinning up the full push-driven\n"
-            "** runtime.  Each wrapper invokes %s_match in the rule's\n"
-            "** first declared state qualifier (or %s_STATE_INITIAL\n"
-            "** for unqualified rules), and returns %s_LEX_OK only\n"
-            "** when that specific rule matches.  *out_consumed is\n"
-            "** written only on success; passing NULL is permitted. */\n",
-            prefix, PREFIX, PREFIX);
+                "/* ===== Per-rule test entry points (M4.3) =====\n"
+                "** One thin wrapper per non-EOF rule, exposing isolated\n"
+                "** rule testing without spinning up the full push-driven\n"
+                "** runtime.  Each wrapper invokes %s_match in the rule's\n"
+                "** first declared state qualifier (or %s_STATE_INITIAL\n"
+                "** for unqualified rules), and returns %s_LEX_OK only\n"
+                "** when that specific rule matches.  *out_consumed is\n"
+                "** written only on success; passing NULL is permitted. */\n",
+                prefix, PREFIX, PREFIX);
         if (emit_test_wrappers(c, spec, prefix, PREFIX, 1, out) != 0) {
             free(PREFIX);
             return -1;
@@ -689,64 +665,50 @@ int lime_lex_emit_h(const LimeLexCompiled *c,
 ** ============================================================ */
 
 /* Emit a single state's DFA tables as C arrays. */
-static void emit_state_tables(const LimeLexCompiledState *cs,
-                              int compiled_state_index,
-                              const char *prefix,
-                              FILE *out) {
+static void emit_state_tables(const LimeLexCompiledState *cs, int compiled_state_index,
+                              const char *prefix, FILE *out) {
     char *upper_state = upper_dup(cs->state_name);
     int ns = cs->dfa ? cs->dfa->n_states : 0;
-    fprintf(out, "/* DFA tables for state %s (%d states, %d rules) */\n",
-            cs->state_name, ns, cs->n_rules);
+    fprintf(out, "/* DFA tables for state %s (%d states, %d rules) */\n", cs->state_name, ns,
+            cs->n_rules);
     if (ns == 0 || !cs->dfa) {
-        fprintf(out,
-                "static const int %s_dfa_%s_start = 0;\n\n",
-                prefix, upper_state);
+        fprintf(out, "static const int %s_dfa_%s_start = 0;\n\n", prefix, upper_state);
         free(upper_state);
         return;
     }
-    fprintf(out, "static const int %s_dfa_%s_start = %d;\n",
-            prefix, upper_state, cs->dfa->start);
+    fprintf(out, "static const int %s_dfa_%s_start = %d;\n", prefix, upper_state, cs->dfa->start);
 
     /* trans[N][256] */
-    fprintf(out, "static const short %s_dfa_%s_trans[%d][256] = {\n",
-            prefix, upper_state, ns);
+    fprintf(out, "static const short %s_dfa_%s_trans[%d][256] = {\n", prefix, upper_state, ns);
     for (int s = 0; s < ns; s++) {
         fprintf(out, "    /* state %d */ {", s);
         for (int b = 0; b < 256; b++) {
             if (b % 16 == 0) fprintf(out, "\n        ");
-            fprintf(out, "%4d%s", cs->dfa->states[s].trans[b],
-                    (b + 1 < 256) ? "," : "");
+            fprintf(out, "%4d%s", cs->dfa->states[s].trans[b], (b + 1 < 256) ? "," : "");
         }
         fprintf(out, "\n    }%s\n", (s + 1 < ns) ? "," : "");
     }
     fprintf(out, "};\n");
 
     /* accept[N] = global rule id or -1. */
-    fprintf(out, "static const short %s_dfa_%s_accept[%d] = {",
-            prefix, upper_state, ns);
+    fprintf(out, "static const short %s_dfa_%s_accept[%d] = {", prefix, upper_state, ns);
     for (int s = 0; s < ns; s++) {
         if (s % 12 == 0) fprintf(out, "\n    ");
-        int local_rule = cs->dfa->states[s].is_accept
-            ? cs->dfa->states[s].accept_rule : -1;
+        int local_rule = cs->dfa->states[s].is_accept ? cs->dfa->states[s].accept_rule : -1;
         int global_rule = -1;
         if (local_rule >= 0 && local_rule < cs->n_rules) {
             global_rule = cs->rule_indices[local_rule];
         }
-        fprintf(out, "%4d%s", global_rule,
-                (s + 1 < ns) ? "," : "");
+        fprintf(out, "%4d%s", global_rule, (s + 1 < ns) ? "," : "");
     }
     fprintf(out, "\n};\n\n");
 
     free(upper_state);
-    (void)compiled_state_index;   /* reserved for future state-id use */
+    (void)compiled_state_index; /* reserved for future state-id use */
 }
 
-int lime_lex_emit_c(const LimeLexCompiled *c,
-                    const LimeLexSpec *spec,
-                    const char *name_prefix,
-                    const char *header_basename,
-                    const char *const *rule_names,
-                    int n_rules,
+int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const char *name_prefix,
+                    const char *header_basename, const char *const *rule_names, int n_rules,
                     FILE *out) {
     if (!c || !out) return -1;
     const char *prefix = eff_prefix(name_prefix);
@@ -769,8 +731,7 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     ** macros).  The unwrapped body has no surrounding braces;
     ** the user wrote it in their preferred style. */
     if (spec && spec->include_block) {
-        fprintf(out,
-            "/* ===== %%include { ... } block (P0-NEW-9) ===== */\n");
+        fprintf(out, "/* ===== %%include { ... } block (P0-NEW-9) ===== */\n");
         fprintf(out, "%s\n\n", spec->include_block);
     }
 
@@ -783,8 +744,7 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     /* Rule-name table. */
     fprintf(out, "const char *const %sRuleNames[] = {\n", prefix);
     for (int i = 0; i < n_rules; i++) {
-        fprintf(out, "    \"%s\"%s\n", rule_names[i],
-                (i + 1 < n_rules) ? "," : "");
+        fprintf(out, "    \"%s\"%s\n", rule_names[i], (i + 1 < n_rules) ? "," : "");
     }
     if (n_rules == 0) fprintf(out, "    /* no rules */\n");
     fprintf(out, "    %s NULL\n", n_rules > 0 ? "," : "");
@@ -796,8 +756,7 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     }
 
     /* Match function: longest-match driver. */
-    fprintf(out, "int %s_match(int state, const char *bytes, size_t n,\n",
-            prefix);
+    fprintf(out, "int %s_match(int state, const char *bytes, size_t n,\n", prefix);
     fprintf(out, "             int *out_rule, size_t *out_consumed) {\n");
     fprintf(out, "    int start;\n");
     fprintf(out, "    int last_accept_rule = -1;\n");
@@ -808,8 +767,7 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     fprintf(out, "    switch (state) {\n");
     for (int i = 0; i < c->n_states; i++) {
         char *upper_state = upper_dup(c->states[i].state_name);
-        fprintf(out, "    case %d: start = %s_dfa_%s_start; break;\n",
-                i, prefix, upper_state);
+        fprintf(out, "    case %d: start = %s_dfa_%s_start; break;\n", i, prefix, upper_state);
         free(upper_state);
     }
     fprintf(out, "    default: return 0;\n");
@@ -822,10 +780,8 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     fprintf(out, "    switch (state) {\n");
     for (int i = 0; i < c->n_states; i++) {
         char *upper_state = upper_dup(c->states[i].state_name);
-        fprintf(out, "    case %d: if (%s_dfa_%s_accept[s] >= 0) {\n",
-                i, prefix, upper_state);
-        fprintf(out, "        last_accept_rule = %s_dfa_%s_accept[s];\n",
-                prefix, upper_state);
+        fprintf(out, "    case %d: if (%s_dfa_%s_accept[s] >= 0) {\n", i, prefix, upper_state);
+        fprintf(out, "        last_accept_rule = %s_dfa_%s_accept[s];\n", prefix, upper_state);
         fprintf(out, "        last_accept_pos = 0;\n");
         fprintf(out, "    } break;\n");
         free(upper_state);
@@ -838,8 +794,8 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     for (int i = 0; i < c->n_states; i++) {
         char *upper_state = upper_dup(c->states[i].state_name);
         fprintf(out, "        case %d:\n", i);
-        fprintf(out, "            next = %s_dfa_%s_trans[s][(unsigned char)bytes[i]];\n",
-                prefix, upper_state);
+        fprintf(out, "            next = %s_dfa_%s_trans[s][(unsigned char)bytes[i]];\n", prefix,
+                upper_state);
         fprintf(out, "            break;\n");
         free(upper_state);
     }
@@ -851,10 +807,9 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     for (int i = 0; i < c->n_states; i++) {
         char *upper_state = upper_dup(c->states[i].state_name);
         fprintf(out, "        case %d:\n", i);
-        fprintf(out, "            if (%s_dfa_%s_accept[s] >= 0) {\n",
-                prefix, upper_state);
-        fprintf(out, "                last_accept_rule = %s_dfa_%s_accept[s];\n",
-                prefix, upper_state);
+        fprintf(out, "            if (%s_dfa_%s_accept[s] >= 0) {\n", prefix, upper_state);
+        fprintf(out, "                last_accept_rule = %s_dfa_%s_accept[s];\n", prefix,
+                upper_state);
         fprintf(out, "                last_accept_pos = i + 1;\n");
         fprintf(out, "            }\n");
         fprintf(out, "            break;\n");
@@ -872,19 +827,19 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     /* ===== M3.3 + M3.5: push-driven runtime ===== */
     fprintf(out, "/* ===== Push-driven runtime (M3.3 + M3.5) ===== */\n\n");
     fprintf(out,
-        "/* Buffer stack frame.  Caller-supplied bytes are NOT copied\n"
-        "** -- the caller retains ownership.  pos is the next-byte-to-\n"
-        "** match offset; LexPushback rewinds it. */\n"
-        "struct %sLexer {\n"
-        "    int          state;\n"
-        "    const char  *err_msg;\n"
-        "    int          depth;       /* # frames currently on stack */\n"
-        "    struct {\n"
-        "        const char *bytes;\n"
-        "        size_t      len;\n"
-        "        size_t      pos;\n"
-        "    } stack[%s_LEX_MAX_INCLUDE_DEPTH];\n",
-        prefix, PREFIX);
+            "/* Buffer stack frame.  Caller-supplied bytes are NOT copied\n"
+            "** -- the caller retains ownership.  pos is the next-byte-to-\n"
+            "** match offset; LexPushback rewinds it. */\n"
+            "struct %sLexer {\n"
+            "    int          state;\n"
+            "    const char  *err_msg;\n"
+            "    int          depth;       /* # frames currently on stack */\n"
+            "    struct {\n"
+            "        const char *bytes;\n"
+            "        size_t      len;\n"
+            "        size_t      pos;\n"
+            "    } stack[%s_LEX_MAX_INCLUDE_DEPTH];\n",
+            prefix, PREFIX);
     /* M3.7: per-buffer storage fields. */
     emit_buf_struct_fields(spec, out);
     fprintf(out, "};\n\n");
@@ -895,32 +850,30 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     emit_buf_helpers(spec, prefix, out);
 
     fprintf(out,
-        "%sLexer *%sLexAlloc(void *(*mallocProc)(size_t)) {\n"
-        "    if (!mallocProc) return 0;\n"
-        "    %sLexer *yyl = (%sLexer*)mallocProc(sizeof(*yyl));\n"
-        "    if (!yyl) return 0;\n"
-        "    yyl->state = 0;          /* INITIAL */\n"
-        "    yyl->err_msg = 0;\n"
-        "    yyl->depth = 0;\n",
-        prefix, prefix, prefix, prefix);
+            "%sLexer *%sLexAlloc(void *(*mallocProc)(size_t)) {\n"
+            "    if (!mallocProc) return 0;\n"
+            "    %sLexer *yyl = (%sLexer*)mallocProc(sizeof(*yyl));\n"
+            "    if (!yyl) return 0;\n"
+            "    yyl->state = 0;          /* INITIAL */\n"
+            "    yyl->err_msg = 0;\n"
+            "    yyl->depth = 0;\n",
+            prefix, prefix, prefix, prefix);
     /* M3.7: zero-initialise per-buffer storage. */
     emit_buf_alloc_init(spec, out);
+    fprintf(out, "    return yyl;\n"
+                 "}\n\n");
     fprintf(out,
-        "    return yyl;\n"
-        "}\n\n");
-    fprintf(out,
-        "void %sLexFree(%sLexer *yyl, void (*freeProc)(void *)) {\n"
-        "    if (yyl) {\n",
-        prefix, prefix);
+            "void %sLexFree(%sLexer *yyl, void (*freeProc)(void *)) {\n"
+            "    if (yyl) {\n",
+            prefix, prefix);
     /* M3.7: walk every declared buffer and free anything still
     ** alive (e.g. accumulator filled but LEX_BUF_TAKE never run
     ** before the caller dropped the lexer).  Each buffer uses
     ** the user-declared <free> function paired with its alloc. */
     emit_buf_free_walk(spec, out);
-    fprintf(out,
-        "    }\n"
-        "    if (yyl && freeProc) freeProc(yyl);\n"
-        "}\n\n");
+    fprintf(out, "    }\n"
+                 "    if (yyl && freeProc) freeProc(yyl);\n"
+                 "}\n\n");
 
     /* M3.4: action-body inlining + LEX_* macros.
     **
@@ -937,8 +890,7 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     int *rule_is_eof = NULL;
     int have_actions = 0;
     if (spec) {
-        if (collect_rule_actions(spec, n_rules,
-                                 &rule_actions, &rule_is_eof) == 0) {
+        if (collect_rule_actions(spec, n_rules, &rule_actions, &rule_is_eof) == 0) {
             have_actions = 1;
         }
     }
@@ -956,7 +908,8 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     if (have_actions && c->n_states > 0) {
         state_eof_rule = malloc((size_t)c->n_states * sizeof(*state_eof_rule));
         if (!state_eof_rule) {
-            free(rule_actions); free(rule_is_eof);
+            free(rule_actions);
+            free(rule_is_eof);
             free(PREFIX);
             return -1;
         }
@@ -979,27 +932,27 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     ** matched, matched_len, lex, state, _action_emitted,
     ** _terminate, _error, emit, user. */
     fprintf(out,
-        "/* ===== Action-body primitives (M3.4) =====\n"
-        "** Defined immediately before %sLexFeedBytes and undefined\n"
-        "** immediately after.  They drive the per-iteration switch\n"
-        "** that dispatches each match to its action body. */\n"
-        "#define LEX_EMIT(rule_code) do {                              \\\n"
-        "    if (emit) emit(user, (int)(rule_code), matched, matched_len); \\\n"
-        "    _action_emitted = 1;                                      \\\n"
-        "} while (0)\n"
-        "#define LEX_SKIP() do { _action_emitted = 1; } while (0)\n"
-        "#define LEX_TRANSITION(state_id) do {                         \\\n"
-        "    int _new_state = (int)(state_id);                          \\\n"
-        "    state = _new_state;                                        \\\n"
-        "    lex->state = _new_state;                                   \\\n"
-        "} while (0)\n"
-        "#define LEX_TERMINATE() do { _terminate = 1; } while (0)\n"
-        "#define LEX_ERROR_AT(msg) do {                                \\\n"
-        "    _error = 1;                                               \\\n"
-        "    lex->err_msg = (msg);                                     \\\n"
-        "} while (0)\n"
-        "#define LEX_PUSHBACK(n) (void)%sLexPushback(lex, (size_t)(n))\n",
-        prefix, prefix);
+            "/* ===== Action-body primitives (M3.4) =====\n"
+            "** Defined immediately before %sLexFeedBytes and undefined\n"
+            "** immediately after.  They drive the per-iteration switch\n"
+            "** that dispatches each match to its action body. */\n"
+            "#define LEX_EMIT(rule_code) do {                              \\\n"
+            "    if (emit) emit(user, (int)(rule_code), matched, matched_len); \\\n"
+            "    _action_emitted = 1;                                      \\\n"
+            "} while (0)\n"
+            "#define LEX_SKIP() do { _action_emitted = 1; } while (0)\n"
+            "#define LEX_TRANSITION(state_id) do {                         \\\n"
+            "    int _new_state = (int)(state_id);                          \\\n"
+            "    state = _new_state;                                        \\\n"
+            "    lex->state = _new_state;                                   \\\n"
+            "} while (0)\n"
+            "#define LEX_TERMINATE() do { _terminate = 1; } while (0)\n"
+            "#define LEX_ERROR_AT(msg) do {                                \\\n"
+            "    _error = 1;                                               \\\n"
+            "    lex->err_msg = (msg);                                     \\\n"
+            "} while (0)\n"
+            "#define LEX_PUSHBACK(n) (void)%sLexPushback(lex, (size_t)(n))\n",
+            prefix, prefix);
     /* M3.7: literal-buffer macros.  Each one references the
     ** function-locals lex / _error / lex->err_msg in scope
     ** inside LexFeedBytes, plus the per-buffer grow/take
@@ -1009,33 +962,33 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     ** #undef block after LexFeedBytes. */
     if (has_literal_buffers(spec)) {
         fprintf(out,
-            "/* ===== Literal buffer primitives (M3.7) ===== */\n"
-            "#define LEX_BUF_START(name) do {                              \\\n"
-            "    lex->name##_len = 0;                                      \\\n"
-            "} while (0)\n"
-            "#define LEX_BUF_APPEND(name, ptr, n) do {                     \\\n"
-            "    size_t _need = lex->name##_len + (size_t)(n);             \\\n"
-            "    if (%s_buf_##name##_grow(lex, _need) == 0) {              \\\n"
-            "        memcpy(lex->name##_buf + lex->name##_len,             \\\n"
-            "               (ptr), (size_t)(n));                           \\\n"
-            "        lex->name##_len = _need;                              \\\n"
-            "    } else {                                                  \\\n"
-            "        _error = 1;                                           \\\n"
-            "        lex->err_msg = \"literal buffer alloc failed\";        \\\n"
-            "    }                                                         \\\n"
-            "} while (0)\n"
-            "#define LEX_BUF_APPEND_CH(name, c) do {                       \\\n"
-            "    if (%s_buf_##name##_grow(lex, lex->name##_len + 1) == 0) {\\\n"
-            "        lex->name##_buf[lex->name##_len++] = (c);             \\\n"
-            "    } else {                                                  \\\n"
-            "        _error = 1;                                           \\\n"
-            "        lex->err_msg = \"literal buffer alloc failed\";        \\\n"
-            "    }                                                         \\\n"
-            "} while (0)\n"
-            "#define LEX_BUF_TAKE(name) (%s_buf_##name##_take(lex))\n"
-            "#define LEX_BUF_LEN(name)  (lex->name##_len)\n"
-            "#define LEX_BUF_PEEK(name) (lex->name##_buf)\n\n",
-            prefix, prefix, prefix);
+                "/* ===== Literal buffer primitives (M3.7) ===== */\n"
+                "#define LEX_BUF_START(name) do {                              \\\n"
+                "    lex->name##_len = 0;                                      \\\n"
+                "} while (0)\n"
+                "#define LEX_BUF_APPEND(name, ptr, n) do {                     \\\n"
+                "    size_t _need = lex->name##_len + (size_t)(n);             \\\n"
+                "    if (%s_buf_##name##_grow(lex, _need) == 0) {              \\\n"
+                "        memcpy(lex->name##_buf + lex->name##_len,             \\\n"
+                "               (ptr), (size_t)(n));                           \\\n"
+                "        lex->name##_len = _need;                              \\\n"
+                "    } else {                                                  \\\n"
+                "        _error = 1;                                           \\\n"
+                "        lex->err_msg = \"literal buffer alloc failed\";        \\\n"
+                "    }                                                         \\\n"
+                "} while (0)\n"
+                "#define LEX_BUF_APPEND_CH(name, c) do {                       \\\n"
+                "    if (%s_buf_##name##_grow(lex, lex->name##_len + 1) == 0) {\\\n"
+                "        lex->name##_buf[lex->name##_len++] = (c);             \\\n"
+                "    } else {                                                  \\\n"
+                "        _error = 1;                                           \\\n"
+                "        lex->err_msg = \"literal buffer alloc failed\";        \\\n"
+                "    }                                                         \\\n"
+                "} while (0)\n"
+                "#define LEX_BUF_TAKE(name) (%s_buf_##name##_take(lex))\n"
+                "#define LEX_BUF_LEN(name)  (lex->name##_len)\n"
+                "#define LEX_BUF_PEEK(name) (lex->name##_buf)\n\n",
+                prefix, prefix, prefix);
     } else {
         fprintf(out, "\n");
     }
@@ -1046,12 +999,11 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     ** to run before unwinding the buffer-stack frame. */
     if (any_eof) {
         fprintf(out,
-            "/* M3.6: per-state <<EOF>> rule index (-1 = no rule). */\n"
-            "static const short %s_eof_rule[%d] = {\n   ",
-            prefix, c->n_states);
+                "/* M3.6: per-state <<EOF>> rule index (-1 = no rule). */\n"
+                "static const short %s_eof_rule[%d] = {\n   ",
+                prefix, c->n_states);
         for (int si = 0; si < c->n_states; si++) {
-            fprintf(out, " %d%s", state_eof_rule[si],
-                    (si + 1 < c->n_states) ? "," : "");
+            fprintf(out, " %d%s", state_eof_rule[si], (si + 1 < c->n_states) ? "," : "");
             if ((si + 1) % 12 == 0 && si + 1 < c->n_states) {
                 fprintf(out, "\n   ");
             }
@@ -1060,41 +1012,41 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     }
 
     fprintf(out,
-        "%sLexResult %sLexInclude(%sLexer *yyl,\n"
-        "                            const char *bytes, size_t n) {\n"
-        "    if (!yyl) return %s_LEX_ERROR;\n"
-        "    if (yyl->depth >= %s_LEX_MAX_INCLUDE_DEPTH) {\n"
-        "        yyl->err_msg = \"include depth exceeded\";\n"
-        "        return %s_LEX_ERROR;\n"
-        "    }\n"
-        "    yyl->stack[yyl->depth].bytes = bytes;\n"
-        "    yyl->stack[yyl->depth].len   = n;\n"
-        "    yyl->stack[yyl->depth].pos   = 0;\n"
-        "    yyl->depth++;\n"
-        "    return %s_LEX_OK;\n"
-        "}\n\n",
-        prefix, prefix, prefix, PREFIX, PREFIX, PREFIX, PREFIX);
+            "%sLexResult %sLexInclude(%sLexer *yyl,\n"
+            "                            const char *bytes, size_t n) {\n"
+            "    if (!yyl) return %s_LEX_ERROR;\n"
+            "    if (yyl->depth >= %s_LEX_MAX_INCLUDE_DEPTH) {\n"
+            "        yyl->err_msg = \"include depth exceeded\";\n"
+            "        return %s_LEX_ERROR;\n"
+            "    }\n"
+            "    yyl->stack[yyl->depth].bytes = bytes;\n"
+            "    yyl->stack[yyl->depth].len   = n;\n"
+            "    yyl->stack[yyl->depth].pos   = 0;\n"
+            "    yyl->depth++;\n"
+            "    return %s_LEX_OK;\n"
+            "}\n\n",
+            prefix, prefix, prefix, PREFIX, PREFIX, PREFIX, PREFIX);
     fprintf(out,
-        "%sLexResult %sLexPushback(%sLexer *yyl, size_t n) {\n"
-        "    if (!yyl || yyl->depth <= 0) {\n"
-        "        if (yyl) yyl->err_msg = \"pushback on empty stack\";\n"
-        "        return %s_LEX_ERROR;\n"
-        "    }\n"
-        "    size_t pos = yyl->stack[yyl->depth - 1].pos;\n"
-        "    if (n > pos) {\n"
-        "        yyl->err_msg = \"pushback exceeds buffered prefix\";\n"
-        "        return %s_LEX_ERROR;\n"
-        "    }\n"
-        "    yyl->stack[yyl->depth - 1].pos = pos - n;\n"
-        "    return %s_LEX_OK;\n"
-        "}\n\n",
-        prefix, prefix, prefix, PREFIX, PREFIX, PREFIX);
+            "%sLexResult %sLexPushback(%sLexer *yyl, size_t n) {\n"
+            "    if (!yyl || yyl->depth <= 0) {\n"
+            "        if (yyl) yyl->err_msg = \"pushback on empty stack\";\n"
+            "        return %s_LEX_ERROR;\n"
+            "    }\n"
+            "    size_t pos = yyl->stack[yyl->depth - 1].pos;\n"
+            "    if (n > pos) {\n"
+            "        yyl->err_msg = \"pushback exceeds buffered prefix\";\n"
+            "        return %s_LEX_ERROR;\n"
+            "    }\n"
+            "    yyl->stack[yyl->depth - 1].pos = pos - n;\n"
+            "    return %s_LEX_OK;\n"
+            "}\n\n",
+            prefix, prefix, prefix, PREFIX, PREFIX, PREFIX);
     fprintf(out,
-        "int %sLexIncludeDepth(const %sLexer *yyl) {\n"
-        "    if (!yyl || yyl->depth <= 0) return 0;\n"
-        "    return yyl->depth - 1;\n"
-        "}\n\n",
-        prefix, prefix);
+            "int %sLexIncludeDepth(const %sLexer *yyl) {\n"
+            "    if (!yyl || yyl->depth <= 0) return 0;\n"
+            "    return yyl->depth - 1;\n"
+            "}\n\n",
+            prefix, prefix);
     /* P0-NEW-12: optional %lexer_extra_argument parameter, threaded
     ** through to action bodies as a normal C parameter (the user's
     ** identifier is in scope in every action body switch case).
@@ -1110,69 +1062,73 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     const char *extra_name = 0;
     if (extra_arg) {
         size_t L = strlen(extra_arg);
-        while (L > 0 && (extra_arg[L-1] == ' ' || extra_arg[L-1] == '\t' || extra_arg[L-1] == '\n')) L--;
+        while (L > 0 &&
+               (extra_arg[L - 1] == ' ' || extra_arg[L - 1] == '\t' || extra_arg[L - 1] == '\n'))
+            L--;
         size_t E = L;
         while (L > 0) {
-            char ch = extra_arg[L-1];
-            if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') L--;
-            else break;
+            char ch = extra_arg[L - 1];
+            if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+                ch == '_')
+                L--;
+            else
+                break;
         }
         if (L < E) extra_name = extra_arg + L;
     }
     if (extra_arg) {
         fprintf(out,
-            "%sLexResult %sLexFeedBytes(%sLexer *yyl,\n"
-            "                              const char *bytes, size_t n,\n"
-            "                              %sEmitFn emit, void *user,\n"
-            "                              %s) {\n",
-            prefix, prefix, prefix, prefix, extra_arg);
+                "%sLexResult %sLexFeedBytes(%sLexer *yyl,\n"
+                "                              const char *bytes, size_t n,\n"
+                "                              %sEmitFn emit, void *user,\n"
+                "                              %s) {\n",
+                prefix, prefix, prefix, prefix, extra_arg);
     } else {
         fprintf(out,
-            "%sLexResult %sLexFeedBytes(%sLexer *yyl,\n"
-            "                              const char *bytes, size_t n,\n"
-            "                              %sEmitFn emit, void *user) {\n",
-            prefix, prefix, prefix, prefix);
+                "%sLexResult %sLexFeedBytes(%sLexer *yyl,\n"
+                "                              const char *bytes, size_t n,\n"
+                "                              %sEmitFn emit, void *user) {\n",
+                prefix, prefix, prefix, prefix);
     }
     fprintf(out,
-        "    if (!yyl) return %s_LEX_ERROR;\n"
-        "    yyl->err_msg = 0;\n"
-        "    /* M3.5: push the caller's buffer as a new bottom-of-this-call\n"
-        "    ** frame, then drive top-of-stack until depth drops back to\n"
-        "    ** where it was before the push.  Nested LexInclude calls\n"
-        "    ** invoked from inside the user's action body raise the loop\n"
-        "    ** bound; each auto-pop on EOF lowers it. */\n"
-        "    if (yyl->depth >= %s_LEX_MAX_INCLUDE_DEPTH) {\n"
-        "        yyl->err_msg = \"include depth exceeded\";\n"
-        "        return %s_LEX_ERROR;\n"
-        "    }\n"
-        "    int initial_depth = yyl->depth;\n"
-        "    yyl->stack[yyl->depth].bytes = bytes;\n"
-        "    yyl->stack[yyl->depth].len   = n;\n"
-        "    yyl->stack[yyl->depth].pos   = 0;\n"
-        "    yyl->depth++;\n"
-        "    /* M3.4: function-scope flags set by LEX_TERMINATE /\n"
-        "    ** LEX_ERROR_AT inside an action body. */\n"
-        "    int _terminate = 0;\n"
-        "    int _error = 0;\n"
-        "    /* P0-NEW-13: result accumulator + drain label.  Every\n"
-        "    ** abnormal exit (_terminate, _error, unmatched input)\n"
-        "    ** sets _result and jumps to _feed_done; the drain loop\n"
-        "    ** there pops any frames pushed during this call so the\n"
-        "    ** depth invariant on return is yyl->depth == initial_depth. */\n"
-        "    %sLexResult _result = %s_LEX_OK;\n",
-        PREFIX, PREFIX, PREFIX, prefix, PREFIX);
+            "    if (!yyl) return %s_LEX_ERROR;\n"
+            "    yyl->err_msg = 0;\n"
+            "    /* M3.5: push the caller's buffer as a new bottom-of-this-call\n"
+            "    ** frame, then drive top-of-stack until depth drops back to\n"
+            "    ** where it was before the push.  Nested LexInclude calls\n"
+            "    ** invoked from inside the user's action body raise the loop\n"
+            "    ** bound; each auto-pop on EOF lowers it. */\n"
+            "    if (yyl->depth >= %s_LEX_MAX_INCLUDE_DEPTH) {\n"
+            "        yyl->err_msg = \"include depth exceeded\";\n"
+            "        return %s_LEX_ERROR;\n"
+            "    }\n"
+            "    int initial_depth = yyl->depth;\n"
+            "    yyl->stack[yyl->depth].bytes = bytes;\n"
+            "    yyl->stack[yyl->depth].len   = n;\n"
+            "    yyl->stack[yyl->depth].pos   = 0;\n"
+            "    yyl->depth++;\n"
+            "    /* M3.4: function-scope flags set by LEX_TERMINATE /\n"
+            "    ** LEX_ERROR_AT inside an action body. */\n"
+            "    int _terminate = 0;\n"
+            "    int _error = 0;\n"
+            "    /* P0-NEW-13: result accumulator + drain label.  Every\n"
+            "    ** abnormal exit (_terminate, _error, unmatched input)\n"
+            "    ** sets _result and jumps to _feed_done; the drain loop\n"
+            "    ** there pops any frames pushed during this call so the\n"
+            "    ** depth invariant on return is yyl->depth == initial_depth. */\n"
+            "    %sLexResult _result = %s_LEX_OK;\n",
+            PREFIX, PREFIX, PREFIX, prefix, PREFIX);
     if (extra_name) {
         /* Suppress -Wunused-parameter when no action body references
         ** the extra arg.  The user's identifier is already in scope
         ** via standard C parameter binding. */
         fprintf(out, "    (void)%s;\n", extra_name);
     }
-    fprintf(out,
-        "    while (yyl->depth > initial_depth) {\n"
-        "        int top = yyl->depth - 1;\n"
-        "        size_t fpos = yyl->stack[top].pos;\n"
-        "        size_t flen = yyl->stack[top].len;\n"
-        "        if (fpos >= flen) {\n");
+    fprintf(out, "    while (yyl->depth > initial_depth) {\n"
+                 "        int top = yyl->depth - 1;\n"
+                 "        size_t fpos = yyl->stack[top].pos;\n"
+                 "        size_t flen = yyl->stack[top].len;\n"
+                 "        if (fpos >= flen) {\n");
 
     /* M3.6: EOF-rule dispatch inside the auto-pop branch.  When
     ** the top-of-stack frame is exhausted, look up the EOF rule
@@ -1196,125 +1152,123 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     ** the EOF position in that frame's buffer. */
     if (any_eof) {
         fprintf(out,
-            "            /* M3.6: fire <<EOF>> rule for the current state. */\n"
-            "            int _eof_rule = -1;\n"
-            "            if (yyl->state >= 0 && yyl->state < %d) {\n"
-            "                _eof_rule = %s_eof_rule[yyl->state];\n"
-            "            }\n"
-            "            if (_eof_rule >= 0) {\n"
-            "                const char *fbytes = yyl->stack[top].bytes;\n"
-            "                const char *matched = fbytes + flen;\n"
-            "                size_t matched_len = 0;\n"
-            "                %sLexer *lex = yyl;\n"
-            "                int state = lex->state;\n"
-            "                int _action_emitted = 0;\n"
-            "                switch (_eof_rule) {\n",
-            c->n_states, prefix, prefix);
+                "            /* M3.6: fire <<EOF>> rule for the current state. */\n"
+                "            int _eof_rule = -1;\n"
+                "            if (yyl->state >= 0 && yyl->state < %d) {\n"
+                "                _eof_rule = %s_eof_rule[yyl->state];\n"
+                "            }\n"
+                "            if (_eof_rule >= 0) {\n"
+                "                const char *fbytes = yyl->stack[top].bytes;\n"
+                "                const char *matched = fbytes + flen;\n"
+                "                size_t matched_len = 0;\n"
+                "                %sLexer *lex = yyl;\n"
+                "                int state = lex->state;\n"
+                "                int _action_emitted = 0;\n"
+                "                switch (_eof_rule) {\n",
+                c->n_states, prefix, prefix);
         for (int i = 0; i < n_rules; i++) {
             if (!rule_is_eof[i]) continue;
             const char *body = rule_actions[i] ? rule_actions[i] : "";
             fprintf(out,
-                "                case %d: {\n"
-                "%s\n"
-                "                } break;\n",
-                i, body);
+                    "                case %d: {\n"
+                    "%s\n"
+                    "                } break;\n",
+                    i, body);
         }
         fprintf(out,
-            "                default: break;\n"
-            "                }\n"
-            "                lex->state = state;\n"
-            "                (void)fbytes; (void)matched; (void)matched_len;\n"
-            "                (void)_action_emitted;\n"
-            "                if (_error) { _result = %s_LEX_ERROR; goto _feed_done; }\n"
-            "                if (_terminate) { _result = %s_LEX_OK; goto _feed_done; }\n"
-            "            }\n",
-            PREFIX, PREFIX);
+                "                default: break;\n"
+                "                }\n"
+                "                lex->state = state;\n"
+                "                (void)fbytes; (void)matched; (void)matched_len;\n"
+                "                (void)_action_emitted;\n"
+                "                if (_error) { _result = %s_LEX_ERROR; goto _feed_done; }\n"
+                "                if (_terminate) { _result = %s_LEX_OK; goto _feed_done; }\n"
+                "            }\n",
+                PREFIX, PREFIX);
     }
 
     fprintf(out,
-        "            yyl->depth--;\n"
-        "            continue;\n"
-        "        }\n"
-        "        const char *fbytes = yyl->stack[top].bytes;\n"
-        "        int rule = -1;\n"
-        "        size_t consumed = 0;\n"
-        "        int ok = %s_match(yyl->state, fbytes + fpos, flen - fpos,\n"
-        "                          &rule, &consumed);\n"
-        "        if (!ok || consumed == 0) {\n"
-        "            yyl->err_msg = \"unmatched input\";\n"
-        "            _result = %s_LEX_ERROR;\n"
-        "            goto _feed_done;\n"
-        "        }\n"
-        "        /* M3.5 invariant: advance pos BEFORE the action body\n"
-        "        ** so a LexInclude issued from inside the body lands\n"
-        "        ** its new frame above already-consumed parent bytes,\n"
-        "        ** and so LEX_PUSHBACK can rewind from the post-match\n"
-        "        ** position. */\n"
-        "        yyl->stack[top].pos = fpos + consumed;\n"
-        "        /* M3.4: per-iteration locals + action body switch. */\n"
-        "        const char *matched = fbytes + fpos;\n"
-        "        size_t matched_len = consumed;\n"
-        "        %sLexer *lex = yyl;\n"
-        "        int state = lex->state;\n"
-        "        int _action_emitted = 0;\n"
-        "        switch (rule) {\n",
-        prefix, PREFIX, prefix);
+            "            yyl->depth--;\n"
+            "            continue;\n"
+            "        }\n"
+            "        const char *fbytes = yyl->stack[top].bytes;\n"
+            "        int rule = -1;\n"
+            "        size_t consumed = 0;\n"
+            "        int ok = %s_match(yyl->state, fbytes + fpos, flen - fpos,\n"
+            "                          &rule, &consumed);\n"
+            "        if (!ok || consumed == 0) {\n"
+            "            yyl->err_msg = \"unmatched input\";\n"
+            "            _result = %s_LEX_ERROR;\n"
+            "            goto _feed_done;\n"
+            "        }\n"
+            "        /* M3.5 invariant: advance pos BEFORE the action body\n"
+            "        ** so a LexInclude issued from inside the body lands\n"
+            "        ** its new frame above already-consumed parent bytes,\n"
+            "        ** and so LEX_PUSHBACK can rewind from the post-match\n"
+            "        ** position. */\n"
+            "        yyl->stack[top].pos = fpos + consumed;\n"
+            "        /* M3.4: per-iteration locals + action body switch. */\n"
+            "        const char *matched = fbytes + fpos;\n"
+            "        size_t matched_len = consumed;\n"
+            "        %sLexer *lex = yyl;\n"
+            "        int state = lex->state;\n"
+            "        int _action_emitted = 0;\n"
+            "        switch (rule) {\n",
+            prefix, PREFIX, prefix);
 
     if (have_actions) {
         for (int i = 0; i < n_rules; i++) {
             if (rule_is_eof[i]) continue;
             const char *body = rule_actions[i] ? rule_actions[i] : "";
             fprintf(out,
-                "        case %d: {\n"
-                "%s\n"
-                "        } break;\n",
-                i, body);
+                    "        case %d: {\n"
+                    "%s\n"
+                    "        } break;\n",
+                    i, body);
         }
     }
 
     fprintf(out,
-        "        default: break;\n"
-        "        }\n"
-        "        lex->state = state;\n"
-        "        if (!_action_emitted && !_error) {\n"
-        "            if (emit) emit(user, rule, matched, matched_len);\n"
-        "        }\n"
-        "        if (_error) { _result = %s_LEX_ERROR; goto _feed_done; }\n"
-        "        if (_terminate) { _result = %s_LEX_OK; goto _feed_done; }\n"
-        "    }\n"
-        "    _result = %s_LEX_OK;\n"
-        "_feed_done:\n"
-        "    /* P0-NEW-13: drain any frames pushed during this call.\n"
-        "    ** The main loop's auto-pop already drains on normal\n"
-        "    ** completion, but LEX_TERMINATE / LEX_ERROR_AT /\n"
-        "    ** unmatched-input bail out with frames still live\n"
-        "    ** (including the bottom frame LexFeedBytes itself\n"
-        "    ** pushed).  After this drain, the depth invariant\n"
-        "    ** yyl->depth == initial_depth holds on every return\n"
-        "    ** path.  M3.6: stack[].bytes is caller-owned, so\n"
-        "    ** popping is just a counter decrement. */\n"
-        "    while (yyl->depth > initial_depth) {\n"
-        "        yyl->depth--;\n"
-        "    }\n"
-        "    return _result;\n"
-        "}\n\n",
-        PREFIX, PREFIX, PREFIX);
+            "        default: break;\n"
+            "        }\n"
+            "        lex->state = state;\n"
+            "        if (!_action_emitted && !_error) {\n"
+            "            if (emit) emit(user, rule, matched, matched_len);\n"
+            "        }\n"
+            "        if (_error) { _result = %s_LEX_ERROR; goto _feed_done; }\n"
+            "        if (_terminate) { _result = %s_LEX_OK; goto _feed_done; }\n"
+            "    }\n"
+            "    _result = %s_LEX_OK;\n"
+            "_feed_done:\n"
+            "    /* P0-NEW-13: drain any frames pushed during this call.\n"
+            "    ** The main loop's auto-pop already drains on normal\n"
+            "    ** completion, but LEX_TERMINATE / LEX_ERROR_AT /\n"
+            "    ** unmatched-input bail out with frames still live\n"
+            "    ** (including the bottom frame LexFeedBytes itself\n"
+            "    ** pushed).  After this drain, the depth invariant\n"
+            "    ** yyl->depth == initial_depth holds on every return\n"
+            "    ** path.  M3.6: stack[].bytes is caller-owned, so\n"
+            "    ** popping is just a counter decrement. */\n"
+            "    while (yyl->depth > initial_depth) {\n"
+            "        yyl->depth--;\n"
+            "    }\n"
+            "    return _result;\n"
+            "}\n\n",
+            PREFIX, PREFIX, PREFIX);
 
-    fprintf(out,
-        "#undef LEX_EMIT\n"
-        "#undef LEX_SKIP\n"
-        "#undef LEX_TRANSITION\n"
-        "#undef LEX_TERMINATE\n"
-        "#undef LEX_ERROR_AT\n"
-        "#undef LEX_PUSHBACK\n");
+    fprintf(out, "#undef LEX_EMIT\n"
+                 "#undef LEX_SKIP\n"
+                 "#undef LEX_TRANSITION\n"
+                 "#undef LEX_TERMINATE\n"
+                 "#undef LEX_ERROR_AT\n"
+                 "#undef LEX_PUSHBACK\n");
     if (has_literal_buffers(spec)) {
-        fprintf(out,
-            "#undef LEX_BUF_START\n"
-            "#undef LEX_BUF_APPEND\n"
-            "#undef LEX_BUF_APPEND_CH\n"
-            "#undef LEX_BUF_TAKE\n"
-            "#undef LEX_BUF_LEN\n"
-            "#undef LEX_BUF_PEEK\n");
+        fprintf(out, "#undef LEX_BUF_START\n"
+                     "#undef LEX_BUF_APPEND\n"
+                     "#undef LEX_BUF_APPEND_CH\n"
+                     "#undef LEX_BUF_TAKE\n"
+                     "#undef LEX_BUF_LEN\n"
+                     "#undef LEX_BUF_PEEK\n");
     }
     fprintf(out, "\n");
 
@@ -1322,39 +1276,38 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     free(rule_is_eof);
     free(state_eof_rule);
     fprintf(out,
-        "%sLexResult %sLexFeedEOF(%sLexer *yyl,\n"
-        "                            %sEmitFn emit, void *user) {\n"
-        "    /* M3.6: <<EOF>> rule dispatch lives in the LexFeedBytes\n"
-        "    ** auto-pop branch -- it fires once per buffer-stack\n"
-        "    ** frame as that frame hits end-of-input, including the\n"
-        "    ** bottom frame that LexFeedBytes itself pushes.  This\n"
-        "    ** entry point therefore has nothing to do beyond signal\n"
-        "    ** clean termination; calling it after LexFeedBytes\n"
-        "    ** returned LEX_OK is a no-op. */\n"
-        "    (void)yyl; (void)emit; (void)user;\n"
-        "    return %s_LEX_OK;\n"
-        "}\n\n",
-        prefix, prefix, prefix, prefix, PREFIX);
+            "%sLexResult %sLexFeedEOF(%sLexer *yyl,\n"
+            "                            %sEmitFn emit, void *user) {\n"
+            "    /* M3.6: <<EOF>> rule dispatch lives in the LexFeedBytes\n"
+            "    ** auto-pop branch -- it fires once per buffer-stack\n"
+            "    ** frame as that frame hits end-of-input, including the\n"
+            "    ** bottom frame that LexFeedBytes itself pushes.  This\n"
+            "    ** entry point therefore has nothing to do beyond signal\n"
+            "    ** clean termination; calling it after LexFeedBytes\n"
+            "    ** returned LEX_OK is a no-op. */\n"
+            "    (void)yyl; (void)emit; (void)user;\n"
+            "    return %s_LEX_OK;\n"
+            "}\n\n",
+            prefix, prefix, prefix, prefix, PREFIX);
     fprintf(out,
-        "int %sLexCurrentState(const %sLexer *yyl) {\n"
-        "    return yyl ? yyl->state : -1;\n"
-        "}\n\n",
-        prefix, prefix);
+            "int %sLexCurrentState(const %sLexer *yyl) {\n"
+            "    return yyl ? yyl->state : -1;\n"
+            "}\n\n",
+            prefix, prefix);
     fprintf(out,
-        "void %sLexSetState(%sLexer *yyl, int state) {\n"
-        "    if (yyl) yyl->state = state;\n"
-        "}\n\n",
-        prefix, prefix);
+            "void %sLexSetState(%sLexer *yyl, int state) {\n"
+            "    if (yyl) yyl->state = state;\n"
+            "}\n\n",
+            prefix, prefix);
     fprintf(out,
-        "const char *%sLexErrorMessage(const %sLexer *yyl) {\n"
-        "    return yyl ? yyl->err_msg : 0;\n"
-        "}\n",
-        prefix, prefix);
+            "const char *%sLexErrorMessage(const %sLexer *yyl) {\n"
+            "    return yyl ? yyl->err_msg : 0;\n"
+            "}\n",
+            prefix, prefix);
 
     /* M4.3: per-rule test entry-point definitions. */
     if (spec) {
-        fprintf(out,
-            "\n/* ===== Per-rule test entry points (M4.3) ===== */\n");
+        fprintf(out, "\n/* ===== Per-rule test entry points (M4.3) ===== */\n");
         if (emit_test_wrappers(c, spec, prefix, PREFIX, 0, out) != 0) {
             free(PREFIX);
             return -1;

@@ -30,31 +30,32 @@
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-    char   *data;
-    size_t  len;
-    size_t  cap;
-    int     oom;   /* sticky out-of-memory flag */
+    char *data;
+    size_t len;
+    size_t cap;
+    int oom; /* sticky out-of-memory flag */
 } TextBuf;
 
 static void tb_init(TextBuf *tb) {
     tb->data = NULL;
-    tb->len  = 0;
-    tb->cap  = 0;
-    tb->oom  = 0;
+    tb->len = 0;
+    tb->cap = 0;
+    tb->oom = 0;
 }
 
 static int tb_reserve(TextBuf *tb, size_t need) {
     if (tb->oom) return 0;
     if (tb->len + need + 1 <= tb->cap) return 1;
     size_t new_cap = tb->cap ? tb->cap * 2 : 256;
-    while (new_cap < tb->len + need + 1) new_cap *= 2;
+    while (new_cap < tb->len + need + 1)
+        new_cap *= 2;
     char *p = realloc(tb->data, new_cap);
     if (p == NULL) {
         tb->oom = 1;
         return 0;
     }
     tb->data = p;
-    tb->cap  = new_cap;
+    tb->cap = new_cap;
     return 1;
 }
 
@@ -118,14 +119,13 @@ static int emit_add_rule(TextBuf *tb, const GrammarModification *mod) {
     ** way to embed a function pointer in .lime text. */
     if (mod->u.add_rule.reduce != NULL && mod->u.add_rule.code == NULL) {
         if (mod->description != NULL) {
-            tb_printf(tb,
-                "/* SKIPPED (runtime reduce callback, no .code): %s */\n",
-                mod->description);
+            tb_printf(tb, "/* SKIPPED (runtime reduce callback, no .code): %s */\n",
+                      mod->description);
         } else {
             tb_printf(tb,
-                "/* SKIPPED MOD_ADD_RULE for %s "
-                "(runtime reduce callback, no .code) */\n",
-                lhs);
+                      "/* SKIPPED MOD_ADD_RULE for %s "
+                      "(runtime reduce callback, no .code) */\n",
+                      lhs);
         }
         return 0;
     }
@@ -158,10 +158,10 @@ static int emit_add_rule(TextBuf *tb, const GrammarModification *mod) {
     */
     if (mod->u.add_rule.precedence >= 0) {
         tb_printf(tb,
-            "\n/* NOTE: precedence=%d on above rule not expressible in "
-            ".lime text;\n"
-            "** concatenated grammar will NOT apply the override. */",
-            mod->u.add_rule.precedence);
+                  "\n/* NOTE: precedence=%d on above rule not expressible in "
+                  ".lime text;\n"
+                  "** concatenated grammar will NOT apply the override. */",
+                  mod->u.add_rule.precedence);
     }
 
     tb_append(tb, "\n");
@@ -182,17 +182,23 @@ static void emit_modify_prec(TextBuf *tb, const GrammarModification *mod) {
 
     const char *kw;
     switch (mod->u.modify_prec.new_assoc) {
-        case 1:  kw = "left";     break;
-        case 2:  kw = "right";    break;
-        case 3:  kw = "nonassoc"; break;
-        default:
-            /* assoc == 0 = \"none\" isn't expressible as a single
+    case 1:
+        kw = "left";
+        break;
+    case 2:
+        kw = "right";
+        break;
+    case 3:
+        kw = "nonassoc";
+        break;
+    default:
+        /* assoc == 0 = \"none\" isn't expressible as a single
             ** directive; skip with a marker. */
-            tb_printf(tb,
-                "/* SKIPPED MOD_MODIFY_PRECEDENCE for %s "
-                "(new_assoc=0 not expressible) */\n",
-                sym);
-            return;
+        tb_printf(tb,
+                  "/* SKIPPED MOD_MODIFY_PRECEDENCE for %s "
+                  "(new_assoc=0 not expressible) */\n",
+                  sym);
+        return;
     }
 
     if (mod->description != NULL) {
@@ -206,7 +212,7 @@ static void emit_modify_prec(TextBuf *tb, const GrammarModification *mod) {
 */
 static void emit_add_type(TextBuf *tb, const GrammarModification *mod) {
     const char *name = mod->u.add_type.name;
-    const char *dt   = mod->u.add_type.datatype;
+    const char *dt = mod->u.add_type.datatype;
     if (name == NULL || dt == NULL) return;
 
     if (mod->description != NULL) {
@@ -222,21 +228,17 @@ static void emit_remove_rule(TextBuf *tb, const GrammarModification *mod) {
     const char *lhs = mod->u.remove_rule.lhs;
     int idx = mod->u.remove_rule.rule_index;
     tb_printf(tb,
-        "/* SKIPPED MOD_REMOVE_RULE (lhs=%s, rule_index=%d): "
-        "rule removal not expressible via .lime concatenation. */\n",
-        lhs ? lhs : "(null)", idx);
+              "/* SKIPPED MOD_REMOVE_RULE (lhs=%s, rule_index=%d): "
+              "rule removal not expressible via .lime concatenation. */\n",
+              lhs ? lhs : "(null)", idx);
 }
 
 /* ------------------------------------------------------------------ */
 /*  Public API                                                          */
 /* ------------------------------------------------------------------ */
 
-char *lime_modifications_to_grammar_text(
-    const GrammarModification *mods,
-    uint32_t                   nmods,
-    uint32_t                  *skipped_out,
-    char                     **error
-) {
+char *lime_modifications_to_grammar_text(const GrammarModification *mods, uint32_t nmods,
+                                         uint32_t *skipped_out, char **error) {
     if (skipped_out != NULL) *skipped_out = 0;
     if (error != NULL) *error = NULL;
 
@@ -249,40 +251,38 @@ char *lime_modifications_to_grammar_text(
 
     TextBuf tb;
     tb_init(&tb);
-    tb_append(&tb,
-        "/*\n"
-        "** Auto-generated by lime_modifications_to_grammar_text().\n"
-        "** Concatenate this fragment after the base grammar text and\n"
-        "** re-run `lime` to produce a parser equivalent to the base\n"
-        "** snapshot with these modifications applied.\n"
-        "*/\n");
+    tb_append(&tb, "/*\n"
+                   "** Auto-generated by lime_modifications_to_grammar_text().\n"
+                   "** Concatenate this fragment after the base grammar text and\n"
+                   "** re-run `lime` to produce a parser equivalent to the base\n"
+                   "** snapshot with these modifications applied.\n"
+                   "*/\n");
 
     uint32_t skipped = 0;
     for (uint32_t i = 0; i < nmods; i++) {
         const GrammarModification *m = &mods[i];
         switch (m->type) {
-            case MOD_ADD_TOKEN:
-                emit_add_token(&tb, m);
-                break;
-            case MOD_ADD_RULE:
-                if (!emit_add_rule(&tb, m)) skipped++;
-                break;
-            case MOD_MODIFY_PRECEDENCE:
-                emit_modify_prec(&tb, m);
-                break;
-            case MOD_ADD_TYPE:
-                emit_add_type(&tb, m);
-                break;
-            case MOD_REMOVE_RULE:
-                emit_remove_rule(&tb, m);
-                skipped++;
-                break;
-            default:
-                tb_printf(&tb,
-                    "/* SKIPPED unknown modification type %d at index %u */\n",
-                    (int)m->type, (unsigned)i);
-                skipped++;
-                break;
+        case MOD_ADD_TOKEN:
+            emit_add_token(&tb, m);
+            break;
+        case MOD_ADD_RULE:
+            if (!emit_add_rule(&tb, m)) skipped++;
+            break;
+        case MOD_MODIFY_PRECEDENCE:
+            emit_modify_prec(&tb, m);
+            break;
+        case MOD_ADD_TYPE:
+            emit_add_type(&tb, m);
+            break;
+        case MOD_REMOVE_RULE:
+            emit_remove_rule(&tb, m);
+            skipped++;
+            break;
+        default:
+            tb_printf(&tb, "/* SKIPPED unknown modification type %d at index %u */\n", (int)m->type,
+                      (unsigned)i);
+            skipped++;
+            break;
         }
     }
 

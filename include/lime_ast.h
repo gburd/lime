@@ -15,10 +15,10 @@ extern "C" {
  * together as a unit.
  */
 typedef struct LimeArena {
-    char *base;              /**< Base pointer of the current block */
-    size_t used;             /**< Bytes used in the current block */
-    size_t capacity;         /**< Total bytes in the current block */
-    struct LimeArena *next;  /**< Next block in the linked list of blocks */
+    char *base;             /**< Base pointer of the current block */
+    size_t used;            /**< Bytes used in the current block */
+    size_t capacity;        /**< Total bytes in the current block */
+    struct LimeArena *next; /**< Next block in the linked list of blocks */
 } LimeArena;
 
 /* Create an arena with the given initial block size. Returns NULL on failure. */

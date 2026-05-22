@@ -38,8 +38,7 @@ static char *dup_str(const char *s) {
 /*  ConflictPoint lifecycle                                            */
 /* ------------------------------------------------------------------ */
 
-void conflict_point_init(ConflictPoint *cp, uint16_t token, int state,
-                         ConflictLevel level) {
+void conflict_point_init(ConflictPoint *cp, uint16_t token, int state, ConflictLevel level) {
     if (cp == NULL) return;
     memset(cp, 0, sizeof(*cp));
     cp->token = token;
@@ -112,15 +111,13 @@ void multi_conflict_result_destroy(MultiGrammarConflictResult *result) {
 ** Add a conflict point to the result set.  Returns a pointer to the
 ** newly added (and initialised) ConflictPoint, or NULL on failure.
 */
-static ConflictPoint *result_add_point(MultiGrammarConflictResult *result,
-                                       uint16_t token, int state,
-                                       ConflictLevel level) {
+static ConflictPoint *result_add_point(MultiGrammarConflictResult *result, uint16_t token,
+                                       int state, ConflictLevel level) {
     if (result == NULL) return NULL;
 
     if (result->npoints >= result->capacity) {
         uint32_t new_cap = result->capacity * 2;
-        ConflictPoint *p = realloc(result->points,
-                                   new_cap * sizeof(ConflictPoint));
+        ConflictPoint *p = realloc(result->points, new_cap * sizeof(ConflictPoint));
         if (p == NULL) return NULL;
         result->points = p;
         result->capacity = new_cap;
@@ -144,10 +141,10 @@ static ConflictPoint *result_add_point(MultiGrammarConflictResult *result,
 ** O(n*m) where n=extensions and m=tokens-per-extension is fine.
 */
 typedef struct TokenEntry {
-    const char *name;              /* Points into modification data (not owned) */
-    ExtensionID ext_ids[16];       /* Extensions that define this token */
-    const char *ext_names[16];     /* Grammar names for each (not owned) */
-    int next;                      /* Number of entries in ext_ids[] */
+    const char *name;          /* Points into modification data (not owned) */
+    ExtensionID ext_ids[16];   /* Extensions that define this token */
+    const char *ext_names[16]; /* Grammar names for each (not owned) */
+    int next;                  /* Number of entries in ext_ids[] */
 } TokenEntry;
 
 typedef struct TokenCollector {
@@ -186,8 +183,7 @@ static uint32_t collector_find_or_add(TokenCollector *tc, const char *name) {
         uint32_t new_cap = tc->capacity * 2;
         TokenEntry *p = realloc(tc->entries, new_cap * sizeof(TokenEntry));
         if (p == NULL) return UINT32_MAX;
-        memset(&p[tc->capacity], 0,
-               (new_cap - tc->capacity) * sizeof(TokenEntry));
+        memset(&p[tc->capacity], 0, (new_cap - tc->capacity) * sizeof(TokenEntry));
         tc->entries = p;
         tc->capacity = new_cap;
     }
@@ -202,25 +198,30 @@ static uint32_t collector_find_or_add(TokenCollector *tc, const char *name) {
 /*
 ** Build a description string for a conflict point.
 */
-static char *build_description(ConflictLevel level, uint16_t token,
-                                int state, int ncontexts) {
+static char *build_description(ConflictLevel level, uint16_t token, int state, int ncontexts) {
     const char *level_str;
     switch (level) {
-        case CONFLICT_LEVEL_TOKEN:    level_str = "token"; break;
-        case CONFLICT_LEVEL_RULE:     level_str = "rule"; break;
-        case CONFLICT_LEVEL_SEMANTIC: level_str = "semantic"; break;
-        default:                      level_str = "unknown"; break;
+    case CONFLICT_LEVEL_TOKEN:
+        level_str = "token";
+        break;
+    case CONFLICT_LEVEL_RULE:
+        level_str = "rule";
+        break;
+    case CONFLICT_LEVEL_SEMANTIC:
+        level_str = "semantic";
+        break;
+    default:
+        level_str = "unknown";
+        break;
     }
 
     char buf[256];
     if (state >= 0) {
-        snprintf(buf, sizeof(buf),
-                 "%s-level conflict: token %u in state %d has %d interpretations",
+        snprintf(buf, sizeof(buf), "%s-level conflict: token %u in state %d has %d interpretations",
                  level_str, (unsigned)token, state, ncontexts);
     } else {
-        snprintf(buf, sizeof(buf),
-                 "%s-level conflict: token %u has %d interpretations",
-                 level_str, (unsigned)token, ncontexts);
+        snprintf(buf, sizeof(buf), "%s-level conflict: token %u has %d interpretations", level_str,
+                 (unsigned)token, ncontexts);
     }
     return dup_str(buf);
 }
@@ -229,10 +230,7 @@ static char *build_description(ConflictLevel level, uint16_t token,
 /*  Token-level conflict detection                                     */
 /* ------------------------------------------------------------------ */
 
-uint32_t detect_token_conflicts(
-    ExtensionRegistry *reg,
-    MultiGrammarConflictResult *result)
-{
+uint32_t detect_token_conflicts(ExtensionRegistry *reg, MultiGrammarConflictResult *result) {
     if (reg == NULL || result == NULL) return 0;
 
     uint32_t found = 0;
@@ -275,14 +273,13 @@ uint32_t detect_token_conflicts(
         TokenEntry *te = &tc.entries[i];
         if (te->next <= 1) continue;
 
-        ConflictPoint *cp = result_add_point(result, 0, -1,
-                                             CONFLICT_LEVEL_TOKEN);
+        ConflictPoint *cp = result_add_point(result, 0, -1, CONFLICT_LEVEL_TOKEN);
         if (cp == NULL) break;
 
         for (int k = 0; k < te->next; k++) {
             LimeContext ctx = {
                 .ext_id = te->ext_ids[k],
-                .token = 0,  /* token code unknown at this level */
+                .token = 0, /* token code unknown at this level */
                 .state = -1,
                 .priority = 0,
                 .grammar_name = te->ext_names[k],
@@ -290,8 +287,7 @@ uint32_t detect_token_conflicts(
             conflict_point_add_context(cp, &ctx);
         }
 
-        cp->description = build_description(
-            CONFLICT_LEVEL_TOKEN, 0, -1, te->next);
+        cp->description = build_description(CONFLICT_LEVEL_TOKEN, 0, -1, te->next);
 
         found++;
         result->token_conflicts++;
@@ -305,12 +301,8 @@ uint32_t detect_token_conflicts(
 /*  Rule-level conflict detection                                      */
 /* ------------------------------------------------------------------ */
 
-uint32_t detect_rule_conflicts(
-    ExtensionRegistry *reg,
-    uint16_t token,
-    int state,
-    MultiGrammarConflictResult *result)
-{
+uint32_t detect_rule_conflicts(ExtensionRegistry *reg, uint16_t token, int state,
+                               MultiGrammarConflictResult *result) {
     if (reg == NULL || result == NULL) return 0;
 
     /*
@@ -349,8 +341,7 @@ uint32_t detect_rule_conflicts(
         /* First, find the token name for the given token code */
         for (uint32_t m = 0; m < ext->nmodifications; m++) {
             const GrammarModification *mod = &ext->modifications[m];
-            if (mod->type == MOD_ADD_TOKEN &&
-                mod->u.add_token.token_code == (int)token) {
+            if (mod->type == MOD_ADD_TOKEN && mod->u.add_token.token_code == (int)token) {
                 token_name = mod->u.add_token.name;
                 break;
             }
@@ -396,8 +387,7 @@ uint32_t detect_rule_conflicts(
 
     /* Only count as a conflict if more than one grammar handles it */
     if (cp != NULL && ncontexts > 1) {
-        cp->description = build_description(
-            CONFLICT_LEVEL_RULE, token, state, ncontexts);
+        cp->description = build_description(CONFLICT_LEVEL_RULE, token, state, ncontexts);
         found = 1;
         result->rule_conflicts++;
     } else if (cp != NULL && ncontexts <= 1) {
@@ -413,12 +403,8 @@ uint32_t detect_rule_conflicts(
 /*  Semantic-level conflict detection                                  */
 /* ------------------------------------------------------------------ */
 
-uint32_t detect_semantic_conflicts(
-    ExtensionRegistry *reg,
-    uint16_t token,
-    int state,
-    MultiGrammarConflictResult *result)
-{
+uint32_t detect_semantic_conflicts(ExtensionRegistry *reg, uint16_t token, int state,
+                                   MultiGrammarConflictResult *result) {
     if (reg == NULL || result == NULL) return 0;
 
     /*
@@ -479,21 +465,21 @@ uint32_t detect_semantic_conflicts(
                     if (mod_b->type != MOD_ADD_RULE) continue;
 
                     /* Check if LHS matches */
-                    if (mod_a->u.add_rule.lhs == NULL ||
-                        mod_b->u.add_rule.lhs == NULL) continue;
-                    if (strcmp(mod_a->u.add_rule.lhs,
-                              mod_b->u.add_rule.lhs) != 0) continue;
+                    if (mod_a->u.add_rule.lhs == NULL || mod_b->u.add_rule.lhs == NULL) continue;
+                    if (strcmp(mod_a->u.add_rule.lhs, mod_b->u.add_rule.lhs) != 0) continue;
 
                     /* Check if RHS matches */
-                    if (mod_a->u.add_rule.nrhs != mod_b->u.add_rule.nrhs)
-                        continue;
+                    if (mod_a->u.add_rule.nrhs != mod_b->u.add_rule.nrhs) continue;
 
                     bool rhs_match = true;
                     for (int r = 0; r < mod_a->u.add_rule.nrhs; r++) {
                         const char *sa = mod_a->u.add_rule.rhs[r];
                         const char *sb = mod_b->u.add_rule.rhs[r];
                         if (sa == NULL || sb == NULL) {
-                            if (sa != sb) { rhs_match = false; break; }
+                            if (sa != sb) {
+                                rhs_match = false;
+                                break;
+                            }
                             continue;
                         }
                         if (strcmp(sa, sb) != 0) {
@@ -509,12 +495,11 @@ uint32_t detect_semantic_conflicts(
 
                     /* If both NULL or identical, no semantic conflict */
                     if (code_a == NULL && code_b == NULL) continue;
-                    if (code_a != NULL && code_b != NULL &&
-                        strcmp(code_a, code_b) == 0) continue;
+                    if (code_a != NULL && code_b != NULL && strcmp(code_a, code_b) == 0) continue;
 
                     /* Semantic conflict: same rule, different actions */
-                    ConflictPoint *cp = result_add_point(
-                        result, token, state, CONFLICT_LEVEL_SEMANTIC);
+                    ConflictPoint *cp =
+                        result_add_point(result, token, state, CONFLICT_LEVEL_SEMANTIC);
                     if (cp == NULL) goto done;
 
                     LimeContext ctx_a = {
@@ -534,8 +519,7 @@ uint32_t detect_semantic_conflicts(
                     conflict_point_add_context(cp, &ctx_a);
                     conflict_point_add_context(cp, &ctx_b);
 
-                    cp->description = build_description(
-                        CONFLICT_LEVEL_SEMANTIC, token, state, 2);
+                    cp->description = build_description(CONFLICT_LEVEL_SEMANTIC, token, state, 2);
 
                     found++;
                     result->semantic_conflicts++;
@@ -554,11 +538,7 @@ done:
 /*  Combined single-point detection                                    */
 /* ------------------------------------------------------------------ */
 
-ConflictPoint detect_conflict(
-    ExtensionRegistry *reg,
-    uint16_t token,
-    int state)
-{
+ConflictPoint detect_conflict(ExtensionRegistry *reg, uint16_t token, int state) {
     ConflictPoint cp;
     conflict_point_init(&cp, token, state, CONFLICT_LEVEL_TOKEN);
 
@@ -584,8 +564,7 @@ ConflictPoint detect_conflict(
         /* Check for token definition */
         for (uint32_t m = 0; m < ext->nmodifications; m++) {
             const GrammarModification *mod = &ext->modifications[m];
-            if (mod->type == MOD_ADD_TOKEN &&
-                mod->u.add_token.token_code == (int)token) {
+            if (mod->type == MOD_ADD_TOKEN && mod->u.add_token.token_code == (int)token) {
                 can_handle = true;
                 token_name = mod->u.add_token.name;
                 break;
@@ -631,8 +610,7 @@ ConflictPoint detect_conflict(
         } else {
             cp.level = CONFLICT_LEVEL_RULE;
         }
-        cp.description = build_description(cp.level, token, state,
-                                           cp.ncontexts);
+        cp.description = build_description(cp.level, token, state, cp.ncontexts);
     }
 
     return cp;
@@ -642,10 +620,8 @@ ConflictPoint detect_conflict(
 /*  Full scan across all extensions                                    */
 /* ------------------------------------------------------------------ */
 
-bool detect_all_multi_grammar_conflicts(
-    ExtensionRegistry *reg,
-    MultiGrammarConflictResult *result)
-{
+bool detect_all_multi_grammar_conflicts(ExtensionRegistry *reg,
+                                        MultiGrammarConflictResult *result) {
     if (reg == NULL || result == NULL) return false;
 
     /* Phase 1: Detect token-level conflicts */
@@ -684,15 +660,17 @@ bool detect_all_multi_grammar_conflicts(
             /* Check for duplicate */
             bool dup = false;
             for (uint32_t t = 0; t < n_tokens; t++) {
-                if (token_codes[t] == code) { dup = true; break; }
+                if (token_codes[t] == code) {
+                    dup = true;
+                    break;
+                }
             }
             if (dup) continue;
 
             /* Add to list */
             if (n_tokens >= token_cap) {
                 uint32_t new_cap = token_cap == 0 ? 32 : token_cap * 2;
-                uint16_t *p = realloc(token_codes,
-                                      new_cap * sizeof(uint16_t));
+                uint16_t *p = realloc(token_codes, new_cap * sizeof(uint16_t));
                 if (p == NULL) break;
                 token_codes = p;
                 token_cap = new_cap;

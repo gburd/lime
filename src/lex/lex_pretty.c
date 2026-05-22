@@ -30,7 +30,7 @@
 ** ============================================================ */
 
 typedef struct {
-    char  *buf;
+    char *buf;
     size_t len;
     size_t cap;
 } Buf;
@@ -38,7 +38,8 @@ typedef struct {
 static int buf_grow(Buf *b, size_t need) {
     if (b->cap >= need) return 1;
     size_t newcap = b->cap ? b->cap : 256;
-    while (newcap < need) newcap *= 2;
+    while (newcap < need)
+        newcap *= 2;
     char *nb = realloc(b->buf, newcap);
     if (!nb) return 0;
     b->buf = nb;
@@ -58,7 +59,9 @@ static void buf_cstr(Buf *b, const char *s) {
     buf_append(b, s, strlen(s));
 }
 
-static void buf_byte(Buf *b, char c) { buf_append(b, &c, 1); }
+static void buf_byte(Buf *b, char c) {
+    buf_append(b, &c, 1);
+}
 
 /* ============================================================
 ** Escape helpers
@@ -94,14 +97,24 @@ static void emit_string(Buf *b, const char *s) {
     if (s) {
         for (const char *p = s; *p; p++) {
             switch (*p) {
-                case '\n': buf_cstr(b, "\\n"); break;
-                case '\r': buf_cstr(b, "\\r"); break;
-                case '\t': buf_cstr(b, "\\t"); break;
-                case '\\': buf_cstr(b, "\\\\"); break;
-                case '"':  buf_cstr(b, "\\\""); break;
-                default:
-                    buf_byte(b, *p);
-                    break;
+            case '\n':
+                buf_cstr(b, "\\n");
+                break;
+            case '\r':
+                buf_cstr(b, "\\r");
+                break;
+            case '\t':
+                buf_cstr(b, "\\t");
+                break;
+            case '\\':
+                buf_cstr(b, "\\\\");
+                break;
+            case '"':
+                buf_cstr(b, "\\\"");
+                break;
+            default:
+                buf_byte(b, *p);
+                break;
             }
         }
     }
@@ -145,8 +158,7 @@ static void emit_state_list(Buf *b, char **states, int n) {
 ** Per-section emitters
 ** ============================================================ */
 
-static void emit_directive_string(Buf *b, const char *what,
-                                  const char *value) {
+static void emit_directive_string(Buf *b, const char *what, const char *value) {
     if (!value) return;
     buf_cstr(b, what);
     buf_byte(b, ' ');
@@ -154,8 +166,7 @@ static void emit_directive_string(Buf *b, const char *what,
     buf_cstr(b, ".\n");
 }
 
-static void emit_directive_block(Buf *b, const char *what,
-                                 const char *body) {
+static void emit_directive_block(Buf *b, const char *what, const char *body) {
     if (!body) return;
     buf_cstr(b, what);
     buf_byte(b, ' ');
@@ -201,8 +212,7 @@ static void emit_keyword_tables(Buf *b, const LimeLexKeywordTable *k) {
         /* Always emit options block so case-sensitivity and
         ** prefix are explicit. */
         buf_cstr(b, " (");
-        buf_cstr(b, k->case_insensitive ?
-                    "case_insensitive" : "case_sensitive");
+        buf_cstr(b, k->case_insensitive ? "case_insensitive" : "case_sensitive");
         if (k->prefix) {
             buf_cstr(b, ", prefix=");
             buf_cstr(b, k->prefix);
@@ -322,15 +332,15 @@ static void emit_lexer_includes(Buf *b, char **arr, int n) {
 
 char *lime_lex_spec_to_text(const LimeLexSpec *spec) {
     if (!spec) return NULL;
-    Buf b = {0};
+    Buf b = { 0 };
 
     /* Header directives in canonical order. */
-    emit_directive_string(&b, "%name_prefix",  spec->name_prefix);
+    emit_directive_string(&b, "%name_prefix", spec->name_prefix);
     emit_directive_string(&b, "%token_prefix", spec->token_prefix);
-    emit_directive_block (&b, "%token_type",   spec->token_type);
-    emit_directive_block (&b, "%location_type", spec->location_type);
-    emit_directive_block (&b, "%lexer_extra_argument", spec->extra_argument);
-    emit_directive_block (&b, "%include",      spec->include_block);
+    emit_directive_block(&b, "%token_type", spec->token_type);
+    emit_directive_block(&b, "%location_type", spec->location_type);
+    emit_directive_block(&b, "%lexer_extra_argument", spec->extra_argument);
+    emit_directive_block(&b, "%include", spec->include_block);
 
     emit_patterns(&b, spec->patterns);
     emit_states(&b, spec->states);

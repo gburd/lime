@@ -27,12 +27,12 @@ typedef struct LimeLocation LimeLocation;
  * chain or pass NULL.
  */
 typedef struct LimeError {
-    uint32_t line;            /**< 1-based source line */
-    uint32_t column;          /**< 1-based source column */
-    const char *filename;     /**< Borrowed filename, or NULL */
-    char *message;            /**< Human-readable error message (owned) */
-    char *expected;           /**< Comma-separated expected-token list (owned) */
-    struct LimeError *next;   /**< Next entry in linked list of errors */
+    uint32_t line;          /**< 1-based source line */
+    uint32_t column;        /**< 1-based source column */
+    const char *filename;   /**< Borrowed filename, or NULL */
+    char *message;          /**< Human-readable error message (owned) */
+    char *expected;         /**< Comma-separated expected-token list (owned) */
+    struct LimeError *next; /**< Next entry in linked list of errors */
 } LimeError;
 
 /*
@@ -48,12 +48,8 @@ typedef struct LimeError {
 ** Returns the list head, or NULL on allocation failure (in which case
 ** `list` is left unchanged and the caller still owns it).
 */
-LimeError *lime_error_append(LimeError *list,
-                             const char *message,
-                             const char *expected,
-                             uint32_t line,
-                             uint32_t column,
-                             const char *filename);
+LimeError *lime_error_append(LimeError *list, const char *message, const char *expected,
+                             uint32_t line, uint32_t column, const char *filename);
 
 /*
 ** Count the number of errors in `list`.  Safe on NULL.

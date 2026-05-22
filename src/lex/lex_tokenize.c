@@ -33,13 +33,13 @@
 /* ----- Tokenizer state ----- */
 
 struct LimeLexTokenizer {
-    const char  *filename;
-    const char  *src;
-    size_t       len;
-    size_t       pos;        /* byte cursor into src */
-    int          line;       /* current 1-indexed line */
-    size_t       n_emitted;
-    size_t       n_errors;
+    const char *filename;
+    const char *src;
+    size_t len;
+    size_t pos; /* byte cursor into src */
+    int line;   /* current 1-indexed line */
+    size_t n_emitted;
+    size_t n_errors;
 };
 
 /* ----- Static helpers ----- */
@@ -63,12 +63,12 @@ static int is_space_no_nl(int c) {
 /* Look at the current byte without advancing.  Returns -1 at EOF. */
 static int peek(const LimeLexTokenizer *t) {
     if (t->pos >= t->len) return -1;
-    return (unsigned char) t->src[t->pos];
+    return (unsigned char)t->src[t->pos];
 }
 
 static int peek_at(const LimeLexTokenizer *t, size_t offset) {
     if (t->pos + offset >= t->len) return -1;
-    return (unsigned char) t->src[t->pos + offset];
+    return (unsigned char)t->src[t->pos + offset];
 }
 
 /* Advance one byte; track line number. */
@@ -90,15 +90,18 @@ static void skip_ws_and_comments(LimeLexTokenizer *t) {
         }
         if (c == '/' && peek_at(t, 1) == '/') {
             /* Line comment: //... to end of line */
-            while (peek(t) >= 0 && peek(t) != '\n') advance(t);
+            while (peek(t) >= 0 && peek(t) != '\n')
+                advance(t);
             continue;
         }
         if (c == '/' && peek_at(t, 1) == '*') {
             /* Block comment: slash-star ... star-slash */
-            advance(t); advance(t);   /* eat the slash and star */
+            advance(t);
+            advance(t); /* eat the slash and star */
             while (peek(t) >= 0) {
                 if (peek(t) == '*' && peek_at(t, 1) == '/') {
-                    advance(t); advance(t);
+                    advance(t);
+                    advance(t);
                     break;
                 }
                 advance(t);
@@ -115,23 +118,23 @@ static void skip_ws_and_comments(LimeLexTokenizer *t) {
 ** sophisticated lookup isn't worth the complexity. */
 
 static const struct {
-    const char       *name;       /* without leading % */
-    LimeLexTokKind    kind;
+    const char *name; /* without leading % */
+    LimeLexTokKind kind;
 } k_directive_table[] = {
-    { "name_prefix",            LIME_LEX_TOK_DIR_NAME_PREFIX           },
-    { "token_prefix",           LIME_LEX_TOK_DIR_TOKEN_PREFIX          },
-    { "token_type",             LIME_LEX_TOK_DIR_TOKEN_TYPE            },
-    { "location_type",          LIME_LEX_TOK_DIR_LOCATION_TYPE         },
-    { "lexer_extra_argument",   LIME_LEX_TOK_DIR_LEXER_EXTRA_ARGUMENT  },
-    { "include",                LIME_LEX_TOK_DIR_INCLUDE               },
-    { "pattern",                LIME_LEX_TOK_DIR_PATTERN               },
-    { "state",                  LIME_LEX_TOK_DIR_STATE                 },
-    { "exclusive_state",        LIME_LEX_TOK_DIR_EXCLUSIVE_STATE       },
-    { "state_destructor",       LIME_LEX_TOK_DIR_STATE_DESTRUCTOR      },
-    { "keyword_table",          LIME_LEX_TOK_DIR_KEYWORD_TABLE         },
-    { "literal_buffer",         LIME_LEX_TOK_DIR_LITERAL_BUFFER        },
-    { "ruleset",                LIME_LEX_TOK_DIR_RULESET               },
-    { "lexer_include",          LIME_LEX_TOK_DIR_LEXER_INCLUDE         },
+    { "name_prefix", LIME_LEX_TOK_DIR_NAME_PREFIX },
+    { "token_prefix", LIME_LEX_TOK_DIR_TOKEN_PREFIX },
+    { "token_type", LIME_LEX_TOK_DIR_TOKEN_TYPE },
+    { "location_type", LIME_LEX_TOK_DIR_LOCATION_TYPE },
+    { "lexer_extra_argument", LIME_LEX_TOK_DIR_LEXER_EXTRA_ARGUMENT },
+    { "include", LIME_LEX_TOK_DIR_INCLUDE },
+    { "pattern", LIME_LEX_TOK_DIR_PATTERN },
+    { "state", LIME_LEX_TOK_DIR_STATE },
+    { "exclusive_state", LIME_LEX_TOK_DIR_EXCLUSIVE_STATE },
+    { "state_destructor", LIME_LEX_TOK_DIR_STATE_DESTRUCTOR },
+    { "keyword_table", LIME_LEX_TOK_DIR_KEYWORD_TABLE },
+    { "literal_buffer", LIME_LEX_TOK_DIR_LITERAL_BUFFER },
+    { "ruleset", LIME_LEX_TOK_DIR_RULESET },
+    { "lexer_include", LIME_LEX_TOK_DIR_LEXER_INCLUDE },
 };
 
 static LimeLexTokKind directive_kind(const char *name, size_t len) {
@@ -149,61 +152,97 @@ static LimeLexTokKind directive_kind(const char *name, size_t len) {
 /* ----- Token-kind name table for diagnostics. ----- */
 const char *lime_lex_tok_kind_name(LimeLexTokKind kind) {
     switch (kind) {
-        case LIME_LEX_TOK_EOF:                     return "EOF";
-        case LIME_LEX_TOK_ERROR:                   return "ERROR";
-        case LIME_LEX_TOK_IDENT:                   return "IDENT";
-        case LIME_LEX_TOK_INTEGER:                 return "INTEGER";
-        case LIME_LEX_TOK_STRING:                  return "STRING";
-        case LIME_LEX_TOK_REGEX:                   return "REGEX";
-        case LIME_LEX_TOK_CODE_BLOCK:              return "CODE_BLOCK";
-        case LIME_LEX_TOK_CHAR_LITERAL:            return "CHAR_LITERAL";
-        case LIME_LEX_TOK_DOT:                     return "DOT";
-        case LIME_LEX_TOK_COMMA:                   return "COMMA";
-        case LIME_LEX_TOK_SEMICOLON:               return "SEMICOLON";
-        case LIME_LEX_TOK_LANGLE:                  return "LANGLE";
-        case LIME_LEX_TOK_RANGLE:                  return "RANGLE";
-        case LIME_LEX_TOK_LBRACE:                  return "LBRACE";
-        case LIME_LEX_TOK_RBRACE:                  return "RBRACE";
-        case LIME_LEX_TOK_LPAREN:                  return "LPAREN";
-        case LIME_LEX_TOK_RPAREN:                  return "RPAREN";
-        case LIME_LEX_TOK_EQUALS:                  return "EQUALS";
-        case LIME_LEX_TOK_EOF_MARKER:              return "EOF_MARKER";
-        case LIME_LEX_TOK_KW_MATCHES:              return "KW_MATCHES";
-        case LIME_LEX_TOK_KW_RULE:                 return "KW_RULE";
-        case LIME_LEX_TOK_DIR_NAME_PREFIX:         return "DIR_NAME_PREFIX";
-        case LIME_LEX_TOK_DIR_TOKEN_PREFIX:        return "DIR_TOKEN_PREFIX";
-        case LIME_LEX_TOK_DIR_TOKEN_TYPE:          return "DIR_TOKEN_TYPE";
-        case LIME_LEX_TOK_DIR_LOCATION_TYPE:       return "DIR_LOCATION_TYPE";
-        case LIME_LEX_TOK_DIR_LEXER_EXTRA_ARGUMENT:return "DIR_LEXER_EXTRA_ARGUMENT";
-        case LIME_LEX_TOK_DIR_INCLUDE:             return "DIR_INCLUDE";
-        case LIME_LEX_TOK_DIR_PATTERN:             return "DIR_PATTERN";
-        case LIME_LEX_TOK_DIR_STATE:               return "DIR_STATE";
-        case LIME_LEX_TOK_DIR_EXCLUSIVE_STATE:     return "DIR_EXCLUSIVE_STATE";
-        case LIME_LEX_TOK_DIR_STATE_DESTRUCTOR:    return "DIR_STATE_DESTRUCTOR";
-        case LIME_LEX_TOK_DIR_KEYWORD_TABLE:       return "DIR_KEYWORD_TABLE";
-        case LIME_LEX_TOK_DIR_LITERAL_BUFFER:      return "DIR_LITERAL_BUFFER";
-        case LIME_LEX_TOK_DIR_RULESET:             return "DIR_RULESET";
-        case LIME_LEX_TOK_DIR_LEXER_INCLUDE:       return "DIR_LEXER_INCLUDE";
-        case LIME_LEX_TOK_DIR_UNKNOWN:             return "DIR_UNKNOWN";
-        case LIME_LEX_TOK__COUNT:                  return "?COUNT";
+    case LIME_LEX_TOK_EOF:
+        return "EOF";
+    case LIME_LEX_TOK_ERROR:
+        return "ERROR";
+    case LIME_LEX_TOK_IDENT:
+        return "IDENT";
+    case LIME_LEX_TOK_INTEGER:
+        return "INTEGER";
+    case LIME_LEX_TOK_STRING:
+        return "STRING";
+    case LIME_LEX_TOK_REGEX:
+        return "REGEX";
+    case LIME_LEX_TOK_CODE_BLOCK:
+        return "CODE_BLOCK";
+    case LIME_LEX_TOK_CHAR_LITERAL:
+        return "CHAR_LITERAL";
+    case LIME_LEX_TOK_DOT:
+        return "DOT";
+    case LIME_LEX_TOK_COMMA:
+        return "COMMA";
+    case LIME_LEX_TOK_SEMICOLON:
+        return "SEMICOLON";
+    case LIME_LEX_TOK_LANGLE:
+        return "LANGLE";
+    case LIME_LEX_TOK_RANGLE:
+        return "RANGLE";
+    case LIME_LEX_TOK_LBRACE:
+        return "LBRACE";
+    case LIME_LEX_TOK_RBRACE:
+        return "RBRACE";
+    case LIME_LEX_TOK_LPAREN:
+        return "LPAREN";
+    case LIME_LEX_TOK_RPAREN:
+        return "RPAREN";
+    case LIME_LEX_TOK_EQUALS:
+        return "EQUALS";
+    case LIME_LEX_TOK_EOF_MARKER:
+        return "EOF_MARKER";
+    case LIME_LEX_TOK_KW_MATCHES:
+        return "KW_MATCHES";
+    case LIME_LEX_TOK_KW_RULE:
+        return "KW_RULE";
+    case LIME_LEX_TOK_DIR_NAME_PREFIX:
+        return "DIR_NAME_PREFIX";
+    case LIME_LEX_TOK_DIR_TOKEN_PREFIX:
+        return "DIR_TOKEN_PREFIX";
+    case LIME_LEX_TOK_DIR_TOKEN_TYPE:
+        return "DIR_TOKEN_TYPE";
+    case LIME_LEX_TOK_DIR_LOCATION_TYPE:
+        return "DIR_LOCATION_TYPE";
+    case LIME_LEX_TOK_DIR_LEXER_EXTRA_ARGUMENT:
+        return "DIR_LEXER_EXTRA_ARGUMENT";
+    case LIME_LEX_TOK_DIR_INCLUDE:
+        return "DIR_INCLUDE";
+    case LIME_LEX_TOK_DIR_PATTERN:
+        return "DIR_PATTERN";
+    case LIME_LEX_TOK_DIR_STATE:
+        return "DIR_STATE";
+    case LIME_LEX_TOK_DIR_EXCLUSIVE_STATE:
+        return "DIR_EXCLUSIVE_STATE";
+    case LIME_LEX_TOK_DIR_STATE_DESTRUCTOR:
+        return "DIR_STATE_DESTRUCTOR";
+    case LIME_LEX_TOK_DIR_KEYWORD_TABLE:
+        return "DIR_KEYWORD_TABLE";
+    case LIME_LEX_TOK_DIR_LITERAL_BUFFER:
+        return "DIR_LITERAL_BUFFER";
+    case LIME_LEX_TOK_DIR_RULESET:
+        return "DIR_RULESET";
+    case LIME_LEX_TOK_DIR_LEXER_INCLUDE:
+        return "DIR_LEXER_INCLUDE";
+    case LIME_LEX_TOK_DIR_UNKNOWN:
+        return "DIR_UNKNOWN";
+    case LIME_LEX_TOK__COUNT:
+        return "?COUNT";
     }
     return "?invalid";
 }
 
 /* ----- Lifecycle ----- */
 
-LimeLexTokenizer *lime_lex_tokenize_init(const char *filename,
-                                         const char *source,
+LimeLexTokenizer *lime_lex_tokenize_init(const char *filename, const char *source,
                                          size_t source_len) {
     LimeLexTokenizer *t = calloc(1, sizeof(*t));
     if (!t) return NULL;
     t->filename = filename;
-    t->src      = source;
-    t->len      = source_len;
-    t->pos      = 0;
-    t->line     = 1;
+    t->src = source;
+    t->len = source_len;
+    t->pos = 0;
+    t->line = 1;
     t->n_emitted = 0;
-    t->n_errors  = 0;
+    t->n_errors = 0;
     return t;
 }
 
@@ -211,24 +250,26 @@ void lime_lex_tokenize_free(LimeLexTokenizer *t) {
     free(t);
 }
 
-int    lime_lex_tokenize_line(const LimeLexTokenizer *t)        { return t->line; }
-size_t lime_lex_tokenize_count(const LimeLexTokenizer *t)       { return t->n_emitted; }
-size_t lime_lex_tokenize_error_count(const LimeLexTokenizer *t) { return t->n_errors; }
+int lime_lex_tokenize_line(const LimeLexTokenizer *t) {
+    return t->line;
+}
+size_t lime_lex_tokenize_count(const LimeLexTokenizer *t) {
+    return t->n_emitted;
+}
+size_t lime_lex_tokenize_error_count(const LimeLexTokenizer *t) {
+    return t->n_errors;
+}
 
 /* ----- Token recognizers ----- */
 
 /* Set out fields and bump counters.  Caller has already advanced
 ** the cursor past the lexeme. */
-static void emit(LimeLexTokenizer *t,
-                 LimeLexToken *out,
-                 LimeLexTokKind kind,
-                 size_t start,
-                 size_t end,
-                 int start_line) {
-    out->kind   = kind;
+static void emit(LimeLexTokenizer *t, LimeLexToken *out, LimeLexTokKind kind, size_t start,
+                 size_t end, int start_line) {
+    out->kind = kind;
     out->lexeme = t->src + start;
     out->length = end - start;
-    out->line   = start_line;
+    out->line = start_line;
     t->n_emitted++;
     if (kind == LIME_LEX_TOK_ERROR) t->n_errors++;
 }
@@ -258,14 +299,17 @@ static size_t consume_code_block(LimeLexTokenizer *t) {
         }
         if (c == '/' && peek_at(t, 1) == '/') {
             /* Line comment */
-            while (peek(t) >= 0 && peek(t) != '\n') advance(t);
+            while (peek(t) >= 0 && peek(t) != '\n')
+                advance(t);
             continue;
         }
         if (c == '/' && peek_at(t, 1) == '*') {
-            advance(t); advance(t);
+            advance(t);
+            advance(t);
             while (peek(t) >= 0) {
                 if (peek(t) == '*' && peek_at(t, 1) == '/') {
-                    advance(t); advance(t);
+                    advance(t);
+                    advance(t);
                     break;
                 }
                 advance(t);
@@ -277,7 +321,7 @@ static size_t consume_code_block(LimeLexTokenizer *t) {
             advance(t);
             while (peek(t) >= 0 && peek(t) != '"') {
                 if (peek(t) == '\\' && peek_at(t, 1) >= 0) {
-                    advance(t);   /* eat the backslash */
+                    advance(t); /* eat the backslash */
                 }
                 advance(t);
             }
@@ -300,12 +344,16 @@ static size_t consume_code_block(LimeLexTokenizer *t) {
                     look += 2;
                     continue;
                 }
-                if (ch == '\'') { found_close = 1; break; }
+                if (ch == '\'') {
+                    found_close = 1;
+                    break;
+                }
                 look++;
             }
             if (found_close) {
                 /* Consume the entire char literal including close. */
-                for (size_t i = 0; i <= look; i++) advance(t);
+                for (size_t i = 0; i <= look; i++)
+                    advance(t);
             } else {
                 /* Treat the lone `'` as a literal byte. */
                 advance(t);
@@ -340,7 +388,7 @@ static size_t consume_string(LimeLexTokenizer *t) {
 ** slash.  Returns position one past closing slash, or t->len on
 ** EOF without close. */
 static size_t consume_regex(LimeLexTokenizer *t) {
-    advance(t);   /* opening slash */
+    advance(t); /* opening slash */
     while (peek(t) >= 0 && peek(t) != '/') {
         if (peek(t) == '\\' && peek_at(t, 1) >= 0) {
             advance(t);
@@ -363,7 +411,7 @@ static size_t consume_regex(LimeLexTokenizer *t) {
 
 /* Consume '.' char literal.  Cursor at opening single quote. */
 static size_t consume_char_literal(LimeLexTokenizer *t) {
-    advance(t);   /* opening ' */
+    advance(t); /* opening ' */
     while (peek(t) >= 0 && peek(t) != '\'') {
         if (peek(t) == '\\' && peek_at(t, 1) >= 0) {
             advance(t);
@@ -377,13 +425,15 @@ static size_t consume_char_literal(LimeLexTokenizer *t) {
 
 /* Consume an identifier.  Returns end position. */
 static size_t consume_ident(LimeLexTokenizer *t) {
-    while (is_ident_cont(peek(t))) advance(t);
+    while (is_ident_cont(peek(t)))
+        advance(t);
     return t->pos;
 }
 
 /* Consume a run of digits. */
 static size_t consume_integer(LimeLexTokenizer *t) {
-    while (is_digit(peek(t))) advance(t);
+    while (is_digit(peek(t)))
+        advance(t);
     return t->pos;
 }
 
@@ -393,14 +443,14 @@ int lime_lex_tokenize_next(LimeLexTokenizer *t, LimeLexToken *out) {
     skip_ws_and_comments(t);
 
     int start_line = t->line;
-    size_t start  = t->pos;
+    size_t start = t->pos;
 
     int c = peek(t);
     if (c < 0) {
-        out->kind   = LIME_LEX_TOK_EOF;
+        out->kind = LIME_LEX_TOK_EOF;
         out->lexeme = t->src + t->len;
         out->length = 0;
-        out->line   = t->line;
+        out->line = t->line;
         return 0;
     }
 
@@ -409,9 +459,9 @@ int lime_lex_tokenize_next(LimeLexTokenizer *t, LimeLexToken *out) {
         /* Expect <<EOF>> exactly. */
         static const char k_marker[] = "<<EOF>>";
         size_t mlen = sizeof(k_marker) - 1;
-        if (t->pos + mlen <= t->len &&
-            memcmp(t->src + t->pos, k_marker, mlen) == 0) {
-            for (size_t i = 0; i < mlen; i++) advance(t);
+        if (t->pos + mlen <= t->len && memcmp(t->src + t->pos, k_marker, mlen) == 0) {
+            for (size_t i = 0; i < mlen; i++)
+                advance(t);
             emit(t, out, LIME_LEX_TOK_EOF_MARKER, start, t->pos, start_line);
             return 0;
         }
@@ -422,7 +472,7 @@ int lime_lex_tokenize_next(LimeLexTokenizer *t, LimeLexToken *out) {
 
     /* Directive: %ident */
     if (c == '%') {
-        advance(t);   /* eat % */
+        advance(t); /* eat % */
         if (!is_ident_start(peek(t))) {
             /* lone %: emit as ERROR */
             emit(t, out, LIME_LEX_TOK_ERROR, start, t->pos, start_line);
@@ -430,8 +480,7 @@ int lime_lex_tokenize_next(LimeLexTokenizer *t, LimeLexToken *out) {
         }
         size_t name_start = t->pos;
         consume_ident(t);
-        LimeLexTokKind kind = directive_kind(t->src + name_start,
-                                             t->pos - name_start);
+        LimeLexTokKind kind = directive_kind(t->src + name_start, t->pos - name_start);
         emit(t, out, kind, start, t->pos, start_line);
         return 0;
     }
@@ -489,19 +538,37 @@ int lime_lex_tokenize_next(LimeLexTokenizer *t, LimeLexToken *out) {
     {
         LimeLexTokKind kind;
         switch (c) {
-            case '.': kind = LIME_LEX_TOK_DOT;       break;
-            case ',': kind = LIME_LEX_TOK_COMMA;     break;
-            case ';': kind = LIME_LEX_TOK_SEMICOLON; break;
-            case '<': kind = LIME_LEX_TOK_LANGLE;    break;
-            case '>': kind = LIME_LEX_TOK_RANGLE;    break;
-            case '}': kind = LIME_LEX_TOK_RBRACE;    break;
-            case '(': kind = LIME_LEX_TOK_LPAREN;    break;
-            case ')': kind = LIME_LEX_TOK_RPAREN;    break;
-            case '=': kind = LIME_LEX_TOK_EQUALS;    break;
-            default:
-                advance(t);
-                emit(t, out, LIME_LEX_TOK_ERROR, start, t->pos, start_line);
-                return 0;
+        case '.':
+            kind = LIME_LEX_TOK_DOT;
+            break;
+        case ',':
+            kind = LIME_LEX_TOK_COMMA;
+            break;
+        case ';':
+            kind = LIME_LEX_TOK_SEMICOLON;
+            break;
+        case '<':
+            kind = LIME_LEX_TOK_LANGLE;
+            break;
+        case '>':
+            kind = LIME_LEX_TOK_RANGLE;
+            break;
+        case '}':
+            kind = LIME_LEX_TOK_RBRACE;
+            break;
+        case '(':
+            kind = LIME_LEX_TOK_LPAREN;
+            break;
+        case ')':
+            kind = LIME_LEX_TOK_RPAREN;
+            break;
+        case '=':
+            kind = LIME_LEX_TOK_EQUALS;
+            break;
+        default:
+            advance(t);
+            emit(t, out, LIME_LEX_TOK_ERROR, start, t->pos, start_line);
+            return 0;
         }
         advance(t);
         emit(t, out, kind, start, t->pos, start_line);

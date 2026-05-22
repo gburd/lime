@@ -52,11 +52,11 @@ typedef enum JITStatus {
  * @brief JIT compilation statistics for a snapshot.
  */
 typedef struct JITStats {
-    uint32_t states_compiled;    /**< Number of states with JIT code attached */
-    uint32_t states_total;       /**< Total number of states in the snapshot */
-    uint64_t compile_time_ns;    /**< Wall-clock nanoseconds spent compiling */
-    uint64_t code_size_bytes;    /**< Approximate generated code size in bytes */
-    bool     available;          /**< True if JIT support is available at runtime */
+    uint32_t states_compiled; /**< Number of states with JIT code attached */
+    uint32_t states_total;    /**< Total number of states in the snapshot */
+    uint64_t compile_time_ns; /**< Wall-clock nanoseconds spent compiling */
+    uint64_t code_size_bytes; /**< Approximate generated code size in bytes */
+    bool available;           /**< True if JIT support is available at runtime */
 } JITStats;
 
 /* ------------------------------------------------------------------ */
@@ -193,9 +193,7 @@ void jit_detach_from_snapshot(ParserSnapshot *snap);
 ** This is the primary entry point for the parser runtime to query
 ** shift actions when JIT is enabled.
 */
-uint16_t jit_find_shift_action(const ParserSnapshot *snap,
-                               uint16_t stateno,
-                               uint16_t iLookAhead);
+uint16_t jit_find_shift_action(const ParserSnapshot *snap, uint16_t stateno, uint16_t iLookAhead);
 
 /*
 ** Batch parse a sequence of tokens using the JIT-compiled monolithic function.
@@ -210,9 +208,7 @@ uint16_t jit_find_shift_action(const ParserSnapshot *snap,
 **   count - Number of tokens in the array
 **   state_inout - Pointer to current parser state (updated after processing)
 */
-void jit_parse_batch(const ParserSnapshot *snap,
-                     uint16_t *tokens,
-                     uint32_t count,
+void jit_parse_batch(const ParserSnapshot *snap, uint16_t *tokens, uint32_t count,
                      uint16_t *state_inout);
 
 #ifdef __cplusplus
