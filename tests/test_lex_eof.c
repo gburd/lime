@@ -20,9 +20,17 @@
 **      verify the right rule fires.
 **   4. test_eof_error_at              -- LEX_ERROR_AT inside an
 **      EOF action body returns LEX_ERROR with the supplied msg.
-**   5. test_eof_with_include          -- EOF rule fires on each
+**   5. test_eof_with_include       -- EOF rule fires on each
 **      buffer-stack frame's auto-pop, including an inner
 **      LexInclude'd buffer popping back to its parent.
+**   6. test_eof_matched_pointer     -- the EOF rule's `matched`
+**      local (passed to the user's emit callback) points one
+**      past the last byte of the current frame's input, so PG
+**      drivers that recover consumed-bytes via pointer
+**      arithmetic (`pos = matched + matched_len - bytes`) get
+**      the right answer.  Reverse of the pre-fix `matched = ""`
+**      that Letter 13 / commit 4a740099a0c worked around in
+**      pgc.c.
 */
 
 #include <stdio.h>
@@ -59,6 +67,31 @@ static void emit_cb(void *user, int rule,
     if (len >= sizeof(c->texts[0])) len = sizeof(c->texts[0]) - 1;
     memcpy(c->texts[c->n], text, len);
     c->texts[c->n][len] = '\0';
+    c->n++;
+}
+
+/* Capture used by test_eof_matched_pointer: records the
+** pointer the emit callback received so the driver can verify
+** EOF rules now pass `bytes + n` (one past end of the bottom
+** frame's input) instead of a static empty string.  PG drivers
+** track consumption via `pos = matched + matched_len - bytes`;
+** with the pre-fix `matched = ""` the arithmetic falls through
+** to garbage.  Letter 13 / commit 4a740099a0c documents the
+** PG-side workaround that this Lime-side fix replaces. */
+struct ptr_capture {
+    int          n;
+    int          rules[MAX_TOKENS];
+    const char  *texts[MAX_TOKENS];
+    size_t       lens[MAX_TOKENS];
+};
+
+static void emit_ptr_cb(void *user, int rule,
+                        const char *text, size_t len) {
+    struct ptr_capture *c = user;
+    if (c->n >= MAX_TOKENS) return;
+    c->rules[c->n] = rule;
+    c->texts[c->n] = text;
+    c->lens[c->n]  = len;
     c->n++;
 }
 
@@ -317,12 +350,67 @@ static int test_eof_with_include(void) {
     return fails - saved;
 }
 
+/* (6) Pointer-equality test for `matched` passed to an EOF
+** rule's action.  Pre-fix Lime emitted `matched = ""`, a
+** static empty string with no relation to the caller's
+** buffer.  The PG migration team works around this in their
+** driver by adding an `if (consumed == 0 && have_token)`
+** branch that nudges pos forward; with this Lime-side fix
+** the workaround becomes unnecessary because pointer
+** arithmetic on `matched` and `bytes` is now well-defined:
+** `matched == bytes + n` for the bottom frame.  The EOF rule
+** body is `LEX_EMIT(EOF_INIT)`, so the user's emit callback
+** receives the same `matched` pointer the action body saw. */
+static int test_eof_matched_pointer(void) {
+    int saved = fails;
+    TleLexer *yyl = TleLexAlloc(malloc);
+    EXPECT(yyl != NULL, "alloc");
+    if (!yyl) return fails - saved;
+
+    static const char input[] = "a";
+    const size_t      n       = sizeof(input) - 1;
+
+    struct ptr_capture c = {0};
+    TleLexResult r = TleLexFeedBytes(yyl, input, n, emit_ptr_cb, &c);
+    EXPECT(r == TLE_LEX_OK, "feed result %d, expected LEX_OK", r);
+    EXPECT(c.n == 2,
+           "want 2 emits (A, EOF_INIT), got %d", c.n);
+    if (c.n >= 2) {
+        /* The non-EOF rule's matched lands inside the buffer. */
+        EXPECT(c.texts[0] == input,
+               "[A] text=%p want input=%p (rule's matched should"
+               " point at the start of the matched span)",
+               (const void *)c.texts[0], (const void *)input);
+        EXPECT(c.lens[0] == 1,
+               "[A] len=%zu want 1", c.lens[0]);
+        /* The EOF rule's matched must be one past end of the
+        ** bottom frame -- exactly bytes + n.  This is the
+        ** invariant PG asked for in Letter 13. */
+        EXPECT(c.texts[1] == input + n,
+               "[EOF_INIT] text=%p want bytes+n=%p (matched must"
+               " point one past end of the current frame's input)",
+               (const void *)c.texts[1], (const void *)(input + n));
+        EXPECT(c.lens[1] == 0,
+               "[EOF_INIT] len=%zu want 0", c.lens[1]);
+        /* Pointer arithmetic the PG driver does:
+        ** consumed = matched + matched_len - bytes  must equal n. */
+        ptrdiff_t consumed = (c.texts[1] + c.lens[1]) - input;
+        EXPECT((size_t)consumed == n,
+               "pointer arithmetic: matched + matched_len - bytes"
+               " = %td, want %zu", consumed, n);
+    }
+    TleLexFree(yyl, free);
+    if (fails == saved) printf("test_eof_matched_pointer: PASS\n");
+    return fails - saved;
+}
+
 int main(void) {
     test_no_eof_rules_returns_ok();
     test_eof_initial_emits();
     test_eof_state_qualified();
     test_eof_error_at();
     test_eof_with_include();
+    test_eof_matched_pointer();
     if (fails == 0) {
         printf("\ntest_lex_eof: all sub-tests PASS\n");
         return 0;

@@ -1177,11 +1177,23 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
     /* M3.6: EOF-rule dispatch inside the auto-pop branch.  When
     ** the top-of-stack frame is exhausted, look up the EOF rule
     ** for the current lexer state and run its action body before
-    ** unwinding the frame.  An EOF action body sees matched="",
-    ** matched_len=0, and the same lex/state/_action_emitted
+    ** unwinding the frame.  An EOF action body sees matched
+    ** pointing one past the last byte of the current frame's
+    ** input, matched_len=0, and the same lex/state/_action_emitted
     ** locals as a normal-rule body, so LEX_EMIT/LEX_TRANSITION/
     ** LEX_ERROR_AT/LEX_TERMINATE all work.  No auto-emit on
-    ** EOF: the rule's body is the source of truth. */
+    ** EOF: the rule's body is the source of truth.
+    **
+    ** Letter 13 / commit 4a740099a0c (PG migration team): the
+    ** previous codegen used `matched = ""` (a static empty
+    ** string with no relation to the caller's buffer).  Drivers
+    ** that recover the consumed prefix via pointer arithmetic
+    ** (`pos = matched + matched_len - bytes`) fall through to
+    ** garbage when an EOF rule's action emits a token.  Pass
+    ** `fbytes + flen` (one past the end of the current frame's
+    ** input) so the arithmetic resolves cleanly: for the bottom
+    ** frame `matched == bytes + n`; for include frames it is
+    ** the EOF position in that frame's buffer. */
     if (any_eof) {
         fprintf(out,
             "            /* M3.6: fire <<EOF>> rule for the current state. */\n"
@@ -1190,7 +1202,8 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
             "                _eof_rule = %s_eof_rule[yyl->state];\n"
             "            }\n"
             "            if (_eof_rule >= 0) {\n"
-            "                const char *matched = \"\";\n"
+            "                const char *fbytes = yyl->stack[top].bytes;\n"
+            "                const char *matched = fbytes + flen;\n"
             "                size_t matched_len = 0;\n"
             "                %sLexer *lex = yyl;\n"
             "                int state = lex->state;\n"
@@ -1210,7 +1223,7 @@ int lime_lex_emit_c(const LimeLexCompiled *c,
             "                default: break;\n"
             "                }\n"
             "                lex->state = state;\n"
-            "                (void)matched; (void)matched_len;\n"
+            "                (void)fbytes; (void)matched; (void)matched_len;\n"
             "                (void)_action_emitted;\n"
             "                if (_error) { _result = %s_LEX_ERROR; goto _feed_done; }\n"
             "                if (_terminate) { _result = %s_LEX_OK; goto _feed_done; }\n"

@@ -540,6 +540,33 @@ fires when the input ends in the qualifying state(s).
 .EE
 .RE
 .PP
+Inside an
+.B <<EOF>>
+action body the standard locals are bound with EOF\-specific
+values:
+.RS
+.IP \(bu 2
+.B matched
+points one past the last byte of the current frame's input
+(equivalent to
+.BI bytes " + " n
+when the bottom frame is the buffer just passed to
+.BR LexFeedBytes ).
+Drivers that recover the consumed prefix via pointer arithmetic
+.RB ( "pos = matched + matched_len \- bytes" )
+resolve cleanly to the end of the frame.
+.IP \(bu 2
+.B matched_len
+is zero.
+.IP \(bu 2
+All other locals
+.RB ( lex ,
+.BR state ,
+.BR loc ,
+.B extra )
+behave exactly as in a normal\-rule action body.
+.RE
+.PP
 Default behaviour when no
 .B <<EOF>>
 rule is declared for the current state:
