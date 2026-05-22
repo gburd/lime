@@ -4997,6 +4997,22 @@ PRIVATE char *append_str(const char *zText, int n, int p1, int p2){
 ** Return 1 if the expanded code requires that "yylhsminor" local variable
 ** to be defined.
 */
+/* P0-NEW-11: lexical states for the action-body byte walk.  The
+** substitution pass rewrites bare alphabetic identifiers that match
+** an LHS or RHS alias into stack-slot references.  Without lexical
+** awareness the walk happily rewrites tokens inside string literals,
+** char literals, and comments -- a real bug surfaced by PG's
+** contrib/cube port (`errdetail("A cube cannot have more than %d
+** dimensions.")` with LHS alias `(A)` mangled to
+** `errdetail("yylhsminor.yy0 cube ...")`).  Tracking these states
+** through the walk keeps substitution code-only.
+*/
+#define LIME_TC_CODE          0
+#define LIME_TC_STRING        1  /* inside "..." */
+#define LIME_TC_CHAR          2  /* inside '...' */
+#define LIME_TC_LINE_COMMENT  3  /* inside // ... \n */
+#define LIME_TC_BLOCK_COMMENT 4  /* inside / * ... * / */
+
 PRIVATE int translate_code(struct lime *lemp, struct rule *rp){
   char *cp, *xp;
   int i;
@@ -5008,6 +5024,7 @@ PRIVATE int translate_code(struct lime *lemp, struct rule *rp){
   char used[MAXRHS];     /* True for each RHS element which is used */
   char zLhs[50];         /* Convert the LHS symbol into this string */
   char zOvwrt[900];      /* Comment that to allow LHS to overwrite RHS */
+  int  tc_state = LIME_TC_CODE; /* P0-NEW-11: body walk lexical state */
 
   for(i=0; i<rp->nrhs; i++) used[i] = 0;
   lhsused = 0;
@@ -5079,6 +5096,87 @@ PRIVATE int translate_code(struct lime *lemp, struct rule *rp){
       append_str(zOvwrt,0,0,0);
       cp += lemonStrlen(zOvwrt)-1;
       dontUseRhs0 = 1;
+      continue;
+    }
+    /* P0-NEW-11: when the walk is inside a string literal, char
+    ** literal, or comment, copy the byte verbatim and bypass every
+    ** substitution branch below.  All transitions are detected
+    ** while in LIME_TC_CODE; we never enter a non-code state from
+    ** inside another non-code state (e.g. "//" inside a string
+    ** stays a string, "\"" inside a comment stays a comment).
+    ** Backslash escapes inside string and char literals consume
+    ** the next byte verbatim so that an embedded `\"` or `\'`
+    ** does not prematurely close the literal. */
+    if( tc_state!=LIME_TC_CODE ){
+      switch( tc_state ){
+        case LIME_TC_STRING:
+          if( *cp=='\\' && cp[1] ){
+            append_str(cp, 1, 0, 0);
+            cp++;
+            append_str(cp, 1, 0, 0);
+            continue;
+          }
+          if( *cp=='"' ){
+            tc_state = LIME_TC_CODE;
+          }
+          append_str(cp, 1, 0, 0);
+          continue;
+        case LIME_TC_CHAR:
+          if( *cp=='\\' && cp[1] ){
+            append_str(cp, 1, 0, 0);
+            cp++;
+            append_str(cp, 1, 0, 0);
+            continue;
+          }
+          if( *cp=='\'' ){
+            tc_state = LIME_TC_CODE;
+          }
+          append_str(cp, 1, 0, 0);
+          continue;
+        case LIME_TC_LINE_COMMENT:
+          if( *cp=='\n' ){
+            tc_state = LIME_TC_CODE;
+          }
+          append_str(cp, 1, 0, 0);
+          continue;
+        case LIME_TC_BLOCK_COMMENT:
+          if( *cp=='*' && cp[1]=='/' ){
+            append_str(cp, 1, 0, 0);
+            cp++;
+            append_str(cp, 1, 0, 0);
+            tc_state = LIME_TC_CODE;
+            continue;
+          }
+          append_str(cp, 1, 0, 0);
+          continue;
+      }
+    }
+    /* In LIME_TC_CODE: detect entry into a literal or comment
+    ** region BEFORE running any substitution logic so that an
+    ** identifier-shaped token inside `"..."`, `'...'`, `// ...`,
+    ** or `/ * ... * /` is preserved verbatim. */
+    if( *cp=='"' ){
+      tc_state = LIME_TC_STRING;
+      append_str(cp, 1, 0, 0);
+      continue;
+    }
+    if( *cp=='\'' ){
+      tc_state = LIME_TC_CHAR;
+      append_str(cp, 1, 0, 0);
+      continue;
+    }
+    if( *cp=='/' && cp[1]=='/' ){
+      tc_state = LIME_TC_LINE_COMMENT;
+      append_str(cp, 1, 0, 0);
+      cp++;
+      append_str(cp, 1, 0, 0);
+      continue;
+    }
+    if( *cp=='/' && cp[1]=='*' ){
+      tc_state = LIME_TC_BLOCK_COMMENT;
+      append_str(cp, 1, 0, 0);
+      cp++;
+      append_str(cp, 1, 0, 0);
       continue;
     }
     /* @$ -- Bison's literal LHS-location syntax.  Lemon historically

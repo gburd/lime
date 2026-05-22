@@ -51,6 +51,26 @@ for use in the action code.
 An optional semantic action executed when the rule is reduced.
 Inside the action, aliases refer to the semantic values of the
 corresponding symbols.
+.IP
+Alias substitution is
+.B lexically aware:
+identifiers that match an alias are rewritten to stack-slot
+references only in code positions.
+Occurrences inside string literals
+.RB ( "\"...\"" ),
+character literals
+.RB ( "'...'" ),
+line comments
+.RB ( // ),
+and block comments
+.RB ( /*\ ...\ */ )
+are preserved verbatim.
+C backslash escapes inside string and character literals are
+honored, so embedded
+.B \\\"
+or
+.B \\'
+sequences do not prematurely close the literal.
 .PP
 Every rule must be terminated by a period
 .RB ( . ).

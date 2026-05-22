@@ -392,6 +392,43 @@ test_yylloc_action_assign = executable('test_yylloc_action_assign',
 
 test('yylloc_action_assign', test_yylloc_action_assign)
 
+# P0-NEW-11: action-body letter-label substitution must respect
+# string literals, char literals, and comments.  The pre-fix
+# walk in lime.c:translate_code rewrote bare alphabetic
+# identifiers blindly, so PG's contrib/cube saw `(A)` LHS aliases
+# rewritten inside `errdetail("A cube cannot have more than %d
+# ...")` strings to `errdetail("yylhsminor.yy0 cube ...")`.
+# This test exercises every state-machine boundary: "...", '...',
+# // ..., /* ... */, escape sequences, and adjacent strings.  The
+# driver verifies (a) runtime: captured literal bytes equal the
+# grammar-source bytes, and (b) source: the generated .c contains
+# the literals verbatim AND substituted the bare-A in code
+# position to a yymsp[...] reference.
+test_action_string_literal_gen = custom_target('test_action_string_literal_parser',
+  input   : ['test_action_string_literal_grammar.y'],
+  output  : ['test_action_string_literal_grammar.c',
+             'test_action_string_literal_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_action_string_literal_gen_c = meson.current_build_dir() / \
+  'test_action_string_literal_grammar.c'
+
+test_action_string_literal = executable('test_action_string_literal',
+  'test_action_string_literal.c',
+  test_action_string_literal_gen,
+  dependencies : lime_parser_dep,
+  c_args : ['-Wno-unused-parameter',
+            '-DACTION_STRLIT_GEN_C="' + test_action_string_literal_gen_c + '"'],
+)
+
+test('action_string_literal', test_action_string_literal)
+
 # M1 phase 1 of the lexer subsystem: .lex source-language
 # tokenizer.  No DFA, no parser yet -- just the byte-level
 # token stream that the M1 parser will consume.
