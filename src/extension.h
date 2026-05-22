@@ -84,25 +84,19 @@ struct ParserSnapshot;
 ** implementation.  The type is declared here so extension code can be
 ** written against the final shape today.
 */
-typedef void (*LimeReduceFn)(
-    void       *user_data,
-    void       *extra_arg,
-    int         nrhs,
-    const void *rhs_values,
-    const int  *rhs_locs,
-    void       *lhs_out
-);
+typedef void (*LimeReduceFn)(void *user_data, void *extra_arg, int nrhs, const void *rhs_values,
+                             const int *rhs_locs, void *lhs_out);
 
 /* ------------------------------------------------------------------ */
 /*  Grammar modification types                                         */
 /* ------------------------------------------------------------------ */
 
 typedef enum GrammarModType {
-    MOD_ADD_RULE,           /* Add a new production rule             */
-    MOD_ADD_TOKEN,          /* Add a new terminal token              */
-    MOD_MODIFY_PRECEDENCE,  /* Change precedence of an existing rule */
-    MOD_ADD_TYPE,           /* Add a new non-terminal type           */
-    MOD_REMOVE_RULE,        /* Remove an existing rule               */
+    MOD_ADD_RULE,          /* Add a new production rule             */
+    MOD_ADD_TOKEN,         /* Add a new terminal token              */
+    MOD_MODIFY_PRECEDENCE, /* Change precedence of an existing rule */
+    MOD_ADD_TYPE,          /* Add a new non-terminal type           */
+    MOD_REMOVE_RULE,       /* Remove an existing rule               */
 } GrammarModType;
 
 /*
@@ -118,9 +112,9 @@ typedef struct GrammarModification {
     union {
         /* MOD_ADD_RULE: a BNF-style rule in Lemon syntax */
         struct {
-            const char *lhs;         /* Left-hand side non-terminal  */
-            const char **rhs;        /* NULL-terminated RHS symbols  */
-            int nrhs;                /* Number of RHS symbols        */
+            const char *lhs;  /* Left-hand side non-terminal  */
+            const char **rhs; /* NULL-terminated RHS symbols  */
+            int nrhs;         /* Number of RHS symbols        */
 
             /*
             ** Reduce action, in order of precedence:
@@ -144,36 +138,36 @@ typedef struct GrammarModification {
             **       No reduction action; the rule reduces but produces
             **       no value.
             */
-            LimeReduceFn reduce;     /* Callable action, or NULL     */
-            void *reduce_user;       /* Opaque ptr for `reduce`      */
-            const char *code;        /* Generator-time action text   */
-            int precedence;          /* -1 if unset                  */
+            LimeReduceFn reduce; /* Callable action, or NULL     */
+            void *reduce_user;   /* Opaque ptr for `reduce`      */
+            const char *code;    /* Generator-time action text   */
+            int precedence;      /* -1 if unset                  */
         } add_rule;
 
         /* MOD_ADD_TOKEN */
         struct {
-            const char *name;        /* Token name (e.g. "TK_JSONB") */
-            const char *lexeme;      /* Literal text if applicable   */
-            int token_code;          /* Assigned token code, or -1 for auto */
+            const char *name;   /* Token name (e.g. "TK_JSONB") */
+            const char *lexeme; /* Literal text if applicable   */
+            int token_code;     /* Assigned token code, or -1 for auto */
         } add_token;
 
         /* MOD_MODIFY_PRECEDENCE */
         struct {
-            const char *symbol;      /* Symbol whose precedence changes */
+            const char *symbol; /* Symbol whose precedence changes */
             int new_precedence;
-            int new_assoc;           /* 0=none, 1=left, 2=right, 3=nonassoc */
+            int new_assoc; /* 0=none, 1=left, 2=right, 3=nonassoc */
         } modify_prec;
 
         /* MOD_ADD_TYPE */
         struct {
-            const char *name;        /* Non-terminal name */
-            const char *datatype;    /* C type for the value union   */
+            const char *name;     /* Non-terminal name */
+            const char *datatype; /* C type for the value union   */
         } add_type;
 
         /* MOD_REMOVE_RULE */
         struct {
             const char *lhs;
-            int rule_index;          /* Index of rule to remove, or -1 for all */
+            int rule_index; /* Index of rule to remove, or -1 for all */
         } remove_rule;
     } u;
 } GrammarModification;
@@ -183,15 +177,15 @@ typedef struct GrammarModification {
 /* ------------------------------------------------------------------ */
 
 typedef enum ConflictResolution {
-    CONFLICT_UNRESOLVED = 0,  /* No resolution provided            */
-    CONFLICT_KEEP_EXISTING,   /* Keep the existing rule/token       */
-    CONFLICT_USE_NEW,         /* Replace with the new modification  */
-    CONFLICT_MERGE,           /* Extension provides merged result   */
+    CONFLICT_UNRESOLVED = 0, /* No resolution provided            */
+    CONFLICT_KEEP_EXISTING,  /* Keep the existing rule/token       */
+    CONFLICT_USE_NEW,        /* Replace with the new modification  */
+    CONFLICT_MERGE,          /* Extension provides merged result   */
 } ConflictResolution;
 
 typedef struct ConflictInfo {
-    ExtensionID existing_ext;         /* Extension that owns existing item */
-    ExtensionID new_ext;              /* Extension proposing new item      */
+    ExtensionID existing_ext; /* Extension that owns existing item */
+    ExtensionID new_ext;      /* Extension proposing new item      */
     const GrammarModification *existing_mod;
     const GrammarModification *new_mod;
 } ConflictInfo;
@@ -206,21 +200,14 @@ typedef struct ConflictInfo {
 ** the count.  The array must remain valid until on_unload is called.
 ** Returns true on success.
 */
-typedef bool (*ExtGetModificationsFn)(
-    void *user_data,
-    const struct ParserSnapshot *base_snapshot,
-    GrammarModification **mods_out,
-    uint32_t *nmods_out
-);
+typedef bool (*ExtGetModificationsFn)(void *user_data, const struct ParserSnapshot *base_snapshot,
+                                      GrammarModification **mods_out, uint32_t *nmods_out);
 
 /*
 ** on_conflict: Called when a modification conflicts with another
 ** extension.  Returns a ConflictResolution value.
 */
-typedef ConflictResolution (*ExtOnConflictFn)(
-    void *user_data,
-    const ConflictInfo *info
-);
+typedef ConflictResolution (*ExtOnConflictFn)(void *user_data, const ConflictInfo *info);
 
 /*
 ** on_unload: Called when the extension is being unloaded.  The extension
@@ -234,24 +221,24 @@ typedef void (*ExtOnUnloadFn)(void *user_data);
 /* ------------------------------------------------------------------ */
 
 typedef enum ExtensionState {
-    EXT_REGISTERED,    /* Registered but not yet loaded  */
-    EXT_LOADED,        /* Active, modifications applied  */
-    EXT_UNLOADED,      /* Was loaded, now removed        */
-    EXT_ERROR,         /* Failed to load                 */
+    EXT_REGISTERED, /* Registered but not yet loaded  */
+    EXT_LOADED,     /* Active, modifications applied  */
+    EXT_UNLOADED,   /* Was loaded, now removed        */
+    EXT_ERROR,      /* Failed to load                 */
 } ExtensionState;
 
 typedef struct Extension {
     ExtensionID id;
-    char *name;                        /* Human-readable name (owned)   */
-    char *version;                     /* Semver string (owned)         */
+    char *name;    /* Human-readable name (owned)   */
+    char *version; /* Semver string (owned)         */
 
     ExtensionState state;
 
     /* Callbacks */
     ExtGetModificationsFn get_modifications;
-    ExtOnConflictFn on_conflict;       /* May be NULL (default: KEEP_EXISTING) */
-    ExtOnUnloadFn on_unload;           /* May be NULL                   */
-    void *user_data;                   /* Opaque pointer passed to callbacks   */
+    ExtOnConflictFn on_conflict; /* May be NULL (default: KEEP_EXISTING) */
+    ExtOnUnloadFn on_unload;     /* May be NULL                   */
+    void *user_data;             /* Opaque pointer passed to callbacks   */
 
     /* Cached modifications from last load */
     GrammarModification *modifications;
@@ -263,12 +250,12 @@ typedef struct Extension {
 /* ------------------------------------------------------------------ */
 
 typedef struct ExtensionInfo {
-    const char *name;                  /* Copied internally         */
-    const char *version;               /* Copied internally         */
+    const char *name;    /* Copied internally         */
+    const char *version; /* Copied internally         */
 
-    ExtGetModificationsFn get_modifications;  /* Required           */
-    ExtOnConflictFn on_conflict;              /* Optional (NULL ok) */
-    ExtOnUnloadFn on_unload;                  /* Optional (NULL ok) */
+    ExtGetModificationsFn get_modifications; /* Required           */
+    ExtOnConflictFn on_conflict;             /* Optional (NULL ok) */
+    ExtOnUnloadFn on_unload;                 /* Optional (NULL ok) */
     void *user_data;
 } ExtensionInfo;
 
@@ -277,11 +264,11 @@ typedef struct ExtensionInfo {
 /* ------------------------------------------------------------------ */
 
 typedef struct ExtensionRegistry {
-    Extension *extensions;             /* Dynamic array of extensions   */
-    uint32_t count;                    /* Number of registered extensions */
-    uint32_t capacity;                 /* Allocated slots               */
-    ExtensionID next_id;               /* Next ID to assign (starts at 1) */
-    pthread_rwlock_t lock;             /* Protects the registry         */
+    Extension *extensions; /* Dynamic array of extensions   */
+    uint32_t count;        /* Number of registered extensions */
+    uint32_t capacity;     /* Allocated slots               */
+    ExtensionID next_id;   /* Next ID to assign (starts at 1) */
+    pthread_rwlock_t lock; /* Protects the registry         */
 } ExtensionRegistry;
 
 /* ------------------------------------------------------------------ */
@@ -298,9 +285,7 @@ void destroy_extension_registry(ExtensionRegistry *reg);
 ** EXT_REGISTERED state and must be explicitly loaded before its
 ** modifications take effect.
 */
-bool register_extension(ExtensionRegistry *reg,
-                        const ExtensionInfo *info,
-                        ExtensionID *id_out);
+bool register_extension(ExtensionRegistry *reg, const ExtensionInfo *info, ExtensionID *id_out);
 
 /*
 ** Load a previously registered extension.  Calls the extension's
@@ -308,10 +293,8 @@ bool register_extension(ExtensionRegistry *reg,
 ** transitions the extension to EXT_LOADED.  On failure sets *error
 ** to a malloc'd message and returns false.
 */
-bool load_extension(ExtensionRegistry *reg,
-                    ExtensionID id,
-                    const struct ParserSnapshot *base_snapshot,
-                    char **error);
+bool load_extension(ExtensionRegistry *reg, ExtensionID id,
+                    const struct ParserSnapshot *base_snapshot, char **error);
 
 /*
 ** Unload an extension.  Calls on_unload if provided, clears cached
@@ -333,5 +316,30 @@ const Extension *find_extension(ExtensionRegistry *reg, ExtensionID id);
 ** Get the number of currently loaded extensions.
 */
 uint32_t get_loaded_extension_count(ExtensionRegistry *reg);
+
+/* ------------------------------------------------------------------ */
+/*  Snapshot publishing                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+** publish_modified_snapshot collects the modifications from every
+** currently-loaded extension, runs them through
+** create_modified_snapshot against *base*, and (on success) returns
+** the resulting ParserSnapshot in *out_snap with refcount 1.  The
+** caller owns the new snapshot reference.
+**
+** When at least one extension's modifications cause an unresolved
+** conflict the function returns false, *error is filled with a
+** human-readable message, and *out_conflicts (if non-NULL) receives
+** the ConflictSet for inspection (the caller frees it via
+** conflict_set_destroy()).
+**
+** This is the single entry point applications use to materialise the
+** "active extended grammar" after loading or unloading extensions.
+*/
+struct ConflictSet;
+bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapshot *base,
+                               struct ParserSnapshot **out_snap,
+                               struct ConflictSet **out_conflicts, char **error);
 
 #endif /* EXTENSION_H */

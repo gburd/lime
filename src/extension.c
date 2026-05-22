@@ -8,6 +8,7 @@
 #include "extension.h"
 #include "parser.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -41,8 +42,7 @@ static bool grow_registry(ExtensionRegistry *reg) {
     if (new_cap == 0) new_cap = INITIAL_CAPACITY;
     Extension *p = realloc(reg->extensions, new_cap * sizeof(Extension));
     if (p == NULL) return false;
-    memset(&p[reg->capacity], 0,
-           (new_cap - reg->capacity) * sizeof(Extension));
+    memset(&p[reg->capacity], 0, (new_cap - reg->capacity) * sizeof(Extension));
     reg->extensions = p;
     reg->capacity = new_cap;
     return true;
@@ -69,7 +69,7 @@ ExtensionRegistry *create_extension_registry(void) {
     }
     reg->capacity = INITIAL_CAPACITY;
     reg->count = 0;
-    reg->next_id = 1;  /* IDs start at 1; 0 means "base / none" */
+    reg->next_id = 1; /* IDs start at 1; 0 means "base / none" */
     return reg;
 }
 
@@ -102,9 +102,7 @@ void destroy_extension_registry(ExtensionRegistry *reg) {
 /*  Registration                                                       */
 /* ------------------------------------------------------------------ */
 
-bool register_extension(ExtensionRegistry *reg,
-                        const ExtensionInfo *info,
-                        ExtensionID *id_out) {
+bool register_extension(ExtensionRegistry *reg, const ExtensionInfo *info, ExtensionID *id_out) {
     if (reg == NULL || info == NULL || id_out == NULL) return false;
     if (info->name == NULL || info->get_modifications == NULL) return false;
 
@@ -112,8 +110,7 @@ bool register_extension(ExtensionRegistry *reg,
 
     /* Check for duplicate name */
     for (uint32_t i = 0; i < reg->count; i++) {
-        if (reg->extensions[i].name != NULL &&
-            strcmp(reg->extensions[i].name, info->name) == 0) {
+        if (reg->extensions[i].name != NULL && strcmp(reg->extensions[i].name, info->name) == 0) {
             pthread_rwlock_unlock(&reg->lock);
             return false;
         }
@@ -162,10 +159,8 @@ bool register_extension(ExtensionRegistry *reg,
 /*  Load / unload                                                      */
 /* ------------------------------------------------------------------ */
 
-bool load_extension(ExtensionRegistry *reg,
-                    ExtensionID id,
-                    const struct ParserSnapshot *base_snapshot,
-                    char **error) {
+bool load_extension(ExtensionRegistry *reg, ExtensionID id,
+                    const struct ParserSnapshot *base_snapshot, char **error) {
     if (reg == NULL) return false;
     if (error != NULL) *error = NULL;
 
@@ -250,6 +245,164 @@ uint32_t get_loaded_extension_count(ExtensionRegistry *reg) {
     }
     pthread_rwlock_unlock(&reg->lock);
     return loaded;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Snapshot publishing                                                */
+/* ------------------------------------------------------------------ */
+
+#include "snapshot_modify.h"
+
+bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapshot *base,
+                               struct ParserSnapshot **out_snap,
+                               struct ConflictSet **out_conflicts, char **error) {
+    if (out_snap == NULL) {
+        if (error) *error = strdup("out_snap is required");
+        return false;
+    }
+    *out_snap = NULL;
+    if (out_conflicts) *out_conflicts = NULL;
+    if (error) *error = NULL;
+
+    if (reg == NULL) {
+        if (error) *error = strdup("registry is required");
+        return false;
+    }
+
+    /* Collect every loaded extension's modifications under the lock,
+    ** along with a parallel ext_id_per_mod[] array so we can resolve
+    ** conflicts back to the owning extension when an on_conflict
+    ** callback is needed. */
+    pthread_rwlock_rdlock(&reg->lock);
+    uint32_t total = 0;
+    for (uint32_t i = 0; i < reg->count; i++) {
+        if (reg->extensions[i].state == EXT_LOADED) {
+            total += reg->extensions[i].nmodifications;
+        }
+    }
+
+    GrammarModification *combined = NULL;
+    ExtensionID *ext_id_per_mod = NULL;
+    if (total > 0) {
+        combined = malloc(total * sizeof(GrammarModification));
+        ext_id_per_mod = malloc(total * sizeof(ExtensionID));
+        if (combined == NULL || ext_id_per_mod == NULL) {
+            free(combined);
+            free(ext_id_per_mod);
+            pthread_rwlock_unlock(&reg->lock);
+            if (error) *error = strdup("publish_modified_snapshot: out of memory");
+            return false;
+        }
+        uint32_t k = 0;
+        for (uint32_t i = 0; i < reg->count; i++) {
+            const Extension *e = &reg->extensions[i];
+            if (e->state != EXT_LOADED) continue;
+            for (uint32_t m = 0; m < e->nmodifications; m++) {
+                combined[k] = e->modifications[m];
+                ext_id_per_mod[k] = e->id;
+                k++;
+            }
+        }
+    }
+    pthread_rwlock_unlock(&reg->lock);
+
+    /* Detect and resolve conflicts ourselves so we have access to the
+    ** ext_id_per_mod[] mapping when invoking on_conflict callbacks. */
+    ConflictSet *cs = conflict_set_create();
+    if (cs == NULL) {
+        free(combined);
+        free(ext_id_per_mod);
+        if (error) *error = strdup("publish_modified_snapshot: conflict_set_create failed");
+        return false;
+    }
+    detect_conflicts(combined, total, cs);
+
+    /* Walk every conflict and ask the owning extensions to resolve. */
+    for (uint32_t i = 0; i < cs->count; i++) {
+        Conflict *c = &cs->conflicts[i];
+        if (c->resolved) continue;
+
+        ExtensionID id_a = (c->mod_index_a < total) ? ext_id_per_mod[c->mod_index_a] : 0;
+        ExtensionID id_b = (c->mod_index_b < total) ? ext_id_per_mod[c->mod_index_b] : 0;
+        c->ext_id_a = id_a;
+        c->ext_id_b = id_b;
+
+        const Extension *ea = find_extension(reg, id_a);
+        if (ea && ea->on_conflict) {
+            ConflictInfo info = {
+                .existing_ext = id_a,
+                .new_ext = id_b,
+                .existing_mod = &combined[c->mod_index_a],
+                .new_mod = &combined[c->mod_index_b],
+            };
+            if (ea->on_conflict(ea->user_data, &info) != CONFLICT_UNRESOLVED) {
+                c->resolved = true;
+                continue;
+            }
+        }
+
+        const Extension *eb = find_extension(reg, id_b);
+        if (eb && eb->on_conflict) {
+            ConflictInfo info = {
+                .existing_ext = id_a,
+                .new_ext = id_b,
+                .existing_mod = &combined[c->mod_index_a],
+                .new_mod = &combined[c->mod_index_b],
+            };
+            if (eb->on_conflict(eb->user_data, &info) != CONFLICT_UNRESOLVED) {
+                c->resolved = true;
+                continue;
+            }
+        }
+    }
+
+    uint32_t unresolved = conflict_set_unresolved_count(cs);
+    if (unresolved > 0) {
+        if (out_conflicts != NULL) {
+            *out_conflicts = cs;
+        } else {
+            conflict_set_destroy(cs);
+        }
+        if (error) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "%u unresolved conflict(s) detected", unresolved);
+            *error = strdup(buf);
+        }
+        free(combined);
+        free(ext_id_per_mod);
+        return false;
+    }
+    conflict_set_destroy(cs);
+
+    /* Build the modified snapshot.  Pass NULL for the registry's
+    ** conflict-resolver argument because we already resolved
+    ** ourselves. */
+    ParserSnapshot *new_snap = NULL;
+    ConflictSet *cs_inner = NULL;
+    char *cm_err = NULL;
+    ModifyResult mr =
+        create_modified_snapshot(base, combined, total, NULL, &new_snap, &cs_inner, &cm_err);
+    free(combined);
+    free(ext_id_per_mod);
+
+    if (mr != MODIFY_OK) {
+        if (error) {
+            *error = cm_err ? cm_err : strdup("create_modified_snapshot failed");
+        } else {
+            free(cm_err);
+        }
+        if (out_conflicts && cs_inner != NULL) {
+            *out_conflicts = cs_inner;
+        } else if (cs_inner != NULL) {
+            conflict_set_destroy(cs_inner);
+        }
+        return false;
+    }
+    free(cm_err);
+    if (cs_inner != NULL) conflict_set_destroy(cs_inner);
+
+    *out_snap = new_snap;
+    return true;
 }
 
 /* ------------------------------------------------------------------ */

@@ -33,31 +33,31 @@ struct state;
  * struct; it is NULL when not present.
  */
 typedef struct SemVer {
-    uint32_t major;             /**< Major version component */
-    uint32_t minor;             /**< Minor version component */
-    uint32_t patch;             /**< Patch version component */
-    char *prerelease;           /**< Prerelease label (malloc'd; NULL if absent) */
+    uint32_t major;   /**< Major version component */
+    uint32_t minor;   /**< Minor version component */
+    uint32_t patch;   /**< Patch version component */
+    char *prerelease; /**< Prerelease label (malloc'd; NULL if absent) */
 } SemVer;
 
 /**
  * @brief Version constraint operators used in dependency declarations.
  */
 typedef enum VersionOp {
-    VERSION_OP_EQ = 0,            /* == exact match                    */
-    VERSION_OP_GTE,               /* >= greater-than-or-equal          */
-    VERSION_OP_LTE,               /* <= less-than-or-equal             */
-    VERSION_OP_GT,                /* >  strictly greater               */
-    VERSION_OP_LT,                /* <  strictly less                  */
-    VERSION_OP_CARET,             /* ^  compatible (same major)        */
-    VERSION_OP_TILDE,             /* ~  approximately (same major.minor) */
+    VERSION_OP_EQ = 0, /* == exact match                    */
+    VERSION_OP_GTE,    /* >= greater-than-or-equal          */
+    VERSION_OP_LTE,    /* <= less-than-or-equal             */
+    VERSION_OP_GT,     /* >  strictly greater               */
+    VERSION_OP_LT,     /* <  strictly less                  */
+    VERSION_OP_CARET,  /* ^  compatible (same major)        */
+    VERSION_OP_TILDE,  /* ~  approximately (same major.minor) */
 } VersionOp;
 
 /**
  * @brief A single version constraint on a dependency, e.g. ">=1.2.0".
  */
 typedef struct VersionConstraint {
-    VersionOp op;               /**< Constraint operator */
-    SemVer version;             /**< Reference version for the operator */
+    VersionOp op;   /**< Constraint operator */
+    SemVer version; /**< Reference version for the operator */
 } VersionConstraint;
 
 /* ------------------------------------------------------------------ */
@@ -88,17 +88,17 @@ typedef struct ParserDependency {
  * over graphs of ParserModule nodes.
  */
 typedef struct ParserModule {
-    char *name;                     /**< Unique module name (owned) */
-    SemVer version;                 /**< Module version */
+    char *name;     /**< Unique module name (owned) */
+    SemVer version; /**< Module version */
 
     ParserDependency *dependencies; /**< Array of dependencies (owned) */
     uint32_t ndependencies;         /**< Length of @ref dependencies */
 
-    char **exports;                 /**< Symbol names exported by this module */
-    uint32_t nexports;              /**< Length of @ref exports */
+    char **exports;    /**< Symbol names exported by this module */
+    uint32_t nexports; /**< Length of @ref exports */
 
-    char **imports;                 /**< Symbol names imported from other modules */
-    uint32_t nimports;              /**< Length of @ref imports */
+    char **imports;    /**< Symbol names imported from other modules */
+    uint32_t nimports; /**< Length of @ref imports */
 } ParserModule;
 
 /* ------------------------------------------------------------------ */
@@ -127,30 +127,55 @@ typedef struct ParserSnapshot {
 
     /* --- Grammar data (deep-copied, owned by this snapshot) ----------- */
 
-    struct symbol **symbols;       /**< Array of pointers to symbol structs */
-    uint32_t nsymbol;              /**< Total number of symbols */
-    uint32_t nterminal;            /**< Number of terminal symbols */
+    struct symbol **symbols; /**< Array of pointers to symbol structs */
+    uint32_t nsymbol;        /**< Total number of symbols */
+    uint32_t nterminal;      /**< Number of terminal symbols */
 
-    struct rule *rules;            /**< Linked list of production rules */
-    uint32_t nrule;                /**< Total number of rules */
+    struct rule *rules; /**< Linked list of production rules */
+    uint32_t nrule;     /**< Total number of rules */
 
-    struct state **states;         /**< Array of pointers to state structs */
-    uint32_t nstate;               /**< Total number of parser states */
+    struct state **states; /**< Array of pointers to state structs */
+    uint32_t nstate;       /**< Total number of parser states */
 
     /* --- Compact action tables (heap-allocated, owned) ---------------- */
 
-    uint16_t *yy_action;           /**< Combined shift+reduce action array */
-    uint16_t *yy_lookahead;        /**< Lookahead values parallel to yy_action */
-    int16_t  *yy_shift_ofst;       /**< Per-state offset into yy_action for shifts */
-    int16_t  *yy_reduce_ofst;      /**< Per-state offset into yy_action for reduces */
-    uint16_t *yy_default;          /**< Default action for each state */
-    uint32_t action_count;         /**< Number of entries in yy_action */
-    uint32_t lookahead_count;      /**< Number of entries in yy_lookahead */
+    uint16_t *yy_action;      /**< Combined shift+reduce action array */
+    uint16_t *yy_lookahead;   /**< Lookahead values parallel to yy_action */
+    int16_t *yy_shift_ofst;   /**< Per-state offset into yy_action for shifts */
+    int16_t *yy_reduce_ofst;  /**< Per-state offset into yy_action for reduces */
+    uint16_t *yy_default;     /**< Default action for each state */
+    uint32_t action_count;    /**< Number of entries in yy_action */
+    uint32_t lookahead_count; /**< Number of entries in yy_lookahead */
+
+    /* --- Action-table dispatch constants (as in generated parsers) ----
+    ** These are the YY_* defines the generator emits per grammar.  The
+    ** runtime LALR(1) interpreter (parse_token) needs them to classify
+    ** action-table entries.  Set by snapshot_init_from_tables() or
+    ** populated directly when a snapshot is built from a generated
+    ** parser. */
+    uint16_t yy_max_shift;       /**< 0..YY_MAX_SHIFT = shift to that state */
+    uint16_t yy_min_shiftreduce; /**< Shift-reduce range minimum */
+    uint16_t yy_max_shiftreduce; /**< Shift-reduce range maximum */
+    uint16_t yy_error_action;    /**< Marker for syntax error */
+    uint16_t yy_accept_action;   /**< Marker for parser accept */
+    uint16_t yy_no_action;       /**< Marker for unused slot */
+    uint16_t yy_min_reduce;      /**< Reduce range minimum (max = nstate+nrule) */
+    uint16_t yy_ntoken;          /**< Highest terminal code + 1 */
+
+    /* --- Rule metadata (parallel arrays, length = nrule) -------------- */
+
+    int16_t *yy_rule_info_lhs; /**< LHS symbol code per rule */
+    int8_t *yy_rule_info_nrhs; /**< Negative number of RHS symbols per rule */
+
+    /* --- Optional fallback table (length = nfallback, may be NULL) ---- */
+
+    uint16_t *yy_fallback; /**< Per-token fallback substitute (0 = none) */
+    uint32_t nfallback;    /**< Length of yy_fallback */
 
     /* --- Module identity (optional, NULL when not part of a module) --- */
 
-    uint8_t merkle_root[32];       /**< Content hash of grammar data */
-    ParserModule *module;          /**< Owning module metadata, or NULL */
+    uint8_t merkle_root[32]; /**< Content hash of grammar data */
+    ParserModule *module;    /**< Owning module metadata, or NULL */
 
     /** Nanosecond-precision wall-clock time when this snapshot was created. */
     uint64_t create_time_ns;
@@ -181,13 +206,23 @@ ParserSnapshot *snapshot_acquire(ParserSnapshot *snap);
 void snapshot_release(ParserSnapshot *snap);
 
 /*
-** Create a base snapshot by parsing *grammar_file* through the Lemon
-** parser generator.  On success a new snapshot with refcount == 1 is
-** returned and *error is set to NULL.  On failure NULL is returned and
-** *error points to a malloc'd error message that the caller must free.
+** Create a base snapshot from *grammar_file*.
 **
-** NOTE: This is currently a stub.  Full implementation comes when Lemon
-** is modified to emit dynamic tables (Task #3).
+** The runtime delegates to a per-grammar <Prefix>BuildSnapshot()
+** function emitted by `lime -n grammar.y` (see snapshot_build.h
+** and the LimeParserTables struct).  When no such builder is linked
+** into the host process this function returns NULL with an
+** actionable error message.
+**
+** Building a snapshot directly from a grammar file at runtime --
+** without a pre-compiled <Prefix>BuildSnapshot() symbol -- is
+** under construction.  It requires exposing the lime generator's
+** LALR(1) Build()/ReportTable() phases as a library callable from
+** the runtime; the generator's algorithm is fully implemented in
+** lime.c but not yet refactored into a public function.
+**
+** Returns a snapshot with refcount == 1 on success, or NULL with
+** *error pointing to a malloc'd message on failure.
 */
 ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error);
 

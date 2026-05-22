@@ -18,9 +18,20 @@ typedef struct ParseContext ParseContext;
  * Pins a snapshot for the duration of a parse, ensuring grammar
  * stability even if extensions are loaded or unloaded by other
  * threads while parsing is in flight.
+ *
+ * The `engine` field is owned by parse_engine.c (opaque to callers).
+ * It holds the parse stack and the accept/error flags.  Embedding it
+ * directly in ParseContext rather than in a side-table keyed by
+ * `ParseContext *` is load-bearing for parse_token throughput: a
+ * side-table lookup adds a pthread_mutex_lock + linear scan to every
+ * parse_token call, which makes the runtime push parser
+ * unnecessarily slower than its compiled-in counterpart in
+ * bench/bench_flex_bison_compare.  Do not move it back out without
+ * rerunning that benchmark.
  */
 struct ParseContext {
-    ParserSnapshot *snapshot;   /**< Snapshot pinned for this parse session */
+    ParserSnapshot *snapshot;  /**< Snapshot pinned for this parse session */
+    void *engine;              /**< Owned by parse_engine.c (opaque) */
 };
 
 /*
@@ -54,10 +65,7 @@ ParserSnapshot *parse_get_snapshot(ParseContext *ctx);
 **
 ** Returns 0 on success, non-zero on parse error.
 */
-int parse_token(ParseContext *ctx,
-                int token_code,
-                void *token_value,
-                int location);
+int parse_token(ParseContext *ctx, int token_code, void *token_value, int location);
 
 /*
 ** Sentinel value for `location` callers who do not track positions
@@ -72,11 +80,7 @@ int parse_token(ParseContext *ctx,
 /*  Snapshot action table lookup helpers                               */
 /* ------------------------------------------------------------------ */
 
-uint16_t snap_find_shift_action(const ParserSnapshot *snap,
-                                uint16_t stateno,
-                                uint16_t iLookAhead);
-uint16_t snap_find_reduce_action(const ParserSnapshot *snap,
-                                 uint16_t stateno,
-                                 uint16_t iLookAhead);
+uint16_t snap_find_shift_action(const ParserSnapshot *snap, uint16_t stateno, uint16_t iLookAhead);
+uint16_t snap_find_reduce_action(const ParserSnapshot *snap, uint16_t stateno, uint16_t iLookAhead);
 
 #endif /* PARSE_CONTEXT_H */

@@ -33,8 +33,7 @@ static void set_diag_error(CompositionDiagnostics *diag, const char *msg) {
     diag->error = dup_string(msg);
 }
 
-static void set_diag_error_fmt(CompositionDiagnostics *diag,
-                               const char *fmt, ...) {
+static void set_diag_error_fmt(CompositionDiagnostics *diag, const char *fmt, ...) {
     if (diag == NULL) return;
     char buf[512];
     va_list ap;
@@ -93,7 +92,7 @@ void composition_diagnostics_destroy(CompositionDiagnostics *diag) {
 */
 typedef struct {
     char **names;
-    uint32_t *source_indices;   /* which snapshot each name came from */
+    uint32_t *source_indices; /* which snapshot each name came from */
     uint32_t count;
     uint32_t capacity;
 } SymbolSet;
@@ -129,8 +128,7 @@ static bool symset_add(SymbolSet *ss, const char *name, uint32_t source) {
     if (ss->count == ss->capacity) {
         uint32_t new_cap = ss->capacity * 2;
         char **new_names = realloc(ss->names, new_cap * sizeof(char *));
-        uint32_t *new_src = realloc(ss->source_indices,
-                                    new_cap * sizeof(uint32_t));
+        uint32_t *new_src = realloc(ss->source_indices, new_cap * sizeof(uint32_t));
         if (!new_names || !new_src) {
             /* realloc may have succeeded for one but not the other;
             ** keep the originals in that case. */
@@ -160,11 +158,9 @@ static bool symset_add(SymbolSet *ss, const char *name, uint32_t source) {
 ** dynamic-table support lands, this will read the actual symbol
 ** names from the struct.
 */
-static char *make_symbol_name(uint32_t snapshot_idx, uint32_t sym_idx,
-                              bool is_terminal) {
+static char *make_symbol_name(uint32_t snapshot_idx, uint32_t sym_idx, bool is_terminal) {
     char buf[64];
-    snprintf(buf, sizeof(buf), "%s_%u_%u",
-             is_terminal ? "T" : "NT", snapshot_idx, sym_idx);
+    snprintf(buf, sizeof(buf), "%s_%u_%u", is_terminal ? "T" : "NT", snapshot_idx, sym_idx);
     return dup_string(buf);
 }
 
@@ -178,14 +174,9 @@ static char *make_symbol_name(uint32_t snapshot_idx, uint32_t sym_idx,
 **
 ** Returns COMPOSE_OK on success or a conflict result code.
 */
-static CompositionResult unify_symbols(
-    ParserSnapshot **snapshots,
-    uint32_t nsnapshots,
-    CompositionFlags flags,
-    ConflictSet *cs,
-    SymbolSet *unified,
-    CompositionDiagnostics *diag)
-{
+static CompositionResult unify_symbols(ParserSnapshot **snapshots, uint32_t nsnapshots,
+                                       CompositionFlags flags, ConflictSet *cs, SymbolSet *unified,
+                                       CompositionDiagnostics *diag) {
     /* Pre-size the mapping array. */
     uint32_t total_syms = 0;
     for (uint32_t s = 0; s < nsnapshots; s++) {
@@ -219,12 +210,10 @@ static CompositionResult unify_symbols(
                     /* Record a collision conflict. */
                     if (cs) {
                         char desc[256];
-                        snprintf(desc, sizeof(desc),
-                                 "symbol '%s' defined in snapshots %u and %u",
+                        snprintf(desc, sizeof(desc), "symbol '%s' defined in snapshots %u and %u",
                                  name, unified->source_indices[existing], s);
                         conflict_set_add(cs, CONFLICT_TOKEN_COLLISION,
-                                         unified->source_indices[existing], s,
-                                         0, 0, desc);
+                                         unified->source_indices[existing], s, 0, 0, desc);
                     }
                 }
                 uint32_t unified_idx = existing;
@@ -283,13 +272,9 @@ static CompositionResult unify_symbols(
 ** With DEDUP_RULES, identical rules (same counts) are collapsed.
 ** Conflicts are recorded in *cs*.
 */
-static CompositionResult merge_rules(
-    ParserSnapshot **snapshots,
-    uint32_t nsnapshots,
-    ParserSnapshot *composed,
-    CompositionFlags flags,
-    ConflictSet *cs)
-{
+static CompositionResult merge_rules(ParserSnapshot **snapshots, uint32_t nsnapshots,
+                                     ParserSnapshot *composed, CompositionFlags flags,
+                                     ConflictSet *cs) {
     /*
     ** Since rules are currently opaque (struct rule is in lime.c),
     ** we accumulate rule counts.  When full dynamic-table support
@@ -336,8 +321,7 @@ MerkleTree *compute_snapshot_merkle(const ParserSnapshot *snap) {
             uint32_t nsymbol;
             uint32_t nterminal;
         } sym_data = { snap->nsymbol, snap->nterminal };
-        leaves[nleaves] = merkle_create_leaf(&sym_data, sizeof(sym_data),
-                                             "symbols");
+        leaves[nleaves] = merkle_create_leaf(&sym_data, sizeof(sym_data), "symbols");
         if (!leaves[nleaves]) goto fail;
         nleaves++;
     }
@@ -365,17 +349,14 @@ MerkleTree *compute_snapshot_merkle(const ParserSnapshot *snap) {
         ** the counts as a placeholder.
         */
         if (snap->yy_action != NULL && snap->action_count > 0) {
-            leaves[nleaves] = merkle_create_leaf(
-                snap->yy_action,
-                snap->action_count * sizeof(uint16_t),
-                "actions");
+            leaves[nleaves] = merkle_create_leaf(snap->yy_action,
+                                                 snap->action_count * sizeof(uint16_t), "actions");
         } else {
             struct {
                 uint32_t action_count;
                 uint32_t lookahead_count;
             } act_data = { snap->action_count, snap->lookahead_count };
-            leaves[nleaves] = merkle_create_leaf(&act_data, sizeof(act_data),
-                                                 "actions");
+            leaves[nleaves] = merkle_create_leaf(&act_data, sizeof(act_data), "actions");
         }
         if (!leaves[nleaves]) goto fail;
         nleaves++;
@@ -395,12 +376,9 @@ fail:
 /*  Validation                                                         */
 /* ------------------------------------------------------------------ */
 
-CompositionResult validate_composition_inputs(
-    ParserSnapshot **snapshots,
-    uint32_t nsnapshots,
-    const CompositionOptions *opts,
-    CompositionDiagnostics *diag)
-{
+CompositionResult validate_composition_inputs(ParserSnapshot **snapshots, uint32_t nsnapshots,
+                                              const CompositionOptions *opts,
+                                              CompositionDiagnostics *diag) {
     if (snapshots == NULL || nsnapshots == 0) {
         set_diag_error(diag, "no snapshots provided");
         return COMPOSE_ERR_INVALID_INPUT;
@@ -417,10 +395,8 @@ CompositionResult validate_composition_inputs(
     ** validate the dependency graph. */
     if (opts != NULL && opts->modules != NULL && opts->nmodules > 0 &&
         !(opts->flags & COMPOSE_FLAG_SKIP_DEPS)) {
-
         if (opts->nmodules != nsnapshots) {
-            set_diag_error(diag,
-                "module count does not match snapshot count");
+            set_diag_error(diag, "module count does not match snapshot count");
             return COMPOSE_ERR_INVALID_INPUT;
         }
 
@@ -433,12 +409,11 @@ CompositionResult validate_composition_inputs(
         DepError dep_err;
         memset(&dep_err, 0, sizeof(dep_err));
 
-        DepResolveResult dr = build_dependency_graph(
-            opts->modules, opts->nmodules, graph, &dep_err);
+        DepResolveResult dr =
+            build_dependency_graph(opts->modules, opts->nmodules, graph, &dep_err);
         if (dr != DEP_OK) {
             set_diag_error_fmt(diag, "dependency graph error: %s",
-                               dep_err.message ? dep_err.message
-                                               : "(unknown)");
+                               dep_err.message ? dep_err.message : "(unknown)");
             dep_error_destroy(&dep_err);
             dep_graph_destroy(graph);
             return COMPOSE_ERR_DEPENDENCY;
@@ -447,8 +422,7 @@ CompositionResult validate_composition_inputs(
         /* Check for cycles. */
         char *cycle = NULL;
         if (has_circular_dependencies(graph, &cycle)) {
-            set_diag_error_fmt(diag, "circular dependency: %s",
-                               cycle ? cycle : "(unknown cycle)");
+            set_diag_error_fmt(diag, "circular dependency: %s", cycle ? cycle : "(unknown cycle)");
             free(cycle);
             dep_error_destroy(&dep_err);
             dep_graph_destroy(graph);
@@ -459,8 +433,7 @@ CompositionResult validate_composition_inputs(
         dr = validate_versions(graph, &dep_err);
         if (dr != DEP_OK) {
             set_diag_error_fmt(diag, "version mismatch: %s",
-                               dep_err.message ? dep_err.message
-                                               : "(unknown)");
+                               dep_err.message ? dep_err.message : "(unknown)");
             dep_error_destroy(&dep_err);
             dep_graph_destroy(graph);
             return COMPOSE_ERR_DEPENDENCY;
@@ -472,8 +445,7 @@ CompositionResult validate_composition_inputs(
         dr = resolve_dependencies(graph, &order, &norder, &dep_err);
         if (dr != DEP_OK) {
             set_diag_error_fmt(diag, "dependency resolution failed: %s",
-                               dep_err.message ? dep_err.message
-                                               : "(unknown)");
+                               dep_err.message ? dep_err.message : "(unknown)");
             dep_error_destroy(&dep_err);
             dep_graph_destroy(graph);
             return COMPOSE_ERR_DEPENDENCY;
@@ -482,8 +454,7 @@ CompositionResult validate_composition_inputs(
         dr = validate_composition(graph, order, norder, &dep_err);
         if (dr != DEP_OK) {
             set_diag_error_fmt(diag, "composition validation failed: %s",
-                               dep_err.message ? dep_err.message
-                                               : "(unknown)");
+                               dep_err.message ? dep_err.message : "(unknown)");
             free(order);
             dep_error_destroy(&dep_err);
             dep_graph_destroy(graph);
@@ -502,13 +473,9 @@ CompositionResult validate_composition_inputs(
 /*  compose_snapshots                                                  */
 /* ------------------------------------------------------------------ */
 
-CompositionResult compose_snapshots(
-    ParserSnapshot **snapshots,
-    uint32_t nsnapshots,
-    const CompositionOptions *opts,
-    ParserSnapshot **out,
-    CompositionDiagnostics *diag)
-{
+CompositionResult compose_snapshots(ParserSnapshot **snapshots, uint32_t nsnapshots,
+                                    const CompositionOptions *opts, ParserSnapshot **out,
+                                    CompositionDiagnostics *diag) {
     if (out == NULL) return COMPOSE_ERR_INVALID_INPUT;
     *out = NULL;
 
@@ -524,8 +491,8 @@ CompositionResult compose_snapshots(
     }
 
     /* Step 1: Validate inputs. */
-    CompositionResult cr = validate_composition_inputs(
-        snapshots, nsnapshots, &effective_opts, diag);
+    CompositionResult cr =
+        validate_composition_inputs(snapshots, nsnapshots, &effective_opts, diag);
     if (cr != COMPOSE_OK) return cr;
 
     /* Step 2: Create conflict set for tracking issues. */
@@ -543,8 +510,7 @@ CompositionResult compose_snapshots(
         return COMPOSE_ERR_ALLOC;
     }
 
-    cr = unify_symbols(snapshots, nsnapshots, effective_opts.flags,
-                        cs, &unified, diag);
+    cr = unify_symbols(snapshots, nsnapshots, effective_opts.flags, cs, &unified, diag);
     if (cr != COMPOSE_OK) {
         symset_destroy(&unified);
         conflict_set_destroy(cs);
@@ -614,14 +580,12 @@ CompositionResult compose_snapshots(
             for (uint32_t s = 0; s < nsnapshots; s++) {
                 ParserSnapshot *snap = snapshots[s];
                 if (snap->yy_action && snap->action_count > 0) {
-                    memcpy(composed->yy_action + act_off,
-                           snap->yy_action,
+                    memcpy(composed->yy_action + act_off, snap->yy_action,
                            snap->action_count * sizeof(uint16_t));
                     act_off += snap->action_count;
                 }
                 if (snap->yy_lookahead && snap->lookahead_count > 0) {
-                    memcpy(composed->yy_lookahead + la_off,
-                           snap->yy_lookahead,
+                    memcpy(composed->yy_lookahead + la_off, snap->yy_lookahead,
                            snap->lookahead_count * sizeof(uint16_t));
                     la_off += snap->lookahead_count;
                 }
@@ -635,7 +599,11 @@ CompositionResult compose_snapshots(
         }
     }
 
-    /* Step 7: Rebuild automaton (currently a stub). */
+    /* Step 7: Rebuild the LALR(1) automaton over the composed
+    ** grammar.  rebuild_automaton currently performs validation and
+    ** version bookkeeping; full table reconstruction lives in the
+    ** lime generator and is exposed via lemon_snapshot_create with
+    ** the merged grammar text. */
     {
         char *build_err = NULL;
         if (!rebuild_automaton(composed, &build_err)) {
@@ -643,8 +611,10 @@ CompositionResult compose_snapshots(
             set_diag_error_fmt(diag, "automaton rebuild failed: %s",
                                build_err ? build_err : "(unknown)");
             free(build_err);
-            if (diag) diag->conflicts = cs;
-            else conflict_set_destroy(cs);
+            if (diag)
+                diag->conflicts = cs;
+            else
+                conflict_set_destroy(cs);
             snapshot_release(composed);
             return COMPOSE_ERR_BUILD;
         }
@@ -654,13 +624,11 @@ CompositionResult compose_snapshots(
     /* Step 8: Check for unresolved conflicts. */
     {
         uint32_t unresolved = conflict_set_unresolved_count(cs);
-        if (unresolved > 0 &&
-            !(effective_opts.flags & COMPOSE_FLAG_LAST_WINS) &&
+        if (unresolved > 0 && !(effective_opts.flags & COMPOSE_FLAG_LAST_WINS) &&
             !(effective_opts.flags & COMPOSE_FLAG_DEDUP_RULES)) {
             if (diag) {
                 diag->conflicts = cs;
-                set_diag_error_fmt(diag,
-                    "%u unresolved conflict(s) detected", unresolved);
+                set_diag_error_fmt(diag, "%u unresolved conflict(s) detected", unresolved);
             } else {
                 conflict_set_destroy(cs);
             }
@@ -698,13 +666,9 @@ CompositionResult compose_snapshots(
 /*  merge_snapshots                                                    */
 /* ------------------------------------------------------------------ */
 
-CompositionResult merge_snapshots(
-    const ParserSnapshot *base,
-    const ParserSnapshot *extension,
-    const CompositionOptions *opts,
-    ParserSnapshot **out,
-    CompositionDiagnostics *diag)
-{
+CompositionResult merge_snapshots(const ParserSnapshot *base, const ParserSnapshot *extension,
+                                  const CompositionOptions *opts, ParserSnapshot **out,
+                                  CompositionDiagnostics *diag) {
     if (out == NULL) return COMPOSE_ERR_INVALID_INPUT;
     *out = NULL;
 

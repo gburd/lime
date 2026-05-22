@@ -24,6 +24,7 @@ ParseContext *parse_context_create(ParserSnapshot *snap) {
     }
 
     ctx->snapshot = snapshot_acquire(snap);
+    ctx->engine = NULL;  /* Allocated lazily by parse_engine_step. */
     if (ctx->snapshot == NULL) {
         free(ctx);
         return NULL;
@@ -39,6 +40,10 @@ void parse_context_destroy(ParseContext *ctx) {
     if (ctx == NULL) {
         return;
     }
+
+    /* Drop any parse-engine state attached to this context. */
+    extern void parse_engine_drop(ParseContext *);
+    parse_engine_drop(ctx);
 
     if (ctx->snapshot != NULL) {
         snapshot_release(ctx->snapshot);
@@ -64,23 +69,14 @@ ParserSnapshot *parse_get_snapshot(ParseContext *ctx) {
     return ctx->snapshot;
 }
 
-int parse_token(ParseContext *ctx,
-                int token_code,
-                void *token_value,
-                int location) {
-    (void)ctx;
-    (void)token_code;
-    (void)token_value;
-    (void)location;
-    /* Stub: full implementation requires reusing the generator's
-    ** parser-template stack logic against the pinned snapshot's
-    ** action tables.  When that lands, the location parameter will
-    ** be pushed alongside token_value onto the value stack and
-    ** propagated to reduce actions (alongside the aliased values
-    ** for each RHS symbol).  Today it is accepted and ignored so
-    ** callers can thread locations through their tokenisation loop
-    ** without waiting for the parser-plumbing work. */
-    return 0;
+int parse_token(ParseContext *ctx, int token_code, void *token_value, int location) {
+    /* Drive the runtime LALR(1) push-parser engine.  The engine
+    ** operates on the snapshot's action tables and rule metadata
+    ** (populated either by snapshot_build_from_tables() from a
+    ** generated parser or by create_modified_snapshot() after an
+    ** extension applies modifications). */
+    extern int parse_engine_step(ParseContext *, int, void *, int);
+    return parse_engine_step(ctx, token_code, token_value, location);
 }
 
 /* ------------------------------------------------------------------ */
@@ -92,17 +88,14 @@ int parse_token(ParseContext *ctx,
 ** Mirrors the logic of yy_find_shift_action() in limpar.c but
 ** operates on the snapshot's dynamically-allocated arrays.
 */
-uint16_t snap_find_shift_action(const ParserSnapshot *snap,
-                                uint16_t stateno,
-                                uint16_t iLookAhead) {
+uint16_t snap_find_shift_action(const ParserSnapshot *snap, uint16_t stateno, uint16_t iLookAhead) {
     if (snap == NULL || snap->yy_shift_ofst == NULL) return 0;
     if (stateno >= snap->nstate) return 0;
 
     int16_t ofst = snap->yy_shift_ofst[stateno];
     uint32_t idx = (uint32_t)((int32_t)ofst + (int32_t)iLookAhead);
 
-    if (idx < snap->lookahead_count &&
-        snap->yy_lookahead[idx] == iLookAhead) {
+    if (idx < snap->lookahead_count && snap->yy_lookahead[idx] == iLookAhead) {
         return snap->yy_action[idx];
     }
 
@@ -114,8 +107,7 @@ uint16_t snap_find_shift_action(const ParserSnapshot *snap,
 ** Uses the reduce offset table; falls back to the default action when
 ** the offset is negative or the lookahead doesn't match.
 */
-uint16_t snap_find_reduce_action(const ParserSnapshot *snap,
-                                 uint16_t stateno,
+uint16_t snap_find_reduce_action(const ParserSnapshot *snap, uint16_t stateno,
                                  uint16_t iLookAhead) {
     if (snap == NULL || snap->yy_reduce_ofst == NULL) return 0;
     if (stateno >= snap->nstate) return 0;
@@ -127,8 +119,7 @@ uint16_t snap_find_reduce_action(const ParserSnapshot *snap,
 
     uint32_t idx = (uint32_t)((int32_t)ofst + (int32_t)iLookAhead);
 
-    if (idx < snap->lookahead_count &&
-        snap->yy_lookahead[idx] == iLookAhead) {
+    if (idx < snap->lookahead_count && snap->yy_lookahead[idx] == iLookAhead) {
         return snap->yy_action[idx];
     }
 

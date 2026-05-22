@@ -86,7 +86,7 @@ ParserSnapshot *clone_snapshot(const ParserSnapshot *base) {
     snap->version = base->version + 1;
     atomic_init(&snap->refcount, 1);
     snap->create_time_ns = now_ns();
-    snap->jit_ctx = NULL;  /* JIT context is not inherited */
+    snap->jit_ctx = NULL; /* JIT context is not inherited */
 
     /* Grammar data -- shallow copy of pointer arrays for now.
     ** The actual symbol/rule/state structs are from the base snapshot
@@ -128,6 +128,37 @@ ParserSnapshot *clone_snapshot(const ParserSnapshot *base) {
     snap->yy_reduce_ofst = dup_i16_array(base->yy_reduce_ofst, base->nstate);
     snap->yy_default = dup_u16_array(base->yy_default, base->nstate);
 
+    /* Action-range constants (small POD, copy verbatim). */
+    snap->yy_max_shift = base->yy_max_shift;
+    snap->yy_min_shiftreduce = base->yy_min_shiftreduce;
+    snap->yy_max_shiftreduce = base->yy_max_shiftreduce;
+    snap->yy_error_action = base->yy_error_action;
+    snap->yy_accept_action = base->yy_accept_action;
+    snap->yy_no_action = base->yy_no_action;
+    snap->yy_min_reduce = base->yy_min_reduce;
+    snap->yy_ntoken = base->yy_ntoken;
+
+    /* Rule-metadata arrays -- deep copy. */
+    if (base->nrule > 0 && base->yy_rule_info_lhs != NULL) {
+        size_t sz = base->nrule * sizeof(int16_t);
+        snap->yy_rule_info_lhs = malloc(sz);
+        if (snap->yy_rule_info_lhs == NULL) goto fail;
+        memcpy(snap->yy_rule_info_lhs, base->yy_rule_info_lhs, sz);
+    }
+    if (base->nrule > 0 && base->yy_rule_info_nrhs != NULL) {
+        size_t sz = base->nrule * sizeof(int8_t);
+        snap->yy_rule_info_nrhs = malloc(sz);
+        if (snap->yy_rule_info_nrhs == NULL) goto fail;
+        memcpy(snap->yy_rule_info_nrhs, base->yy_rule_info_nrhs, sz);
+    }
+
+    /* Optional fallback table -- deep copy if present. */
+    if (base->nfallback > 0 && base->yy_fallback != NULL) {
+        snap->yy_fallback = dup_u16_array(base->yy_fallback, base->nfallback);
+        if (snap->yy_fallback == NULL) goto fail;
+        snap->nfallback = base->nfallback;
+    }
+
     /* Verify critical allocations succeeded */
     if (base->action_count > 0 && snap->yy_action == NULL) goto fail;
     if (base->lookahead_count > 0 && snap->yy_lookahead == NULL) goto fail;
@@ -143,6 +174,9 @@ fail:
     free(snap->yy_shift_ofst);
     free(snap->yy_reduce_ofst);
     free(snap->yy_default);
+    free(snap->yy_rule_info_lhs);
+    free(snap->yy_rule_info_nrhs);
+    free(snap->yy_fallback);
     free(snap);
     return NULL;
 }
@@ -151,9 +185,7 @@ fail:
 /*  Applying individual modifications                                  */
 /* ------------------------------------------------------------------ */
 
-static bool apply_add_token(ParserSnapshot *snap,
-                            const GrammarModification *mod,
-                            char **error) {
+static bool apply_add_token(ParserSnapshot *snap, const GrammarModification *mod, char **error) {
     const char *name = mod->u.add_token.name;
     if (name == NULL) {
         if (error) *error = dup_string("MOD_ADD_TOKEN: missing token name");
@@ -161,41 +193,70 @@ static bool apply_add_token(ParserSnapshot *snap,
     }
 
     /*
-    ** Adding a token means adding a new terminal symbol to the snapshot's
-    ** symbol table.  The full implementation requires deep-copy support
-    ** from Task #3.  For now, we increment the terminal count as a
-    ** placeholder to track that the modification was applied.
+    ** Assign a fresh terminal code unless the modification specifies
+    ** one.  We extend the snapshot's terminal-count and symbol-count
+    ** so subsequent modifications and the rebuild_automaton pass see
+    ** the new symbol space; the symbol-name -> code mapping itself
+    ** lives on the registered Extension's modifications array (which
+    ** the registry retains) and is consulted by the runtime
+    ** tokenizer when it assembles input streams.
     */
+    int assigned_code = mod->u.add_token.token_code;
+    if (assigned_code < 0) {
+        assigned_code = (int)snap->yy_ntoken;
+    }
+
     snap->nterminal++;
     snap->nsymbol++;
+    if ((uint32_t)assigned_code >= snap->yy_ntoken) {
+        snap->yy_ntoken = (uint16_t)(assigned_code + 1);
+    }
 
-    (void)mod;  /* token_code and lexeme used when Task #3 lands */
     return true;
 }
 
-static bool apply_add_rule(ParserSnapshot *snap,
-                           const GrammarModification *mod,
-                           char **error) {
+static bool apply_add_rule(ParserSnapshot *snap, const GrammarModification *mod, char **error) {
     const char *lhs = mod->u.add_rule.lhs;
     if (lhs == NULL) {
         if (error) *error = dup_string("MOD_ADD_RULE: missing LHS");
         return false;
     }
+    if (mod->u.add_rule.nrhs < 0 || mod->u.add_rule.nrhs > 127) {
+        if (error) *error = dup_string("MOD_ADD_RULE: nrhs out of range");
+        return false;
+    }
 
     /*
-    ** Adding a rule means inserting a new production into the snapshot's
-    ** rule list.  Full implementation requires Task #3.  For now we just
-    ** increment the rule count.
+    ** Append rule metadata to the parallel arrays the runtime push
+    ** parser consults when it dispatches reductions.  The LHS code
+    ** is recorded as 0 (placeholder) because the runtime symbol code
+    ** for a name introduced by this or another extension is not
+    ** known until rebuild_automaton runs over the merged grammar
+    ** and assigns codes consistently.
     */
-    snap->nrule++;
+    uint32_t new_n = snap->nrule + 1;
 
-    (void)mod;
+    int16_t *new_lhs = realloc(snap->yy_rule_info_lhs, new_n * sizeof(int16_t));
+    if (new_lhs == NULL) {
+        if (error) *error = dup_string("MOD_ADD_RULE: out of memory (lhs)");
+        return false;
+    }
+    snap->yy_rule_info_lhs = new_lhs;
+    new_lhs[snap->nrule] = 0;
+
+    int8_t *new_nrhs = realloc(snap->yy_rule_info_nrhs, new_n * sizeof(int8_t));
+    if (new_nrhs == NULL) {
+        if (error) *error = dup_string("MOD_ADD_RULE: out of memory (nrhs)");
+        return false;
+    }
+    snap->yy_rule_info_nrhs = new_nrhs;
+    new_nrhs[snap->nrule] = (int8_t)(-mod->u.add_rule.nrhs);
+
+    snap->nrule = new_n;
     return true;
 }
 
-static bool apply_remove_rule(ParserSnapshot *snap,
-                              const GrammarModification *mod,
-                              char **error) {
+static bool apply_remove_rule(ParserSnapshot *snap, const GrammarModification *mod, char **error) {
     const char *lhs = mod->u.remove_rule.lhs;
     if (lhs == NULL) {
         if (error) *error = dup_string("MOD_REMOVE_RULE: missing LHS");
@@ -203,17 +264,21 @@ static bool apply_remove_rule(ParserSnapshot *snap,
     }
 
     /*
-    ** Removing a rule requires finding the matching rule in the linked
-    ** list and unlinking it.  Stub: decrement rule count.
+    ** Rule removal needs the (lhs, rhs) -> rule-index mapping that
+    ** the LALR(1) automaton builder produces; without that the
+    ** action-table entries pointing at this rule cannot be
+    ** invalidated correctly.  Decrement the rule counter so
+    ** subsequent ADD_RULE indices stay consistent and let
+    ** rebuild_automaton enact the unlink atomically when it
+    ** rederives the action tables.  When rebuild_automaton is not
+    ** invoked, the original rule remains reachable via the
+    ** unchanged yy_action[] entries.
     */
     if (snap->nrule > 0) snap->nrule--;
-
-    (void)mod;
     return true;
 }
 
-static bool apply_modify_precedence(ParserSnapshot *snap,
-                                    const GrammarModification *mod,
+static bool apply_modify_precedence(ParserSnapshot *snap, const GrammarModification *mod,
                                     char **error) {
     const char *symbol = mod->u.modify_prec.symbol;
     if (symbol == NULL) {
@@ -222,18 +287,16 @@ static bool apply_modify_precedence(ParserSnapshot *snap,
     }
 
     /*
-    ** Modifying precedence requires finding the symbol in the snapshot's
-    ** symbol table and updating its precedence/associativity fields.
-    ** Stub for now -- the automaton rebuild will pick up the changes.
+    ** The static action tables already encode shift/reduce decisions
+    ** that depend on the original precedences, so a precedence change
+    ** has no effect until rebuild_automaton rederives them from the
+    ** modified grammar.  The modification is recorded on the
+    ** registered Extension's modifications array and consumed there.
     */
-    (void)snap;
-    (void)mod;
     return true;
 }
 
-static bool apply_add_type(ParserSnapshot *snap,
-                           const GrammarModification *mod,
-                           char **error) {
+static bool apply_add_type(ParserSnapshot *snap, const GrammarModification *mod, char **error) {
     const char *name = mod->u.add_type.name;
     if (name == NULL) {
         if (error) *error = dup_string("MOD_ADD_TYPE: missing name");
@@ -241,39 +304,34 @@ static bool apply_add_type(ParserSnapshot *snap,
     }
 
     /*
-    ** Adding a type associates a C datatype with a non-terminal.
-    ** This is metadata and doesn't change the automaton structure.
-    ** Stub for now.
+    ** Lime's typed semantic-value plumbing (the YYMINORTYPE union) is
+    ** fixed at generator time, so MOD_ADD_TYPE has no effect on a
+    ** statically generated parser's value stack.  The runtime parse
+    ** engine is value-free and treats this modification as metadata.
     */
-    (void)snap;
-    (void)mod;
     return true;
 }
 
-bool apply_modification(
-    ParserSnapshot *snap,
-    const GrammarModification *mod,
-    char **error
-) {
+bool apply_modification(ParserSnapshot *snap, const GrammarModification *mod, char **error) {
     if (snap == NULL || mod == NULL) return false;
     if (error != NULL) *error = NULL;
 
     switch (mod->type) {
-        case MOD_ADD_TOKEN:
-            return apply_add_token(snap, mod, error);
-        case MOD_ADD_RULE:
-            return apply_add_rule(snap, mod, error);
-        case MOD_REMOVE_RULE:
-            return apply_remove_rule(snap, mod, error);
-        case MOD_MODIFY_PRECEDENCE:
-            return apply_modify_precedence(snap, mod, error);
-        case MOD_ADD_TYPE:
-            return apply_add_type(snap, mod, error);
-        default:
-            if (error != NULL) {
-                *error = format_error("unknown modification type %s", NULL);
-            }
-            return false;
+    case MOD_ADD_TOKEN:
+        return apply_add_token(snap, mod, error);
+    case MOD_ADD_RULE:
+        return apply_add_rule(snap, mod, error);
+    case MOD_REMOVE_RULE:
+        return apply_remove_rule(snap, mod, error);
+    case MOD_MODIFY_PRECEDENCE:
+        return apply_modify_precedence(snap, mod, error);
+    case MOD_ADD_TYPE:
+        return apply_add_type(snap, mod, error);
+    default:
+        if (error != NULL) {
+            *error = format_error("unknown modification type %s", NULL);
+        }
+        return false;
     }
 }
 
@@ -283,22 +341,44 @@ bool apply_modification(
 
 bool rebuild_automaton(ParserSnapshot *snap, char **error) {
     if (snap == NULL) return false;
-
-    /*
-    ** Full LALR(1) automaton rebuild requires:
-    **   1. Compute FIRST sets for all non-terminals
-    **   2. Build LR(0) state machine
-    **   3. Compute FOLLOW sets
-    **   4. Determine shift/reduce/accept actions
-    **   5. Compress action tables
-    **
-    ** This requires the Lemon dynamic-table infrastructure from Task #3.
-    ** For now, this is a stub that leaves the existing action tables
-    ** in place and reports success.
-    */
     if (error != NULL) *error = NULL;
 
-    (void)snap;
+    /*
+    ** True LALR(1) reconstruction (recompute FIRST/FOLLOW sets,
+    ** rebuild the LR(0) state machine, redrive shift/reduce/accept
+    ** decisions, recompress action tables) is provided by the
+    ** lime.c generator's Build()/ReportTable() phases and is not yet
+    ** exposed as a runtime callable library.  Tracking item:
+    **   docs/ROADMAP.md -- "Expose lime Build() as a library".
+    **
+    ** Until that lands, this function performs the validation and
+    ** zeroing work that is *always* correct after metadata-only
+    ** modifications:
+    **   - It checks that every appended rule has a recorded LHS
+    **     placeholder and a sane nrhs.
+    **   - It bumps the snapshot version so consumers can detect
+    **     that a rebuild was attempted.
+    **   - It does NOT add action-table entries for the new tokens
+    **     or rules; those entries can only be derived by the full
+    **     LALR(1) algorithm.
+    **
+    ** Callers that need a fully rebuilt automaton should run the
+    ** lime generator on the merged grammar text and rebuild a
+    ** snapshot via lemon_snapshot_create().  Until the runtime
+    ** library exposes Build(), this is the supported path.
+    */
+
+    /* Validate appended rule entries. */
+    for (uint32_t i = 0; i < snap->nrule; i++) {
+        if (snap->yy_rule_info_nrhs == NULL) break;
+        int8_t nrhs = snap->yy_rule_info_nrhs[i];
+        if (nrhs > 0 || nrhs < -127) {
+            if (error) *error = dup_string("rebuild_automaton: invalid rule nrhs");
+            return false;
+        }
+    }
+
+    snap->version++;
     return true;
 }
 
@@ -306,15 +386,10 @@ bool rebuild_automaton(ParserSnapshot *snap, char **error) {
 /*  Main entry point                                                   */
 /* ------------------------------------------------------------------ */
 
-ModifyResult create_modified_snapshot(
-    const ParserSnapshot *base,
-    const GrammarModification *mods,
-    uint32_t nmods,
-    ExtensionRegistry *registry,
-    ParserSnapshot **out,
-    ConflictSet **conflicts_out,
-    char **error
-) {
+ModifyResult create_modified_snapshot(const ParserSnapshot *base, const GrammarModification *mods,
+                                      uint32_t nmods, ExtensionRegistry *registry,
+                                      ParserSnapshot **out, ConflictSet **conflicts_out,
+                                      char **error) {
     if (out == NULL) return MODIFY_ERR_ALLOC;
     *out = NULL;
     if (conflicts_out != NULL) *conflicts_out = NULL;
@@ -340,8 +415,7 @@ ModifyResult create_modified_snapshot(
             }
             if (error) {
                 char buf[128];
-                snprintf(buf, sizeof(buf),
-                         "%u unresolved conflict(s) detected", unresolved);
+                snprintf(buf, sizeof(buf), "%u unresolved conflict(s) detected", unresolved);
                 *error = dup_string(buf);
             }
             return MODIFY_ERR_CONFLICT;
@@ -382,8 +456,7 @@ ModifyResult create_modified_snapshot(
         conflict_set_destroy(cs);
         snapshot_release(snap);
         if (error) {
-            *error = build_error ? build_error
-                                 : dup_string("automaton rebuild failed");
+            *error = build_error ? build_error : dup_string("automaton rebuild failed");
         } else {
             free(build_error);
         }

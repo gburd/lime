@@ -25,11 +25,11 @@
 /* ------------------------------------------------------------------ */
 
 typedef enum ModifyResult {
-    MODIFY_OK = 0,           /* Snapshot created successfully */
-    MODIFY_ERR_ALLOC,        /* Memory allocation failure */
-    MODIFY_ERR_INVALID_MOD,  /* Invalid modification (bad type, missing fields) */
-    MODIFY_ERR_CONFLICT,     /* Unresolved conflicts detected */
-    MODIFY_ERR_BUILD,        /* LALR(1) automaton rebuild failed */
+    MODIFY_OK = 0,          /* Snapshot created successfully */
+    MODIFY_ERR_ALLOC,       /* Memory allocation failure */
+    MODIFY_ERR_INVALID_MOD, /* Invalid modification (bad type, missing fields) */
+    MODIFY_ERR_CONFLICT,    /* Unresolved conflicts detected */
+    MODIFY_ERR_BUILD,       /* LALR(1) automaton rebuild failed */
 } ModifyResult;
 
 /* ------------------------------------------------------------------ */
@@ -55,15 +55,9 @@ typedef enum ModifyResult {
 **
 ** Returns MODIFY_OK on success.
 */
-ModifyResult create_modified_snapshot(
-    const ParserSnapshot *base,
-    const GrammarModification *mods,
-    uint32_t nmods,
-    ExtensionRegistry *registry,
-    ParserSnapshot **out,
-    ConflictSet **conflicts,
-    char **error
-);
+ModifyResult create_modified_snapshot(const ParserSnapshot *base, const GrammarModification *mods,
+                                      uint32_t nmods, ExtensionRegistry *registry,
+                                      ParserSnapshot **out, ConflictSet **conflicts, char **error);
 
 /*
 ** Clone a snapshot.  Returns a new snapshot with refcount == 1 whose
@@ -77,19 +71,17 @@ ParserSnapshot *clone_snapshot(const ParserSnapshot *base);
 ** just cloned and has not yet been published).  Returns true on
 ** success, false on invalid modification.
 */
-bool apply_modification(
-    ParserSnapshot *snap,
-    const GrammarModification *mod,
-    char **error
-);
+bool apply_modification(ParserSnapshot *snap, const GrammarModification *mod, char **error);
 
 /*
 ** Rebuild the LALR(1) automaton for a snapshot after modifications
-** have been applied.  This recomputes states and action tables.
-** Returns true on success.
-**
-** NOTE: This is currently a stub.  Full implementation requires
-** the Lemon dynamic-table support from Task #3.
+** have been applied.  Validates rule-metadata invariants and bumps
+** the snapshot version; full action-table reconstruction (FIRST /
+** FOLLOW / state machine / table compression) is provided by the
+** lime generator's Build()/ReportTable() phases and is invoked by
+** lemon_snapshot_create on the merged grammar text.  Exposing those
+** phases as a runtime callable is under construction; see
+** docs/ROADMAP.md for status.
 */
 bool rebuild_automaton(ParserSnapshot *snap, char **error);
 

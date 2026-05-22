@@ -1,0 +1,101 @@
+/**
+ * @file snapshot_build.h
+ * @brief Build a runtime ParserSnapshot from generated parser tables.
+ *
+ * A Lime-generated parser contains everything needed to drive an
+ * LALR(1) parse: action tables, rule metadata, and the constants that
+ * partition the action range into shifts / reduces / errors.  The
+ * generator emits these as static arrays inside the parser .c file.
+ *
+ * This header provides the bridge that lets a generated parser hand
+ * those tables to the runtime so the runtime push parser
+ * (parse_begin / parse_token / parse_end) and the JIT can drive them.
+ *
+ * Two ways to use this:
+ *
+ *   1. Call lemon_snapshot_create("foo.y", &err) which subprocesses
+ *      `lime -n foo.y` to produce a *_snapshot.c file, compiles it,
+ *      dlopens it, and calls the registration entry point below.
+ *      Used for true runtime grammar loading.
+ *
+ *   2. The generated parser's *_snapshot.c file calls
+ *      snapshot_build_from_tables() at static init / on-demand to
+ *      hand its tables to a snapshot the application acquires.
+ *      Used for "static parser, runtime API" applications.
+ *
+ * The snapshot returned takes a *shared* reference to the static
+ * tables -- it does not free them -- so the same generated parser can
+ * be used by many concurrent ParseContext instances.  When extensions
+ * mutate the snapshot via apply_modification, the snapshot's tables
+ * are first deep-copied; the originals stay untouched.
+ */
+#ifndef SNAPSHOT_BUILD_H
+#define SNAPSHOT_BUILD_H
+
+#include "snapshot.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @brief Bundle of pointers + sizes the generator emits for a parser.
+ *
+ * Every Lime-generated parser exposes (via its *_snapshot.c output, or
+ * directly if the application links against the static tables) the
+ * fields below.  Field names match the existing limpar.c emitted
+ * symbols so the generator can wire them up mechanically.
+ */
+typedef struct LimeParserTables {
+    /* Action tables */
+    const uint16_t *yy_action;
+    uint32_t yy_action_count;
+    const uint16_t *yy_lookahead;
+    uint32_t yy_lookahead_count;
+    const int16_t *yy_shift_ofst;
+    const int16_t *yy_reduce_ofst;
+    const uint16_t *yy_default;
+    uint32_t nstate;
+
+    /* Rule metadata */
+    const int16_t *yy_rule_info_lhs;
+    const int8_t *yy_rule_info_nrhs;
+    uint32_t nrule;
+
+    /* Counts */
+    uint32_t nsymbol;
+    uint32_t nterminal;
+    uint16_t ntoken; /* YYNTOKEN = highest terminal + 1 */
+
+    /* Action-range constants */
+    uint16_t yy_max_shift;
+    uint16_t yy_min_shiftreduce;
+    uint16_t yy_max_shiftreduce;
+    uint16_t yy_error_action;
+    uint16_t yy_accept_action;
+    uint16_t yy_no_action;
+    uint16_t yy_min_reduce;
+
+    /* Optional fallback (NULL when grammar has no %fallback) */
+    const uint16_t *yy_fallback;
+    uint32_t nfallback;
+} LimeParserTables;
+
+/**
+ * @brief Build a fresh ParserSnapshot from a LimeParserTables bundle.
+ *
+ * The snapshot deep-copies the action tables and rule metadata so that
+ * subsequent extension modifications do not touch the static
+ * generator-emitted arrays.  Returns a snapshot with refcount 1, or
+ * NULL on allocation failure.
+ *
+ * @param tables Compile-time table bundle from a generated parser.
+ * @return New snapshot, or NULL on allocation failure.
+ */
+ParserSnapshot *snapshot_build_from_tables(const LimeParserTables *tables);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* SNAPSHOT_BUILD_H */
