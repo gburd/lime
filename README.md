@@ -93,14 +93,28 @@ Reference docs:
 # Development environment (optional)
 nix develop
 
-# Build the generator
+# Single-file build (parser generator only, no .lex compiler)
 cc -o lime lime.c
 
-# Build everything (generator + extension library + tests + benchmarks)
+# Full build (parser generator with .lex compiler, runtime library,
+# extensions, tests, benchmarks)
 meson setup builddir
 ninja -C builddir
 ninja -C builddir test
+
+# OR -- meson-free build via the hand-written Makefile
+make            # builds bin/lime, lib/liblime_parser.a, tests
+make test       # runs the runtime-engine tests
+make LEX=1      # bundle the .lex compiler into the lime binary
+make JIT=0      # build without LLVM JIT (stubs)
+make install PREFIX=/usr/local
 ```
+
+The single-file build accepts every `.y` grammar.  The `-X` flag for
+the `.lex` lexer compiler requires linking the lex sources -- if
+invoked without them, lime prints a clear error directing you to
+either `meson setup` or
+`cc -o lime lime.c src/lex/*.c -Iinclude -Isrc/lex -DLIME_HAS_LEX_COMPILER`.
 
 Build options:
 
@@ -124,30 +138,33 @@ that do not have a matching LLVM SONAME installed.
 
 ## Project Layout
 
-The project root contains the parser generator itself — three files
-inherited from Lemon/SQLite.  The `src/` directory contains the runtime
-extension framework, which is a separate library.
+The project root contains the parser generator itself.  The `src/`
+directory contains the runtime push-parser, snapshot system, and
+extension framework, all built into a single library.
 
 ```
 lime/
-├── lime.c                  # Parser generator (single-file, from Lemon)
+├── lime.c                  # Parser generator (single-file)
 ├── limpar.c                # Parser driver template (filled by lime)
-├── tokenize.c              # SQL tokenizer (SQLite lineage)
 ├── meson.build             # Build configuration
 ├── Makefile                # Convenience wrapper for meson
 ├── flake.nix               # Nix development environment
 │
-├── src/                    # Extension framework library
-│   ├── snapshot.{c,h}     #   Copy-on-write grammar snapshots
-│   ├── extension.{c,h}    #   Extension registry
-│   ├── conflict.{c,h}     #   Conflict detection
-│   ├── tokenize_simd.{c,h}#   SIMD tokenization (AVX2/NEON)
-│   ├── jit_context.{c,h}  #   LLVM JIT compilation
-│   └── ...                 #   (27 source files total)
+├── src/                    # Runtime + extension framework library
+│   ├── snapshot.{c,h}      #   Copy-on-write grammar snapshots
+│   ├── snapshot_build.c    #   Build a runtime snapshot from
+│   │                       #   generated parser tables
+│   ├── parse_engine.c      #   LALR(1) push-parser interpreter
+│   ├── extension.{c,h}     #   Extension registry
+│   ├── conflict.{c,h}      #   Conflict detection
+│   ├── tokenize_simd.{c,h} #   SIMD tokenization (AVX2/NEON)
+│   ├── jit_context.{c,h}   #   LLVM JIT compilation
+│   └── ...                 #   (35+ source files)
 │
-├── include/                # Public API headers
-├── tests/                  # Test suites (27 files, 200+ assertions)
-├── bench/                  # Benchmarks (JIT comparison, overhead)
+├── include/                # Public API headers (snapshot_build.h,
+│                           # tokenize_simd.h, parser.h, ...)
+├── tests/                  # Test suite (60+ files)
+├── bench/                  # Benchmarks (JIT, overhead, real parser)
 ├── examples/               # Example grammars and extensions
 ├── contrib/                # SQL dialect extensions (Oracle, MySQL, ...)
 ├── docs/                   # Reference documentation
@@ -279,11 +296,21 @@ this is Apple Silicon; on x86_64 with AVX2 the speedup ratios tend to
 be larger. See [docs/BENCHMARKS_VS_BISON.md](docs/BENCHMARKS_VS_BISON.md)
 for head-to-head comparison methodology.)
 
-Extension overhead with no extensions loaded: 26 ns (a single atomic
-load).  With extensions active: ~232 ns for token-level conflict
-detection, ~222 ns for priority disambiguation, ~456 ns for the full
-detect-resolve-execute pipeline.  See [docs/EXTENSION_PERFORMANCE.md](docs/EXTENSION_PERFORMANCE.md)
-and <a href="bench/BENCHMARK_RESULTS.md">bench/BENCHMARK_RESULTS.md</a>.
+Extension framework overhead, measured via `bench/extension_overhead`
+(numbers from `bench/BENCHMARK_RESULTS.md`):
+
+| Scenario | ns/op |
+|----------|------:|
+| No extensions (fast path) | 119 |
+| Token-level conflict detection | 1,548 |
+| Priority disambiguation | 739 |
+| Full detect+resolve+execute | 1,433 |
+
+The fast-path check is a single `get_loaded_extension_count()` call.
+The full pipeline only fires on conflicting tokens, so amortised
+per-parse overhead is a small fraction of total parse time.  See
+[docs/EXTENSION_PERFORMANCE.md](docs/EXTENSION_PERFORMANCE.md)
+and [bench/BENCHMARK_RESULTS.md](bench/BENCHMARK_RESULTS.md).
 
 ## Testing
 
@@ -323,8 +350,7 @@ All provided by `nix develop` via `flake.nix`.
 
 Lime is derived from the **Lemon** parser generator by
 [D. Richard Hipp](https://www.hwaci.com/drh/), originally developed as
-part of the [SQLite](https://www.sqlite.org/) project.  The `tokenize.c`
-file in the project root is also from SQLite.  Both Lemon and SQLite are
+part of the [SQLite](https://www.sqlite.org/) project.  Lemon is
 released into the public domain.
 
 We are grateful to Dr. Hipp and the SQLite team for creating and
