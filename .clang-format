@@ -1,0 +1,43 @@
+# Project-wide clang-format configuration.
+#
+# Style: K&R derivative matching the existing Lemon/SQLite-derived
+# code in lime.c and limpar.c.  Major points:
+#   - 4-space indent, no tabs
+#   - Braces on the same line for control flow, on a new line for
+#     function definitions (existing files use both inconsistently;
+#     we pick "Attach" because the runtime files in src/* use it
+#     uniformly and they are the bulk of the project)
+#   - 100-column line limit
+#   - Pointer * binds to the variable: `char *foo`
+#   - Sort includes within a translation unit's group, but never
+#     across groups (system vs project)
+#
+# Files explicitly excluded from automated formatting via .clang-format-ignore:
+#   - lime.c and limpar.c (Lemon-vintage formatting kept verbatim
+#     so upstream Lemon merges remain tractable)
+#   - generated *.c / *.h under builddir/
+
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+BreakBeforeBraces: Attach
+PointerAlignment: Right
+SpaceBeforeParens: ControlStatements
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortCaseLabelsOnASingleLine: false
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignEscapedNewlines: Right
+SortIncludes: false
+KeepEmptyLinesAtTheStartOfBlocks: false
+ReflowComments: false
+IndentCaseLabels: false
+ContinuationIndentWidth: 4
+ConstructorInitializerIndentWidth: 4
+Cpp11BracedListStyle: false
+SpacesBeforeTrailingComments: 2
+DerivePointerAlignment: false

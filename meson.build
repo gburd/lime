@@ -59,7 +59,9 @@ lime_public_headers = [
   'include/parser.h',
   'include/parser_manager.h',
   'include/parser_operations.h',
+  'include/snapshot_build.h',
   'include/tokenize.h',
+  'include/tokenize_simd.h',
   'include/token_table.h',
   'include/utf8.h',
   # Extension authoring + grammar-modification serializer surface
@@ -82,6 +84,7 @@ lime_exe = executable('lime',
   'lime.c',
   link_with : [lime_lex_compiler_lib],
   include_directories : [inc, include_directories('src/lex')],
+  c_args : ['-DLIME_HAS_LEX_COMPILER'],
   install : true,
 )
 

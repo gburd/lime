@@ -46,6 +46,23 @@
           pkg-config
           python3
           doxygen
+          # Code formatter -- ships clang-format-21 to match the
+          # bundled LLVM toolchain so `make format` and the
+          # `.clang-format` config behave identically across
+          # contributor machines.
+          llvmPkgs.clang-tools
+          # Flex + Bison are required by the optional Flex/Bison
+          # comparison benchmark in bench/bench_flex_bison_compare/.
+          # The harness skips cleanly when they are missing, but
+          # putting them in the dev shell means contributors get
+          # reproducible numbers without a separate apt/brew install.
+          flex
+          bison
+          # Real `git` rather than relying on the macOS Xcode shim,
+          # which prints "error: tool 'git' not found" when the
+          # command-line tools are not installed.  Needed for cr
+          # workflows, git log/blame in the dev shell, etc.
+          git
         ];
 
         linuxTools = with pkgs; lib.optionals isLinux [
@@ -77,11 +94,14 @@
 
           shellHook = ''
             echo "Lime development environment (${system})"
-            echo "  cc:     $(${stdenv.cc}/bin/cc --version | head -1)"
-            echo "  meson:  $(meson --version)"
-            echo "  ninja:  $(ninja --version 2>/dev/null || echo missing)"
+            echo "  cc:            $(${stdenv.cc}/bin/cc --version | head -1)"
+            echo "  meson:         $(meson --version)"
+            echo "  ninja:         $(ninja --version 2>/dev/null || echo missing)"
+            echo "  clang-format:  $(clang-format --version 2>/dev/null | head -1 || echo missing)"
+            echo "  flex:          $(flex --version 2>/dev/null || echo missing)"
+            echo "  bison:         $(bison --version 2>/dev/null | head -1 || echo missing)"
           '' + lib.optionalString hasLLVM ''
-            echo "  llvm:   $(llvm-config --version 2>/dev/null || echo 'not in PATH')"
+            echo "  llvm:          $(llvm-config --version 2>/dev/null || echo 'not in PATH')"
             export PKG_CONFIG_PATH="${llvmPkgs.libllvm.dev}/lib/pkgconfig:''${PKG_CONFIG_PATH:-}"
             # Pin meson's LLVM config-tool probe to the nix-provided
             # llvm-config.  Without this, meson's dependency('llvm',
@@ -91,7 +111,7 @@
             # nix LLVM and causes link failures against host /usr/lib64.
             export LLVM_CONFIG="${llvmPkgs.libllvm.dev}/bin/llvm-config"
           '' + lib.optionalString (!hasLLVM) ''
-            echo "  llvm:   not available on ${system} (JIT disabled)"
+            echo "  llvm:          not available on ${system} (JIT disabled)"
           '';
         };
 

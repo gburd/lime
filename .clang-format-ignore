@@ -1,0 +1,32 @@
+# Files excluded from clang-format runs.
+#
+# Lemon-vintage and Lime-fork-of-Lemon code keeps the upstream style
+# verbatim so future Lemon merges remain tractable.
+lime.c
+limpar.c
+
+# Generated parser output.
+**/*_grammar.c
+**/*_grammar.h
+**/*_grammar_lex.c
+**/*_grammar_lex.h
+**/*_lex.c
+**/*_lex.h
+
+# Build directories.
+builddir/**
+
+# Vendored / large generated files in examples.
+examples/pg/gram.c
+examples/pg/pg_grammar.c
+examples/pg_modular/pg_grammar.c
+examples/replication/repl_gram.c
+examples/syncrep/syncrep_gram.c
+examples/isolation/isolation_gram.c
+examples/jsonpath/jsonpath_gram.c
+examples/mongodb/mongodb.c
+examples/datalog/datalog.c
+examples/xpath/xpath.c
+examples/xquery/xquery.c
+examples/bootstrap/boot_grammar.c
+examples/pgbench/pgbench_expr.c
