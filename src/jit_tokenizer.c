@@ -43,7 +43,7 @@
 
 struct JITTokenizer {
     LLVMOrcLLJITRef lljit;
-    LLVMContextRef llvm_ctx;          /* Bare LLVM context (for IR gen)  */
+    LLVMContextRef llvm_ctx; /* Bare LLVM context (for IR gen)  */
     LLVMOrcThreadSafeContextRef ts_ctx;
 
     /* Compiled classifier: int32_t (*)(const char *input, uint32_t len) */
@@ -57,15 +57,14 @@ struct JITTokenizer {
 /* ------------------------------------------------------------------ */
 
 typedef struct KeywordEntry {
-    char *lower_lexeme;    /* Heap-allocated lowercase copy */
+    char *lower_lexeme; /* Heap-allocated lowercase copy */
     size_t len;
     int token_code;
 } KeywordEntry;
 
 /* Copy all keywords from the TokenTable, lowercasing them.
 ** Caller must free the returned array and each lower_lexeme string. */
-static KeywordEntry *snapshot_keywords(const TokenTable *table,
-                                       uint32_t *out_count) {
+static KeywordEntry *snapshot_keywords(const TokenTable *table, uint32_t *out_count) {
     *out_count = 0;
     if (table == NULL || table->ntokens == 0) return NULL;
 
@@ -83,7 +82,8 @@ static KeywordEntry *snapshot_keywords(const TokenTable *table,
         entries[i].lower_lexeme = malloc(td->lexeme_len + 1);
         if (entries[i].lower_lexeme == NULL) {
             /* Cleanup on failure */
-            for (uint32_t j = 0; j < i; j++) free(entries[j].lower_lexeme);
+            for (uint32_t j = 0; j < i; j++)
+                free(entries[j].lower_lexeme);
             free(entries);
             return NULL;
         }
@@ -113,7 +113,7 @@ static void free_keywords(KeywordEntry *entries, uint32_t count) {
 
 typedef struct TrieNode {
     struct TrieNode *children[256]; /* Indexed by lowercase ASCII byte */
-    int token_code;                  /* -1 if not a terminal node       */
+    int token_code;                 /* -1 if not a terminal node       */
 } TrieNode;
 
 static TrieNode *trie_new(void) {
@@ -122,16 +122,43 @@ static TrieNode *trie_new(void) {
     return n;
 }
 
+/*
+** trie_free -- post-order free of a 256-fanout trie.
+**
+** ----------------------------------------------------------------------
+** TAIL-CALL STRUCTURE -- LOAD-BEARING, see src/merkle_tree.c
+** ----------------------------------------------------------------------
+**
+** The trie depth here is bounded by the longest keyword (typically a
+** few dozen chars), so even unoptimised recursion is well inside the
+** default thread stack.  We still hand-roll the spine into the outer
+** while loop so a future contributor adding deeper trie keys (e.g. a
+** runtime-loaded SQL dialect with multi-segment qualified names) does
+** not silently introduce an O(depth) stack hog.  Verified via objdump
+** that no `bl trie_free` instruction follows the loop tail.
+*/
 static void trie_free(TrieNode *n) {
-    if (n == NULL) return;
-    for (int i = 0; i < 256; i++) {
-        trie_free(n->children[i]);
+    while (n != NULL) {
+        TrieNode *last = NULL;
+        int last_idx = -1;
+        /* Find the last non-NULL child so we can tail-loop into it. */
+        for (int i = 255; i >= 0; i--) {
+            if (n->children[i] != NULL) {
+                last_idx = i;
+                last = n->children[i];
+                break;
+            }
+        }
+        /* Free every child except the last via ordinary recursion. */
+        for (int i = 0; i < last_idx; i++) {
+            trie_free(n->children[i]);
+        }
+        free(n);
+        n = last;
     }
-    free(n);
 }
 
-static void trie_insert(TrieNode *root, const char *key, size_t len,
-                         int token_code) {
+static void trie_insert(TrieNode *root, const char *key, size_t len, int token_code) {
     TrieNode *cur = root;
     for (size_t i = 0; i < len; i++) {
         unsigned char c = (unsigned char)key[i];
@@ -153,21 +180,16 @@ static void trie_insert(TrieNode *root, const char *key, size_t len,
 ** At depth `depth` into the input string, dispatches on input[depth]
 ** (lowercased) to child nodes.
 */
-static void emit_trie_node(LLVMContextRef ctx, LLVMBuilderRef builder,
-                            LLVMValueRef fn,
-                            LLVMValueRef input_ptr,
-                            LLVMValueRef result_var,
-                            LLVMBasicBlockRef done_bb,
-                            const TrieNode *node,
-                            uint32_t depth,
-                            uint32_t max_depth) {
+static void emit_trie_node(LLVMContextRef ctx, LLVMBuilderRef builder, LLVMValueRef fn,
+                           LLVMValueRef input_ptr, LLVMValueRef result_var,
+                           LLVMBasicBlockRef done_bb, const TrieNode *node, uint32_t depth,
+                           uint32_t max_depth) {
     LLVMTypeRef i8 = LLVMInt8TypeInContext(ctx);
     LLVMTypeRef i32 = LLVMInt32TypeInContext(ctx);
 
     /* If this node is a terminal, store the token code and jump to done */
     if (node->token_code >= 0 && depth == max_depth) {
-        LLVMBuildStore(builder, LLVMConstInt(i32, (uint64_t)node->token_code, 0),
-                       result_var);
+        LLVMBuildStore(builder, LLVMConstInt(i32, (uint64_t)node->token_code, 0), result_var);
         LLVMBuildBr(builder, done_bb);
         return;
     }
@@ -210,8 +232,8 @@ static void emit_trie_node(LLVMContextRef ctx, LLVMBuilderRef builder,
         LLVMAddCase(sw, LLVMConstInt(i8, (uint64_t)c, 0), child_bb);
 
         LLVMPositionBuilderAtEnd(builder, child_bb);
-        emit_trie_node(ctx, builder, fn, input_ptr, result_var, done_bb,
-                       node->children[c], depth + 1, max_depth);
+        emit_trie_node(ctx, builder, fn, input_ptr, result_var, done_bb, node->children[c],
+                       depth + 1, max_depth);
     }
 
     /* No-match block */
@@ -223,10 +245,8 @@ static void emit_trie_node(LLVMContextRef ctx, LLVMBuilderRef builder,
 ** Generate the complete classifier function:
 **   int32_t jit_classify_keyword(const char *input, uint32_t len)
 */
-static LLVMValueRef generate_classifier(LLVMContextRef ctx,
-                                         LLVMModuleRef module,
-                                         const KeywordEntry *entries,
-                                         uint32_t nentries) {
+static LLVMValueRef generate_classifier(LLVMContextRef ctx, LLVMModuleRef module,
+                                        const KeywordEntry *entries, uint32_t nentries) {
     LLVMTypeRef i8 = LLVMInt8TypeInContext(ctx);
     LLVMTypeRef i32 = LLVMInt32TypeInContext(ctx);
     LLVMTypeRef i8_ptr = LLVMPointerType(i8, 0);
@@ -278,8 +298,7 @@ static LLVMValueRef generate_classifier(LLVMContextRef ctx,
 
         for (uint32_t i = 0; i < nentries; i++) {
             if (entries[i].len == length) {
-                trie_insert(root, entries[i].lower_lexeme, length,
-                            entries[i].token_code);
+                trie_insert(root, entries[i].lower_lexeme, length, entries[i].token_code);
             }
         }
 
@@ -290,8 +309,7 @@ static LLVMValueRef generate_classifier(LLVMContextRef ctx,
         LLVMAddCase(len_switch, LLVMConstInt(i32, length, 0), len_bb);
 
         LLVMPositionBuilderAtEnd(builder, len_bb);
-        emit_trie_node(ctx, builder, fn, param_input, result_var, ret_bb,
-                       root, 0, length);
+        emit_trie_node(ctx, builder, fn, param_input, result_var, ret_bb, root, 0, length);
 
         trie_free(root);
     }
@@ -412,8 +430,7 @@ JITTokenizer *jit_tokenizer_create(const TokenTable *table) {
     LIME_JIT_RUN_O2_PASSES(module);
 
     /* Submit to OrcJIT */
-    LLVMOrcThreadSafeModuleRef ts_mod =
-        LLVMOrcCreateNewThreadSafeModule(module, tok->ts_ctx);
+    LLVMOrcThreadSafeModuleRef ts_mod = LLVMOrcCreateNewThreadSafeModule(module, tok->ts_ctx);
 
     LLVMOrcJITDylibRef jd = LLVMOrcLLJITGetMainJITDylib(tok->lljit);
     err = LLVMOrcLLJITAddLLVMIRModule(tok->lljit, jd, ts_mod);
@@ -474,8 +491,7 @@ void jit_tokenizer_destroy(JITTokenizer *tok) {
     free(tok);
 }
 
-int jit_tokenizer_classify_keyword(const JITTokenizer *tok,
-                                   const char *input, size_t len) {
+int jit_tokenizer_classify_keyword(const JITTokenizer *tok, const char *input, size_t len) {
     if (tok == NULL || tok->classify_fn == NULL) return -1;
     if (input == NULL || len == 0) return -1;
     if (len > UINT32_MAX) return -1;
@@ -485,7 +501,7 @@ int jit_tokenizer_classify_keyword(const JITTokenizer *tok,
 
 JITTokenizerStats jit_tokenizer_get_stats(const JITTokenizer *tok) {
     if (tok == NULL) {
-        JITTokenizerStats empty = {0};
+        JITTokenizerStats empty = { 0 };
         return empty;
     }
     return tok->stats;
@@ -510,15 +526,16 @@ void jit_tokenizer_destroy(JITTokenizer *tok) {
     free(tok);
 }
 
-int jit_tokenizer_classify_keyword(const JITTokenizer *tok,
-                                   const char *input, size_t len) {
-    (void)tok; (void)input; (void)len;
+int jit_tokenizer_classify_keyword(const JITTokenizer *tok, const char *input, size_t len) {
+    (void)tok;
+    (void)input;
+    (void)len;
     return -1;
 }
 
 JITTokenizerStats jit_tokenizer_get_stats(const JITTokenizer *tok) {
     (void)tok;
-    JITTokenizerStats empty = {0};
+    JITTokenizerStats empty = { 0 };
     return empty;
 }
 

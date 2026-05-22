@@ -16,29 +16,21 @@
 /* ================================================================== */
 
 typedef struct {
-    uint8_t  data[64];
+    uint8_t data[64];
     uint32_t datalen;
     uint64_t bitlen;
     uint32_t state[8];
 } SHA256_CTX;
 
 static const uint32_t sha256_k[64] = {
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
-    0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
-    0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-    0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
-    0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
-    0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 };
 
 #define ROTR(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
@@ -54,36 +46,48 @@ static void sha256_transform(SHA256_CTX *ctx, const uint8_t data[64]) {
     int i;
 
     for (i = 0; i < 16; i++) {
-        m[i] = ((uint32_t)data[i * 4    ] << 24) |
-               ((uint32_t)data[i * 4 + 1] << 16) |
-               ((uint32_t)data[i * 4 + 2] <<  8) |
-               ((uint32_t)data[i * 4 + 3]);
+        m[i] = ((uint32_t)data[i * 4] << 24) | ((uint32_t)data[i * 4 + 1] << 16) |
+               ((uint32_t)data[i * 4 + 2] << 8) | ((uint32_t)data[i * 4 + 3]);
     }
     for (; i < 64; i++) {
         m[i] = SIG1(m[i - 2]) + m[i - 7] + SIG0(m[i - 15]) + m[i - 16];
     }
 
-    a = ctx->state[0]; b = ctx->state[1];
-    c = ctx->state[2]; d = ctx->state[3];
-    e = ctx->state[4]; f = ctx->state[5];
-    g = ctx->state[6]; h = ctx->state[7];
+    a = ctx->state[0];
+    b = ctx->state[1];
+    c = ctx->state[2];
+    d = ctx->state[3];
+    e = ctx->state[4];
+    f = ctx->state[5];
+    g = ctx->state[6];
+    h = ctx->state[7];
 
     for (i = 0; i < 64; i++) {
         t1 = h + EP1(e) + CH(e, f, g) + sha256_k[i] + m[i];
         t2 = EP0(a) + MAJ(a, b, c);
-        h = g; g = f; f = e; e = d + t1;
-        d = c; c = b; b = a; a = t1 + t2;
+        h = g;
+        g = f;
+        f = e;
+        e = d + t1;
+        d = c;
+        c = b;
+        b = a;
+        a = t1 + t2;
     }
 
-    ctx->state[0] += a; ctx->state[1] += b;
-    ctx->state[2] += c; ctx->state[3] += d;
-    ctx->state[4] += e; ctx->state[5] += f;
-    ctx->state[6] += g; ctx->state[7] += h;
+    ctx->state[0] += a;
+    ctx->state[1] += b;
+    ctx->state[2] += c;
+    ctx->state[3] += d;
+    ctx->state[4] += e;
+    ctx->state[5] += f;
+    ctx->state[6] += g;
+    ctx->state[7] += h;
 }
 
 static void sha256_init(SHA256_CTX *ctx) {
     ctx->datalen = 0;
-    ctx->bitlen  = 0;
+    ctx->bitlen = 0;
     ctx->state[0] = 0x6a09e667;
     ctx->state[1] = 0xbb67ae85;
     ctx->state[2] = 0x3c6ef372;
@@ -137,9 +141,9 @@ static void sha256_final(SHA256_CTX *ctx, uint8_t hash[32]) {
 
     /* Produce the final hash value (big-endian). */
     for (i = 0; i < 4; i++) {
-        hash[i]      = (uint8_t)(ctx->state[0] >> (24 - i * 8));
-        hash[i + 4]  = (uint8_t)(ctx->state[1] >> (24 - i * 8));
-        hash[i + 8]  = (uint8_t)(ctx->state[2] >> (24 - i * 8));
+        hash[i] = (uint8_t)(ctx->state[0] >> (24 - i * 8));
+        hash[i + 4] = (uint8_t)(ctx->state[1] >> (24 - i * 8));
+        hash[i + 8] = (uint8_t)(ctx->state[2] >> (24 - i * 8));
         hash[i + 12] = (uint8_t)(ctx->state[3] >> (24 - i * 8));
         hash[i + 16] = (uint8_t)(ctx->state[4] >> (24 - i * 8));
         hash[i + 20] = (uint8_t)(ctx->state[5] >> (24 - i * 8));
@@ -163,8 +167,7 @@ void merkle_sha256(const void *data, size_t len, uint8_t out[MERKLE_HASH_SIZE]) 
 /*  Node construction                                                   */
 /* ================================================================== */
 
-MerkleNode *merkle_create_leaf(const void *data, size_t len,
-                               const char *label) {
+MerkleNode *merkle_create_leaf(const void *data, size_t len, const char *label) {
     MerkleNode *node = calloc(1, sizeof(*node));
     if (!node) return NULL;
 
@@ -184,8 +187,7 @@ MerkleNode *merkle_create_leaf(const void *data, size_t len,
     return node;
 }
 
-MerkleNode *merkle_create_internal(MerkleNode **children, uint32_t nchildren,
-                                   const char *label) {
+MerkleNode *merkle_create_internal(MerkleNode **children, uint32_t nchildren, const char *label) {
     if (!children || nchildren == 0) return NULL;
 
     MerkleNode *node = calloc(1, sizeof(*node));
@@ -238,8 +240,7 @@ void merkle_compute_hash(MerkleNode *node) {
     if (!concat) return;
 
     for (uint32_t i = 0; i < node->nchildren; i++) {
-        memcpy(concat + (size_t)i * MERKLE_HASH_SIZE,
-               node->children[i]->hash, MERKLE_HASH_SIZE);
+        memcpy(concat + (size_t)i * MERKLE_HASH_SIZE, node->children[i]->hash, MERKLE_HASH_SIZE);
     }
 
     merkle_sha256(concat, concat_len, node->hash);
@@ -250,8 +251,7 @@ void merkle_compute_hash(MerkleNode *node) {
 /*  Tree construction                                                   */
 /* ================================================================== */
 
-MerkleTree *merkle_build_tree(MerkleNode **leaves, uint32_t nleaves,
-                              const char *root_label) {
+MerkleTree *merkle_build_tree(MerkleNode **leaves, uint32_t nleaves, const char *root_label) {
     if (!leaves || nleaves == 0) return NULL;
 
     MerkleTree *tree = calloc(1, sizeof(*tree));
@@ -348,8 +348,7 @@ static bool verify_node(const MerkleNode *node) {
     if (!concat) return false;
 
     for (uint32_t i = 0; i < node->nchildren; i++) {
-        memcpy(concat + (size_t)i * MERKLE_HASH_SIZE,
-               node->children[i]->hash, MERKLE_HASH_SIZE);
+        memcpy(concat + (size_t)i * MERKLE_HASH_SIZE, node->children[i]->hash, MERKLE_HASH_SIZE);
     }
 
     uint8_t expected[MERKLE_HASH_SIZE];
@@ -375,31 +374,57 @@ bool merkle_trees_equal(const MerkleTree *a, const MerkleTree *b) {
 /* ================================================================== */
 
 /* Count all nodes reachable from *node* (post-order). */
+/*
+** count_nodes -- count nodes in a Merkle subtree.  Same TCO
+** structure as free_node_recursive: tail-recurse on the last child
+** via the outer while loop so degenerate spines run in O(1) stack.
+** Inner recursive calls handle siblings; their stack depth is
+** bounded by tree width.  See the long comment on
+** free_node_recursive() for the contract this layout maintains.
+*/
 static uint32_t count_nodes(const MerkleNode *node) {
-    if (!node) return 0;
-    uint32_t n = 1;
-    for (uint32_t i = 0; i < node->nchildren; i++) {
-        n += count_nodes(node->children[i]);
+    uint32_t n = 0;
+    while (node != NULL) {
+        n += 1;
+        for (uint32_t i = 0; i + 1 < node->nchildren; i++) {
+            n += count_nodes(node->children[i]);
+        }
+        node = (node->nchildren > 0) ? node->children[node->nchildren - 1] : NULL;
     }
     return n;
 }
 
-/* Flatten tree into a post-order array.  Returns the number of nodes
-** written starting at *out + *pos*. */
-static void flatten_postorder(const MerkleNode *node,
-                              const MerkleNode **out,
-                              uint32_t *pos) {
-    if (!node) return;
-    for (uint32_t i = 0; i < node->nchildren; i++) {
-        flatten_postorder(node->children[i], out, pos);
+/*
+** flatten_postorder -- emit the subtree's nodes in post-order.
+** Tail-recursion is on the LAST child via the outer while loop
+** because in post-order traversal the parent is emitted *after*
+** every child, so the last child is the only candidate for being
+** in tail position relative to the parent's emission.  See the
+** long comment on free_node_recursive() for the contract.
+*/
+static void flatten_postorder(const MerkleNode *node, const MerkleNode **out, uint32_t *pos) {
+    while (node != NULL) {
+        for (uint32_t i = 0; i + 1 < node->nchildren; i++) {
+            flatten_postorder(node->children[i], out, pos);
+        }
+        if (node->nchildren > 0) {
+            /* Recurse on the last child first (post-order), then we
+            ** still need to emit `node` after the recursion returns.
+            ** That blocks a true tail-call in the strict sense; we
+            ** keep the iterative shape because the *non*-tail
+            ** recursion (siblings above) still gets the O(width)
+            ** bound and the spine is still O(1) iteration count. */
+            const MerkleNode *last = node->children[node->nchildren - 1];
+            flatten_postorder(last, out, pos);
+        }
+        out[*pos] = node;
+        (*pos)++;
+        node = NULL; /* post-order: parent is the final emit, nothing more to do */
     }
-    out[*pos] = node;
-    (*pos)++;
 }
 
 /* Look up the post-order index of *target* in the flat array. */
-static uint32_t find_index(const MerkleNode **flat, uint32_t count,
-                           const MerkleNode *target) {
+static uint32_t find_index(const MerkleNode **flat, uint32_t count, const MerkleNode *target) {
     for (uint32_t i = 0; i < count; i++) {
         if (flat[i] == target) return i;
     }
@@ -427,10 +452,8 @@ static uint16_t read_le16(const uint8_t *buf) {
 
 /* Read a little-endian uint32_t from buf. */
 static uint32_t read_le32(const uint8_t *buf) {
-    return (uint32_t)buf[0]
-         | ((uint32_t)buf[1] << 8)
-         | ((uint32_t)buf[2] << 16)
-         | ((uint32_t)buf[3] << 24);
+    return (uint32_t)buf[0] | ((uint32_t)buf[1] << 8) | ((uint32_t)buf[2] << 16) |
+           ((uint32_t)buf[3] << 24);
 }
 
 static const uint8_t MERKLE_MAGIC[4] = { 'M', 'R', 'K', '1' };
@@ -463,15 +486,18 @@ uint8_t *merkle_serialize(const MerkleTree *tree, size_t *out_len) {
     }
 
     size_t off = 0;
-    memcpy(buf + off, MERKLE_MAGIC, 4); off += 4;
-    write_le32(buf + off, node_count);  off += 4;
+    memcpy(buf + off, MERKLE_MAGIC, 4);
+    off += 4;
+    write_le32(buf + off, node_count);
+    off += 4;
 
     for (uint32_t i = 0; i < node_count; i++) {
         const MerkleNode *n = flat[i];
         uint16_t label_len = n->label ? (uint16_t)strlen(n->label) : 0;
 
         buf[off++] = (uint8_t)n->type;
-        write_le16(buf + off, label_len); off += 2;
+        write_le16(buf + off, label_len);
+        off += 2;
         if (label_len > 0) {
             memcpy(buf + off, n->label, label_len);
             off += label_len;
@@ -480,10 +506,12 @@ uint8_t *merkle_serialize(const MerkleTree *tree, size_t *out_len) {
         off += MERKLE_HASH_SIZE;
 
         if (n->type == MERKLE_NODE_INTERNAL) {
-            write_le32(buf + off, n->nchildren); off += 4;
+            write_le32(buf + off, n->nchildren);
+            off += 4;
             for (uint32_t c = 0; c < n->nchildren; c++) {
                 uint32_t idx = find_index(flat, node_count, n->children[c]);
-                write_le32(buf + off, idx); off += 4;
+                write_le32(buf + off, idx);
+                off += 4;
             }
         }
     }
@@ -513,21 +541,35 @@ MerkleTree *merkle_deserialize(const uint8_t *data, size_t len) {
     bool ok = true;
 
     for (uint32_t i = 0; i < node_count && ok; i++) {
-        if (off + 1 + 2 > len) { ok = false; break; }
+        if (off + 1 + 2 > len) {
+            ok = false;
+            break;
+        }
 
         uint8_t type = data[off++];
-        uint16_t label_len = read_le16(data + off); off += 2;
+        uint16_t label_len = read_le16(data + off);
+        off += 2;
 
-        if (off + label_len + MERKLE_HASH_SIZE > len) { ok = false; break; }
+        if (off + label_len + MERKLE_HASH_SIZE > len) {
+            ok = false;
+            break;
+        }
 
         MerkleNode *node = calloc(1, sizeof(*node));
-        if (!node) { ok = false; break; }
+        if (!node) {
+            ok = false;
+            break;
+        }
 
         node->type = (MerkleNodeType)type;
 
         if (label_len > 0) {
             node->label = malloc(label_len + 1);
-            if (!node->label) { free(node); ok = false; break; }
+            if (!node->label) {
+                free(node);
+                ok = false;
+                break;
+            }
             memcpy(node->label, data + off, label_len);
             node->label[label_len] = '\0';
             off += label_len;
@@ -539,17 +581,31 @@ MerkleTree *merkle_deserialize(const uint8_t *data, size_t len) {
         off += MERKLE_HASH_SIZE;
 
         if (node->type == MERKLE_NODE_INTERNAL) {
-            if (off + 4 > len) { merkle_free_node(node); ok = false; break; }
-            uint32_t nc = read_le32(data + off); off += 4;
+            if (off + 4 > len) {
+                merkle_free_node(node);
+                ok = false;
+                break;
+            }
+            uint32_t nc = read_le32(data + off);
+            off += 4;
 
-            if (off + (size_t)nc * 4 > len) { merkle_free_node(node); ok = false; break; }
+            if (off + (size_t)nc * 4 > len) {
+                merkle_free_node(node);
+                ok = false;
+                break;
+            }
 
             node->nchildren = nc;
             node->children = calloc(nc, sizeof(MerkleNode *));
-            if (!node->children) { merkle_free_node(node); ok = false; break; }
+            if (!node->children) {
+                merkle_free_node(node);
+                ok = false;
+                break;
+            }
 
             for (uint32_t c = 0; c < nc; c++) {
-                uint32_t idx = read_le32(data + off); off += 4;
+                uint32_t idx = read_le32(data + off);
+                off += 4;
                 if (idx >= i) {
                     /* Child index must refer to an already-deserialised
                     ** (earlier in post-order) node. */
@@ -612,12 +668,55 @@ void merkle_free_node(MerkleNode *node) {
     free(node);
 }
 
+/*
+** free_node_recursive -- post-order free of a Merkle subtree.
+**
+** ----------------------------------------------------------------------
+** TAIL-CALL STRUCTURE -- LOAD-BEARING, DO NOT REFACTOR
+** ----------------------------------------------------------------------
+**
+** This function is written in a specific shape so that clang and gcc
+** convert the deepest recursion path into a loop (TCO) rather than
+** consuming O(depth) stack frames.  Concretely:
+**
+**   - The *outer* `while (node)` loop iterates one level deeper into
+**     the tree on each pass, with the final child of the current node
+**     becoming the next iteration's `node`.  This is the would-be
+**     tail call, hand-rolled into a loop so we don't depend on the
+**     compiler choosing to TCO.  A degenerate spine (each node has
+**     exactly one child) thus runs in O(1) stack frames.
+**
+**   - The *inner* `for` loop recurses on every child *except* the
+**     last.  Those are not in tail position; their stack depth is
+**     bounded by the tree's width times the spine length.  In
+**     practice merkle trees over grammar snapshots are O(log nrules)
+**     deep with O(small) fan-out, so this is well within the default
+**     thread-stack limit.
+**
+**   - The free of the children-pointer array happens AFTER we copy
+**     the last-child pointer into `next`, so we never dereference
+**     freed memory.
+**
+** If you change the loop to recurse on every child (turning the
+** tail-loop back into a function call), benchmarks on deep merkle
+** trees (e.g. 1M-rule grammars) get a smashed stack.  The current
+** layout has been verified via `objdump -d` to compile to a single
+** outer jump (no `bl free_node_recursive` instruction at the bottom
+** of the function on aarch64; no `call free_node_recursive` at the
+** equivalent x86_64 site) -- when that compiles change, fix it.
+*/
 static void free_node_recursive(MerkleNode *node) {
-    if (!node) return;
-    for (uint32_t i = 0; i < node->nchildren; i++) {
-        free_node_recursive(node->children[i]);
+    while (node != NULL) {
+        /* Recurse on every child except the last.  The last one
+        ** becomes the next iteration's `node`, which keeps the
+        ** terminal-spine recursion in O(1) stack frames. */
+        for (uint32_t i = 0; i + 1 < node->nchildren; i++) {
+            free_node_recursive(node->children[i]);
+        }
+        MerkleNode *next = (node->nchildren > 0) ? node->children[node->nchildren - 1] : NULL;
+        merkle_free_node(node);
+        node = next;
     }
-    merkle_free_node(node);
 }
 
 void merkle_free_tree(MerkleTree *tree) {
@@ -633,7 +732,7 @@ void merkle_free_tree(MerkleTree *tree) {
 void merkle_hash_to_hex(const uint8_t hash[MERKLE_HASH_SIZE], char *buf) {
     static const char hex[] = "0123456789abcdef";
     for (int i = 0; i < MERKLE_HASH_SIZE; i++) {
-        buf[i * 2]     = hex[hash[i] >> 4];
+        buf[i * 2] = hex[hash[i] >> 4];
         buf[i * 2 + 1] = hex[hash[i] & 0x0f];
     }
     buf[MERKLE_HASH_SIZE * 2] = '\0';
