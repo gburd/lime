@@ -979,3 +979,78 @@ test_mod_serialize = executable('test_mod_serialize',
 )
 
 test('mod_serialize', test_mod_serialize)
+
+# Forensic harness that probes runtime extensibility and JIT claims
+# against the actual code paths.  Always exits 0; verdicts in stdout.
+test_claims_proof = executable('test_claims_proof',
+  'test_claims_proof.c',
+  include_directories : include_directories('../src'),
+  dependencies : lime_parser_dep,
+)
+
+test('claims_proof', test_claims_proof)
+
+# Generate an arithmetic parser locally for the runtime parse test
+# (separate from bench/, since meson custom_target outputs are scoped
+# to their declaring subdir).
+test_runtime_arith_gen = custom_target('test_runtime_arith_parser',
+  input   : ['../bench/bench_arith_grammar.y'],
+  output  : ['bench_arith_grammar.c', 'bench_arith_grammar.h',
+             'bench_arith_grammar_snapshot.c'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-n',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+# End-to-end: take a real lime-generated parser, build a runtime
+# snapshot from it via <Prefix>BuildSnapshot, then drive parse_token
+# against it.  Proves Claim C3 in test_claims_proof.
+test_runtime_parse = executable('test_runtime_parse',
+  'test_runtime_parse.c',
+  test_runtime_arith_gen,
+  include_directories : include_directories('../src'),
+  dependencies : lime_parser_dep,
+)
+
+test('runtime_parse', test_runtime_parse)
+
+# End-to-end extension exercise: drives create_modified_snapshot
+# against a real generated parser snapshot and confirms parse_token
+# still works on the result.
+test_extension_e2e = executable('test_extension_e2e',
+  'test_extension_e2e.c',
+  test_runtime_arith_gen,
+  include_directories : include_directories('../src'),
+  dependencies : lime_parser_dep,
+)
+
+test('extension_e2e', test_extension_e2e)
+
+# %destructor smoke test: drives a tiny grammar with %destructor
+# directives, exercises both happy-path and error-recovery code paths,
+# and asserts every allocation has a matching free (proving the
+# destructor actually runs on stack pops, the README's "modern memory
+# safety" claim).
+test_destructor_gen = custom_target('test_destructor_parser',
+  input   : ['test_destructor_grammar.y'],
+  output  : ['test_destructor_grammar.c', 'test_destructor_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_destructor = executable('test_destructor',
+  'test_destructor.c',
+  test_destructor_gen,
+  include_directories : include_directories('../src'),
+  dependencies : lime_parser_dep,
+)
+
+test('destructor', test_destructor)
