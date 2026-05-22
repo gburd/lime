@@ -159,6 +159,15 @@ ParserSnapshot *clone_snapshot(const ParserSnapshot *base) {
         snap->nfallback = base->nfallback;
     }
 
+    /* Optional grammar source -- deep copy if present. */
+    if (base->grammar_source != NULL && base->grammar_source_len > 0) {
+        snap->grammar_source = malloc(base->grammar_source_len + 1);
+        if (snap->grammar_source == NULL) goto fail;
+        memcpy(snap->grammar_source, base->grammar_source, base->grammar_source_len);
+        snap->grammar_source[base->grammar_source_len] = '\0';
+        snap->grammar_source_len = base->grammar_source_len;
+    }
+
     /* Verify critical allocations succeeded */
     if (base->action_count > 0 && snap->yy_action == NULL) goto fail;
     if (base->lookahead_count > 0 && snap->yy_lookahead == NULL) goto fail;
@@ -177,6 +186,7 @@ fail:
     free(snap->yy_rule_info_lhs);
     free(snap->yy_rule_info_nrhs);
     free(snap->yy_fallback);
+    free(snap->grammar_source);
     free(snap);
     return NULL;
 }

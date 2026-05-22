@@ -1045,6 +1045,24 @@ test('snapshot_create', test_snapshot_create,
   is_parallel : false,
 )
 
+# End-to-end exercise of runtime LALR(1) automaton rebuild via the
+# subprocess pipeline.  Adds a postfix-factorial extension to the
+# arithmetic grammar, calls publish_modified_snapshot which
+# concatenates the original grammar source with the serialised
+# modifications and reruns lime+cc, then parses input that exercises
+# the new rule.  Skipped at runtime when lime or cc is unavailable.
+test_extension_rebuild = executable('test_extension_rebuild',
+  'test_extension_rebuild.c',
+  test_runtime_arith_gen,
+  include_directories : include_directories('../src'),
+  dependencies : lime_parser_dep,
+)
+
+test('extension_rebuild', test_extension_rebuild,
+  workdir : meson.project_source_root(),
+  is_parallel : false,
+)
+
 # %destructor smoke test: drives a tiny grammar with %destructor
 # directives, exercises both happy-path and error-recovery code paths,
 # and asserts every allocation has a matching free (proving the

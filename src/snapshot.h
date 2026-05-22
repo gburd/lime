@@ -172,6 +172,15 @@ typedef struct ParserSnapshot {
     uint16_t *yy_fallback; /**< Per-token fallback substitute (0 = none) */
     uint32_t nfallback;    /**< Length of yy_fallback */
 
+    /** Optional original grammar source text.  Populated by `lime -n`
+    ** for snapshots produced via snapshot_build_from_tables() from a
+    ** generated *_snapshot.c.  publish_modified_snapshot() reads
+    ** this when an extension adds new rules so it can rebuild the
+    ** LALR(1) automaton via the lime + cc subprocess pipeline.
+    ** NULL for snapshots that don't have the source available. */
+    char *grammar_source;
+    uint32_t grammar_source_len; /**< Byte length, not including trailing NUL */
+
     /* --- Module identity (optional, NULL when not part of a module) --- */
 
     uint8_t merkle_root[32]; /**< Content hash of grammar data */

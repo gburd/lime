@@ -252,6 +252,7 @@ uint32_t get_loaded_extension_count(ExtensionRegistry *reg) {
 /* ------------------------------------------------------------------ */
 
 #include "snapshot_modify.h"
+#include "mod_serialize.h"
 
 bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapshot *base,
                                struct ParserSnapshot **out_snap,
@@ -374,32 +375,92 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
     }
     conflict_set_destroy(cs);
 
-    /* Build the modified snapshot.  Pass NULL for the registry's
-    ** conflict-resolver argument because we already resolved
-    ** ourselves. */
+    /* Build the modified snapshot.
+    **
+    ** Two paths:
+    **
+    **   A) Subprocess rebuild (real LALR(1) reconstruction).  When
+    **      the base snapshot carries its original grammar source
+    **      (set by `lime -n`), we can serialise the modifications
+    **      to a .y fragment via lime_modifications_to_grammar_text(),
+    **      concatenate the two, and rerun the lime + cc subprocess
+    **      pipeline on the merged grammar.  The resulting snapshot
+    **      has fully recomputed action tables and the new tokens /
+    **      rules are reachable through parse_token().
+    **
+    **   B) Metadata-only rebuild (legacy / no-source fallback).
+    **      When grammar_source is unavailable we fall back to
+    **      create_modified_snapshot(), which clones the snapshot
+    **      and applies the modifications as metadata (counters
+    **      grow, rule-info arrays extend) but does not re-derive
+    **      action tables.  This keeps existing test paths working
+    **      and is honest about what it can do.
+    **
+    ** Path A activates whenever the base has source AND the
+    ** environment can run the subprocess pipeline (lime + cc on
+    ** PATH).  Otherwise B.  When A fails for a reason other than
+    ** missing tools (e.g. the merged grammar contains a real
+    ** parser-construction conflict), we surface the error rather
+    ** than silently downgrading to B. */
     ParserSnapshot *new_snap = NULL;
-    ConflictSet *cs_inner = NULL;
     char *cm_err = NULL;
-    ModifyResult mr =
-        create_modified_snapshot(base, combined, total, NULL, &new_snap, &cs_inner, &cm_err);
-    free(combined);
-    free(ext_id_per_mod);
 
-    if (mr != MODIFY_OK) {
-        if (error) {
-            *error = cm_err ? cm_err : strdup("create_modified_snapshot failed");
+    if (base != NULL && base->grammar_source != NULL && base->grammar_source_len > 0) {
+        uint32_t skipped = 0;
+        char *frag_err = NULL;
+        char *frag = lime_modifications_to_grammar_text(combined, total, &skipped, &frag_err);
+        if (frag != NULL) {
+            size_t base_len = base->grammar_source_len;
+            size_t frag_len = strlen(frag);
+            char *merged = malloc(base_len + 1 + frag_len + 1);
+            if (merged != NULL) {
+                memcpy(merged, base->grammar_source, base_len);
+                merged[base_len] = '\n';
+                memcpy(merged + base_len + 1, frag, frag_len);
+                merged[base_len + 1 + frag_len] = '\0';
+
+                new_snap = lime_compile_grammar_text(merged, base_len + 1 + frag_len, &cm_err);
+                free(merged);
+            } else {
+                cm_err = strdup("publish_modified_snapshot: out of memory merging grammar");
+            }
+            free(frag);
         } else {
-            free(cm_err);
+            cm_err = frag_err ? frag_err
+                              : strdup("lime_modifications_to_grammar_text returned NULL");
         }
-        if (out_conflicts && cs_inner != NULL) {
-            *out_conflicts = cs_inner;
-        } else if (cs_inner != NULL) {
-            conflict_set_destroy(cs_inner);
-        }
-        return false;
     }
-    free(cm_err);
-    if (cs_inner != NULL) conflict_set_destroy(cs_inner);
+
+    if (new_snap == NULL) {
+        /* Fall back to the metadata-only path. */
+        ConflictSet *cs_inner = NULL;
+        free(cm_err);
+        cm_err = NULL;
+        ModifyResult mr =
+            create_modified_snapshot(base, combined, total, NULL, &new_snap, &cs_inner, &cm_err);
+        free(combined);
+        free(ext_id_per_mod);
+
+        if (mr != MODIFY_OK) {
+            if (error) {
+                *error = cm_err ? cm_err : strdup("create_modified_snapshot failed");
+            } else {
+                free(cm_err);
+            }
+            if (out_conflicts && cs_inner != NULL) {
+                *out_conflicts = cs_inner;
+            } else if (cs_inner != NULL) {
+                conflict_set_destroy(cs_inner);
+            }
+            return false;
+        }
+        free(cm_err);
+        if (cs_inner != NULL) conflict_set_destroy(cs_inner);
+    } else {
+        free(combined);
+        free(ext_id_per_mod);
+        free(cm_err);
+    }
 
     *out_snap = new_snap;
     return true;

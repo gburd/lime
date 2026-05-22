@@ -49,6 +49,7 @@ static void destroy_snapshot(ParserSnapshot *snap) {
     free(snap->yy_rule_info_lhs);
     free(snap->yy_rule_info_nrhs);
     free(snap->yy_fallback);
+    free(snap->grammar_source);
 
     /* JIT context (if any). */
     jit_detach_from_snapshot(snap);

@@ -79,6 +79,23 @@ typedef struct LimeParserTables {
     /* Optional fallback (NULL when grammar has no %fallback) */
     const uint16_t *yy_fallback;
     uint32_t nfallback;
+
+    /* Optional original grammar source text.  Embedded by `lime -n`
+    ** so the runtime extension framework can rebuild the LALR(1)
+    ** automaton from a base snapshot plus a list of modifications:
+    ** publish_modified_snapshot() concatenates this text with
+    ** lime_modifications_to_grammar_text(mods) and reruns the
+    ** subprocess pipeline (lime + cc) on the merged grammar.
+    **
+    ** NULL when the snapshot was built by a path that did not have
+    ** access to the original .y text (e.g. a hand-built snapshot
+    ** for testing).  Callers that want runtime grammar mutation
+    ** must supply this, or a base snapshot whose generated builder
+    ** populated it.  Length is the byte count NOT including a
+    ** trailing NUL (the array always has one for C-string-friendly
+    ** consumption). */
+    const char *grammar_source;
+    uint32_t grammar_source_len;
 } LimeParserTables;
 
 /**

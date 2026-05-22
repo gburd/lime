@@ -303,9 +303,17 @@ static void compute_basename(const char *grammar_file, char *out, size_t out_sz)
 ** definition wins at link time when liblime_parser is built with
 ** snapshot_create.c included.
 */
-ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
+/* ------------------------------------------------------------------ */
+/*  Core pipeline: grammar file -> ParserSnapshot                      */
+/*                                                                      */
+/*  Run lime + cc on grammar_file (which must already exist on disk    */
+/*  with a .y / .lime extension), dlopen the result, return the        */
+/*  ParserSnapshot.                                                     */
+/* ------------------------------------------------------------------ */
+
+static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file, char **error) {
     if (grammar_file == NULL) {
-        if (error) *error = xstrdup("create_base_snapshot: grammar_file is NULL");
+        if (error) *error = xstrdup("compile_grammar: grammar_file is NULL");
         return NULL;
     }
     if (error) *error = NULL;
@@ -313,8 +321,8 @@ ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
     /* 0. Check the grammar file exists. */
     struct stat st;
     if (stat(grammar_file, &st) != 0) {
-        if (error) *error = fmt_err("create_base_snapshot: grammar file not found: %s",
-                                    grammar_file);
+        if (error)
+            *error = fmt_err("compile_grammar: grammar file not found: %s", grammar_file);
         return NULL;
     }
 
@@ -323,10 +331,10 @@ ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
     const char *cc_bin = getenv_or("LIME_CC", "cc");
     char *template_path = find_limpar_template();
     if (template_path == NULL) {
-        if (error) *error =
-            xstrdup("create_base_snapshot: limpar.c template not found.  Set LIME_TEMPLATE "
-                    "to its absolute path or install lime so /usr/local/share/lime/limpar.c "
-                    "exists.");
+        if (error)
+            *error = xstrdup("compile_grammar: limpar.c template not found.  Set LIME_TEMPLATE "
+                             "to its absolute path or install lime so "
+                             "/usr/local/share/lime/limpar.c exists.");
         return NULL;
     }
     char *libdir = find_runtime_libdir();
@@ -348,12 +356,7 @@ ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
     snprintf(dflag, sizeof(dflag), "-d%s", tmpdir);
 
     char *lime_argv[] = {
-        (char *)lime_bin,
-        tflag,
-        "-n",
-        dflag,
-        (char *)grammar_file,
-        NULL,
+        (char *)lime_bin, tflag, "-n", dflag, (char *)grammar_file, NULL,
     };
     if (run_cmd(lime_argv, error) != 0) {
         free(template_path);
@@ -363,37 +366,19 @@ ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
         return NULL;
     }
 
-    /* 3. Compile the *_snapshot.c (and the parser .c if needed for
-    ** the snapshot to resolve symbols) into a shared library. */
-    char snap_c[1024], parser_c[1024], so_path[1024];
-    snprintf(snap_c,   sizeof(snap_c),   "%s/%s_snapshot.c", tmpdir, base);
-    snprintf(parser_c, sizeof(parser_c), "%s/%s.c",          tmpdir, base);
-    snprintf(so_path,  sizeof(so_path),  "%s/%s_snapshot.so",tmpdir, base);
+    /* 3. Compile the *_snapshot.c (with snapshot_build.c folded in
+    ** so snapshot_build_from_tables resolves) into a shared library. */
+    char snap_c[1024], so_path[1024];
+    snprintf(snap_c, sizeof(snap_c), "%s/%s_snapshot.c", tmpdir, base);
+    snprintf(so_path, sizeof(so_path), "%s/%s_snapshot.so", tmpdir, base);
 
-    /* Build the cc command line.  We need the source-tree include
-    ** dirs so snapshot_build.h is found, plus the runtime library
-    ** for the snapshot_build_from_tables symbol. */
     const char *include_root = getenv_or("LIME_INCLUDE", "include");
     const char *src_root = getenv_or("LIME_SRC_INCLUDE", "src");
 
-    char inc_a[256], inc_b[256], lib_l[256];
+    char inc_a[256], inc_b[256];
     snprintf(inc_a, sizeof(inc_a), "-I%s", include_root);
     snprintf(inc_b, sizeof(inc_b), "-I%s", src_root);
 
-    /* Linkage strategy: produce a .so that compiles in a copy of
-    ** snapshot_build.c (so the snapshot_build_from_tables symbol the
-    ** *_snapshot.c references is statically resolved inside the .so)
-    ** and uses -Wl,-undefined,dynamic_lookup on macOS so any
-    ** remaining runtime references (snapshot_release on the failure
-    ** path) resolve from the host process at dlopen time.  On Linux
-    ** ld silently treats undefined symbols in shared libs as
-    ** runtime-resolved by default; the host process must be linked
-    ** with -rdynamic for the symbols to be visible to dlopen.
-    **
-    ** This avoids pulling LLVM and the rest of liblime_parser.a into
-    ** every snapshot .so. */
-
-    /* Locate snapshot_build.c. */
     char snapshot_build_c[1024] = {0};
     {
         const char *env = getenv("LIME_SNAPSHOT_BUILD_C");
@@ -420,12 +405,11 @@ ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
             }
         }
     }
-
     if (snapshot_build_c[0] == '\0') {
         if (error)
-            *error = xstrdup("create_base_snapshot: snapshot_build.c not found.  Set "
-                             "LIME_SNAPSHOT_BUILD_C, install lime to "
-                             "/usr/local/share/lime/, or run from the source tree.");
+            *error = xstrdup("compile_grammar: snapshot_build.c not found.  Set "
+                             "LIME_SNAPSHOT_BUILD_C, install lime to /usr/local/share/lime/, "
+                             "or run from the source tree.");
         free(template_path);
         free(libdir);
         rm_rf(tmpdir);
@@ -438,7 +422,7 @@ ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
     cc_argv[ai++] = (char *)cc_bin;
     cc_argv[ai++] = "-shared";
     cc_argv[ai++] = "-fPIC";
-    cc_argv[ai++] = "-O0"; /* fast compile, the .so isn't on the perf path */
+    cc_argv[ai++] = "-O0"; /* fast compile; .so not on the perf path */
     cc_argv[ai++] = "-std=c11";
     cc_argv[ai++] = inc_a;
     cc_argv[ai++] = inc_b;
@@ -458,28 +442,30 @@ ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
         return NULL;
     }
 
-    /* 4. dlopen the .so and resolve the entry point. */
-    dlerror();  /* clear */
+    /* 4. dlopen + dlsym the entry point. */
+    dlerror();
     void *handle = dlopen(so_path, RTLD_NOW | RTLD_LOCAL);
     if (handle == NULL) {
         const char *de = dlerror();
-        if (error) *error = fmt_err("create_base_snapshot: dlopen failed: %s",
-                                    de ? de : "(no error message)");
+        if (error)
+            *error = fmt_err("compile_grammar: dlopen failed: %s", de ? de : "(no error message)");
         free(template_path);
         free(libdir);
         rm_rf(tmpdir);
         free(tmpdir);
         return NULL;
     }
-
     typedef ParserSnapshot *(*entry_fn)(void);
-    /* Cast through void* to silence -Wpedantic about object-vs-function pointers. */
-    union { void *ptr; entry_fn fn; } cast;
+    union {
+        void *ptr;
+        entry_fn fn;
+    } cast;
     cast.ptr = dlsym(handle, "lime_snapshot_entry");
     if (cast.ptr == NULL) {
         const char *de = dlerror();
-        if (error) *error = fmt_err("create_base_snapshot: dlsym(lime_snapshot_entry) failed: %s",
-                                    de ? de : "(no error message)");
+        if (error)
+            *error = fmt_err("compile_grammar: dlsym(lime_snapshot_entry) failed: %s",
+                             de ? de : "(no error message)");
         dlclose(handle);
         free(template_path);
         free(libdir);
@@ -492,17 +478,10 @@ ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
 
     /* 5. Cleanup.  We intentionally do NOT dlclose() the handle:
     ** the snapshot tables were memcpy'd out of the .so by
-    ** snapshot_build_from_tables, but a strict reading of POSIX
-    ** says any rodata pointers from the .so are invalidated by
-    ** dlclose.  Since none of our copies retain such pointers, we
-    ** could in principle dlclose; for safety we keep the .so
-    ** mapped until process exit.  Memory cost is small (~100 KB
-    ** per loaded grammar) and process-lifetime in nature.  See
-    ** docs/ROADMAP.md for the cleanup-tracking item.
-    **
-    ** We DO clean up the temp directory now -- the .c files and
-    ** the .so contents are loaded into memory, so the on-disk
-    ** copies are no longer needed. */
+    ** snapshot_build_from_tables, but POSIX leaves the lifetime of
+    ** any rodata pointers loose under dlclose.  Memory cost is
+    ** small (~100 KB per loaded grammar) and process-lifetime in
+    ** nature.  See docs/ROADMAP.md for the cleanup-tracking item. */
     rm_rf(tmpdir);
     free(tmpdir);
     free(template_path);
@@ -510,8 +489,66 @@ ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
 
     if (snap == NULL) {
         if (error && *error == NULL) {
-            *error = xstrdup("create_base_snapshot: lime_snapshot_entry returned NULL");
+            *error = xstrdup("compile_grammar: lime_snapshot_entry returned NULL");
         }
     }
     return snap;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Compile from in-memory grammar text                                */
+/*                                                                      */
+/*  Used by lemon_snapshot_extend(): take a base grammar's source,     */
+/*  concatenate the modification fragment from                          */
+/*  lime_modifications_to_grammar_text(), and feed the result through   */
+/*  the subprocess pipeline.                                            */
+/* ------------------------------------------------------------------ */
+
+ParserSnapshot *lime_compile_grammar_text(const char *grammar_text, size_t len, char **error) {
+    if (grammar_text == NULL || len == 0) {
+        if (error) *error = xstrdup("lime_compile_grammar_text: grammar_text is empty");
+        return NULL;
+    }
+    if (error) *error = NULL;
+
+    /* Write to a temp .y file, then call the file-based pipeline.
+    ** We could in principle hand a pipe to lime, but lime today is
+    ** organised around stat()-able input paths, so a temp file is
+    ** the simplest correct approach. */
+    char *tmpdir = make_tmpdir(error);
+    if (tmpdir == NULL) return NULL;
+
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/grammar.y", tmpdir);
+
+    FILE *fp = fopen(path, "wb");
+    if (fp == NULL) {
+        if (error) *error = fmt_err("lime_compile_grammar_text: fopen failed (%s)",
+                                    strerror(errno));
+        rm_rf(tmpdir);
+        free(tmpdir);
+        return NULL;
+    }
+    if (fwrite(grammar_text, 1, len, fp) != len) {
+        fclose(fp);
+        if (error) *error = xstrdup("lime_compile_grammar_text: fwrite truncated");
+        rm_rf(tmpdir);
+        free(tmpdir);
+        return NULL;
+    }
+    fclose(fp);
+
+    ParserSnapshot *snap = compile_grammar_file_to_snapshot(path, error);
+
+    rm_rf(tmpdir);
+    free(tmpdir);
+    return snap;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Public API: create_base_snapshot                                    */
+/* ------------------------------------------------------------------ */
+
+ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
+    return compile_grammar_file_to_snapshot(grammar_file, error);
 }

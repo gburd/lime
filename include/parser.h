@@ -36,6 +36,7 @@
 #define PARSER_H
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -97,6 +98,22 @@ void lemon_snapshot_release(ParserSnapshot *snap);
  * @return New snapshot with refcount 1, or NULL on failure.
  */
 ParserSnapshot *lemon_snapshot_create(const char *grammar_file, char **error);
+
+/**
+ * @brief Build a base snapshot from in-memory grammar text.
+ *
+ * Same pipeline as lemon_snapshot_create() but takes the grammar
+ * source as a buffer rather than a file path.  Internally writes
+ * the buffer to a temp file and runs lime + cc on it.  Used by
+ * lemon_snapshot_extend() and by callers that hold the grammar
+ * text in memory (e.g. embedded in a config blob).
+ *
+ * @param grammar_text  Pointer to the grammar source bytes.
+ * @param len           Byte length (NOT including any NUL).
+ * @param[out] error    On failure, malloc'd message; NULL on success.
+ * @return New snapshot with refcount 1, or NULL on failure.
+ */
+ParserSnapshot *lime_compile_grammar_text(const char *grammar_text, size_t len, char **error);
 
 /** @} */ /* end snapshot_api */
 

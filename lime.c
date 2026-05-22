@@ -6972,6 +6972,45 @@ void ReportSnapshotInit(struct lime *lemp)
   fprintf(out, "};\n");
 
   /* ------------------------------------------------------------ */
+  /*  Grammar source text                                         */
+  /* ------------------------------------------------------------ */
+  /*
+  ** Emit the original grammar's source text as a static byte
+  ** array.  The runtime extension framework needs this to rebuild
+  ** the LALR(1) automaton when an extension adds tokens or rules:
+  ** publish_modified_snapshot() concatenates the original text
+  ** with lime_modifications_to_grammar_text(mods) and reruns the
+  ** subprocess pipeline (lime + cc) on the merged grammar.
+  **
+  ** Emit as a `static const unsigned char[]` rather than a string
+  ** literal so we don't hit the C99 4095-byte string-literal length
+  ** limit on large grammars (e.g. the PostgreSQL grammar at
+  ** ~525,000 bytes).  Trailing NUL is appended so the runtime can
+  ** treat it as a C string.
+  */
+  fprintf(out, "static const unsigned char s_grammar_source[] = {\n");
+  {
+    FILE *src_in = fopen(lemp->filename, "rb");
+    int col = 0;
+    if (src_in != NULL) {
+      int c;
+      while ((c = fgetc(src_in)) != EOF) {
+        if (col == 0) fprintf(out, "    ");
+        fprintf(out, "0x%02x,", (unsigned char)c);
+        col++;
+        if (col >= 16) {
+          fprintf(out, "\n");
+          col = 0;
+        }
+      }
+      fclose(src_in);
+      if (col > 0) fprintf(out, "\n");
+    }
+  }
+  /* Trailing NUL so consumers can treat the array as a C string. */
+  fprintf(out, "    0x00\n};\n");
+
+  /* ------------------------------------------------------------ */
   /*  Builder function                                            */
   /* ------------------------------------------------------------ */
 
@@ -7001,6 +7040,8 @@ void ReportSnapshotInit(struct lime *lemp)
     "        .yy_min_reduce        = %d,\n"
     "        .yy_fallback          = NULL,\n"
     "        .nfallback            = 0,\n"
+    "        .grammar_source       = (const char *)s_grammar_source,\n"
+    "        .grammar_source_len   = sizeof(s_grammar_source) - 1,\n"
     "    };\n"
     "    return snapshot_build_from_tables(&tables);\n"
     "}\n"

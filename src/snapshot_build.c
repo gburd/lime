@@ -84,6 +84,19 @@ ParserSnapshot *snapshot_build_from_tables(const LimeParserTables *t) {
         snap->nfallback = t->nfallback;
     }
 
+    /* Deep-copy the original grammar source text so the snapshot
+    ** outlives the LimeParserTables struct (and the .so it came
+    ** from, in the dlopen path).  publish_modified_snapshot reads
+    ** this to drive the subprocess rebuild path. */
+    if (t->grammar_source != NULL && t->grammar_source_len > 0) {
+        snap->grammar_source = malloc(t->grammar_source_len + 1);
+        if (snap->grammar_source != NULL) {
+            memcpy(snap->grammar_source, t->grammar_source, t->grammar_source_len);
+            snap->grammar_source[t->grammar_source_len] = '\0';
+            snap->grammar_source_len = t->grammar_source_len;
+        }
+    }
+
     snap->yy_ntoken = t->ntoken;
     snap->yy_max_shift = t->yy_max_shift;
     snap->yy_min_shiftreduce = t->yy_min_shiftreduce;
