@@ -219,9 +219,11 @@ for a longer walkthrough of each.  Grouped quick reference:
 | Example | What it shows |
 |---------|---------------|
 | [`examples/datalog/`](examples/datalog/) | Datalog / EDN parser with a hand-rolled tokenizer driving Lime's push parser.  Demonstrates the "bring your own lexer" integration pattern. |
+| [`examples/json/`](examples/json/) | Compact JSON parser that produces a tagged-union `JsonValue` AST.  Demonstrates `%token_type`, `%type`, `%extra_argument`, and the typed-alias action style.  Companion to the simdjson throughput benchmark below. |
 | [`examples/jsonpath/`](examples/jsonpath/) | JSONPath parser converted from PostgreSQL's `jsonpath_gram.y` / `jsonpath_scan.l`.  Self-contained; does not link against PostgreSQL. |
 | [`examples/xpath/`](examples/xpath/), [`examples/xquery/`](examples/xquery/) | XPath 1.0 and XQuery parsers, each with a standalone driver that reads expressions from stdin or argv and prints the AST. |
 | [`examples/mongodb/`](examples/mongodb/) | MongoDB query-document parser for expressions like `{ "age": { "$gt": 25 } }`. |
+| [`examples/cobol/`](examples/cobol/) | Substantial COBOL parser covering all four divisions (IDENTIFICATION, ENVIRONMENT, DATA, PROCEDURE) and ~30 verbs.  Demonstrates `%symbol_prefix CB_INTERNAL_` for namespace isolation. |
 
 ### PostgreSQL grammar conversions
 
@@ -397,6 +399,33 @@ All provided by `nix develop` via `flake.nix`.
 2. Build and test: `ninja -C builddir && meson test -C builddir`
 3. Run sanitizers before submitting
 4. Measure coverage: `./scripts/measure_coverage.sh`
+
+## Distribution and Packaging
+
+Source releases are produced via the build system:
+
+```bash
+make dist                                    # ./build-dist/lime-parser-X.Y.Z.tar.gz
+meson dist -C builddir --formats=gztar       # builddir/meson-dist/lime-parser-X.Y.Z.tar.gz
+```
+
+Both produce a reproducible tarball with everything tracked under
+`git ls-tree HEAD`.
+
+Package recipes for downstream distributions live under
+[`packaging/`](packaging/):
+
+| Recipe | Distribution |
+|--------|--------------|
+| [`packaging/lime.spec`](packaging/lime.spec)               | Fedora / RHEL / openSUSE (RPM) |
+| [`packaging/debian/`](packaging/debian/)                   | Debian / Ubuntu (.deb source package) |
+| [`packaging/Formula/lime.rb`](packaging/Formula/lime.rb)   | Homebrew (macOS / Linux) |
+| [`packaging/PKGBUILD`](packaging/PKGBUILD)                 | Arch Linux |
+| [`packaging/APKBUILD`](packaging/APKBUILD)                 | Alpine Linux |
+| [`flake.nix`](flake.nix)                                   | Nix / NixOS (project root) |
+
+See [`packaging/README.md`](packaging/README.md) for the release
+checklist.
 
 ## Acknowledgements
 

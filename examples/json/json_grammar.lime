@@ -1,0 +1,57 @@
+/*
+** json.lime -- JSON grammar with semantic actions producing a
+** tagged-union JsonValue tree.  Companion to examples/json/main.c.
+**
+** Tokens come from json_tokenize.c; the grammar drives reduction
+** actions that allocate JsonValue nodes via the helpers in json.h.
+**
+** This is the example version (full AST).  bench/bench_json_grammar.y
+** is the recognition-only twin used by the bison-vs-lime benchmark.
+*/
+
+%name_prefix Json
+%token_prefix JSON_
+%token_type   { void * }
+%type value     { JsonValue * }
+%type object    { JsonValue * }
+%type members   { JsonValue * }
+%type pair      { JsonValue * }
+%type array     { JsonValue * }
+%type elements  { JsonValue * }
+%extra_argument { JsonValue **result_out }
+%start_symbol json
+
+%token LBRACE RBRACE LBRACKET RBRACKET COMMA COLON STRING NUMBER TRUE FALSE NULL.
+
+%include {
+#include <assert.h>
+#include "json.h"
+}
+
+%syntax_error {
+    fprintf(stderr, "json: syntax error near token code %d\n", yymajor);
+}
+
+json ::= value(V).                 { *result_out = V; }
+
+value(A) ::= STRING(S).            { A = json_string_take((char *)S); }
+value(A) ::= NUMBER(N).            { A = json_number_take((char *)N); }
+value(A) ::= TRUE.                 { A = json_bool(1); }
+value(A) ::= FALSE.                { A = json_bool(0); }
+value(A) ::= NULL.                 { A = json_null(); }
+value(A) ::= object(O).            { A = O; }
+value(A) ::= array(R).             { A = R; }
+
+object(A) ::= LBRACE RBRACE.                 { A = json_object_new(); }
+object(A) ::= LBRACE members(M) RBRACE.      { A = M; }
+
+members(A) ::= pair(P).                       { A = json_object_new(); json_object_add_pair(A, P); }
+members(A) ::= members(L) COMMA pair(P).      { A = L; json_object_add_pair(A, P); }
+
+pair(A) ::= STRING(K) COLON value(V).         { A = json_pair((char *)K, V); }
+
+array(A) ::= LBRACKET RBRACKET.               { A = json_array_new(); }
+array(A) ::= LBRACKET elements(E) RBRACKET.   { A = E; }
+
+elements(A) ::= value(V).                     { A = json_array_new(); json_array_append(A, V); }
+elements(A) ::= elements(L) COMMA value(V).   { A = L; json_array_append(A, V); }

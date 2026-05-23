@@ -1,0 +1,36 @@
+Source: lime-parser
+Section: devel
+Priority: optional
+Maintainer: Greg Burd <greg@burd.me>
+Build-Depends:
+ debhelper-compat (= 13),
+ meson (>= 0.60),
+ ninja-build,
+ pkg-config,
+ libllvm-dev | llvm-dev (>= 14),
+ gcc (>= 13) | clang (>= 15),
+Standards-Version: 4.6.2
+Homepage: https://codeberg.org/gregburd/lime
+Vcs-Browser: https://codeberg.org/gregburd/lime
+Vcs-Git: https://codeberg.org/gregburd/lime.git
+Rules-Requires-Root: no
+
+Package: lime-parser
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Runtime-extensible LALR(1) parser generator
+ Lime is a runtime-extensible LALR(1) parser generator derived from the
+ Lemon parser generator (SQLite project). Lime reads a context-free
+ grammar and emits a C parser, and -- unlike yacc/bison -- the generated
+ parser can load and unload grammar extensions at runtime without
+ recompilation. Optional features include SIMD-accelerated tokenization
+ (AVX2/NEON) and LLVM JIT compilation of the action table.
+
+Package: lime-parser-dev
+Section: libdevel
+Architecture: any
+Depends: lime-parser (= ${binary:Version}), ${misc:Depends}
+Description: Development files for lime-parser
+ Headers and the static runtime library for embedding the Lime parser
+ engine in C/C++ projects. Includes the snapshot and extension-registry
+ interfaces.

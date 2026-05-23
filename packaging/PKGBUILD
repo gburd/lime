@@ -1,0 +1,25 @@
+# Maintainer: Greg Burd <greg@burd.me>
+pkgname=lime-parser
+pkgver=0.2.4
+pkgrel=1
+pkgdesc="Runtime-extensible LALR(1) parser generator"
+arch=('x86_64' 'aarch64')
+url="https://codeberg.org/gregburd/lime"
+license=('PublicDomain')
+depends=('llvm-libs')
+makedepends=('meson' 'ninja' 'llvm')
+source=("https://codeberg.org/gregburd/lime/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  arch-meson "lime-$pkgver" build -Dllvm=auto
+  meson compile -C build
+}
+
+check() {
+  meson test -C build --no-rebuild
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+}

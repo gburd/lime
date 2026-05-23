@@ -92,3 +92,17 @@ config/
 # Agent / editor tool config dropped in the worktree
 .mcp.json
 opencode.json
+
+# JSON example: generated parser sources + binary
+examples/json/json_grammar.c
+examples/json/json_grammar.h
+examples/json/json_grammar.out
+examples/json/json_parser
+!examples/json/json.h
+!examples/json/json_helpers.c
+!examples/json/json_tokenize.c
+!examples/json/json_tokenize.h
+!examples/json/main.c
+
+# Top-level dist tarballs from make dist
+build-dist/

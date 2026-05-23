@@ -1,0 +1,23 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: lime-parser
+Upstream-Contact: Greg Burd <greg@burd.me>
+Source: https://codeberg.org/gregburd/lime
+
+Files: *
+Copyright: 2024-2026 Lime Parser Generator Project
+License: public-domain
+ The lime parser generator is dedicated to the public domain.
+ The author or authors of this code dedicate any and all copyright
+ interest in this code to the public domain. We make this dedication
+ for the benefit of the public at large and to the detriment of our
+ heirs and successors. We intend this dedication to be an overt act of
+ relinquishment in perpetuity of all present and future rights to this
+ code under copyright law.
+ .
+ Lime is derived from the Lemon parser generator by D. Richard Hipp,
+ originally part of the SQLite project.  Lemon is itself in the public
+ domain.
+
+Files: debian/*
+Copyright: 2026 Greg Burd <greg@burd.me>
+License: public-domain

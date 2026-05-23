@@ -253,12 +253,41 @@ clean:
 
 help:
 	@echo "Targets:"
-	@echo "  all      -- lime + library + tests"
-	@echo "  test     -- run the test programs (after building)"
-	@echo "  format   -- run clang-format"
-	@echo "  install  -- install to PREFIX (default /usr/local)"
-	@echo "  clean    -- remove build artifacts"
+	@echo "  all       -- lime + library + tests"
+	@echo "  test      -- run the test programs (after building)"
+	@echo "  format    -- run clang-format"
+	@echo "  install   -- install to PREFIX (default /usr/local)"
+	@echo "  dist      -- create lime-parser-VERSION.tar.gz release tarball"
+	@echo "  clean     -- remove build artifacts"
 	@echo "Knobs: CC, CFLAGS, LDFLAGS, LEX=1, JIT=0, PREFIX"
+
+# -------------------------------------------------------------------
+# Distribution tarball
+# -------------------------------------------------------------------
+#
+# `make dist` produces a reproducible release tarball:
+#
+#     lime-parser-X.Y.Z.tar.gz
+#
+# under ./build-dist/, containing every file tracked by git at HEAD
+# (no untracked / build artifacts).  The version comes from
+# meson.build (single source of truth).  Equivalent to
+# `meson dist -C builddir --no-tests` but doesn't require a
+# configured meson build directory.
+
+VERSION ?= $(shell awk -F"[ ,'\":]+" '/^[[:space:]]*version[[:space:]]*:/ { print $$3; exit }' meson.build)
+DIST_NAME = lime-parser-$(VERSION)
+DIST_DIR  = build-dist
+
+.PHONY: dist
+dist:
+	@echo "Creating release tarball $(DIST_NAME).tar.gz"
+	@mkdir -p $(DIST_DIR)
+	@git archive --format=tar.gz --prefix=$(DIST_NAME)/ \
+	    -o $(DIST_DIR)/$(DIST_NAME).tar.gz HEAD
+	@echo "Wrote $(DIST_DIR)/$(DIST_NAME).tar.gz"
+	@echo "  size:    $$(du -h $(DIST_DIR)/$(DIST_NAME).tar.gz | cut -f1)"
+	@echo "  sha256:  $$(shasum -a 256 $(DIST_DIR)/$(DIST_NAME).tar.gz | cut -d' ' -f1)"
 
 # -------------------------------------------------------------------
 # Directory creation

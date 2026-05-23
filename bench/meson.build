@@ -76,6 +76,10 @@ bench_jit_real_parser = executable('bench_jit_real_parser',
 # when flex or bison is unavailable -- see subdir's meson.build).
 subdir('bench_flex_bison_compare')
 
+# Optional simdjson throughput comparison (skipped when simdjson
+# is not on the system).
+subdir('bench_simdjson_compare')
+
 # Microbenchmark proving the SIMD character-classification path
 # delivers measurable speedup over the scalar fallback.  This is
 # the load-bearing measurement that the README's SIMD-acceleration

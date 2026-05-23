@@ -63,6 +63,10 @@
           # command-line tools are not installed.  Needed for cr
           # workflows, git log/blame in the dev shell, etc.
           git
+          # simdjson is used by bench/bench_simdjson_compare/ to
+          # measure Lime's JSON throughput against a purpose-built
+          # SIMD JSON parser.  Skipped automatically when absent.
+          simdjson
         ];
 
         linuxTools = with pkgs; lib.optionals isLinux [
