@@ -390,6 +390,13 @@ JITStatus jit_attach_to_snapshot(ParserSnapshot *snap) {
     }
 
     snap->jit_ctx = ctx;
+    /* Cache the per-token JIT entry point on the snapshot so the
+    ** runtime's hot path can read it with a single load and skip
+    ** the indirection through ctx->find_shift_action_fn on every
+    ** token.  Safe even when find_shift_action_fn is NULL (large-
+    ** grammar codegen path); find_shift_action will fall through
+    ** to the table interpreter. */
+    snap->jit_find_shift_fn = ctx->find_shift_action_fn;
 
     return JIT_OK;
 }
@@ -399,6 +406,7 @@ void jit_detach_from_snapshot(ParserSnapshot *snap) {
     if (snap->jit_ctx != NULL) {
         jit_destroy((JITContext *)snap->jit_ctx);
         snap->jit_ctx = NULL;
+        snap->jit_find_shift_fn = NULL;
     }
 }
 
@@ -474,6 +482,47 @@ bool lime_jit_available(void) {
 }
 
 int lime_jit_compile(ParserSnapshot *snap) {
+    /*
+    ** Architecture-conditional gate.  On x86_64 with the unrolled-
+    ** switch interpreter codegen, the C compiler-generated code
+    ** typically *outperforms* the JIT on small grammars (Intel's
+    ** branch predictor walks the static switch better than the
+    ** indirect-call sequence the JIT produces).  Measured on
+    ** docs/BENCHMARK_RESULTS.md: -8 to -12 % on JSON / arith
+    ** grammars.  On aarch64 the relationship reverses: JIT wins.
+    **
+    ** Honour an explicit user request via the LIME_JIT env var:
+    **   LIME_JIT=1   -- force JIT regardless of architecture
+    **   LIME_JIT=0   -- skip JIT regardless of architecture
+    **   (unset)      -- arch-conditional default below
+    **
+    ** Fast-path skip: if architecture is x86_64 *and* grammar is
+    ** below the size threshold where JIT codegen becomes
+    ** worthwhile, skip the JIT compile and let the table-driven
+    ** path run.  The table-driven path on x86_64 is faster anyway.
+    ** The threshold matches the IR_SIZE_THRESHOLD in
+    ** src/jit_codegen.c::generate_find_shift_action_compact, since
+    ** the compact codegen is the path that genuinely beats the
+    ** interpreter on x86_64.
+    */
+    const char *env = getenv("LIME_JIT");
+    if (env != NULL) {
+        if (env[0] == '0') return 1; /* user-forced skip */
+        /* env[0] == '1' (or anything else): fall through, JIT */
+    } else {
+#if defined(__x86_64__) || defined(_M_X64)
+        if (snap != NULL) {
+            uint64_t ir_size_estimate =
+                (uint64_t)snap->nstate * (uint64_t)snap->nterminal;
+            if (ir_size_estimate < 500000) {
+                /* On x86_64, small-grammar JIT loses to the
+                ** interpreter; skip and let the table path run. */
+                return 1;
+            }
+        }
+#endif
+    }
+
     JITStatus st = jit_attach_to_snapshot(snap);
     return (st == JIT_OK || st == JIT_ERR_ALREADY_COMPILED) ? 0 : (int)st;
 }

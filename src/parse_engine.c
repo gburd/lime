@@ -107,38 +107,56 @@ static void stack_pop_n(ParseStack *s, uint32_t n) {
 ** bench still shows the JIT-armed path beating the table-driven
 ** path.
 */
-static uint16_t find_shift_action(const ParserSnapshot *snap, uint16_t stateno,
-                                  uint16_t lookahead) {
-    if (snap->jit_ctx != NULL) {
-        JITFindShiftActionFn jit_fn = jit_get_find_shift_action((JITContext *)snap->jit_ctx);
-        if (jit_fn != NULL) {
-            /* Cast args up to uint32_t for the JIT'd function (see
-            ** the typedef in include/jit_context.h for why), then
-            ** mask the result back to uint16_t for engine use. */
-            return (uint16_t)jit_fn((uint32_t)stateno, (uint32_t)lookahead);
-        }
+/*
+** find_shift_action -- per-token hot path.
+**
+** Optimisations:
+**   1. Hoisted JIT entry-point cache: snap->jit_find_shift_fn is
+**      written once in lime_jit_compile and read once per token.
+**      Avoids the previous ctx->fn chase that was two loads + one
+**      function call.
+**   2. Branch hints: __builtin_expect tells the compiler the JIT
+**      branch is unlikely (most callers don't enable JIT), so the
+**      table-driven path stays in the straight-line fallthrough
+**      that branch predictors handle best.
+**   3. `static inline`: explicit inline hint so the engine's
+**      step function doesn't pay function-call overhead per token.
+**      The compiler at -O2 already inlines this most of the time,
+**      but the explicit hint makes it consistent across compilers.
+*/
+typedef uint32_t (*lime_jit_shift_fn)(uint32_t state, uint32_t lookahead);
+
+static inline uint16_t find_shift_action(const ParserSnapshot *snap, uint16_t stateno,
+                                         uint16_t lookahead) {
+    lime_jit_shift_fn jit_fn = (lime_jit_shift_fn)snap->jit_find_shift_fn;
+    if (__builtin_expect(jit_fn != NULL, 0)) {
+        return (uint16_t)jit_fn((uint32_t)stateno, (uint32_t)lookahead);
     }
 
-    if (stateno > snap->yy_max_shift) return stateno;
-    if (snap->yy_shift_ofst == NULL) return snap->yy_no_action;
+    if (__builtin_expect(stateno > snap->yy_max_shift, 0)) return stateno;
+    if (__builtin_expect(snap->yy_shift_ofst == NULL, 0)) return snap->yy_no_action;
 
     int32_t ofst = snap->yy_shift_ofst[stateno];
-    int32_t idx = (int32_t)ofst + (int32_t)lookahead;
+    int32_t idx = ofst + (int32_t)lookahead;
 
-    if (idx >= 0 && (uint32_t)idx < snap->lookahead_count && snap->yy_lookahead[idx] == lookahead) {
+    if (__builtin_expect(idx >= 0 && (uint32_t)idx < snap->lookahead_count
+                             && snap->yy_lookahead[idx] == lookahead,
+                         1)) {
         return snap->yy_action[idx];
     }
     return snap->yy_default[stateno];
 }
 
-static uint16_t find_reduce_action(const ParserSnapshot *snap, uint16_t stateno,
-                                   uint16_t lookahead) {
-    if (snap->yy_reduce_ofst == NULL) return snap->yy_no_action;
+static inline uint16_t find_reduce_action(const ParserSnapshot *snap, uint16_t stateno,
+                                          uint16_t lookahead) {
+    if (__builtin_expect(snap->yy_reduce_ofst == NULL, 0)) return snap->yy_no_action;
 
     int32_t ofst = snap->yy_reduce_ofst[stateno];
-    int32_t idx = (int32_t)ofst + (int32_t)lookahead;
+    int32_t idx = ofst + (int32_t)lookahead;
 
-    if (idx >= 0 && (uint32_t)idx < snap->lookahead_count && snap->yy_lookahead[idx] == lookahead) {
+    if (__builtin_expect(idx >= 0 && (uint32_t)idx < snap->lookahead_count
+                             && snap->yy_lookahead[idx] == lookahead,
+                         1)) {
         return snap->yy_action[idx];
     }
     return snap->yy_default[stateno];

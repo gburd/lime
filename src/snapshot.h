@@ -215,6 +215,14 @@ typedef struct ParserSnapshot {
     /** Reserved for a future JIT compilation context that can cache
     ** machine code generated from the action tables. */
     void *jit_ctx;
+
+    /** Cached pointer to the JIT'd jit_find_shift_action function, or
+    ** NULL if no JIT is attached.  Hot-path optimisation: avoids a
+    ** chase through jit_ctx -> find_shift_action_fn on every token.
+    ** Set in lime_jit_compile, cleared in snapshot_release.  Type is
+    ** uint32_t (*)(uint32_t state, uint32_t lookahead) -- declared as
+    ** void* so this header doesn't need to pull in jit_context.h. */
+    void *jit_find_shift_fn;
 } ParserSnapshot;
 
 /*
