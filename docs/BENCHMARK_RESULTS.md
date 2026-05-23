@@ -46,11 +46,31 @@ does not expose stable per-core pinning.
     rows below fall through to the interpreter on this host.
   * **Pinning:** `taskset -c 0`
 
+### icarus — Sun UltraSPARC, OpenIndiana 2026.04 / SPARC v9 (big-endian)
+
+  * **CPU:** SPARC v9 @ 1.6 GHz, 2 virtual processors,
+    SUNW,A70.  64-bit big-endian.  VIS / VIS2 SIMD instructions
+    (not used by Lime; SIMD tokenizer falls back to scalar
+    portable path).
+  * **OS:** OpenIndiana Hipster 2026.04, illumos
+    `illumos-31d3d510d0`.
+  * **Compilers tested:** gcc 14.2 (system) and clang 21.1.8
+    (OpenIndiana ports).  clang requires `--buildtype=release`
+    on this host (debug DWARF triggers SPARC-specific
+    relocation errors at link time).
+  * **simdjson:** not installed; `bench_simdjson_compare`
+    skipped at configure time.
+  * **Allocator:** Solaris libc malloc.
+  * **JIT:** disabled (LLVM dev not bound for the build); same
+    skip semantics as rv.
+  * **Pinning:** none (no per-core taskset analogue exposed in
+    this OpenIndiana userland).
+
 The nuc and rv are the trustworthy hosts: dedicated, mostly idle,
-predictable schedulers.  The M3 Pro is a developer laptop; its
-per-run stddev is **5-17× larger** than the nuc/rv on the same
-metric.  This is exactly why the user routes long-running
-benchmarks elsewhere.
+predictable schedulers.  icarus is similarly dedicated.  The M3
+Pro is a developer laptop; its per-run stddev is **5-17× larger**
+than the nuc/rv on the same metric.  This is exactly why the user
+routes long-running benchmarks elsewhere.
 
 ## Reproduce
 
@@ -166,6 +186,23 @@ Likely cause: Bison's pull-parser-with-Flex pattern has more
 function-call overhead than Lime's push parser, and on a
 narrower-issue RISC-V core (1.6 GHz, no SIMD) that overhead
 dominates more.
+
+### icarus — SPARC v9 big-endian / OpenIndiana (no simdjson)
+
+5-run sample on the arith parser-only benchmark:
+
+| toolchain    | min (ms) | mean (ms) | std (ms) |
+|--------------|---------:|----------:|---------:|
+| gcc 14.2     |   365.14 |    374.15 |     ~10  |
+| clang 21.1.8 |   313.74 |    317.43 |     ~2   |
+
+This is the slowest host of the four (~10× the nuc on the same
+benchmark) which is consistent with 1.6 GHz vs 3.1 GHz, narrower
+SPARC issue width, and big-endian byte order forcing the action-
+table loads through endianness-aware accessors.  No JIT and no
+simdjson, but the FreeBSD/Linux unrolled-switch dispatch path
+works correctly on the platform — exactly the portability check
+the user wanted.
 
 ## Results — Lime+JIT vs simdjson (steady state, three Lime alloc modes)
 

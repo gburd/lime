@@ -255,7 +255,7 @@ The runtime extension library exports symbols in three naming schemes:
 | Prefix | Scope | Examples |
 |--------|-------|----------|
 | `lime_*`, `Lime*`, `LIME_*` | Preferred modern API | `lime_arena_create`, `LimePluginHandle`, `LIME_PLUGIN_ABI_VERSION` |
-| `lemon_*` | Legacy (snapshot/registry) | `lemon_snapshot_create`, `lemon_parser_version` |
+| `lemon_*` | Legacy (snapshot/registry) | `lime_snapshot_create`, `lime_parser_version` |
 | Unprefixed | Internal/runtime API | `parse_begin`, `Token`, `Tokenizer`, `ExtensionRegistry`, `snapshot_acquire` |
 
 If you embed the library directly in your project (Option 3), the

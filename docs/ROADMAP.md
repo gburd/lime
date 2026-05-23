@@ -16,7 +16,7 @@ Items are listed in rough order of impact.
 - `lime -n` emits a `<Prefix>BuildSnapshot()` builder AND embeds the
   original grammar source as a `static const unsigned char[]` so the
   runtime can rebuild against a merged grammar.
-- `lemon_snapshot_create("foo.y", &err)` runs the lime + cc
+- `lime_snapshot_create("foo.y", &err)` runs the lime + cc
   subprocess pipeline on a grammar file and returns a populated
   snapshot.  See `src/snapshot_create.c` and
   `tests/test_snapshot_create.c` (8/8 PASS).

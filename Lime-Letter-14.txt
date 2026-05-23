@@ -1,0 +1,162 @@
+To:        Lime maintainer
+From:      PostgreSQL migration team
+Subject:   v0.2.4 adoption + integration questions for lemon_snapshot_create
+Tag:       Lime v0.2.4 (`9da2453`)
+
+
+Summary
+-------
+
+Adopted v0.2.4 cleanly.  Both PG-side workarounds reverted:
+
+  - pgc.c driver's `consumed == 0 && have_token` branch (commit
+    5262c18e353)
+  - cube's "Cube" -> "A cube" string rewording (commit
+    c1d05209ace)
+
+Tests at 346/0/35 throughout.
+
+Two questions about the new public APIs we'd like to use, plus
+one bug report.
+
+
+Question 1: How do PG-style integrators use lemon_snapshot_create() ?
+--------------------------------------------------------------------
+
+The README / extension authoring guide assumes the
+parse_begin/parse_token/parse_end loop drives parsing.  PG's
+existing parser invocation is
+
+    int base_yyparse(core_yyscan_t scanner);
+
+which loops internally calling base_yylex(yylval, yylloc) and
+running reduce actions inline (via the static gram.c that lime
+emits).  Function-pointer dispatch to base_yyparse is how Phase 4
+Track A's subprocess-rebuilt parser is invoked.
+
+If we adopt lemon_snapshot_create() at the static gram.lime level,
+we need the snapshot path's parse_token API.  Concrete questions:
+
+1. Is there a way to call the static reduce actions (compiled into
+   gram.c) from the parse_token() driver?  Right now the actions
+   reach into base_yylval / base_yylloc -- file-static pointers
+   that the static yyparse's reduce switch dereferences.  The
+   parse_token path passes `void *token_value` which the action
+   would need to interpret, but the action body is generated C
+   that expects the union directly.
+
+2. parse_token's location is `int location` (single offset).  PG's
+   YYLTYPE is
+
+       typedef struct YYLTYPE {
+           int first_column;
+           int last_column;  // unused since 11
+       } YYLTYPE;
+
+   Currently single-int compatible; just confirming the calling
+   convention treats `location` as that first_column byte offset.
+
+3. The existing static yyparse is invoked by raw_parser() from a
+   single thread per backend (one parse session at a time).  Is
+   there overhead in the parse_begin/parse_end pair versus a
+   long-lived ParseContext?  PG creates a new MemoryContext per
+   parse; we'd want symmetry.
+
+We can answer these by reading parse_engine.c and writing a
+prototype, but the questions feel canonical.  An "integrating Lime
+into a project that has its own scanner+actions" guide would
+probably help several future integrators.
+
+
+Question 2: How does an LLVM-using PG actually use lime_jit_compile()?
+---------------------------------------------------------------------
+
+The roadmap goal in PG's AGENTS.md is:
+
+  "When Lime is built with LLVM, the backend SQL parser's action-
+  table dispatch uses Lime's JIT.  When LLVM is absent, everything
+  falls through to the interpreter."
+
+The `lime_jit_compile(snap)` API operates on a ParserSnapshot.
+Two concrete questions:
+
+1. Is JIT only meaningful for the snapshot path (parse_token), or
+   does it also speed up the static action-table dispatch (the
+   yy_action / yy_lookahead / yy_shift_ofst tables in the
+   generated gram.c)?  If the latter, is there a way to invoke
+   the JIT against the static tables without going through
+   ParserSnapshot?
+
+2. Is the AOT path (`lime -j`, *_aot.c) the static-codegen
+   equivalent of the JIT?  Reading the codegen, it's a switch-
+   based yy_find_shift_action_aot() that the C compiler turns
+   into a jump table.  If yes, that would be the natural fit
+   for our static gram.c -- compile with -DYYAOT and link the
+   _aot.c.  See bug report below.
+
+
+Bug: lime -j crashes with "free(): invalid size" on every PG grammar
+---------------------------------------------------------------------
+
+Repro on v0.2.4 (commit 9da2453):
+
+  $ lime -j -d. examples/calc/calc.lime
+  free(): invalid size
+
+Tested also on:
+  - syncrep_gram.lime  (~30 rules; PG branch)
+  - segparse.lime      (~10 rules; PG branch)
+  - gram.lime          (~5000 states; PG backend SQL parser)
+
+All produce the same error and a zero-byte *_aot.c output.
+
+Likely a double-free or out-of-bounds free in ReportAOTTable
+(lime.c:5703).  Bisect not done; reproducer is small enough
+(any non-trivial grammar).
+
+This blocks our ability to evaluate whether -j is the right
+fit for the static gram.lime path.  Question 2 above depends
+on this.
+
+
+Adoption ledger after v0.2.4
+----------------------------
+
+Closed (PG-side cleanup landed):
+  - pgc.c EOF workaround removed
+  - cube rewording reverted
+
+Open (architectural; need guidance from upstream):
+  - Migration to ParserSnapshot/parse_token (see Q1)
+  - JIT integration with PG's MemoryContext-per-parse model (see Q2)
+  - -j AOT path validation (blocked on bug above)
+
+Not in this letter:
+  - seg / pg_plan_advice cosmetic error-message DETAIL deltas
+    (independent of v0.2.4; rooted in Lime's LALR push parser
+    reporting errors at the offending token vs Bison's pull-mode
+    at-EOF reporting).  No PG-side path to "fix" without making
+    Lime's error reporting less precise, which we don't want.
+
+  - Phase 4 Track A migration to lemon_snapshot_create() pipeline
+    (the subprocess work is currently re-implemented in
+    parser_extension.c; could collapse to library calls if Q1's
+    integration question resolves).
+
+Phase 4 Track B (in-process snapshot patching, no subprocess) is
+still on your timeline per Reply 13.
+
+
+Repository / commits since Letter 13
+------------------------------------
+
+  c1d05209ace  contrib/cube: revert P0-NEW-11 string-rewording
+               workaround under v0.2.4
+  5262c18e353  build: bump Lime to v0.2.4; revert pgc.c
+               EOF-emit workaround
+  b1dfb1f8b74  dev - Phase 5 closeout: Letter 13 + dashboard
+               + meson.build comment refresh
+
+Pin: Lime v0.2.4 (`9da2453`).
+
+End of letter.

@@ -24,9 +24,9 @@ Snapshots are the unit of concurrency: multiple threads can parse
 simultaneously by acquiring references to the same snapshot.
 
 ```
-ParserSnapshot *snap = lemon_snapshot_create("sql.y", &err);
-lemon_snapshot_acquire(snap);   /* +1 refcount */
-lemon_snapshot_release(snap);   /* -1 refcount, freed at 0 */
+ParserSnapshot *snap = lime_snapshot_create("sql.y", &err);
+lime_snapshot_acquire(snap);   /* +1 refcount */
+lime_snapshot_release(snap);   /* -1 refcount, freed at 0 */
 ```
 
 Snapshots are created from a grammar file or by modifying an existing

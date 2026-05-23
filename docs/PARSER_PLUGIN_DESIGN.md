@@ -306,7 +306,7 @@ parser_manager_set_active(mgr, h, "grammar.y")
    parse_begin(snap)                         // refcount = 3
    |  snapshot_acquire(snap)
    |
-   lemon_snapshot_release(snap)              // caller drops ref, refcount = 2
+   lime_snapshot_release(snap)              // caller drops ref, refcount = 2
    |
    parser_manager_hot_swap(mgr, h2, "new.y")
    |  new_snap = plugin2->create_snapshot()
@@ -330,8 +330,8 @@ ParserSnapshot *base = parser_manager_get_snapshot(mgr);
 ParserSnapshot *modified;
 create_modified_snapshot(base, mods, nmods, registry, &modified, NULL, NULL);
 parser_manager_set_snapshot(mgr, modified);
-lemon_snapshot_release(modified);
-lemon_snapshot_release(base);
+lime_snapshot_release(modified);
+lime_snapshot_release(base);
 ```
 
 ### JIT Compilation
@@ -370,7 +370,7 @@ static uint32_t my_get_capabilities(void) { return LIME_CAP_SNAPSHOT; }
 
 static ParserSnapshot *my_create_snapshot(const char *grammar_file,
                                           char **error) {
-    return lemon_snapshot_create(grammar_file, error);
+    return lime_snapshot_create(grammar_file, error);
 }
 
 static void my_destroy(void) { /* cleanup */ }
