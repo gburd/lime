@@ -5910,48 +5910,33 @@ static void emit_symbol_prefix_block(FILE *out, struct lime *lemp, int *lineno) 
     /* Trace globals */
     "yyTraceFILE", "yyTracePrompt",
     /* Internal types */
-    "yyParser", "yyStackEntry", "YYMINORTYPE",
+    "yyParser", "yyStackEntry",
     /* Internal helpers (file-static today, but their names still appear
-    ** in debug info / object dumps) */
-    "yyGrowStack", "yy_destructor", "yy_pop_parser_stack",
+    ** in debug info / object dumps).  yyGrowStack is intentionally
+    ** omitted -- limpar.c may #define it to a no-op macro under
+    ** #if !YYGROWABLESTACK, and the prefix would then collide with
+    ** that conditional redefinition. */
+    "yy_destructor", "yy_pop_parser_stack",
     "yy_find_shift_action", "yy_find_reduce_action", "yyStackOverflow",
     "yyTraceShift", "yy_shift", "yy_reduce", "yy_accept",
     "yy_parse_failed", "yy_syntax_error",
     NULL,
   };
   /*
-  ** YY_* macros safe to prefix.  We DO NOT prefix names that are
-  ** tested in #if / #ifdef / #ifndef expressions inside limpar.c,
-  ** because those tests would see the prefixed name (defined as
-  ** the unprefixed identifier) and resolve incorrectly.  See
-  ** docs/lime_grammar(5) for the full list of conditional names.
+  ** YY_* macros INTENTIONALLY excluded from the prefix block:
+  ** they are compile-time integer / string constants that never
+  ** appear in the object file's symbol table, so prefixing them
+  ** yields no link-time benefit.  Doing so would also generate
+  ** spurious -Wmacro-redefined warnings because lime's emit
+  ** subsequently re-#defines them with their actual values, and
+  ** would break #if expressions that test their values.
   **
-  ** Names intentionally OMITTED:
-  **   YYWILDCARD, YYFALLBACK, YYLOCATIONTYPE,
-  **   YYTRACKMAXSTACKDEPTH, YYNOERRORRECOVERY, YYAOT,
-  **   YYERRORSYMBOL, YYEMPTY, YYSIZELIMIT, YYMALLOCARGTYPE,
-  **   YYPARSEFREENEVERNULL  -- tested with #ifdef / #ifndef
-  **   YYSTACKDEPTH, YYDYNSTACK, YYGROWABLESTACK, YYCOVERAGE,
-  **   YYFIRSTTOKEN  -- tested with #if <value>
-  **   YYREALLOC, YYFREE  -- function-like aliases
-  **
-  ** These names remain in their unprefixed form in the emitted .c.
-  ** That is acceptable because (a) they are file-static defines and
-  ** thus carry no link-time risk, and (b) the dominant collision
-  ** vector -- combining two grammars into one TU -- is solved by
-  ** prefixing the table arrays and types.
+  ** The collision risk addressed by %symbol_prefix is the
+  ** SYMBOL-table side: yy_action, yyParser, yy_destructor, etc.
+  ** Those are file-static names that nm and the linker observe.
+  ** They get prefixed below.
   */
   static const char *yy_macros[] = {
-    "YYCODETYPE", "YYNOCODE", "YYACTIONTYPE",
-    "YYNRHS_MAX",
-    "YYNSTATE", "YYNRULE", "YYNRULE_WITH_ACTION", "YYNTOKEN",
-    "YY_MAX_SHIFT", "YY_MIN_SHIFTREDUCE", "YY_MAX_SHIFTREDUCE",
-    "YY_ERROR_ACTION", "YY_ACCEPT_ACTION", "YY_NO_ACTION",
-    "YY_MIN_REDUCE", "YY_MAX_REDUCE",
-    "YY_MIN_DSTRCTR", "YY_MAX_DSTRCTR",
-    "YY_NLOOKAHEAD", "YY_ACTTAB_COUNT",
-    "YY_SHIFT_COUNT", "YY_SHIFT_MIN", "YY_SHIFT_MAX",
-    "YY_REDUCE_COUNT", "YY_REDUCE_MIN", "YY_REDUCE_MAX",
     NULL,
   };
 

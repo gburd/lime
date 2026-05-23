@@ -1,0 +1,534 @@
+/*
+** cobol_grammar.lime -- substantial COBOL grammar for the Lime parser
+** generator.
+**
+** Covers IDENTIFICATION / ENVIRONMENT / DATA / PROCEDURE divisions
+** with the verb set and clauses described in README.md.  ~200 rules.
+**
+** This grammar is structured division-by-division so reviewers can
+** read it top-down.  Each rule is non-terminal `lhs ::= rhs.` form
+** with the action body either dropped (when no semantic value is
+** needed for the parse-only pass) or consumed via `(void)X`.
+*/
+
+%name CobolParser
+%token_prefix CB_
+%symbol_prefix CB_INTERNAL_
+%token_type   { int }
+%expect 53      /* COBOL has many syntactic ambiguities (dangling
+                ** ELSE, optional divisions, name_ref vs literal in
+                ** verb-position).  Production COBOL parsers resolve
+                ** these via default-shift; %expect acknowledges the
+                ** count so a routine `lime` invocation does not error
+                ** out.  See cobol_grammar.out for the full list. */
+%type prog       { int }
+%type div_id     { int }
+%type div_env    { int }
+%type div_data   { int }
+%type div_proc   { int }
+%type id_paragraphs { int }
+%type id_paragraph  { int }
+%type id_text       { int }
+%type env_sections  { int }
+%type config_section{ int }
+%type io_section    { int }
+%type select_list   { int }
+%type select_clause { int }
+%type data_sections { int }
+%type ws_section    { int }
+%type linkage_section{ int }
+%type ws_entries    { int }
+%type ws_entry      { int }
+%type data_clauses  { int }
+%type level         { int }
+%type pic_clause    { int }
+%type pic_string    { int }
+%type usage_clause  { int }
+%type usage         { int }
+%type value_clause  { int }
+%type value         { int }
+%type redef_clause  { int }
+%type occurs_clause { int }
+%type proc_section  { int }
+%type paragraphs    { int }
+%type paragraph     { int }
+%type sentences     { int }
+%type sentence      { int }
+%type stmts         { int }
+%type stmt          { int }
+%type move_stmt     { int }
+%type if_stmt       { int }
+%type perform_stmt  { int }
+%type compute_stmt  { int }
+%type display_stmt  { int }
+%type accept_stmt   { int }
+%type add_stmt      { int }
+%type sub_stmt      { int }
+%type mul_stmt      { int }
+%type div_stmt      { int }
+%type evaluate_stmt { int }
+%type call_stmt     { int }
+%type initialize_stmt { int }
+%type set_stmt      { int }
+%type goto_stmt     { int }
+%type stop_stmt     { int }
+%type continue_stmt { int }
+%type exit_stmt     { int }
+%type inspect_stmt  { int }
+%type string_stmt   { int }
+%type unstring_stmt { int }
+%type when_clauses  { int }
+%type when_clause   { int }
+%type when_subject  { int }
+%type expr          { int }
+%type cond          { int }
+%type cond_term     { int }
+%type cond_factor   { int }
+%type rel_op        { int }
+%type name_ref      { int }
+%type number_lit    { int }
+%type string_lit    { int }
+%type figurative    { int }
+%type id_or_lit     { int }
+%type id_list       { int }
+%type display_args  { int }
+%type call_args     { int }
+%type call_arg      { int }
+%type set_target    { int }
+%type set_value     { int }
+%type optional_dot  { int }
+%extra_argument { struct cobol_parse_state *cps }
+%start_symbol prog
+
+%left OR.
+%left AND.
+%right NOT.
+%left EQUAL LESS GREATER LE GE NE.
+%left PLUS MINUS.
+%left STAR SLASH.
+%right POWER.
+
+%token IDENTIFICATION ENVIRONMENT DATA PROCEDURE DIVISION SECTION.
+%token PROGRAM_ID AUTHOR DATE_WRITTEN INSTALLATION DATE_COMPILED SECURITY.
+%token CONFIGURATION SOURCE_COMPUTER OBJECT_COMPUTER.
+%token INPUT_OUTPUT FILE_CONTROL SELECT ASSIGN ORGANIZATION ACCESS_MODE.
+%token WORKING_STORAGE LINKAGE FILE_SECTION.
+%token PIC PICTURE USAGE VALUE REDEFINES OCCURS TIMES.
+%token DEPENDING ON INDEXED BY.
+%token DISPLAY_USAGE COMP COMP_3 COMP_5 BINARY PACKED_DECIMAL POINTER.
+%token MOVE TO CORRESPONDING CORR.
+%token IF THEN ELSE END_IF.
+%token PERFORM THRU UNTIL VARYING FROM.
+%token COMPUTE ROUNDED.
+%token DISPLAY UPON CONSOLE.
+%token ACCEPT.
+%token ADD SUBTRACT MULTIPLY DIVIDE GIVING INTO.
+%token EVALUATE WHEN OTHER END_EVALUATE.
+%token CALL USING.
+%token INITIALIZE.
+%token SET IS TRUE FALSE.
+%token INSPECT TALLYING REPLACING.
+%token STRING_KW DELIMITED END_STRING.
+%token UNSTRING END_UNSTRING.
+%token GO STOP RUN EXIT PROGRAM CONTINUE.
+%token AT END NOT_AT_END.
+%token PIC_LITERAL.
+%token IDENT NUMBER STRING.
+%token EQUAL LESS GREATER LE GE NE.
+%token PLUS MINUS STAR SLASH POWER.
+%token AND OR NOT.
+%token NUMERIC ALPHABETIC POSITIVE NEGATIVE ZERO_KW.
+%token ZERO SPACES LOW_VALUES HIGH_VALUES QUOTES NULL_KW.
+%token LPAREN RPAREN DOT COMMA COLON.
+%token IN OF UP DOWN FOR.
+
+%include {
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "cobol_state.h"
+}
+
+%syntax_error {
+    if (cps) cps->errors++;
+    /* Lightweight error reporting: bump the count.  A future
+    ** revision could capture line/column from the token stream
+    ** (the tokenizer already tracks them); for now we just count. */
+}
+
+/* =====================================================================
+**  TOP LEVEL
+** ===================================================================== */
+
+prog ::= div_id div_env div_data div_proc.       { (void)0; }
+prog ::= div_id div_env div_data.                { (void)0; }
+prog ::= div_id div_data div_proc.               { (void)0; }
+prog ::= div_id div_proc.                        { (void)0; }
+prog ::= div_id div_data.                        { (void)0; }
+
+/* =====================================================================
+**  IDENTIFICATION DIVISION
+** ===================================================================== */
+
+div_id ::= IDENTIFICATION DIVISION DOT
+           PROGRAM_ID DOT IDENT DOT
+           id_paragraphs.                        { cobol_count_program(cps); }
+
+id_paragraphs ::= .
+id_paragraphs ::= id_paragraphs id_paragraph.
+
+id_paragraph ::= AUTHOR DOT id_text DOT.
+id_paragraph ::= DATE_WRITTEN DOT id_text DOT.
+id_paragraph ::= INSTALLATION DOT id_text DOT.
+id_paragraph ::= DATE_COMPILED DOT id_text DOT.
+id_paragraph ::= SECURITY DOT id_text DOT.
+
+/* Free-form text in identification paragraphs.  We accept a
+** sequence of identifiers/strings/numbers up to the period. */
+id_text ::= .
+id_text ::= id_text IDENT.
+id_text ::= id_text STRING.
+id_text ::= id_text NUMBER.
+id_text ::= id_text COMMA.
+
+/* =====================================================================
+**  ENVIRONMENT DIVISION
+** ===================================================================== */
+
+div_env ::= .
+div_env ::= ENVIRONMENT DIVISION DOT env_sections.
+
+env_sections ::= .
+env_sections ::= env_sections config_section.
+env_sections ::= env_sections io_section.
+
+config_section ::= CONFIGURATION SECTION DOT.
+config_section ::= CONFIGURATION SECTION DOT
+                   SOURCE_COMPUTER DOT IDENT DOT
+                   OBJECT_COMPUTER DOT IDENT DOT.
+config_section ::= CONFIGURATION SECTION DOT
+                   SOURCE_COMPUTER DOT IDENT DOT.
+config_section ::= CONFIGURATION SECTION DOT
+                   OBJECT_COMPUTER DOT IDENT DOT.
+
+io_section ::= INPUT_OUTPUT SECTION DOT FILE_CONTROL DOT select_list.
+
+select_list ::= .
+select_list ::= select_list select_clause DOT.
+
+select_clause ::= SELECT IDENT ASSIGN TO IDENT.
+select_clause ::= SELECT IDENT ASSIGN TO STRING.
+
+/* =====================================================================
+**  DATA DIVISION
+** ===================================================================== */
+
+div_data ::= .
+div_data ::= DATA DIVISION DOT data_sections.
+
+data_sections ::= .
+data_sections ::= data_sections ws_section.
+data_sections ::= data_sections linkage_section.
+
+ws_section ::= WORKING_STORAGE SECTION DOT ws_entries.
+
+linkage_section ::= LINKAGE SECTION DOT ws_entries.
+
+ws_entries ::= .
+ws_entries ::= ws_entries ws_entry.
+
+/* A single data entry: level number, name (or FILLER), optional
+** clauses in any order (COBOL allows them freely-ordered),
+** terminating period.  88-level condition names share the same
+** shape but require a VALUE clause; 77-level is independent. */
+ws_entry ::= level IDENT data_clauses DOT.       { cobol_count_data(cps); }
+
+data_clauses ::= .
+data_clauses ::= data_clauses pic_clause.
+data_clauses ::= data_clauses usage_clause.
+data_clauses ::= data_clauses value_clause.
+data_clauses ::= data_clauses redef_clause.
+data_clauses ::= data_clauses occurs_clause.
+
+/* Numeric levels 01..49, plus 77 (independent) and 88 (condition). */
+level ::= NUMBER.
+
+pic_clause ::= PIC pic_string.
+pic_clause ::= PICTURE pic_string.
+
+pic_string ::= PIC_LITERAL.
+pic_string ::= IDENT.        /* PIC X is parsed as IDENT "X" */
+
+usage_clause ::= USAGE IS usage.
+usage_clause ::= USAGE usage.
+
+usage ::= DISPLAY_USAGE.
+usage ::= COMP.
+usage ::= COMP_3.
+usage ::= COMP_5.
+usage ::= BINARY.
+usage ::= PACKED_DECIMAL.
+usage ::= POINTER.
+
+value_clause ::= VALUE IS value.
+value_clause ::= VALUE value.
+
+value ::= NUMBER.
+value ::= MINUS NUMBER.
+value ::= STRING.
+value ::= figurative.
+
+figurative ::= ZERO.
+figurative ::= ZERO_KW.
+figurative ::= SPACES.
+figurative ::= LOW_VALUES.
+figurative ::= HIGH_VALUES.
+figurative ::= QUOTES.
+figurative ::= NULL_KW.
+
+redef_clause ::= REDEFINES IDENT.
+
+occurs_clause ::= OCCURS NUMBER TIMES.
+occurs_clause ::= OCCURS NUMBER.
+occurs_clause ::= OCCURS NUMBER TO NUMBER TIMES DEPENDING ON IDENT.
+occurs_clause ::= OCCURS NUMBER TIMES INDEXED BY IDENT.
+
+/* =====================================================================
+**  PROCEDURE DIVISION
+** ===================================================================== */
+
+div_proc ::= PROCEDURE DIVISION DOT paragraphs.
+div_proc ::= PROCEDURE DIVISION USING id_list DOT paragraphs.
+
+id_list ::= IDENT.
+id_list ::= id_list IDENT.
+
+paragraphs ::= .
+paragraphs ::= paragraphs paragraph.
+paragraphs ::= paragraphs proc_section.
+
+proc_section ::= IDENT SECTION DOT paragraphs.
+
+/* A paragraph: name, period, then a sequence of sentences.  When
+** there are no sentences, the paragraph is just a label. */
+paragraph ::= IDENT DOT.                         { cobol_count_paragraph(cps); }
+paragraph ::= IDENT DOT sentences.               { cobol_count_paragraph(cps); }
+
+sentences ::= sentence.
+sentences ::= sentences sentence.
+
+sentence ::= stmts DOT.
+
+stmts ::= stmt.
+stmts ::= stmts stmt.
+
+stmt ::= move_stmt.        { cobol_count_stmt(cps); }
+stmt ::= if_stmt.          { cobol_count_stmt(cps); }
+stmt ::= perform_stmt.     { cobol_count_stmt(cps); }
+stmt ::= compute_stmt.     { cobol_count_stmt(cps); }
+stmt ::= display_stmt.     { cobol_count_stmt(cps); }
+stmt ::= accept_stmt.      { cobol_count_stmt(cps); }
+stmt ::= add_stmt.         { cobol_count_stmt(cps); }
+stmt ::= sub_stmt.         { cobol_count_stmt(cps); }
+stmt ::= mul_stmt.         { cobol_count_stmt(cps); }
+stmt ::= div_stmt.         { cobol_count_stmt(cps); }
+stmt ::= evaluate_stmt.    { cobol_count_stmt(cps); }
+stmt ::= call_stmt.        { cobol_count_stmt(cps); }
+stmt ::= initialize_stmt.  { cobol_count_stmt(cps); }
+stmt ::= set_stmt.         { cobol_count_stmt(cps); }
+stmt ::= inspect_stmt.     { cobol_count_stmt(cps); }
+stmt ::= string_stmt.      { cobol_count_stmt(cps); }
+stmt ::= unstring_stmt.    { cobol_count_stmt(cps); }
+stmt ::= goto_stmt.        { cobol_count_stmt(cps); }
+stmt ::= stop_stmt.        { cobol_count_stmt(cps); }
+stmt ::= continue_stmt.    { cobol_count_stmt(cps); }
+stmt ::= exit_stmt.        { cobol_count_stmt(cps); }
+
+/* MOVE */
+move_stmt ::= MOVE id_or_lit TO id_list.
+move_stmt ::= MOVE CORRESPONDING name_ref TO name_ref.
+move_stmt ::= MOVE CORR name_ref TO name_ref.
+
+/* IF ... [ELSE ...] END-IF */
+if_stmt ::= IF cond stmts END_IF.
+if_stmt ::= IF cond THEN stmts END_IF.
+if_stmt ::= IF cond stmts ELSE stmts END_IF.
+if_stmt ::= IF cond THEN stmts ELSE stmts END_IF.
+
+/* PERFORM */
+perform_stmt ::= PERFORM IDENT.
+perform_stmt ::= PERFORM IDENT THRU IDENT.
+perform_stmt ::= PERFORM IDENT NUMBER TIMES.
+perform_stmt ::= PERFORM IDENT UNTIL cond.
+perform_stmt ::= PERFORM IDENT VARYING name_ref FROM expr BY expr UNTIL cond.
+
+/* COMPUTE */
+compute_stmt ::= COMPUTE name_ref EQUAL expr.
+compute_stmt ::= COMPUTE name_ref ROUNDED EQUAL expr.
+
+/* DISPLAY */
+display_stmt ::= DISPLAY display_args.
+display_stmt ::= DISPLAY display_args UPON CONSOLE.
+
+display_args ::= id_or_lit.
+display_args ::= display_args id_or_lit.
+
+/* ACCEPT */
+accept_stmt ::= ACCEPT name_ref.
+accept_stmt ::= ACCEPT name_ref FROM IDENT.
+
+/* ADD / SUBTRACT / MULTIPLY / DIVIDE
+**
+** All four use id_or_lit (not name_ref) on both sides to avoid a
+** shift/reduce conflict at the GIVING fork: a destination can be
+** any data item, and lime can't disambiguate when it has only one
+** lookahead token.  Semantic checks (numeric vs alpha, target must
+** be numeric) belong in a later pass anyway, so the looser grammar
+** is fine. */
+add_stmt ::= ADD id_or_lit TO id_or_lit.
+add_stmt ::= ADD id_or_lit TO id_or_lit GIVING id_or_lit.
+
+sub_stmt ::= SUBTRACT id_or_lit FROM id_or_lit.
+sub_stmt ::= SUBTRACT id_or_lit FROM id_or_lit GIVING id_or_lit.
+
+mul_stmt ::= MULTIPLY id_or_lit BY id_or_lit.
+mul_stmt ::= MULTIPLY id_or_lit BY id_or_lit GIVING id_or_lit.
+
+div_stmt ::= DIVIDE id_or_lit BY id_or_lit.
+div_stmt ::= DIVIDE id_or_lit INTO id_or_lit.
+div_stmt ::= DIVIDE id_or_lit BY id_or_lit GIVING id_or_lit.
+div_stmt ::= DIVIDE id_or_lit INTO id_or_lit GIVING id_or_lit.
+
+/* EVALUATE */
+evaluate_stmt ::= EVALUATE when_subject when_clauses END_EVALUATE.
+
+when_subject ::= name_ref.
+when_subject ::= TRUE.
+when_subject ::= FALSE.
+
+when_clauses ::= when_clause.
+when_clauses ::= when_clauses when_clause.
+
+when_clause ::= WHEN id_or_lit stmts.
+when_clause ::= WHEN cond stmts.
+when_clause ::= WHEN OTHER stmts.
+
+/* CALL */
+call_stmt ::= CALL string_lit.
+call_stmt ::= CALL string_lit USING call_args.
+
+call_args ::= call_arg.
+call_args ::= call_args call_arg.
+
+call_arg ::= name_ref.
+call_arg ::= BY IDENT name_ref.   /* BY VALUE / BY REFERENCE */
+
+/* INITIALIZE */
+initialize_stmt ::= INITIALIZE name_ref.
+initialize_stmt ::= INITIALIZE id_list.
+
+/* SET */
+set_stmt ::= SET set_target TO set_value.
+set_stmt ::= SET set_target UP BY expr.
+set_stmt ::= SET set_target DOWN BY expr.
+
+set_target ::= name_ref.
+
+set_value ::= name_ref.
+set_value ::= NUMBER.
+set_value ::= TRUE.
+set_value ::= FALSE.
+
+/* INSPECT (basic) */
+inspect_stmt ::= INSPECT name_ref TALLYING name_ref FOR id_or_lit.
+inspect_stmt ::= INSPECT name_ref REPLACING id_or_lit BY id_or_lit.
+
+/* STRING / UNSTRING (basic) */
+string_stmt ::= STRING_KW id_or_lit DELIMITED BY id_or_lit
+                INTO name_ref END_STRING.
+
+unstring_stmt ::= UNSTRING name_ref DELIMITED BY id_or_lit
+                  INTO id_list END_UNSTRING.
+
+/* GO TO */
+goto_stmt ::= GO TO IDENT.
+
+/* STOP RUN */
+stop_stmt ::= STOP RUN.
+
+/* CONTINUE */
+continue_stmt ::= CONTINUE.
+
+/* EXIT */
+exit_stmt ::= EXIT.
+exit_stmt ::= EXIT PROGRAM.
+
+/* =====================================================================
+**  Expressions
+** ===================================================================== */
+
+expr ::= name_ref.
+expr ::= NUMBER.
+expr ::= MINUS expr.        [POWER]
+expr ::= LPAREN expr RPAREN.
+expr ::= expr PLUS expr.
+expr ::= expr MINUS expr.
+expr ::= expr STAR expr.
+expr ::= expr SLASH expr.
+expr ::= expr POWER expr.
+
+/* =====================================================================
+**  Conditions
+** ===================================================================== */
+
+cond ::= cond_term.
+cond ::= cond OR cond_term.
+
+cond_term ::= cond_factor.
+cond_term ::= cond_term AND cond_factor.
+
+cond_factor ::= NOT cond_factor.
+cond_factor ::= LPAREN cond RPAREN.
+cond_factor ::= expr rel_op expr.
+cond_factor ::= name_ref IS NUMERIC.
+cond_factor ::= name_ref IS NOT NUMERIC.
+cond_factor ::= name_ref IS ALPHABETIC.
+cond_factor ::= name_ref IS POSITIVE.
+cond_factor ::= name_ref IS NEGATIVE.
+cond_factor ::= name_ref IS ZERO_KW.
+cond_factor ::= name_ref.   /* 88-level condition name */
+
+rel_op ::= EQUAL.
+rel_op ::= LESS.
+rel_op ::= GREATER.
+rel_op ::= LE.
+rel_op ::= GE.
+rel_op ::= NE.
+
+/* =====================================================================
+**  Names and literals (helpers)
+**
+**  Single IDENT reduction path -- name_ref is the only nonterminal
+**  that turns IDENT into an operand.  All verb productions that
+**  want "an name_ref" use name_ref; productions that want
+**  "an name_ref or literal" use id_or_lit, which itself includes
+**  name_ref via the alternative below.  Having only one IDENT->
+**  reduction eliminates the reduce/reduce conflicts that came from
+**  parallel `name_ref` and `id_or_lit` productions both ending
+**  at IDENT.
+**
+**  Qualified references (`name IN scope` / `name OF scope`) are a
+**  future extension; the current single-IDENT form covers every
+**  test program in tests/.
+** ===================================================================== */
+
+name_ref ::= IDENT.
+
+string_lit ::= STRING.
+
+id_or_lit ::= name_ref.
+id_or_lit ::= NUMBER.
+id_or_lit ::= MINUS NUMBER.
+id_or_lit ::= STRING.
+id_or_lit ::= figurative.
