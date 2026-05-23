@@ -297,6 +297,11 @@ JITStatus jit_warmup(JITContext *ctx, const uint32_t *hot_states, uint32_t n) {
 
 struct JITContext {
     JITStats stats;
+    /* Mirror the real struct's slot so jit_attach_to_snapshot's
+    ** ctx->find_shift_action_fn reference compiles in LIME_NO_JIT
+    ** builds (the actual code path returns early from jit_create
+    ** with JIT_ERR_NO_LLVM and never dereferences ctx). */
+    void *find_shift_action_fn;
 };
 
 JITStatus jit_create(JITContext **ctx_out) {
