@@ -2,32 +2,49 @@
 ** bench_simdjson_compare.cpp -- Lime+JIT vs simdjson on a JSON
 ** workload, measured at steady state after warmup.
 **
-** This is a deliberately uneven comparison: simdjson is a
-** purpose-built SIMD JSON parser that operates on the full input
-** in vectorised passes; Lime is a generic LALR(1) parser generator
-** that happens to be hosting a JSON grammar.  simdjson is going to
-** win on raw bytes/sec.  The point of the benchmark is to put
-** *some* number on how close Lime gets and to make the trade-off
-** explicit.
+** Three Lime modes:
 **
-** Methodology:
-**   1. Warmup: 100,000 parses of the same document on each side.
-**   2. Steady state: 5 trials of 100,000 parses; report median.
-**   3. Both sides build the document tree on the heap and free it.
-**      For Lime, that means producing JsonValue nodes (full AST).
-**      For simdjson, we use ondemand to walk the document but do
-**      not materialise an external tree -- simdjson's "lazy"
-**      parsing means a faithful AST build would distort the
-**      comparison.  We measure simdjson in its native
-**      no-AST-allocation mode and explicitly call it out.
+**   1. lime+jit malloc        -- one malloc per JsonValue node
+**                                + json_free walks and releases.
+**                                The honest "build a tree, dispose
+**                                of it" cost.
+**   2. lime+jit malloc-leak   -- one malloc per node; json_free is
+**                                a no-op.  Isolates parse-only cost
+**                                without paying the deallocator.
+**                                For TESTING ONLY -- in production
+**                                this leaks every parse.
+**   3. lime+jit arena         -- single 1 MB pre-allocated arena;
+**                                bump-pointer alloc per node; reset
+**                                (not freed) between iterations.
+**                                Mirrors simdjson's allocation
+**                                model: parser owns big buffers,
+**                                resets between parses.
 **
-** Compiled as C++ to consume simdjson's API directly (it is a
-** C++ library; the JSON example is C).  The Lime side calls into
-** the C parser via extern "C".
+** simdjson:
+**
+**   ondemand parser, internal buffers reused across parses
+**   (its standard steady-state pattern).  The driver forces a
+**   full document walk so we are not just measuring time-to-first-
+**   token.
+**
+** simdjson's allocation model (verified by reading
+** /opt/homebrew/include/simdjson.h on the build host):
+**
+**   - dom_parser_implementation::allocate() does one
+**     `new uint8_t[string_capacity]` and one
+**     `new uint64_t[tape_capacity]`.
+**   - These buffers are reset (`tape.reset()`, `string_buf.reset()`)
+**     between parses, not freed.  In ondemand mode the parser
+**     keeps a small string_buf and walks the input tape directly.
+**   - End result: in steady state, simdjson does effectively zero
+**     allocations per parse.
+**
+** The ARENA mode in this driver is the apples-to-apples comparison.
 */
 
 #include <simdjson.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -81,10 +98,11 @@ static double now_ms() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Lime+JIT driver: build full JsonValue AST                          */
+/*  Lime drivers                                                       */
 /* ------------------------------------------------------------------ */
 
-static double bench_lime(ParserSnapshot *snap, int iters) {
+static double bench_lime_malloc(ParserSnapshot *snap, int iters) {
+    json_set_alloc_mode(JSON_ALLOC_MALLOC);
     double t0 = now_ms();
     int total = 0;
     for (int i = 0; i < iters; i++) {
@@ -92,7 +110,6 @@ static double bench_lime(ParserSnapshot *snap, int iters) {
         json_scanner_init(&sc, kJsonInput, std::strlen(kJsonInput));
         void *parser = JsonAlloc(std::malloc);
         ParseContext *ctx = parse_begin(snap);
-        (void)ctx;
         JsonValue *root = nullptr;
         int tok;
         void *value;
@@ -112,19 +129,75 @@ static double bench_lime(ParserSnapshot *snap, int iters) {
     return t1 - t0;
 }
 
+static double bench_lime_leak(ParserSnapshot *snap, int iters) {
+    /* WARNING: leaks every iteration.  Pre-allocates a fresh OS heap
+    ** for itself by way of the loop; malloc throughput is what we
+    ** measure here, NOT free throughput. */
+    json_set_alloc_mode(JSON_ALLOC_MALLOC_NOFREE);
+    double t0 = now_ms();
+    int total = 0;
+    for (int i = 0; i < iters; i++) {
+        JsonScanner sc;
+        json_scanner_init(&sc, kJsonInput, std::strlen(kJsonInput));
+        void *parser = JsonAlloc(std::malloc);
+        ParseContext *ctx = parse_begin(snap);
+        JsonValue *root = nullptr;
+        int tok;
+        void *value;
+        while ((tok = json_scan(&sc, &value)) > 0) {
+            Json(parser, tok, value, &root);
+        }
+        Json(parser, 0, nullptr, &root);
+        JsonFree(parser, std::free);
+        if (ctx) parse_end(ctx);
+        if (root) total += root->type;
+        /* deliberate leak: no json_free */
+    }
+    double t1 = now_ms();
+    asm volatile("" : : "r"(total));
+    return t1 - t0;
+}
+
+static double bench_lime_arena(ParserSnapshot *snap, int iters) {
+    /* Single arena, pre-allocated, reset between iterations.  Mirrors
+    ** simdjson's "buffers owned by parser, reset between parses"
+    ** model.  Zero malloc/free in steady state. */
+    JsonArena arena;
+    json_arena_init(&arena, 1 << 20); /* 1 MB */
+    json_set_arena(&arena);
+    json_set_alloc_mode(JSON_ALLOC_ARENA);
+
+    double t0 = now_ms();
+    int total = 0;
+    for (int i = 0; i < iters; i++) {
+        json_arena_reset(&arena);
+        JsonScanner sc;
+        json_scanner_init(&sc, kJsonInput, std::strlen(kJsonInput));
+        void *parser = JsonAlloc(std::malloc);
+        ParseContext *ctx = parse_begin(snap);
+        JsonValue *root = nullptr;
+        int tok;
+        void *value;
+        while ((tok = json_scan(&sc, &value)) > 0) {
+            Json(parser, tok, value, &root);
+        }
+        Json(parser, 0, nullptr, &root);
+        JsonFree(parser, std::free);
+        if (ctx) parse_end(ctx);
+        if (root) total += root->type;
+    }
+    double t1 = now_ms();
+    asm volatile("" : : "r"(total));
+    json_arena_destroy(&arena);
+    json_set_arena(nullptr);
+    return t1 - t0;
+}
+
 /* ------------------------------------------------------------------ */
-/*  simdjson driver: validate + walk on-demand                         */
+/*  simdjson driver                                                    */
 /* ------------------------------------------------------------------ */
-/*
-** simdjson's ondemand API parses lazily as the user walks the
-** document.  We force a full traversal so the comparison is
-** apples-to-apples on "all of the input was processed".  We do
-** not materialise the document into an external tree; that would
-** be unfair to simdjson (its design is to skip that step).
-*/
+
 static double bench_simdjson(int iters) {
-    /* Allocate the parser and padded string once; reuse across
-    ** iterations.  Steady-state is what we want to measure. */
     simdjson::ondemand::parser parser;
     simdjson::padded_string input(kJsonInput, std::strlen(kJsonInput));
 
@@ -132,12 +205,8 @@ static double bench_simdjson(int iters) {
     int total = 0;
     for (int i = 0; i < iters; i++) {
         simdjson::ondemand::document doc = parser.iterate(input);
-
-        /* Walk the document fully.  Drains the lazy iterator so
-        ** we are not just measuring time-to-first-token. */
         for (auto field : doc.get_object()) {
-            std::string_view key = field.unescaped_key();
-            (void)key;
+            (void)field.unescaped_key();
             simdjson::ondemand::value v = field.value();
             switch (v.type()) {
                 case simdjson::ondemand::json_type::object:
@@ -164,8 +233,13 @@ static double bench_simdjson(int iters) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Main: warmup + 5-trial median                                      */
+/*  Main                                                               */
 /* ------------------------------------------------------------------ */
+
+static double median(std::vector<double> v) {
+    std::sort(v.begin(), v.end());
+    return v[v.size() / 2];
+}
 
 int main() {
     const int warmup = 50000;
@@ -179,58 +253,59 @@ int main() {
     std::printf("Warmup:   %d iterations per side\n", warmup);
     std::printf("Trials:   %d trials of %d iterations each\n\n", trials, iters);
 
-    /* Build snapshot, warm up, then JIT-compile and warm again. */
     ParserSnapshot *snap = JsonBuildSnapshot();
     if (!snap) { std::fprintf(stderr, "JsonBuildSnapshot returned NULL\n"); return 1; }
 
-    /* Warmup #1: cold caches, no JIT yet. */
-    bench_lime(snap, warmup);
-
+    /* JIT compile, then warm everything. */
     int rc = lime_jit_compile(snap);
-    std::printf("lime_jit_compile rc=%d (0 = ok)\n", rc);
+    std::printf("lime_jit_compile rc=%d (0 = ok)\n\n", rc);
 
-    /* Warmup #2: warm caches with JIT armed. */
-    bench_lime(snap, warmup);
-
-    /* simdjson warmup */
+    bench_lime_malloc(snap, warmup);
+    bench_lime_leak  (snap, warmup);
+    bench_lime_arena (snap, warmup);
     bench_simdjson(warmup);
 
-    std::vector<double> lime_times, simd_times;
+    std::vector<double> t_malloc, t_leak, t_arena, t_simd;
     for (int t = 0; t < trials; t++) {
-        double ms = bench_lime(snap, iters);
-        lime_times.push_back(ms);
-        std::printf("  trial %d  lime+jit     %8.2f ms  (%.0f ops/s)\n",
-                    t + 1, ms, iters / (ms / 1000.0));
+        double m = bench_lime_malloc(snap, iters);
+        double l = bench_lime_leak  (snap, iters);
+        double a = bench_lime_arena (snap, iters);
+        double s = bench_simdjson(iters);
+        t_malloc.push_back(m);
+        t_leak  .push_back(l);
+        t_arena .push_back(a);
+        t_simd  .push_back(s);
+        std::printf("trial %d  malloc %7.1f ms  leak %7.1f ms  arena %7.1f ms  simdjson %7.1f ms\n",
+                    t + 1, m, l, a, s);
     }
-    for (int t = 0; t < trials; t++) {
-        double ms = bench_simdjson(iters);
-        simd_times.push_back(ms);
-        std::printf("  trial %d  simdjson     %8.2f ms  (%.0f ops/s)\n",
-                    t + 1, ms, iters / (ms / 1000.0));
-    }
-
-    auto median = [](std::vector<double> v) {
-        std::sort(v.begin(), v.end());
-        return v[v.size() / 2];
-    };
-    double lm = median(lime_times);
-    double sm = median(simd_times);
 
     auto throughput_mbs = [&](double ms_per_iters) {
         double bytes_per_sec = (double)doc_bytes * iters / (ms_per_iters / 1000.0);
         return bytes_per_sec / (1024.0 * 1024.0);
     };
+    auto docs_per_sec = [&](double ms_per_iters) {
+        return iters / (ms_per_iters / 1000.0);
+    };
+
+    double m = median(t_malloc), l = median(t_leak),
+           a = median(t_arena),  s = median(t_simd);
 
     std::printf("\n=== Median across %d trials ===\n", trials);
-    std::printf("  lime+jit (full AST):  %8.2f ms  %7.1f MB/s  %.0f docs/s\n",
-                lm, throughput_mbs(lm), iters / (lm / 1000.0));
-    std::printf("  simdjson (ondemand):  %8.2f ms  %7.1f MB/s  %.0f docs/s\n",
-                sm, throughput_mbs(sm), iters / (sm / 1000.0));
-    std::printf("\n  simdjson speedup over lime+jit: %.2fx\n", lm / sm);
-    std::printf("\n  Note: simdjson does not materialise an external AST.\n"
-                "  Lime builds a full JsonValue tree per parse, then frees it.\n"
-                "  The comparison is a useful order-of-magnitude check, not a\n"
-                "  like-for-like benchmark.\n");
+    std::printf("  lime+jit malloc       %7.1f ms  %6.1f MB/s  %7.0f docs/s\n",
+                m, throughput_mbs(m), docs_per_sec(m));
+    std::printf("  lime+jit malloc-leak  %7.1f ms  %6.1f MB/s  %7.0f docs/s   (no free)\n",
+                l, throughput_mbs(l), docs_per_sec(l));
+    std::printf("  lime+jit arena        %7.1f ms  %6.1f MB/s  %7.0f docs/s   (zero alloc steady)\n",
+                a, throughput_mbs(a), docs_per_sec(a));
+    std::printf("  simdjson ondemand     %7.1f ms  %6.1f MB/s  %7.0f docs/s\n",
+                s, throughput_mbs(s), docs_per_sec(s));
+
+    std::printf("\n  free() cost (malloc - leak):  %.1f ms  (%.0f%% of malloc total)\n",
+                m - l, 100.0 * (m - l) / m);
+    std::printf("  alloc cost (leak - arena):    %.1f ms  (%.0f%% of malloc total)\n",
+                l - a, 100.0 * (l - a) / m);
+    std::printf("  remaining gap (arena/simd):   %.2fx\n", a / s);
+    std::printf("  full gap (malloc/simd):       %.2fx\n", m / s);
 
     snapshot_release(snap);
     return 0;

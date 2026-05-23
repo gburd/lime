@@ -10,6 +10,7 @@
 ** example.
 */
 #include "json_tokenize.h"
+#include "json.h"          /* json_alloc honors the current allocator */
 #include "json_grammar.h"
 
 #include <ctype.h>
@@ -39,50 +40,73 @@ static void skip_ws(JsonScanner *s) {
 }
 
 static char *scan_string_decoded(JsonScanner *s) {
-    /* On entry, *cursor == '"'. */
+    /* On entry, *cursor == '"'.  We can't bump-allocate a string
+    ** while it grows since we don't know the final size up-front,
+    ** so first pass: count bytes; second pass: copy.  This keeps
+    ** the arena allocator linear (one bump-alloc per string). */
     consume(s);
+    const char *start = s->cursor;
+    size_t out_len = 0;
+    while (s->cursor < s->end && *s->cursor != '"') {
+        if (*s->cursor == '\\' && s->cursor + 1 < s->end) {
+            char e = s->cursor[1];
+            if (e == 'u') {
+                /* \uXXXX -- pass through as 6 raw bytes (no decode) */
+                size_t skip = 2;
+                for (int i = 0; i < 4 && s->cursor + 2 + i < s->end; i++) skip++;
+                out_len += skip;
+                s->cursor += skip;
+            } else {
+                out_len += 1;
+                s->cursor += 2;
+            }
+        } else {
+            out_len++;
+            s->cursor++;
+        }
+    }
+    size_t consumed = (size_t)(s->cursor - start);
+    if (s->cursor < s->end && *s->cursor == '"') consume(s);
 
-    size_t cap = 32;
-    size_t len = 0;
-    char *buf = malloc(cap);
+    char *buf = json_alloc(out_len + 1);
     if (buf == NULL) return NULL;
 
-    while (s->cursor < s->end && *s->cursor != '"') {
-        if (len + 4 >= cap) { cap *= 2; buf = realloc(buf, cap); }
-        int c = consume(s);
-        if (c == '\\' && s->cursor < s->end) {
-            int e = consume(s);
+    /* Second pass: rewind and copy. */
+    const char *p = start;
+    size_t i = 0;
+    size_t end_off = consumed;
+    while ((size_t)(p - start) < end_off) {
+        if (*p == '\\' && (size_t)(p - start) + 1 < end_off) {
+            char e = p[1];
             switch (e) {
-                case '"': buf[len++] = '"'; break;
-                case '\\': buf[len++] = '\\'; break;
-                case '/': buf[len++] = '/'; break;
-                case 'b': buf[len++] = '\b'; break;
-                case 'f': buf[len++] = '\f'; break;
-                case 'n': buf[len++] = '\n'; break;
-                case 'r': buf[len++] = '\r'; break;
-                case 't': buf[len++] = '\t'; break;
-                /* Unicode escapes \uXXXX are accepted at the lexer
-                ** level but not decoded here -- keep the example
-                ** small.  Pass through as-is. */
+                case '"':  buf[i++] = '"';  p += 2; break;
+                case '\\': buf[i++] = '\\'; p += 2; break;
+                case '/':  buf[i++] = '/';  p += 2; break;
+                case 'b':  buf[i++] = '\b'; p += 2; break;
+                case 'f':  buf[i++] = '\f'; p += 2; break;
+                case 'n':  buf[i++] = '\n'; p += 2; break;
+                case 'r':  buf[i++] = '\r'; p += 2; break;
+                case 't':  buf[i++] = '\t'; p += 2; break;
                 case 'u':
-                    buf[len++] = '\\';
-                    buf[len++] = 'u';
-                    for (int i = 0; i < 4 && s->cursor < s->end; i++) {
-                        buf[len++] = consume(s);
+                    /* Pass through 6 bytes \\uXXXX */
+                    buf[i++] = '\\';
+                    buf[i++] = 'u';
+                    p += 2;
+                    for (int k = 0; k < 4 && p < start + end_off; k++) {
+                        buf[i++] = *p++;
                     }
                     break;
                 default:
-                    /* unknown escape; pass through */
-                    buf[len++] = '\\';
-                    buf[len++] = (char)e;
+                    buf[i++] = '\\';
+                    buf[i++] = e;
+                    p += 2;
                     break;
             }
         } else {
-            buf[len++] = (char)c;
+            buf[i++] = *p++;
         }
     }
-    if (s->cursor < s->end && *s->cursor == '"') consume(s);
-    buf[len] = '\0';
+    buf[i] = '\0';
     return buf;
 }
 
@@ -102,7 +126,7 @@ static char *scan_number(JsonScanner *s) {
         while (peek(s) >= '0' && peek(s) <= '9') consume(s);
     }
     size_t n = (size_t)(s->cursor - start);
-    char *buf = malloc(n + 1);
+    char *buf = json_alloc(n + 1);
     if (buf == NULL) return NULL;
     memcpy(buf, start, n);
     buf[n] = '\0';

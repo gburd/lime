@@ -106,6 +106,49 @@ database, a language server, a query engine).
 **SIMD is 1.78× faster** on classification.  End-to-end tokenizer
 throughput holds steady at 99-101 MB/s across input sizes.
 
+## Lime+JIT vs simdjson (orientation, not a fair fight)
+
+simdjson is a SIMD-accelerated JSON-only parser; Lime is a generic
+LALR(1) parser generator that happens to be hosting a JSON
+grammar.  simdjson wins; the question is by how much, and how
+much of the gap is allocation cost vs parsing cost.
+
+`bench/bench_simdjson_compare/` runs Lime in three allocator modes
+and simdjson in its standard ondemand mode.  Median of 5 trials,
+100 K iterations each, on a 515-byte JSON document (Apple M1,
+clang 21.1.8 -O2, simdjson 4.6.4):
+
+| Tool | mean (ms) | MB/s | docs/s | gap to simdjson |
+|------|----------:|-----:|-------:|----------------:|
+| lime+jit malloc (full free)        | 622 |   79 | 161 K | 20.3× |
+| lime+jit malloc-leak (no free)     | 561 |   88 | 178 K | 18.3× |
+| lime+jit arena (zero alloc steady) | 383 |  128 | 261 K | 12.5× |
+| **simdjson ondemand**              |  31 | 1603 | 3.3 M | 1.0× |
+
+Cost breakdown:
+
+| Component | ms | % of malloc total |
+|-----------|---:|------------------:|
+| `free()` walk        |  61 | 10 % |
+| `malloc()` per node  | 178 | 29 % |
+| Parse machinery      | 383 | 61 % |
+| Total                | 622 | 100 % |
+
+So:
+
+  * The allocator overhead is real (~39 % of total) but it's not
+    the dominant cost.
+  * Even with **zero allocations in steady state** (arena reset
+    between iterations, mirroring simdjson's own model), Lime is
+    12.5× slower.
+  * That remaining gap is the inherent cost of a token-at-a-time
+    push parser vs a SIMD-vectorised structural decoder operating
+    on 32-byte chunks at a time.
+  * Lime is the right tool when you want a generic parser
+    generator (any language, runtime extensions, JIT for hot
+    grammars).  simdjson is the right tool when "JSON, fast"
+    *is* the requirement.
+
 ## Historical baseline (Lime 0.1.0)
 
 The original publication of this document reported Bison 1.29×

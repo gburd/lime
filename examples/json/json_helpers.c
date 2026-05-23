@@ -1,9 +1,7 @@
 /*
-** json_helpers.c -- AST node constructors / destructor / pretty printer
-** for the examples/json Lime parser.  Memory model: callers transfer
-** ownership of heap-allocated strings (number / string literals, object
-** keys) via the *_take entry points; json_free walks the tree and
-** releases everything.
+** json_helpers.c -- AST node constructors / destructor / pretty
+** printer with a pluggable allocator.  See json.h for the allocator
+** model.
 */
 #include "json.h"
 
@@ -12,8 +10,91 @@
 #include <stdlib.h>
 #include <string.h>
 
-static JsonValue *alloc(JsonType t) {
-    JsonValue *v = calloc(1, sizeof(*v));
+/* ------------------------------------------------------------------ */
+/*  Allocator state                                                    */
+/* ------------------------------------------------------------------ */
+
+static JsonAllocMode g_mode  = JSON_ALLOC_MALLOC;
+static JsonArena    *g_arena = NULL;
+
+void json_set_alloc_mode(JsonAllocMode m) { g_mode = m; }
+JsonAllocMode json_get_alloc_mode(void)   { return g_mode; }
+void json_set_arena(JsonArena *a)         { g_arena = a; }
+JsonArena *json_get_arena(void)           { return g_arena; }
+
+/* ------------------------------------------------------------------ */
+/*  Arena                                                              */
+/* ------------------------------------------------------------------ */
+
+void json_arena_init(JsonArena *a, size_t cap) {
+    a->base  = malloc(cap);
+    a->cap   = cap;
+    a->used  = 0;
+    a->escapes = NULL;
+    a->escapes_count = 0;
+    a->escapes_cap = 0;
+}
+
+void json_arena_destroy(JsonArena *a) {
+    free(a->base);
+    a->base = NULL;
+    for (size_t i = 0; i < a->escapes_count; i++) free(a->escapes[i]);
+    free(a->escapes);
+    a->escapes = NULL;
+    a->escapes_count = 0;
+    a->escapes_cap = 0;
+    a->cap = a->used = 0;
+}
+
+void json_arena_reset(JsonArena *a) {
+    /* Free escape allocations (resizable arrays inside JsonValues
+    ** that overflow into heap) and reset bump pointer to 0. */
+    for (size_t i = 0; i < a->escapes_count; i++) free(a->escapes[i]);
+    a->escapes_count = 0;
+    a->used = 0;
+}
+
+static void *arena_alloc(JsonArena *a, size_t bytes) {
+    /* 8-byte align */
+    size_t aligned = (bytes + 7) & ~(size_t)7;
+    if (a->used + aligned > a->cap) {
+        /* Out of arena: spill to malloc and remember to free in reset. */
+        void *p = calloc(1, bytes);
+        if (a->escapes_count == a->escapes_cap) {
+            size_t nc = a->escapes_cap == 0 ? 8 : a->escapes_cap * 2;
+            a->escapes = realloc(a->escapes, nc * sizeof(void *));
+            a->escapes_cap = nc;
+        }
+        a->escapes[a->escapes_count++] = p;
+        return p;
+    }
+    void *p = a->base + a->used;
+    memset(p, 0, bytes);
+    a->used += aligned;
+    return p;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Allocation dispatch                                                */
+/* ------------------------------------------------------------------ */
+
+void *json_alloc(size_t bytes) {
+    switch (g_mode) {
+        case JSON_ALLOC_MALLOC:
+        case JSON_ALLOC_MALLOC_NOFREE: {
+            void *p = malloc(bytes);
+            if (p) memset(p, 0, bytes);
+            return p;
+        }
+        case JSON_ALLOC_ARENA:
+            assert(g_arena != NULL);
+            return arena_alloc(g_arena, bytes);
+    }
+    return NULL;
+}
+
+static void *value_alloc(JsonType t) {
+    JsonValue *v = json_alloc(sizeof(*v));
     if (v == NULL) {
         fprintf(stderr, "json: out of memory\n");
         exit(1);
@@ -23,38 +104,51 @@ static JsonValue *alloc(JsonType t) {
 }
 
 JsonValue *json_null(void) {
-    return alloc(JSON_T_NULL);
+    return value_alloc(JSON_T_NULL);
 }
 
 JsonValue *json_bool(int b) {
-    JsonValue *v = alloc(JSON_T_BOOL);
+    JsonValue *v = value_alloc(JSON_T_BOOL);
     v->b = b;
     return v;
 }
 
 JsonValue *json_number_take(char *literal) {
-    JsonValue *v = alloc(JSON_T_NUMBER);
+    JsonValue *v = value_alloc(JSON_T_NUMBER);
     v->n = strtod(literal, NULL);
-    free(literal);
+    /* In MALLOC mode the tokenizer used real malloc and we now own
+    ** that memory; free it.  In NOFREE mode we deliberately leak.
+    ** In ARENA mode the literal came from the arena and is freed
+    ** by arena_reset / arena_destroy (no per-value action needed). */
+    if (g_mode == JSON_ALLOC_MALLOC) free(literal);
     return v;
 }
 
 JsonValue *json_string_take(char *literal) {
-    JsonValue *v = alloc(JSON_T_STRING);
-    v->s = literal; /* takes ownership */
+    JsonValue *v = value_alloc(JSON_T_STRING);
+    v->s = literal; /* ownership moved into the tree */
     return v;
 }
 
 static void array_grow(JsonValue *arr) {
     if (arr->a.count + 1 > arr->a.cap) {
         size_t new_cap = arr->a.cap == 0 ? 4 : arr->a.cap * 2;
-        arr->a.items = realloc(arr->a.items, new_cap * sizeof(JsonValue *));
+        if (g_mode == JSON_ALLOC_ARENA) {
+            /* Resizing a backing array from a bump arena is awkward;
+            ** route through the arena's escape list so it still gets
+            ** released on reset. */
+            JsonValue **fresh = json_alloc(new_cap * sizeof(JsonValue *));
+            if (arr->a.items) memcpy(fresh, arr->a.items, arr->a.count * sizeof(JsonValue *));
+            arr->a.items = fresh;
+        } else {
+            arr->a.items = realloc(arr->a.items, new_cap * sizeof(JsonValue *));
+        }
         arr->a.cap = new_cap;
     }
 }
 
 JsonValue *json_array_new(void) {
-    return alloc(JSON_T_ARRAY);
+    return value_alloc(JSON_T_ARRAY);
 }
 
 void json_array_append(JsonValue *arr, JsonValue *item) {
@@ -64,11 +158,11 @@ void json_array_append(JsonValue *arr, JsonValue *item) {
 }
 
 JsonValue *json_object_new(void) {
-    return alloc(JSON_T_OBJECT);
+    return value_alloc(JSON_T_OBJECT);
 }
 
 JsonValue *json_pair(char *key, JsonValue *val) {
-    JsonValue *p = alloc(JSON_T_PAIR);
+    JsonValue *p = value_alloc(JSON_T_PAIR);
     p->p.key = key;
     p->p.val = val;
     return p;
@@ -79,13 +173,23 @@ void json_object_add_pair(JsonValue *obj, JsonValue *pair) {
     assert(pair != NULL && pair->type == JSON_T_PAIR);
     if (obj->o.count + 1 > obj->o.cap) {
         size_t new_cap = obj->o.cap == 0 ? 4 : obj->o.cap * 2;
-        obj->o.pairs = realloc(obj->o.pairs, new_cap * sizeof(JsonValue *));
+        if (g_mode == JSON_ALLOC_ARENA) {
+            JsonValue **fresh = json_alloc(new_cap * sizeof(JsonValue *));
+            if (obj->o.pairs) memcpy(fresh, obj->o.pairs, obj->o.count * sizeof(JsonValue *));
+            obj->o.pairs = fresh;
+        } else {
+            obj->o.pairs = realloc(obj->o.pairs, new_cap * sizeof(JsonValue *));
+        }
         obj->o.cap = new_cap;
     }
     obj->o.pairs[obj->o.count++] = pair;
 }
 
 void json_free(JsonValue *v) {
+    /* In NOFREE / ARENA modes we don't release per-node.  The
+    ** caller is responsible for resetting / destroying the arena
+    ** (or accepting the leak). */
+    if (g_mode != JSON_ALLOC_MALLOC) return;
     if (v == NULL) return;
     switch (v->type) {
         case JSON_T_NULL:
@@ -148,7 +252,6 @@ void json_print(FILE *out, const JsonValue *v, int indent) {
             print_indent(out, indent); fputc('}', out);
             break;
         case JSON_T_PAIR:
-            /* not normally encountered as a top-level value */
             fprintf(out, "<pair %s>", v->p.key);
             break;
     }

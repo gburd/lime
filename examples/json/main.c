@@ -4,8 +4,10 @@
 ** the round-tripped result, and frees everything.
 **
 ** Usage:
-**     ./json_parser           # reads from stdin
-**     ./json_parser file.json
+**     ./json_parser                   # malloc + free   (default)
+**     ./json_parser --leak file.json  # malloc + leak   (no json_free)
+**     ./json_parser --arena file.json # bump-pointer arena
+**     ./json_parser file.json         # malloc + free
 **
 ** Exits 0 on success, non-zero on parse error.
 */
@@ -39,22 +41,34 @@ static char *slurp(FILE *f, size_t *out_len) {
 }
 
 int main(int argc, char **argv) {
+    JsonAllocMode mode = JSON_ALLOC_MALLOC;
+    const char *path = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--leak") == 0)  mode = JSON_ALLOC_MALLOC_NOFREE;
+        else if (strcmp(argv[i], "--arena") == 0) mode = JSON_ALLOC_ARENA;
+        else if (path == NULL) path = argv[i];
+        else { fprintf(stderr, "usage: %s [--leak|--arena] [file.json]\n", argv[0]); return 1; }
+    }
+
+    json_set_alloc_mode(mode);
+
+    JsonArena arena;
+    if (mode == JSON_ALLOC_ARENA) {
+        json_arena_init(&arena, 1 << 20); /* 1 MB; big enough for any reasonable doc */
+        json_set_arena(&arena);
+    }
+
     FILE *f = stdin;
-    if (argc > 1) {
-        f = fopen(argv[1], "r");
-        if (f == NULL) {
-            fprintf(stderr, "json: cannot open %s\n", argv[1]);
-            return 1;
-        }
+    if (path != NULL) {
+        f = fopen(path, "r");
+        if (f == NULL) { fprintf(stderr, "json: cannot open %s\n", path); return 1; }
     }
 
     size_t len = 0;
     char *input = slurp(f, &len);
     if (f != stdin) fclose(f);
-    if (input == NULL) {
-        fprintf(stderr, "json: failed to read input\n");
-        return 1;
-    }
+    if (input == NULL) { fprintf(stderr, "json: failed to read input\n"); return 1; }
 
     JsonScanner sc;
     json_scanner_init(&sc, input, len);
@@ -75,15 +89,19 @@ int main(int argc, char **argv) {
     if (tok < 0) {
         fprintf(stderr, "json: lex error\n");
         json_free(root);
+        if (mode == JSON_ALLOC_ARENA) json_arena_destroy(&arena);
         return 1;
     }
     if (root == NULL) {
         fprintf(stderr, "json: empty / no value parsed\n");
+        if (mode == JSON_ALLOC_ARENA) json_arena_destroy(&arena);
         return 1;
     }
 
     json_print(stdout, root, 0);
     fputc('\n', stdout);
-    json_free(root);
+
+    json_free(root); /* no-op in NOFREE / ARENA modes */
+    if (mode == JSON_ALLOC_ARENA) json_arena_destroy(&arena);
     return 0;
 }

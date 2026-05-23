@@ -62,6 +62,23 @@ This directory is the *full* path: real semantic actions, real
 heap-allocated AST, real CLI surface.  Useful as a worked example
 when porting a real grammar to Lime.
 
+## Allocator modes (also benchmark fodder)
+
+The example supports three allocator modes via CLI flags so the
+parsing cost can be teased apart from the allocator cost:
+
+```sh
+./json_parser           # default: malloc per node + json_free walks the tree
+./json_parser --leak    # malloc per node, json_free is a no-op (LEAKS)
+./json_parser --arena   # bump-pointer from a 1 MB pre-allocated arena;
+                        # arena resets between iterations (zero alloc steady)
+```
+
+The arena mode mirrors how simdjson manages memory: parser owns
+big buffers, resets between parses.  See
+`bench/bench_simdjson_compare/` for a head-to-head measurement
+that uses all three modes.
+
 ## Caveats (not bugs, just scope)
 
 * No Unicode handling for `\u` escapes (the JSON example we ship
