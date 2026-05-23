@@ -602,7 +602,7 @@ CompositionResult compose_snapshots(ParserSnapshot **snapshots, uint32_t nsnapsh
     /* Step 7: Rebuild the LALR(1) automaton over the composed
     ** grammar.  rebuild_automaton currently performs validation and
     ** version bookkeeping; full table reconstruction lives in the
-    ** lime generator and is exposed via lemon_snapshot_create with
+    ** lime generator and is exposed via lime_snapshot_create with
     ** the merged grammar text. */
     {
         char *build_err = NULL;

@@ -339,9 +339,9 @@ static void test_clone_null(void) {
     if (ok) PASS();
 }
 
-/* Test: lemon_snapshot_* wrappers match underlying functions */
+/* Test: lime_snapshot_* wrappers match underlying functions */
 static void test_public_wrappers(void) {
-    TEST("lemon_snapshot_acquire/release wrappers");
+    TEST("lime_snapshot_acquire/release wrappers");
     ParserSnapshot *snap = make_test_snapshot();
     if (snap == NULL) {
         FAIL("make_test_snapshot returned NULL");
@@ -349,9 +349,9 @@ static void test_public_wrappers(void) {
     }
 
     /* Use the public wrapper API */
-    ParserSnapshot *ref = lemon_snapshot_acquire(snap);
+    ParserSnapshot *ref = lime_snapshot_acquire(snap);
     if (ref != snap) {
-        FAIL("lemon_snapshot_acquire did not return same pointer");
+        FAIL("lime_snapshot_acquire did not return same pointer");
         snapshot_release(snap);
         return;
     }
@@ -361,13 +361,13 @@ static void test_public_wrappers(void) {
         char buf[64];
         snprintf(buf, sizeof(buf), "expected refcount 2, got %lu", (unsigned long)rc);
         FAIL(buf);
-        lemon_snapshot_release(snap);
-        lemon_snapshot_release(snap);
+        lime_snapshot_release(snap);
+        lime_snapshot_release(snap);
         return;
     }
 
-    lemon_snapshot_release(snap);
-    lemon_snapshot_release(snap);
+    lime_snapshot_release(snap);
+    lime_snapshot_release(snap);
     PASS();
 }
 

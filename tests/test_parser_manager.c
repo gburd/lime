@@ -500,7 +500,7 @@ static void test_unload_active_plugin(void) {
     ParserSnapshot *snap = parser_manager_get_snapshot(mgr);
     if (snap != NULL) {
         FAIL("snapshot should be NULL after unloading active plugin");
-        lemon_snapshot_release(snap);
+        lime_snapshot_release(snap);
         parser_manager_destroy(mgr);
         return;
     }
@@ -544,7 +544,7 @@ static void test_set_active_with_grammar(void) {
         return;
     }
 
-    lemon_snapshot_release(snap);
+    lime_snapshot_release(snap);
     parser_manager_destroy(mgr);
     PASS();
 }
@@ -579,7 +579,7 @@ static void test_set_active_null_grammar(void) {
     ParserSnapshot *snap = parser_manager_get_snapshot(mgr);
     if (snap != NULL) {
         FAIL("expected NULL snapshot when grammar is NULL");
-        lemon_snapshot_release(snap);
+        lime_snapshot_release(snap);
         parser_manager_destroy(mgr);
         return;
     }
@@ -693,13 +693,13 @@ static void test_set_snapshot_directly(void) {
     /* Should be the same snapshot */
     if (retrieved != snap) {
         FAIL("retrieved snapshot differs from original");
-        lemon_snapshot_release(retrieved);
+        lime_snapshot_release(retrieved);
         snapshot_release(snap);
         parser_manager_destroy(mgr);
         return;
     }
 
-    lemon_snapshot_release(retrieved);
+    lime_snapshot_release(retrieved);
     snapshot_release(snap);
     parser_manager_destroy(mgr);
     PASS();
@@ -710,7 +710,7 @@ static void test_get_snapshot_null_mgr(void) {
     ParserSnapshot *snap = parser_manager_get_snapshot(NULL);
     if (snap != NULL) {
         FAIL("expected NULL");
-        lemon_snapshot_release(snap);
+        lime_snapshot_release(snap);
         return;
     }
     PASS();
@@ -734,8 +734,8 @@ static void test_snapshot_replaced_on_set_active(void) {
 
     if (snap1 == NULL || snap2 == NULL) {
         FAIL("expected non-NULL snapshots");
-        if (snap1) lemon_snapshot_release(snap1);
-        if (snap2) lemon_snapshot_release(snap2);
+        if (snap1) lime_snapshot_release(snap1);
+        if (snap2) lime_snapshot_release(snap2);
         parser_manager_destroy(mgr);
         return;
     }
@@ -743,14 +743,14 @@ static void test_snapshot_replaced_on_set_active(void) {
     /* They should be different snapshot objects */
     if (snap1 == snap2) {
         FAIL("snapshots should be different objects");
-        lemon_snapshot_release(snap1);
-        lemon_snapshot_release(snap2);
+        lime_snapshot_release(snap1);
+        lime_snapshot_release(snap2);
         parser_manager_destroy(mgr);
         return;
     }
 
-    lemon_snapshot_release(snap1);
-    lemon_snapshot_release(snap2);
+    lime_snapshot_release(snap1);
+    lime_snapshot_release(snap2);
     parser_manager_destroy(mgr);
     PASS();
 }
@@ -1006,14 +1006,14 @@ static void test_hot_swap(void) {
         snprintf(buf, sizeof(buf), "hot_swap failed: %s",
                  parser_manager_status_string(st));
         FAIL(buf);
-        if (old_snap) lemon_snapshot_release(old_snap);
+        if (old_snap) lime_snapshot_release(old_snap);
         parser_manager_destroy(mgr);
         return;
     }
 
     if (parser_manager_get_active(mgr) != h2) {
         FAIL("active should be h2 after swap");
-        if (old_snap) lemon_snapshot_release(old_snap);
+        if (old_snap) lime_snapshot_release(old_snap);
         parser_manager_destroy(mgr);
         return;
     }
@@ -1021,22 +1021,22 @@ static void test_hot_swap(void) {
     ParserSnapshot *new_snap = parser_manager_get_snapshot(mgr);
     if (new_snap == NULL) {
         FAIL("expected non-NULL snapshot after swap");
-        if (old_snap) lemon_snapshot_release(old_snap);
+        if (old_snap) lime_snapshot_release(old_snap);
         parser_manager_destroy(mgr);
         return;
     }
 
     if (new_snap == old_snap) {
         FAIL("snapshot should have changed");
-        lemon_snapshot_release(new_snap);
-        lemon_snapshot_release(old_snap);
+        lime_snapshot_release(new_snap);
+        lime_snapshot_release(old_snap);
         parser_manager_destroy(mgr);
         return;
     }
 
     /* Old snapshot should still be valid (we hold a reference) */
-    if (old_snap) lemon_snapshot_release(old_snap);
-    lemon_snapshot_release(new_snap);
+    if (old_snap) lime_snapshot_release(old_snap);
+    lime_snapshot_release(new_snap);
     parser_manager_destroy(mgr);
     PASS();
 }
@@ -1067,13 +1067,13 @@ static void test_hot_swap_preserves_old_snapshot_refs(void) {
     if (pinned->version != 42) {
         /* Our mock always creates version 42 */
         FAIL("pinned snapshot data corrupted");
-        lemon_snapshot_release(pinned);
+        lime_snapshot_release(pinned);
         parser_manager_destroy(mgr);
         return;
     }
 
     /* Release the pinned snapshot; should not crash */
-    lemon_snapshot_release(pinned);
+    lime_snapshot_release(pinned);
     parser_manager_destroy(mgr);
     PASS();
 }
@@ -1291,7 +1291,7 @@ static void *reader_thread_fn(void *arg) {
         if (snap->version == 0 && snap->nsymbol == 0) {
             /* Might be an empty snapshot, that's ok */
         }
-        lemon_snapshot_release(snap);
+        lime_snapshot_release(snap);
     }
 
     return NULL;

@@ -13,7 +13,7 @@
 **       at runtime without recompilation"
 **   C2. "Conflict detection and resolution callbacks"
 **   C3. The Quick Start in docs/parser.h:
-**         snap = lemon_snapshot_create("sql.y", ...);
+**         snap = lime_snapshot_create("sql.y", ...);
 **         ctx  = parse_begin(snap);
 **         parse_token(ctx, TK_SELECT, ...);
 **       i.e. you can take a grammar file and parse a token stream
@@ -186,13 +186,13 @@ static bool ext_b_get_modifications(void *user_data, const struct ParserSnapshot
 }
 
 /* ------------------------------------------------------------------ */
-/*  Test 1: lemon_snapshot_create() with a grammar file                 */
+/*  Test 1: lime_snapshot_create() with a grammar file                 */
 /* ------------------------------------------------------------------ */
 
 static void test_grammar_file_path(void) {
-    SECTION("Claim C3: lemon_snapshot_create(\"file.y\") works");
+    SECTION("Claim C3: lime_snapshot_create(\"file.y\") works");
 
-    /* lemon_snapshot_create now runs the lime parser generator as a
+    /* lime_snapshot_create now runs the lime parser generator as a
     ** subprocess on the grammar file, compiles the resulting
     ** *_snapshot.c into a shared library, and dlopen()s it to
     ** retrieve the populated ParserSnapshot.  See src/snapshot_create.c.
@@ -203,16 +203,16 @@ static void test_grammar_file_path(void) {
     **          because that test needs lime + cc on PATH and skips
     **          cleanly when they are missing). */
     char *err = NULL;
-    ParserSnapshot *snap = lemon_snapshot_create("nonexistent.y", &err);
+    ParserSnapshot *snap = lime_snapshot_create("nonexistent.y", &err);
     if (snap == NULL && err != NULL) {
         printf("  Error returned (expected): \"%s\"\n", err);
-        VERDICT_OK("lemon_snapshot_create",
+        VERDICT_OK("lime_snapshot_create",
                    "returns an actionable error for a missing grammar file "
                    "(real builds covered by test_snapshot_create)");
         free(err);
     } else if (snap != NULL) {
-        VERDICT_OK("lemon_snapshot_create", "actually built a snapshot from a grammar file");
-        lemon_snapshot_release(snap);
+        VERDICT_OK("lime_snapshot_create", "actually built a snapshot from a grammar file");
+        lime_snapshot_release(snap);
     }
 }
 
@@ -509,8 +509,8 @@ int main(void) {
     printf("Each line below is a VERDICT against a specific README claim.\n");
 
     /* Init the global registry the way the public API expects. */
-    if (!lemon_extension_registry_init()) {
-        fprintf(stderr, "lemon_extension_registry_init failed\n");
+    if (!lime_extension_registry_init()) {
+        fprintf(stderr, "lime_extension_registry_init failed\n");
         return 0;
     }
 
@@ -535,7 +535,7 @@ int main(void) {
     printf("  Passed verdicts (working features):  %d\n", n_pass);
     printf("  Gap verdicts    (stub or missing):   %d\n", n_fail);
 
-    lemon_extension_registry_destroy();
+    lime_extension_registry_destroy();
 
     /* Always exit 0 -- this harness reports rather than asserts. */
     return 0;

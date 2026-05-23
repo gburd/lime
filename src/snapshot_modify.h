@@ -79,7 +79,7 @@ bool apply_modification(ParserSnapshot *snap, const GrammarModification *mod, ch
 ** the snapshot version; full action-table reconstruction (FIRST /
 ** FOLLOW / state machine / table compression) is provided by the
 ** lime generator's Build()/ReportTable() phases and is invoked by
-** lemon_snapshot_create on the merged grammar text.  Exposing those
+** lime_snapshot_create on the merged grammar text.  Exposing those
 ** phases as a runtime callable is under construction; see
 ** docs/ROADMAP.md for status.
 */

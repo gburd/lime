@@ -177,7 +177,7 @@ int main(int argc, char **argv) {
     ParseContext *ctx = parse_begin(snap);
     if (ctx == NULL) {
         fprintf(stderr, "Failed to begin parse session.\n");
-        lemon_snapshot_release(snap);
+        lime_snapshot_release(snap);
         parser_manager_destroy(mgr);
         return 1;
     }
@@ -199,7 +199,7 @@ int main(int argc, char **argv) {
 
     /* End the session, releasing the snapshot reference */
     parse_end(ctx);
-    lemon_snapshot_release(snap);
+    lime_snapshot_release(snap);
     printf("Parse session ended.\n");
 
     /* -------------------------------------------------------------- */

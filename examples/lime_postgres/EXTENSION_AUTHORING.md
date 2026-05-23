@@ -316,11 +316,11 @@ No shared library is needed.
 #include "parser.h"
 
 /* Initialize the registry */
-lemon_extension_registry_init();
+lime_extension_registry_init();
 
 /* Create a base snapshot from a grammar file */
 char *error = NULL;
-ParserSnapshot *snap = lemon_snapshot_create("base_grammar.y", &error);
+ParserSnapshot *snap = lime_snapshot_create("base_grammar.y", &error);
 
 /* Create the internal registry and register your extension */
 ExtensionRegistry *reg = create_extension_registry();

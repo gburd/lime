@@ -475,13 +475,13 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
 */
 static ExtensionRegistry *g_registry = NULL;
 
-bool lemon_extension_registry_init(void) {
+bool lime_extension_registry_init(void) {
     if (g_registry != NULL) return true;
     g_registry = create_extension_registry();
     return g_registry != NULL;
 }
 
-void lemon_extension_registry_destroy(void) {
+void lime_extension_registry_destroy(void) {
     if (g_registry == NULL) return;
     destroy_extension_registry(g_registry);
     g_registry = NULL;

@@ -10,6 +10,6 @@
 #define LIME_VERSION_STRING "0.1.0"
 #endif
 
-const char *lemon_parser_version(void) {
+const char *lime_parser_version(void) {
     return LIME_VERSION_STRING;
 }

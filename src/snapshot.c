@@ -114,17 +114,17 @@ void snapshot_release(ParserSnapshot *snap) {
 */
 
 /* ------------------------------------------------------------------ */
-/*  Public lemon_snapshot_* wrappers (declared in parser.h)            */
+/*  Public lime_snapshot_* wrappers (declared in parser.h)            */
 /* ------------------------------------------------------------------ */
 
-ParserSnapshot *lemon_snapshot_acquire(ParserSnapshot *snap) {
+ParserSnapshot *lime_snapshot_acquire(ParserSnapshot *snap) {
     return snapshot_acquire(snap);
 }
 
-void lemon_snapshot_release(ParserSnapshot *snap) {
+void lime_snapshot_release(ParserSnapshot *snap) {
     snapshot_release(snap);
 }
 
-ParserSnapshot *lemon_snapshot_create(const char *grammar_file, char **error) {
+ParserSnapshot *lime_snapshot_create(const char *grammar_file, char **error) {
     return create_base_snapshot(grammar_file, error);
 }

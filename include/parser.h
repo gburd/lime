@@ -13,7 +13,7 @@
  * @code
  *   // Create a snapshot from a grammar file
  *   char *error = NULL;
- *   ParserSnapshot *snap = lemon_snapshot_create("sql.y", &error);
+ *   ParserSnapshot *snap = lime_snapshot_create("sql.y", &error);
  *   if (!snap) { fprintf(stderr, "%s\n", error); free(error); return 1; }
  *
  *   // Begin a parse session
@@ -26,7 +26,7 @@
  *
  *   // End the session
  *   parse_end(ctx);
- *   lemon_snapshot_release(snap);
+ *   lime_snapshot_release(snap);
  * @endcode
  *
  * @see parser_manager.h for plugin-based parser management.
@@ -47,7 +47,7 @@ extern "C" {
  *
  * @return Static NUL-terminated version string (e.g. "0.1.0").
  */
-const char *lemon_parser_version(void);
+const char *lime_parser_version(void);
 
 /* --- Snapshot API -------------------------------------------------- */
 
@@ -66,15 +66,15 @@ typedef struct ParserSnapshot ParserSnapshot;
 /**
  * @brief Acquire a reference to a snapshot.
  *
- * The caller must eventually call lemon_snapshot_release() to avoid
+ * The caller must eventually call lime_snapshot_release() to avoid
  * leaking memory.
  *
  * @param snap Snapshot to acquire.  Passing NULL is safe and returns NULL.
  * @return Same pointer as @p snap, for convenience.
  *
- * @see lemon_snapshot_release()
+ * @see lime_snapshot_release()
  */
-ParserSnapshot *lemon_snapshot_acquire(ParserSnapshot *snap);
+ParserSnapshot *lime_snapshot_acquire(ParserSnapshot *snap);
 
 /**
  * @brief Release a snapshot reference.
@@ -84,7 +84,7 @@ ParserSnapshot *lemon_snapshot_acquire(ParserSnapshot *snap);
  *
  * @param snap Snapshot to release.  Passing NULL is safe.
  */
-void lemon_snapshot_release(ParserSnapshot *snap);
+void lime_snapshot_release(ParserSnapshot *snap);
 
 /**
  * @brief Create a base snapshot by parsing a grammar file.
@@ -97,15 +97,15 @@ void lemon_snapshot_release(ParserSnapshot *snap);
  *                     must free.  Set to NULL on success.
  * @return New snapshot with refcount 1, or NULL on failure.
  */
-ParserSnapshot *lemon_snapshot_create(const char *grammar_file, char **error);
+ParserSnapshot *lime_snapshot_create(const char *grammar_file, char **error);
 
 /**
  * @brief Build a base snapshot from in-memory grammar text.
  *
- * Same pipeline as lemon_snapshot_create() but takes the grammar
+ * Same pipeline as lime_snapshot_create() but takes the grammar
  * source as a buffer rather than a file path.  Internally writes
  * the buffer to a temp file and runs lime + cc on it.  Used by
- * lemon_snapshot_extend() and by callers that hold the grammar
+ * lime_snapshot_extend() and by callers that hold the grammar
  * text in memory (e.g. embedded in a config blob).
  *
  * @param grammar_text  Pointer to the grammar source bytes.
@@ -221,21 +221,45 @@ int lime_jit_compile(ParserSnapshot *snap);
  * @retval true  Initialization succeeded.
  * @retval false Initialization failed.
  *
- * @see lemon_extension_registry_destroy()
+ * @see lime_extension_registry_destroy()
  */
-bool lemon_extension_registry_init(void);
+bool lime_extension_registry_init(void);
 
 /**
  * @brief Destroy the global extension registry.
  *
  * Unloads all extensions and frees registry resources.
  */
-void lemon_extension_registry_destroy(void);
+void lime_extension_registry_destroy(void);
 
 /** @} */ /* end ext_init */
 
 #ifdef __cplusplus
 }
 #endif
+
+/*
+** Backward-compatibility aliases for the previous public-API
+** prefix (lemon_*).  As of v0.2.5 the public surface uses lime_*
+** for every function, type, and constant.  The lemon_* names
+** below remain available so that downstream callers (notably
+** PostgreSQL integration tracks) can adopt v0.2.5 without an
+** atomic source rewrite.  These aliases will be removed in
+** v0.4.0; new code should write lime_* directly.
+**
+** Implementation note: macro-level aliasing rather than function
+** wrappers so the deprecated calls have zero runtime cost and
+** debug symbols still point at the real function.  The macros
+** are placed AFTER the extern "C" block so their token
+** replacement happens after the C++ linkage attribute is parsed.
+*/
+#define lemon_parser_version              lime_parser_version
+#define lemon_snapshot_acquire            lime_snapshot_acquire
+#define lemon_snapshot_release            lime_snapshot_release
+#define lemon_snapshot_create             lime_snapshot_create
+#define lemon_snapshot_extend             lime_snapshot_extend
+#define lemon_modifications_to_grammar_text lime_modifications_to_grammar_text
+#define lemon_extension_registry_init     lime_extension_registry_init
+#define lemon_extension_registry_destroy  lime_extension_registry_destroy
 
 #endif /* PARSER_H */

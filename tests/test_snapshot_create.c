@@ -1,11 +1,11 @@
 /*
 ** test_snapshot_create.c -- end-to-end test of
-** lemon_snapshot_create("foo.y", &err).
+** lime_snapshot_create("foo.y", &err).
 **
 ** Drives the full subprocess-based grammar-to-snapshot pipeline:
 **
 **   1. Write a tiny grammar file to a temp path.
-**   2. Call lemon_snapshot_create() on it.
+**   2. Call lime_snapshot_create() on it.
 **   3. Verify the returned ParserSnapshot is populated and that
 **      parse_begin/parse_token/parse_end can drive it.
 **
@@ -47,7 +47,7 @@ static int n_pass = 0, n_fail = 0;
 ** A minimal arithmetic grammar identical in shape to the one used by
 ** test_runtime_parse + bench/bench_arith_grammar.y, written here as
 ** a string so the test is self-contained.  The token codes that
-** lemon_snapshot_create produces are arbitrary -- we don't import
+** lime_snapshot_create produces are arbitrary -- we don't import
 ** the generated header -- so we feed numeric codes that we know are
 ** valid (1..nterminal) and check the parse outcome.
 */
@@ -90,7 +90,7 @@ static bool tool_available(const char *cmd) {
 }
 
 int main(void) {
-    printf("Lime lemon_snapshot_create() end-to-end test\n");
+    printf("Lime lime_snapshot_create() end-to-end test\n");
     printf("============================================\n");
 
     if (!tool_available("cc")) {
@@ -148,19 +148,19 @@ int main(void) {
 
     printf("  Grammar written to: %s\n", ypath);
 
-    /* Step 2: call lemon_snapshot_create. */
+    /* Step 2: call lime_snapshot_create. */
     char *err = NULL;
-    ParserSnapshot *snap = lemon_snapshot_create(ypath, &err);
+    ParserSnapshot *snap = lime_snapshot_create(ypath, &err);
     if (snap == NULL) {
         printf("  Error: %s\n", err ? err : "(none)");
         free(err);
         unlink(ypath);
-        CHECK(snap != NULL, "lemon_snapshot_create returned a snapshot");
+        CHECK(snap != NULL, "lime_snapshot_create returned a snapshot");
         return n_fail == 0 ? 0 : 1;
     }
     free(err);
 
-    CHECK(snap != NULL, "lemon_snapshot_create returned a snapshot");
+    CHECK(snap != NULL, "lime_snapshot_create returned a snapshot");
     CHECK(snap->yy_action != NULL, "snapshot has yy_action populated");
     CHECK(snap->yy_default != NULL, "snapshot has yy_default populated");
     CHECK(snap->yy_rule_info_nrhs != NULL, "snapshot has rule metadata");

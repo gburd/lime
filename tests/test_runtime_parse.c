@@ -4,7 +4,7 @@
 ** LALR(1) parse against the action tables of a generated parser.
 **
 ** This is the test that proves Claim C3 from test_claims_proof now
-** holds: lemon_snapshot_create + parse_begin + parse_token works for
+** holds: lime_snapshot_create + parse_begin + parse_token works for
 ** any grammar.  We use the same arithmetic grammar from
 ** bench/bench_arith_grammar.y -- a realistic LALR(1) grammar with
 ** shift/reduce/precedence dispatch -- and feed token streams through

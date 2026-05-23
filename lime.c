@@ -5776,10 +5776,10 @@ void ReportAOTTable(struct lime *lemp){
   out = fopen(z,"wb");
   if( out==0 ){
     fprintf(stderr,"Can't open file \"%s\".\n", z);
-    free(z);
+    lime_free(z);
     return;
   }
-  free(z);
+  lime_free(z);
 
   fprintf(out,
     "/*\n"

@@ -13,7 +13,7 @@
  *
  * Two ways to use this:
  *
- *   1. Call lemon_snapshot_create("foo.y", &err) which subprocesses
+ *   1. Call lime_snapshot_create("foo.y", &err) which subprocesses
  *      `lime -n foo.y` to produce a *_snapshot.c file, compiles it,
  *      dlopens it, and calls the registration entry point below.
  *      Used for true runtime grammar loading.

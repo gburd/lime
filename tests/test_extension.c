@@ -638,19 +638,19 @@ static void test_snapshot_clone(void) {
 static void test_global_registry(void) {
     printf("test_global_registry\n");
 
-    bool ok = lemon_extension_registry_init();
-    ASSERT(ok, "lemon_extension_registry_init should succeed");
+    bool ok = lime_extension_registry_init();
+    ASSERT(ok, "lime_extension_registry_init should succeed");
 
     /* Double init should also succeed */
-    ok = lemon_extension_registry_init();
+    ok = lime_extension_registry_init();
     ASSERT(ok, "double init should be idempotent");
 
-    lemon_extension_registry_destroy();
+    lime_extension_registry_destroy();
     /* Should not crash */
     ASSERT(true, "destroy should not crash");
 
     /* Double destroy should be safe */
-    lemon_extension_registry_destroy();
+    lime_extension_registry_destroy();
     ASSERT(true, "double destroy should be safe");
 }
 

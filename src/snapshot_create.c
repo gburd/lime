@@ -2,7 +2,7 @@
 ** snapshot_create.c -- runtime grammar-file -> snapshot pipeline
 ** built on lime + cc + dlopen.
 **
-** Implements lemon_snapshot_create("foo.y", &err) by invoking the
+** Implements lime_snapshot_create("foo.y", &err) by invoking the
 ** lime parser generator as a subprocess on the grammar file (with
 ** -n to emit a *_snapshot.c), compiling that file to a shared
 ** library, dlopen()ing it, and dlsym()ing the generic
@@ -32,7 +32,7 @@
 **     LIME_LIBDIR to point at the directory containing
 **     liblime_parser.{a,so}.
 **
-** When any of those is missing, lemon_snapshot_create returns NULL
+** When any of those is missing, lime_snapshot_create returns NULL
 ** with an error message naming the missing piece, so the caller
 ** can either install the prerequisite or fall back to a
 ** pre-compiled <Prefix>BuildSnapshot() they linked statically.
@@ -283,7 +283,7 @@ static void compute_basename(const char *grammar_file, char *out, size_t out_sz)
 **
 ** We register an atexit-style hook by storing the dlopen handle in
 ** snap->jit_ctx (we don't use that field for actual JIT contexts in
-** the lemon_snapshot_create-built case) -- but jit_ctx is the right
+** the lime_snapshot_create-built case) -- but jit_ctx is the right
 ** "opaque finalizer slot" to use.  Actually, we'd be racing with the
 ** JIT's own user.  Use a side-channel instead.
 **
@@ -380,6 +380,7 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
     snprintf(inc_b, sizeof(inc_b), "-I%s", src_root);
 
     char snapshot_build_c[1024] = {0};
+    char snapshot_c_path[1024] = {0};
     {
         const char *env = getenv("LIME_SNAPSHOT_BUILD_C");
         if (env && env[0] != '\0') {
@@ -404,6 +405,33 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
                 }
             }
         }
+        /* Also locate snapshot.c -- snapshot_build.c calls
+        ** snapshot_release on its error path, and on FreeBSD the
+        ** default ld behaviour is to NOT export executable symbols
+        ** to dlopen'd shared libs.  Bundling snapshot.c into the .so
+        ** makes the resulting module self-contained on every
+        ** supported platform (no -rdynamic / dynamic_lookup needed). */
+        const char *env_s = getenv("LIME_SNAPSHOT_C");
+        if (env_s && env_s[0] != '\0') {
+            struct stat sst;
+            if (stat(env_s, &sst) == 0) {
+                strncpy(snapshot_c_path, env_s, sizeof(snapshot_c_path) - 1);
+            }
+        }
+        if (snapshot_c_path[0] == '\0' && snapshot_build_c[0] != '\0') {
+            /* Derive snapshot.c path from snapshot_build.c path. */
+            const char *bld = snapshot_build_c;
+            const char *slash = strrchr(bld, '/');
+            size_t base_len = slash ? (size_t)(slash - bld + 1) : 0;
+            if (base_len + sizeof("snapshot.c") <= sizeof(snapshot_c_path)) {
+                memcpy(snapshot_c_path, bld, base_len);
+                memcpy(snapshot_c_path + base_len, "snapshot.c", sizeof("snapshot.c"));
+                struct stat sst;
+                if (stat(snapshot_c_path, &sst) != 0) {
+                    snapshot_c_path[0] = '\0';
+                }
+            }
+        }
     }
     if (snapshot_build_c[0] == '\0') {
         if (error)
@@ -417,7 +445,7 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
         return NULL;
     }
 
-    char *cc_argv[16];
+    char *cc_argv[18];
     int ai = 0;
     cc_argv[ai++] = (char *)cc_bin;
     cc_argv[ai++] = "-shared";
@@ -428,6 +456,9 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
     cc_argv[ai++] = inc_b;
     cc_argv[ai++] = snap_c;
     cc_argv[ai++] = snapshot_build_c;
+    if (snapshot_c_path[0] != '\0') {
+        cc_argv[ai++] = snapshot_c_path;
+    }
     cc_argv[ai++] = "-o";
     cc_argv[ai++] = so_path;
 #if defined(__APPLE__)
@@ -498,7 +529,7 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
 /* ------------------------------------------------------------------ */
 /*  Compile from in-memory grammar text                                */
 /*                                                                      */
-/*  Used by lemon_snapshot_extend(): take a base grammar's source,     */
+/*  Used by lime_snapshot_extend(): take a base grammar's source,     */
 /*  concatenate the modification fragment from                          */
 /*  lime_modifications_to_grammar_text(), and feed the result through   */
 /*  the subprocess pipeline.                                            */

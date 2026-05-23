@@ -382,7 +382,7 @@ bool rebuild_automaton(ParserSnapshot *snap, char **error) {
     **
     ** Callers that need a fully rebuilt automaton should run the
     ** lime generator on the merged grammar text and rebuild a
-    ** snapshot via lemon_snapshot_create().  Until the runtime
+    ** snapshot via lime_snapshot_create().  Until the runtime
     ** library exposes Build(), this is the supported path.
     */
 

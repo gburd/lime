@@ -5,7 +5,7 @@
 ** plugin that can be dynamically loaded by the ParserManager.
 **
 ** This example implements a basic SQL parser plugin that:
-**   1. Produces snapshots from grammar files via lemon_snapshot_create()
+**   1. Produces snapshots from grammar files via lime_snapshot_create()
 **   2. Optionally validates snapshots
 **   3. Advertises extensibility and JIT support
 **
@@ -131,7 +131,7 @@ static void sql_destroy(void) {
 ** On failure: return NULL, set *error to a malloc'd message.
 **
 ** Thread safety: this callback may be called from multiple threads
-** concurrently. The underlying lemon_snapshot_create() handles its
+** concurrently. The underlying lime_snapshot_create() handles its
 ** own synchronization.
 */
 static ParserSnapshot *sql_create_snapshot(const char *grammar_file,
@@ -151,7 +151,7 @@ static ParserSnapshot *sql_create_snapshot(const char *grammar_file,
     ** include resolution) or post-processing (optimization passes)
     ** around this call.
     */
-    ParserSnapshot *snap = lemon_snapshot_create(grammar_file, error);
+    ParserSnapshot *snap = lime_snapshot_create(grammar_file, error);
     if (snap != NULL) {
         g_state.snapshot_count++;
     }

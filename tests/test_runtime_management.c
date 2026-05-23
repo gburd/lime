@@ -222,7 +222,7 @@ static void test_add_static_and_activate(void) {
         return;
     }
 
-    lemon_snapshot_release(snap);
+    lime_snapshot_release(snap);
     parser_op_result_cleanup(&r);
     parser_manager_destroy(mgr);
     PASS();
@@ -569,7 +569,7 @@ static void test_reload_grammar(void) {
     ParserOpResult r = parser_op_reload_grammar(mgr, "new.y");
     if (r.status != PM_OK) {
         FAIL("reload failed");
-        if (old_snap) lemon_snapshot_release(old_snap);
+        if (old_snap) lime_snapshot_release(old_snap);
         parser_op_result_cleanup(&r);
         parser_manager_destroy(mgr);
         return;
@@ -578,8 +578,8 @@ static void test_reload_grammar(void) {
     ParserSnapshot *new_snap = parser_manager_get_snapshot(mgr);
     if (new_snap == old_snap) {
         FAIL("snapshot should have changed");
-        if (old_snap) lemon_snapshot_release(old_snap);
-        if (new_snap) lemon_snapshot_release(new_snap);
+        if (old_snap) lime_snapshot_release(old_snap);
+        if (new_snap) lime_snapshot_release(new_snap);
         parser_op_result_cleanup(&r);
         parser_manager_destroy(mgr);
         return;
@@ -588,15 +588,15 @@ static void test_reload_grammar(void) {
     /* Same plugin should still be active */
     if (parser_manager_get_active(mgr) != h) {
         FAIL("active plugin should not change");
-        if (old_snap) lemon_snapshot_release(old_snap);
-        if (new_snap) lemon_snapshot_release(new_snap);
+        if (old_snap) lime_snapshot_release(old_snap);
+        if (new_snap) lime_snapshot_release(new_snap);
         parser_op_result_cleanup(&r);
         parser_manager_destroy(mgr);
         return;
     }
 
-    if (old_snap) lemon_snapshot_release(old_snap);
-    if (new_snap) lemon_snapshot_release(new_snap);
+    if (old_snap) lime_snapshot_release(old_snap);
+    if (new_snap) lime_snapshot_release(new_snap);
     parser_op_result_cleanup(&r);
     parser_manager_destroy(mgr);
     PASS();
@@ -1061,7 +1061,7 @@ static void test_full_lifecycle(void) {
         parser_manager_destroy(mgr);
         return;
     }
-    lemon_snapshot_release(snap);
+    lime_snapshot_release(snap);
 
     /* 3. Reload grammar */
     r = parser_op_reload_grammar(mgr, "grammar_v1_updated.y");
@@ -1158,7 +1158,7 @@ static void *worker_thread_fn(void *arg) {
         } else {
             ParserSnapshot *snap = parser_manager_get_snapshot(wa->mgr);
             if (snap != NULL) {
-                lemon_snapshot_release(snap);
+                lime_snapshot_release(snap);
             }
         }
 

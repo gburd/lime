@@ -1039,7 +1039,7 @@ test_extension_e2e = executable('test_extension_e2e',
 
 test('extension_e2e', test_extension_e2e)
 
-# End-to-end test of lemon_snapshot_create() -- the runtime
+# End-to-end test of lime_snapshot_create() -- the runtime
 # subprocess pipeline that takes a .y file, runs lime + cc on it,
 # dlopens the result, and returns a ParserSnapshot.  Skipped at
 # runtime when lime/cc are not available.

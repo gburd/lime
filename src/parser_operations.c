@@ -354,7 +354,7 @@ ParserOpResult parser_op_get_stats(const ParserManager *mgr, ParserManagerStats 
     ParserSnapshot *snap = parser_manager_get_snapshot((ParserManager *)mgr);
     if (snap != NULL) {
         stats->snapshot_available = true;
-        lemon_snapshot_release(snap);
+        lime_snapshot_release(snap);
     }
 
     return ok_result(stats->active_handle);

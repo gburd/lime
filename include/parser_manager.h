@@ -58,7 +58,7 @@
  *   ParseContext *ctx = parse_begin(snap);
  *   // ... parse tokens ...
  *   parse_end(ctx);
- *   lemon_snapshot_release(snap);
+ *   lime_snapshot_release(snap);
  *
  *   parser_manager_destroy(mgr);
  * @endcode
@@ -628,7 +628,7 @@ ParserManagerStatus parser_manager_set_snapshot(ParserManager *mgr, ParserSnapsh
  * @brief Get the current active snapshot.
  *
  * Returns a snapshot with an additional reference -- the caller must call
- * lemon_snapshot_release() when done.
+ * lime_snapshot_release() when done.
  *
  * @param mgr The parser manager.
  * @return Active snapshot, or NULL if no active snapshot is available.

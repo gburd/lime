@@ -6,9 +6,9 @@
 #include "parser.h"
 
 int main(void) {
-    const char *ver = lemon_parser_version();
+    const char *ver = lime_parser_version();
     if (ver == NULL) {
-        fprintf(stderr, "FAIL: lemon_parser_version() returned NULL\n");
+        fprintf(stderr, "FAIL: lime_parser_version() returned NULL\n");
         return 1;
     }
     if (strcmp(ver, "0.1.0") != 0) {
