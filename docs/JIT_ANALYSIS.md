@@ -223,11 +223,23 @@ Each parser state can be compiled independently, on demand.
 
 ### Migration Path
 
-1. Implement JIT pipeline using MCJIT for initial validation
-2. Verify correctness against table-driven interpreter for all test grammars
-3. Replace MCJIT with OrcJIT lazy compilation stubs
-4. Add per-state compilation triggers on first state entry
-5. Add optional background compilation for predicted hot states
+(Status as of Lime 0.2.4: items 1, 2, 3, 5 are done; item 4 is
+deliberately not implemented because it is supplanted by the
+size-threshold codegen path.)
+
+1. ✅ Implement JIT pipeline using MCJIT for initial validation
+2. ✅ Verify correctness against table-driven interpreter for all
+   test grammars (see `tests/test_jit_parse_equivalence.c`,
+   `tests/test_pg_grammar.c`)
+3. ✅ Replace MCJIT with OrcJIT lazy compilation
+4. **Skipped.**  Per-state compilation triggers were superseded by
+   the size-class strategy: small grammars get an unrolled IR with
+   constant-folded action returns, large grammars get a compact
+   table-load IR.  Both paths compile in tens of milliseconds; the
+   per-state granularity isn't a meaningful win.  See
+   `src/jit_codegen.c::generate_find_shift_action_compact`.
+5. ✅ Optional background compilation supported via
+   `jit_maybe_compile()` policy hooks.
 
 ---
 

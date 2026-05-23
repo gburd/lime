@@ -136,10 +136,10 @@ Feed one token to the parser.
 - `location` -- Byte offset of the token in the original source, or
   `LIME_LOC_UNKNOWN` (-1) if the grammar does not declare `%locations`
   or the caller does not track positions (e.g. the synthetic
-  end-of-input token).  Currently accepted and stored; full propagation
-  into reduce actions lands with the push-parser implementation that
-  replaces the current `parse_token()` stub.  Callers should thread
-  real locations anyway so they are ready.
+  end-of-input token).  Threaded through `parse_token` into the runtime
+  engine and into the snapshot's `yyloc` slot for each stack entry
+  when `%locations` is active in the grammar.  Pass `LIME_LOC_UNKNOWN`
+  if location data is unavailable for this token.
 
 **Returns:** `0` on success, non-zero on error (syntax error or OOM).
 
@@ -587,10 +587,9 @@ Precedence of the two action-source fields:
 | NULL     | non-NULL| `code` is compiled into the parser's generated `reduce()` switch at generator time.  Applicable to grammars fed through `lime`; not usable from extensions loaded into a pre-compiled parser. |
 | NULL     | NULL    | Rule reduces with no action. |
 
-Current implementation status: `reduce`-based dispatch is not yet wired
-through to the push-parser stack (blocks on the runtime rebuild work).
-The types are stable; extension code written against the contract today
-will not need changes when dispatch lights up.
+Reduce-based dispatch is wired through to the push-parser stack
+in `src/parse_engine.c::reduce` (state machine is fully driven by
+the snapshot's `yy_rule_info_lhs` and `yy_rule_info_nrhs` tables).
 
 ### Conflict Resolution
 

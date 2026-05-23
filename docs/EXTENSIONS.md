@@ -167,12 +167,15 @@ The callback must write the LHS value into `*lhs_out` before returning.
 The extension owns any memory referenced from that value; Lime treats
 slot payloads as opaque.  See `docs/API.md` for the full contract.
 
-**Current status:** the `reduce` dispatch path is type-checked and
-accepted at registration time, but the parser does not yet invoke
-running callbacks at parse time -- the wiring lands with the runtime
-LALR rebuild (Task #3).  Writing extension code against `reduce` today
-still compiles and will light up transparently when dispatch lands.
-In the meantime, use the `subprocess fallback` pattern (see
+**Current status:** the `reduce` callback shape is type-checked and
+accepted at registration time, but the runtime engine does not yet
+invoke extension-supplied reduce callbacks at parse time -- the
+runtime engine performs the LR reductions on its stack but has no
+hook for executing extension code per reduction.  The action tables
+themselves include the rule data; only the user-callback dispatch
+is missing.  Writing extension code against `reduce` today still
+compiles and will light up transparently when dispatch lands.  In
+the meantime, use the `subprocess fallback` pattern (see
 `lime_modifications_to_grammar_text()` in `docs/API.md`) to validate
 extension-grammar designs end to end.
 

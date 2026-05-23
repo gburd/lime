@@ -146,21 +146,28 @@ grammar):
 
 ## 3. Bayesian and LLM disambiguation strategies
 
-**What works today.**  Priority-based and fork-resolve disambiguation
-strategies are fully implemented and exercised by tests.
+**What works today.**  Priority-based, fork-resolve, and Bayesian
+(Beta-Bernoulli) disambiguation strategies are fully implemented
+and exercised by tests.  See `src/strategy_bayesian.c` and
+`tests/test_strategy_bayesian.c` (4 tests / 20 assertions covering
+cold-start, biased feedback, independence across conflict points,
+and posterior-mean closed-form match).
 
-**What is missing.**  `STRAT_BAYESIAN` and `STRAT_LLM` are accepted by
-`disambiguation_create()` but currently bind to a stub vtable that
-returns "unresolved" for every conflict.
+**What is missing.**  `STRAT_LLM` still binds to the stub vtable.
+Bayesian uses greedy posterior-mean selection; Thompson sampling
+would be a natural exploration upgrade.
 
-**What it would take.**  A Bayesian scorer over the conflict-history
-state plus a generic LLM HTTP client honouring a configurable model
-endpoint (the `examples/llm_oracle/` directory has a sketch).
+**What it would take.**  A generic LLM HTTP client honouring a
+configurable model endpoint (the `examples/llm_oracle/` directory
+has a sketch).  Thompson sampling for Bayesian is ~50 lines of
+additional code in `strategy_bayesian.c`.
 
 **Source-tree references.**
 
+- `src/strategy_bayesian.c` -- working Beta-Bernoulli
+  implementation.
 - `src/disambiguation.c::stub_vtable` -- the stub binding that
-  STRAT_BAYESIAN / STRAT_LLM use.
+  STRAT_LLM still uses.
 
 ---
 
