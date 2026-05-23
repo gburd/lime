@@ -43,8 +43,8 @@ static ParserSnapshot *make_base_snapshot(void) {
 
     snap->yy_action = calloc(50, sizeof(uint16_t));
     snap->yy_lookahead = calloc(50, sizeof(uint16_t));
-    snap->yy_shift_ofst = calloc(10, sizeof(int16_t));
-    snap->yy_reduce_ofst = calloc(10, sizeof(int16_t));
+    snap->yy_shift_ofst = calloc(10, sizeof(int32_t));
+    snap->yy_reduce_ofst = calloc(10, sizeof(int32_t));
     snap->yy_default = calloc(10, sizeof(uint16_t));
 
     if (!snap->yy_action || !snap->yy_lookahead ||
@@ -56,7 +56,7 @@ static ParserSnapshot *make_base_snapshot(void) {
 
     /* Fill with test data */
     for (int i = 0; i < 10; i++) {
-        snap->yy_shift_ofst[i] = (int16_t)(i * 5);
+        snap->yy_shift_ofst[i] = (int32_t)(i * 5);
         snap->yy_default[i] = (uint16_t)(100 + i);
     }
 
@@ -307,8 +307,8 @@ static void test_clone_large_tables(void) {
 
     base->yy_action = calloc(table_size, sizeof(uint16_t));
     base->yy_lookahead = calloc(table_size, sizeof(uint16_t));
-    base->yy_shift_ofst = calloc(500, sizeof(int16_t));
-    base->yy_reduce_ofst = calloc(500, sizeof(int16_t));
+    base->yy_shift_ofst = calloc(500, sizeof(int32_t));
+    base->yy_reduce_ofst = calloc(500, sizeof(int32_t));
     base->yy_default = calloc(500, sizeof(uint16_t));
 
     if (!base->yy_action || !base->yy_lookahead ||

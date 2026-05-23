@@ -52,8 +52,8 @@ static ParserSnapshot *make_test_snapshot(void) {
     snap->yy_lookahead[1] = 1;
     snap->yy_lookahead[2] = 2;
 
-    snap->yy_shift_ofst = calloc(5, sizeof(int16_t));
-    snap->yy_reduce_ofst = calloc(5, sizeof(int16_t));
+    snap->yy_shift_ofst = calloc(5, sizeof(int32_t));
+    snap->yy_reduce_ofst = calloc(5, sizeof(int32_t));
     snap->yy_default = calloc(5, sizeof(uint16_t));
 
     snap->symbols = NULL;

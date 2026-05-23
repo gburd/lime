@@ -66,8 +66,8 @@ static ParserSnapshot *create_test_snapshot(uint32_t nstate, uint32_t naction) {
 
     snap->yy_action = calloc(naction, sizeof(uint16_t));
     snap->yy_lookahead = calloc(naction, sizeof(uint16_t));
-    snap->yy_shift_ofst = calloc(nstate, sizeof(int16_t));
-    snap->yy_reduce_ofst = calloc(nstate, sizeof(int16_t));
+    snap->yy_shift_ofst = calloc(nstate, sizeof(int32_t));
+    snap->yy_reduce_ofst = calloc(nstate, sizeof(int32_t));
     snap->yy_default = calloc(nstate, sizeof(uint16_t));
 
     /* Fill with recognizable patterns */
@@ -76,8 +76,8 @@ static ParserSnapshot *create_test_snapshot(uint32_t nstate, uint32_t naction) {
         snap->yy_lookahead[i] = (uint16_t)(i % 128);
     }
     for (uint32_t i = 0; i < nstate; i++) {
-        snap->yy_shift_ofst[i] = (int16_t)(i % 64);
-        snap->yy_reduce_ofst[i] = (int16_t)(i % 32);
+        snap->yy_shift_ofst[i] = (int32_t)(i % 64);
+        snap->yy_reduce_ofst[i] = (int32_t)(i % 32);
         snap->yy_default[i] = (uint16_t)(i % 16);
     }
 

@@ -156,16 +156,16 @@ static ParserSnapshot *make_random_snapshot(
     }
 
     if (nstate > 0) {
-        snap->yy_shift_ofst = calloc(nstate, sizeof(int16_t));
-        snap->yy_reduce_ofst = calloc(nstate, sizeof(int16_t));
+        snap->yy_shift_ofst = calloc(nstate, sizeof(int32_t));
+        snap->yy_reduce_ofst = calloc(nstate, sizeof(int32_t));
         snap->yy_default = calloc(nstate, sizeof(uint16_t));
         if (snap->yy_shift_ofst) {
             for (uint32_t i = 0; i < nstate; i++)
-                snap->yy_shift_ofst[i] = (int16_t)(rng_next() & 0xFFFF);
+                snap->yy_shift_ofst[i] = (int32_t)(rng_next() & 0xFFFF);
         }
         if (snap->yy_reduce_ofst) {
             for (uint32_t i = 0; i < nstate; i++)
-                snap->yy_reduce_ofst[i] = (int16_t)(rng_next() & 0xFFFF);
+                snap->yy_reduce_ofst[i] = (int32_t)(rng_next() & 0xFFFF);
         }
         if (snap->yy_default) {
             for (uint32_t i = 0; i < nstate; i++)

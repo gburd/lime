@@ -141,8 +141,14 @@ typedef struct ParserSnapshot {
 
     uint16_t *yy_action;      /**< Combined shift+reduce action array */
     uint16_t *yy_lookahead;   /**< Lookahead values parallel to yy_action */
-    int16_t *yy_shift_ofst;   /**< Per-state offset into yy_action for shifts */
-    int16_t *yy_reduce_ofst;  /**< Per-state offset into yy_action for reduces */
+    int32_t *yy_shift_ofst;   /**< Per-state offset into yy_action for shifts.
+                              ** int32 (not int16) so grammars with action tables
+                              ** larger than 32k entries (e.g. PostgreSQL's
+                              ** ~145k-entry action table) can be represented
+                              ** without overflow.  Memory cost on small grammars
+                              ** is at most 4 * nstate bytes; trivial. */
+    int32_t *yy_reduce_ofst;  /**< Per-state offset into yy_action for reduces.
+                              ** Same int32 reasoning as yy_shift_ofst above. */
     uint16_t *yy_default;     /**< Default action for each state */
     uint32_t action_count;    /**< Number of entries in yy_action */
     uint32_t lookahead_count; /**< Number of entries in yy_lookahead */

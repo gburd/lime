@@ -52,8 +52,8 @@ typedef struct LimeParserTables {
     uint32_t yy_action_count;
     const uint16_t *yy_lookahead;
     uint32_t yy_lookahead_count;
-    const int16_t *yy_shift_ofst;
-    const int16_t *yy_reduce_ofst;
+    const int32_t *yy_shift_ofst;
+    const int32_t *yy_reduce_ofst;
     const uint16_t *yy_default;
     uint32_t nstate;
 

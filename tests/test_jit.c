@@ -72,8 +72,8 @@ static ParserSnapshot *make_test_snapshot(void) {
 
     snap->yy_action = calloc(snap->action_count, sizeof(uint16_t));
     snap->yy_lookahead = calloc(snap->lookahead_count, sizeof(uint16_t));
-    snap->yy_shift_ofst = calloc(snap->nstate, sizeof(int16_t));
-    snap->yy_reduce_ofst = calloc(snap->nstate, sizeof(int16_t));
+    snap->yy_shift_ofst = calloc(snap->nstate, sizeof(int32_t));
+    snap->yy_reduce_ofst = calloc(snap->nstate, sizeof(int32_t));
     snap->yy_default = calloc(snap->nstate, sizeof(uint16_t));
 
     if (!snap->yy_action || !snap->yy_lookahead ||
@@ -91,7 +91,7 @@ static ParserSnapshot *make_test_snapshot(void) {
     ** State 3: default action = 99
     */
     for (uint32_t s = 0; s < 3; s++) {
-        snap->yy_shift_ofst[s] = (int16_t)(s * 3);
+        snap->yy_shift_ofst[s] = (int32_t)(s * 3);
         snap->yy_default[s] = 0;
         for (uint32_t t = 0; t < 3; t++) {
             uint32_t idx = s * 3 + t;

@@ -5314,12 +5314,30 @@ PRIVATE int translate_code(struct lime *lemp, struct rule *rp){
   if( cp && cp[0] ) rp->code = Strsafe(cp);
   append_str(0,0,0,0);
 
-  /* Check to make sure the LHS has been used */
-  if( rp->lhsalias && !lhsused ){
+  /* Check to make sure the LHS has been used.  We only fire this
+  ** check when the rule has an action body, otherwise the alias
+  ** can't possibly be "used" -- there's no code to use it from.
+  ** Without this guard, generating a parser from a grammar that
+  ** lists pure-recogniser rules with explicit aliases (like
+  ** PostgreSQL's bare_label_keyword(A) ::= ABORT_P. forms, where
+  ** the alias was once needed by an action that has since been
+  ** stripped) would produce hundreds of spurious errors.  Note
+  ** that rp->code is non-null even for actionless rules (it is
+  ** set to a synthetic "\n" earlier in this function); rp->noCode
+  ** is the canonical "user wrote no action" flag.
+  **
+  ** "Unused alias" is a lint warning, not a hard error -- it does
+  ** not affect parser correctness (the alias just doesn't connect
+  ** to a stack slot read).  Bison treats it the same way.  We
+  ** still print the message so a developer sees it, but we do not
+  ** count it against errorcnt; this matters for grammars that
+  ** were mechanically converted from another generator and may
+  ** carry leftover alias labels in their action bodies. */
+  if( rp->lhsalias && !lhsused && !rp->noCode ){
     ErrorMsg(lemp->filename,rp->ruleline,
       "Label \"%s\" for \"%s(%s)\" is never used.",
         rp->lhsalias,rp->lhs->name,rp->lhsalias);
-    lemp->errorcnt++;
+    /* warn-only -- see comment above */
   }
 
   /* Generate destructor code for RHS minor values which are not referenced.
@@ -5346,11 +5364,13 @@ PRIVATE int translate_code(struct lime *lemp, struct rule *rp){
           }
         }
       }
-      if( !used[i] ){
+      if( !used[i] && !rp->noCode ){
+        /* See guard rationale on the LHS-alias check above.  This
+        ** is also a warn-only diagnostic -- alias being unused is
+        ** lint, not a correctness problem. */
         ErrorMsg(lemp->filename,rp->ruleline,
           "Label %s for \"%s(%s)\" is never used.",
           rp->rhsalias[i],rp->rhs[i]->name,rp->rhsalias[i]);
-        lemp->errorcnt++;
       }
     }else if( i>0 && has_destructor(rp->rhs[i],lemp) ){
       append_str("  yy_destructor(yypParser,%d,&yymsp[%d].minor);\n", 0,
@@ -7001,7 +7021,7 @@ void ReportSnapshotInit(struct lime *lemp)
 
   /* yy_shift_ofst */
   n = lemp->nxstate;
-  fprintf(out, "static const int16_t s_yy_shift_ofst[] = {\n");
+  fprintf(out, "static const int32_t s_yy_shift_ofst[] = {\n");
   for(i=j=0; i<n; i++){
     int ofst;
     stp = lemp->sorted[i];
@@ -7023,7 +7043,7 @@ void ReportSnapshotInit(struct lime *lemp)
         mnNtOfst = stp->iNtOfst;
       }
     }
-    fprintf(out, "static const int16_t s_yy_reduce_ofst[] = {\n");
+    fprintf(out, "static const int32_t s_yy_reduce_ofst[] = {\n");
     for(i=j=0; i<n; i++){
       int ofst;
       stp = lemp->sorted[i];

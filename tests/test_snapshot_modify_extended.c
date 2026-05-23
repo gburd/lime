@@ -31,8 +31,8 @@ static ParserSnapshot *make_test_snapshot(void) {
     snap->action_count = 10;
     snap->yy_action = calloc(10, sizeof(uint16_t));
     snap->yy_lookahead = calloc(10, sizeof(uint16_t));
-    snap->yy_shift_ofst = calloc(5, sizeof(int16_t));
-    snap->yy_reduce_ofst = calloc(5, sizeof(int16_t));
+    snap->yy_shift_ofst = calloc(5, sizeof(int32_t));
+    snap->yy_reduce_ofst = calloc(5, sizeof(int32_t));
     snap->yy_default = calloc(5, sizeof(uint16_t));
 
     return snap;

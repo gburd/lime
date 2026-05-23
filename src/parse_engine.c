@@ -122,7 +122,7 @@ static uint16_t find_shift_action(const ParserSnapshot *snap, uint16_t stateno,
     if (stateno > snap->yy_max_shift) return stateno;
     if (snap->yy_shift_ofst == NULL) return snap->yy_no_action;
 
-    int16_t ofst = snap->yy_shift_ofst[stateno];
+    int32_t ofst = snap->yy_shift_ofst[stateno];
     int32_t idx = (int32_t)ofst + (int32_t)lookahead;
 
     if (idx >= 0 && (uint32_t)idx < snap->lookahead_count && snap->yy_lookahead[idx] == lookahead) {
@@ -135,7 +135,7 @@ static uint16_t find_reduce_action(const ParserSnapshot *snap, uint16_t stateno,
                                    uint16_t lookahead) {
     if (snap->yy_reduce_ofst == NULL) return snap->yy_no_action;
 
-    int16_t ofst = snap->yy_reduce_ofst[stateno];
+    int32_t ofst = snap->yy_reduce_ofst[stateno];
     int32_t idx = (int32_t)ofst + (int32_t)lookahead;
 
     if (idx >= 0 && (uint32_t)idx < snap->lookahead_count && snap->yy_lookahead[idx] == lookahead) {

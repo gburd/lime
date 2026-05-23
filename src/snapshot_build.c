@@ -34,6 +34,14 @@ static int16_t *dup_i16(const int16_t *src, uint32_t count) {
     return copy;
 }
 
+static int32_t *dup_i32(const int32_t *src, uint32_t count) {
+    if (src == NULL || count == 0) return NULL;
+    size_t sz = count * sizeof(int32_t);
+    int32_t *copy = malloc(sz);
+    if (copy != NULL) memcpy(copy, src, sz);
+    return copy;
+}
+
 static int8_t *dup_i8(const int8_t *src, uint32_t count) {
     if (src == NULL || count == 0) return NULL;
     size_t sz = count * sizeof(int8_t);
@@ -72,8 +80,8 @@ ParserSnapshot *snapshot_build_from_tables(const LimeParserTables *t) {
 
     snap->yy_action = dup_u16(t->yy_action, t->yy_action_count);
     snap->yy_lookahead = dup_u16(t->yy_lookahead, t->yy_lookahead_count);
-    snap->yy_shift_ofst = dup_i16(t->yy_shift_ofst, t->nstate);
-    snap->yy_reduce_ofst = dup_i16(t->yy_reduce_ofst, t->nstate);
+    snap->yy_shift_ofst = dup_i32(t->yy_shift_ofst, t->nstate);
+    snap->yy_reduce_ofst = dup_i32(t->yy_reduce_ofst, t->nstate);
     snap->yy_default = dup_u16(t->yy_default, t->nstate);
 
     snap->yy_rule_info_lhs = dup_i16(t->yy_rule_info_lhs, t->nrule);

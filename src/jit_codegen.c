@@ -118,10 +118,10 @@ static LLVMValueRef generate_monolithic_parser(LLVMContextRef llvm_ctx, LLVMModu
         LLVMPositionBuilderAtEnd(builder, state_bb);
 
         /* Inline action lookup for this state */
-        int16_t ofst = snap->yy_shift_ofst[s];
+        int32_t ofst = snap->yy_shift_ofst[s];
         uint16_t default_action = snap->yy_default[s];
 
-        if (ofst < 0 || ofst >= (int16_t)snap->lookahead_count) {
+        if (ofst < 0 || (uint32_t)ofst >= snap->lookahead_count) {
             /* No shift actions - use default */
             LLVMBuildStore(builder, LLVMConstInt(i16, default_action, 0), state_var);
             LLVMBuildBr(builder, loop_increment_bb);
@@ -296,10 +296,10 @@ static LLVMValueRef generate_find_shift_action(LLVMContextRef llvm_ctx, LLVMModu
 
         LLVMPositionBuilderAtEnd(builder, sbb);
 
-        int16_t ofst = snap->yy_shift_ofst[s];
+        int32_t ofst = snap->yy_shift_ofst[s];
         uint16_t default_action = snap->yy_default[s];
 
-        if (ofst < 0 || ofst >= (int16_t)snap->lookahead_count) {
+        if (ofst < 0 || (uint32_t)ofst >= snap->lookahead_count) {
             LLVMBuildRet(builder, LLVMConstInt(i32, default_action, 0));
             continue;
         }

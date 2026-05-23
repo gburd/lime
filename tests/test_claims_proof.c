@@ -82,8 +82,8 @@ static ParserSnapshot *make_base_snapshot(void) {
 
     snap->yy_action = calloc(8, sizeof(uint16_t));
     snap->yy_lookahead = calloc(8, sizeof(uint16_t));
-    snap->yy_shift_ofst = calloc(4, sizeof(int16_t));
-    snap->yy_reduce_ofst = calloc(4, sizeof(int16_t));
+    snap->yy_shift_ofst = calloc(4, sizeof(int32_t));
+    snap->yy_reduce_ofst = calloc(4, sizeof(int32_t));
     snap->yy_default = calloc(4, sizeof(uint16_t));
 
     if (!snap->yy_action || !snap->yy_lookahead || !snap->yy_shift_ofst || !snap->yy_reduce_ofst ||
@@ -99,8 +99,8 @@ static ParserSnapshot *make_base_snapshot(void) {
         snap->yy_lookahead[i] = (uint16_t)(0xB000 + i);
     }
     for (int i = 0; i < 4; i++) {
-        snap->yy_shift_ofst[i] = (int16_t)(0x100 + i);
-        snap->yy_reduce_ofst[i] = (int16_t)(0x200 + i);
+        snap->yy_shift_ofst[i] = (int32_t)(0x100 + i);
+        snap->yy_reduce_ofst[i] = (int32_t)(0x200 + i);
         snap->yy_default[i] = (uint16_t)(0xC000 + i);
     }
     return snap;
@@ -115,8 +115,8 @@ static bool snapshots_have_same_action_tables(const ParserSnapshot *a, const Par
     if (memcmp(a->yy_action, b->yy_action, a->action_count * sizeof(uint16_t)) != 0) return false;
     if (memcmp(a->yy_lookahead, b->yy_lookahead, a->lookahead_count * sizeof(uint16_t)) != 0)
         return false;
-    if (memcmp(a->yy_shift_ofst, b->yy_shift_ofst, a->nstate * sizeof(int16_t)) != 0) return false;
-    if (memcmp(a->yy_reduce_ofst, b->yy_reduce_ofst, a->nstate * sizeof(int16_t)) != 0)
+    if (memcmp(a->yy_shift_ofst, b->yy_shift_ofst, a->nstate * sizeof(int32_t)) != 0) return false;
+    if (memcmp(a->yy_reduce_ofst, b->yy_reduce_ofst, a->nstate * sizeof(int32_t)) != 0)
         return false;
     if (memcmp(a->yy_default, b->yy_default, a->nstate * sizeof(uint16_t)) != 0) return false;
     return true;

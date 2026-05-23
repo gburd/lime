@@ -64,6 +64,14 @@ static int16_t *dup_i16_array(const int16_t *src, uint32_t count) {
     return copy;
 }
 
+static int32_t *dup_i32_array(const int32_t *src, uint32_t count) {
+    if (src == NULL || count == 0) return NULL;
+    size_t sz = count * sizeof(int32_t);
+    int32_t *copy = malloc(sz);
+    if (copy != NULL) memcpy(copy, src, sz);
+    return copy;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Snapshot cloning                                                   */
 /* ------------------------------------------------------------------ */
@@ -124,8 +132,8 @@ ParserSnapshot *clone_snapshot(const ParserSnapshot *base) {
 
     snap->yy_action = dup_u16_array(base->yy_action, base->action_count);
     snap->yy_lookahead = dup_u16_array(base->yy_lookahead, base->lookahead_count);
-    snap->yy_shift_ofst = dup_i16_array(base->yy_shift_ofst, base->nstate);
-    snap->yy_reduce_ofst = dup_i16_array(base->yy_reduce_ofst, base->nstate);
+    snap->yy_shift_ofst = dup_i32_array(base->yy_shift_ofst, base->nstate);
+    snap->yy_reduce_ofst = dup_i32_array(base->yy_reduce_ofst, base->nstate);
     snap->yy_default = dup_u16_array(base->yy_default, base->nstate);
 
     /* Action-range constants (small POD, copy verbatim). */

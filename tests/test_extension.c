@@ -594,8 +594,8 @@ static void test_snapshot_clone(void) {
 
     snap->yy_action = malloc(3 * sizeof(uint16_t));
     snap->yy_lookahead = malloc(3 * sizeof(uint16_t));
-    snap->yy_shift_ofst = malloc(4 * sizeof(int16_t));
-    snap->yy_reduce_ofst = malloc(4 * sizeof(int16_t));
+    snap->yy_shift_ofst = malloc(4 * sizeof(int32_t));
+    snap->yy_reduce_ofst = malloc(4 * sizeof(int32_t));
     snap->yy_default = malloc(4 * sizeof(uint16_t));
 
     if (snap->yy_action) { snap->yy_action[0] = 10; snap->yy_action[1] = 20; snap->yy_action[2] = 30; }

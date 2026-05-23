@@ -41,8 +41,8 @@ static ParserSnapshot *make_test_snapshot(uint64_t version) {
 
     snap->yy_action = calloc(50, sizeof(uint16_t));
     snap->yy_lookahead = calloc(50, sizeof(uint16_t));
-    snap->yy_shift_ofst = calloc(10, sizeof(int16_t));
-    snap->yy_reduce_ofst = calloc(10, sizeof(int16_t));
+    snap->yy_shift_ofst = calloc(10, sizeof(int32_t));
+    snap->yy_reduce_ofst = calloc(10, sizeof(int32_t));
     snap->yy_default = calloc(10, sizeof(uint16_t));
 
     if (!snap->yy_action || !snap->yy_lookahead ||
@@ -54,7 +54,7 @@ static ParserSnapshot *make_test_snapshot(uint64_t version) {
 
     /* Fill with test data */
     for (int i = 0; i < 10; i++) {
-        snap->yy_shift_ofst[i] = (int16_t)(i * 5);
+        snap->yy_shift_ofst[i] = (int32_t)(i * 5);
         snap->yy_reduce_ofst[i] = -1;
         snap->yy_default[i] = (uint16_t)(100 + i);
 

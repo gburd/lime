@@ -69,8 +69,8 @@ static ParserSnapshot *make_test_snapshot(
     }
 
     if (nstate > 0) {
-        snap->yy_shift_ofst = calloc(nstate, sizeof(int16_t));
-        snap->yy_reduce_ofst = calloc(nstate, sizeof(int16_t));
+        snap->yy_shift_ofst = calloc(nstate, sizeof(int32_t));
+        snap->yy_reduce_ofst = calloc(nstate, sizeof(int32_t));
         snap->yy_default = calloc(nstate, sizeof(uint16_t));
     }
 
