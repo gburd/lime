@@ -16,7 +16,7 @@
 #include <string.h>
 
 #include "test_diagnostics_grammar.h"
-#include "../../include/lime_error.h"
+#include "lime_error.h"
 
 /* Declarations for the generated parser API (Lemon convention:
 ** user declares these in their driver). */
