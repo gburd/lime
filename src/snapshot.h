@@ -12,7 +12,24 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+
+/* Atomic refcount type.
+**
+** In C this is just <stdatomic.h>'s atomic_uint_fast32_t.  In C++
+** the same name is not necessarily available (g++ before C++23
+** does not pull in <stdatomic.h>'s typedefs), so we typedef it to
+** std::atomic<std::uint_fast32_t> which has the same memory
+** layout in practice on every supported platform.  The atomic
+** operations themselves only happen in C code in src/snapshot.c
+** (compiled as C, sees the C definition); C++ consumers only need
+** the field to exist for sizeof / pointer-to-struct purposes. */
+#ifdef __cplusplus
+#include <atomic>
+#include <cstdint>
+typedef std::atomic<std::uint_fast32_t> atomic_uint_fast32_t;
+#else
 #include <stdatomic.h>
+#endif
 
 /* Forward declarations for Lemon grammar structures.
 ** The actual definitions live in lemon.c; snapshot consumers only
