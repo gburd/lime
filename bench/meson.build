@@ -45,6 +45,24 @@ bench_arith_gen = custom_target('bench_arith_parser',
   ],
 )
 
+# JSON parser tables for the same head-to-head comparison harness.
+# Real-world workload: object/array nesting, multiple value types,
+# key/value pairs.  ~16 rules, 11 terminals -- a few times bigger
+# than the arithmetic grammar, exercises the parser's nesting
+# state-machine paths the arithmetic test cannot.
+bench_json_gen = custom_target('bench_json_parser',
+  input   : ['bench_json_grammar.y'],
+  output  : ['bench_json_grammar.c', 'bench_json_grammar.h',
+             'bench_json_grammar_snapshot.c'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-n',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
 bench_jit_real_parser = executable('bench_jit_real_parser',
   'bench_jit_real_parser.c',
   bench_arith_gen,

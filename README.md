@@ -281,23 +281,75 @@ See **[docs/EXTENSIONS.md](docs/EXTENSIONS.md)** and
 
 ## Performance
 
-JIT comparison benchmark (LLVM 21):
+### vs Bison + Flex (lex + parse, fair)
 
-JIT comparison benchmark (LLVM 21, aarch64-darwin):
+`bench/bench_flex_bison_compare/`: same JSON document parsed
+through Flex+Bison and Lime in the same harness.  100k iterations
+per trial, 5 trials, median:
 
-| Grammar Size | Interpreted | JIT | Speedup |
-|--------------|-------------|-----|---------|
-| Small (64 states)   | 62 ns  | 24 ns | 2.59x |
-| Medium (256 states) | 91 ns  | 43 ns | 2.13x |
-| Large (512 states)  | 161 ns | 85 ns | 1.89x |
+| Tool | mean (ms) | per-doc | vs Bison |
+|------|----------:|--------:|---------:|
+| bison + flex | 470 | 4.70 µs | 1.00× |
+| lime         | 260 | 2.60 µs | **1.81×** |
 
-(Absolute numbers are lower than some published measurements because
-this is Apple Silicon; on x86_64 with AVX2 the speedup ratios tend to
-be larger. See [docs/BENCHMARKS_VS_BISON.md](docs/BENCHMARKS_VS_BISON.md)
-for head-to-head comparison methodology.)
+This is the honest end-to-end comparison: both sides include
+lexing.  See [docs/BENCHMARKS_VS_BISON.md](docs/BENCHMARKS_VS_BISON.md)
+for methodology and the parser-only arithmetic benchmark.
 
-Extension framework overhead, measured via `bench/extension_overhead`
-(numbers from `bench/BENCHMARK_RESULTS.md`):
+### Parser-only throughput
+
+Same harness, arithmetic grammar with pre-tokenized Lime input:
+
+| Tool | per-parse | per-token | vs Bison |
+|------|----------:|----------:|---------:|
+| bison       | 492 ns | 38 ns | 1.00× |
+| lime        | 426 ns | 33 ns | **1.15×** |
+| lime + JIT  | 393 ns | 30 ns | **1.25×** |
+
+### JIT speedup vs interpreted
+
+`bench/jit_comparison`, synthetic 128-state grammar:
+
+| Path | Per-parse |
+|------|----------:|
+| Interpreted | 98 ns |
+| JIT (warm) | 43 ns |
+
+JIT compile time on this grammar is 750 ms; break-even after ~14 M
+parses.  Useful for long-running processes that hit the same
+grammar over and over (databases, language servers, query engines).
+
+### JIT compile scaling
+
+The JIT codegen has two paths:
+
+- **Unrolled** (default below `nstate × nterminal = 500,000`): every
+  state is compiled to a basic block with a constant-action switch,
+  yielding the fastest per-call performance.
+- **Compact** (above the threshold): the snapshot's action tables
+  are baked in as LLVM constant globals and the lookup is done via
+  ~30 IR instructions.  This is what makes the JIT scale to
+  PG-class grammars.
+
+On the full PostgreSQL SQL grammar (3,842 states, 145 K-entry
+action table), the compact path JITs in **~19 ms**.  An earlier
+unrolled-only path either timed out or took 186 s on the same input.
+
+### SIMD tokenizer
+
+`bench/parser_bench`, AVX2 on x86_64 / NEON on aarch64:
+
+| Path | 4 KB classify |
+|------|--------------:|
+| Scalar | 3171 ns |
+| SIMD (best available) | 1784 ns |
+
+End-to-end tokenizer throughput holds at 99-101 MB/s across
+4 KB-256 KB inputs.
+
+### Extension framework overhead
+
+`bench/extension_overhead` (numbers from `bench/BENCHMARK_RESULTS.md`):
 
 | Scenario | ns/op |
 |----------|------:|
@@ -309,8 +361,8 @@ Extension framework overhead, measured via `bench/extension_overhead`
 The fast-path check is a single `get_loaded_extension_count()` call.
 The full pipeline only fires on conflicting tokens, so amortised
 per-parse overhead is a small fraction of total parse time.  See
-[docs/EXTENSION_PERFORMANCE.md](docs/EXTENSION_PERFORMANCE.md)
-and [bench/BENCHMARK_RESULTS.md](bench/BENCHMARK_RESULTS.md).
+[docs/EXTENSION_PERFORMANCE.md](docs/EXTENSION_PERFORMANCE.md) and
+[bench/BENCHMARK_RESULTS.md](bench/BENCHMARK_RESULTS.md).
 
 ## Testing
 
