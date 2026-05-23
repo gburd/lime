@@ -16,6 +16,7 @@ does not expose stable per-core pinning.
   * **Compiler:** clang 19.1.7 (FreeBSD ports)
   * **simdjson:** 4.5.0 (FreeBSD ports)
   * **Allocator:** jemalloc (FreeBSD default)
+  * **JIT:** enabled (LLVM 19)
   * **Load:** load avg < 1, 97 % idle, dedicated benchmark machine.
   * **Pinning:** `cpuset -l 0`
 
@@ -26,13 +27,30 @@ does not expose stable per-core pinning.
   * **Compiler:** clang 21.1.8 (nix LLVM 21.1.8 toolchain)
   * **simdjson:** 4.6.4 (Homebrew)
   * **Allocator:** macOS libc malloc
+  * **JIT:** enabled (LLVM 21.1.8)
   * **Pinning:** none (macOS doesn't expose stable per-core pinning)
 
-The nuc is the trustworthy host: dedicated, idle, FreeBSD's
-predictable scheduler, jemalloc.  The M3 Pro is a developer
-laptop running other workloads; its per-run stddev is **17×
-larger** than the nuc's on the same metric.  This is exactly
-why the user routes long-running benchmarks to the nuc.
+### rv — Ky(R) X1, Ubuntu 24.04 / RISC-V
+
+  * **CPU:** Ky(R) X1 @ 1.60 GHz max, 8 cores / 8 threads
+    (no SMT), 32 KB L1d, 32 KB L1i, 1 MB L2 (per cluster).
+    riscv64.  No SIMD ISA exposed.
+  * **OS:** Linux 6.6.63-ky, Ubuntu 24.04.4 LTS
+  * **Compiler:** gcc 13.3.0 (system) and clang 20.1.2 (Ubuntu)
+  * **simdjson:** 3.6.4 (Ubuntu, fetched via `apt-get download`
+    + dpkg-deb -x into a userspace prefix because we don't have
+    sudo on this host)
+  * **Allocator:** glibc malloc (ptmalloc2)
+  * **JIT:** **disabled** at configure time (LLVM dev headers
+    not available; `-Dllvm=disabled` selected).  All "lime+JIT"
+    rows below fall through to the interpreter on this host.
+  * **Pinning:** `taskset -c 0`
+
+The nuc and rv are the trustworthy hosts: dedicated, mostly idle,
+predictable schedulers.  The M3 Pro is a developer laptop; its
+per-run stddev is **5-17× larger** than the nuc/rv on the same
+metric.  This is exactly why the user routes long-running
+benchmarks elsewhere.
 
 ## Reproduce
 
@@ -94,6 +112,18 @@ interpreter on Apple Silicon** — opposite of x86.  Stddev is 14×
 larger here, but the JIT-faster effect is consistent across all
 11 runs.
 
+### rv — RISC-V / Ubuntu (no LLVM, JIT disabled)
+
+| metric (ms)             |    min |    med |   mean |    p95 |    max |    std |
+|-------------------------|-------:|-------:|-------:|-------:|-------:|-------:|
+| bison min               | 260.83 | 261.14 | 261.27 | 261.95 | 262.11 |   0.39 |
+| **lime min**            | 219.68 | 219.79 | 219.85 | 220.14 | 220.22 |   0.16 |
+
+Lime wins by **1.19×** over Bison.  Tightest stddev of any host
+(0.16 ms = 0.07 % relative).  No JIT row because LLVM dev
+headers were not available on this host; the JIT path was
+disabled at configure time.
+
 ## Results — JSON benchmark (lex + parse, fair on both sides)
 
 The same 515-byte JSON document parsed 100,000 times per inner
@@ -124,6 +154,19 @@ Lime+JIT is **2.01× faster** than Bison on M3 Pro (median 236.14
 vs 474.62 ms).  Again the JIT helps on aarch64 and hurts on
 Intel.
 
+### rv — RISC-V / Ubuntu (no JIT)
+
+| metric (ms)               |    min |    med |   mean |    p95 |    max |   std |
+|---------------------------|-------:|-------:|-------:|-------:|-------:|------:|
+| bison_json min            | 1976.85 | 1980.91 | 1980.35 | 1983.89 | 1984.49 |  2.64 |
+| **lime_json min**         | 1425.02 | 1434.16 | 1434.34 | 1443.03 | 1445.85 |  6.16 |
+
+Lime wins by **1.38× over Bison** — the largest gap of any host.
+Likely cause: Bison's pull-parser-with-Flex pattern has more
+function-call overhead than Lime's push parser, and on a
+narrower-issue RISC-V core (1.6 GHz, no SIMD) that overhead
+dominates more.
+
 ## Results — Lime+JIT vs simdjson (steady state, three Lime alloc modes)
 
 11 outer runs, each with 50,000 iterations of warmup + 5 inner
@@ -149,6 +192,20 @@ Stddev is < 10 ms across all four modes.
 | lime+JIT malloc-leak (no free)    |     573.60 |        85.6 |       174,329 |
 | **lime+JIT arena** (zero alloc)   |     431.70 |       113.8 |       231,659 |
 | **simdjson ondemand**             |      35.80 |     1,372.9 |     2,795,219 |
+
+### rv (no JIT — interpreter only)
+
+| mode                              |  median ms | median MB/s | median docs/s |
+|-----------------------------------|-----------:|------------:|--------------:|
+| lime malloc                       |    5438.00 |         9.0 |        18,389 |
+| lime malloc-leak (no free)        |    6241.80 |         7.9 |        16,021 |
+| **lime arena** (zero alloc)       |    2997.10 |        16.4 |        33,366 |
+| **simdjson ondemand**             |     536.50 |        91.5 |       186,387 |
+
+(JIT was disabled at configure time on this host since LLVM dev
+headers weren't available; "lime+JIT" labels emitted by the bench
+binary are misnomers here -- they all fall through to the
+interpreter when `lime_jit_compile` returns non-zero.)
 
 ## The two surprising findings
 
@@ -192,24 +249,31 @@ fastest on both platforms.
 
 ## Cross-host shape comparison (median values)
 
-|                      | nuc (Intel/FreeBSD) | m3pro (Apple/macOS) |
-|----------------------|--------------------:|--------------------:|
-| simdjson median      |   29.1 ms          |   35.8 ms           |
-| lime+JIT arena       |  381.4 ms (13.1×)  |  431.7 ms (12.1×)   |
-| lime+JIT malloc      |  494.0 ms (17.0×)  |  693.7 ms (19.4×)   |
-| lime+JIT malloc-leak |  571.0 ms (19.6×)  |  573.6 ms (16.0×)   |
+|                      | nuc (Intel) | m3pro (Apple) | rv (RISC-V) |
+|----------------------|------------:|--------------:|------------:|
+| simdjson median      |   29.1 ms   |   35.8 ms     |  536.5 ms   |
+| lime arena           |  381.4 ms (13.1×) | 431.7 ms (12.1×) | 2997 ms ( 5.6×) |
+| lime malloc          |  494.0 ms (17.0×) | 693.7 ms (19.4×) | 5438 ms (10.1×) |
+| lime malloc-leak     |  571.0 ms (19.6×) | 573.6 ms (16.0×) | 6242 ms (11.6×) |
 
 Cross-host signal:
 
-  * **simdjson is consistently 12-13× faster than Lime+arena.**
-    Same shape on both architectures.  The remaining gap is
-    purely the inherent cost of a token-at-a-time push parser
-    versus SIMD-vectorised structural decoding on 32-byte
-    chunks.
-  * **Lime+arena is consistently fastest of the three Lime
-    modes.**  The arena pattern (single buffer, reused, reset
-    between parses) mirrors simdjson's own internal allocation
-    model.
+  * **simdjson is consistently 12-13× faster than Lime+arena on
+    machines with SIMD** (Intel AVX2, Apple NEON).  On RISC-V
+    where simdjson has no SIMD ISA to vectorise into (this build
+    of simdjson 3.6.4 was compiled without RVV), the gap drops
+    to **5.6×**.  That's our cleanest measurement of how much of
+    simdjson's win is SIMD specifically: about 60 % of the gap
+    on Intel/Apple is SIMD; the remaining 40 % is structural
+    (lazy ondemand parsing, no per-value allocation, in-place
+    iteration).
+  * **Lime+arena is consistently the fastest of the Lime modes**
+    on every platform tested.  The arena pattern (single buffer,
+    reused, reset between parses) mirrors simdjson's own
+    internal allocation model.
+  * **Bison vs Lime ratio is consistent across all three hosts**
+    (1.04-1.38× Lime advantage).  The win is robust across
+    architectures, compilers, allocators, and SIMD availability.
 
 ## Methodology notes
 
