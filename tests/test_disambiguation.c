@@ -135,7 +135,9 @@ static void test_create_stub_strategies(void) {
 
     ExtensionRegistry *reg = create_test_registry();
 
-    /* Fork-resolve, Bayesian, LLM should all get stub vtables */
+    /* Fork-resolve has its own implementation; LLM is still a stub.
+    ** Bayesian is a real strategy now (see test_strategy_bayesian.c)
+    ** -- here we just verify creation/destruction works. */
     DisambiguationContext *ctx_fork = disambiguation_create(STRAT_FORK_RESOLVE, reg);
     ASSERT(ctx_fork != NULL, "STRAT_FORK_RESOLVE should create");
     disambiguation_destroy(ctx_fork);

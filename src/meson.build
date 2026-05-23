@@ -14,6 +14,7 @@ lib_sources = files(
   'disambiguation.c',
   'strategy_priority.c',
   'strategy_fork_resolve.c',
+  'strategy_bayesian.c',
   'snapshot_modify.c',
   'mod_serialize.c',
   'dependency_resolver.c',

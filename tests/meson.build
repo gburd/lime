@@ -177,6 +177,15 @@ test_disambiguation = executable('test_disambiguation',
 
 test('disambiguation', test_disambiguation)
 
+# Bayesian strategy unit tests
+test_strategy_bayesian = executable('test_strategy_bayesian',
+  'test_strategy_bayesian.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('strategy_bayesian', test_strategy_bayesian)
+
 # Multi-extension integration tests
 test_multi_extension = executable('test_multi_extension',
   'test_multi_extension.c',

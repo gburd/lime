@@ -35,6 +35,9 @@ extern const DisambiguationStrategyVTable strategy_priority_vtable;
 /* Defined in strategy_fork_resolve.c */
 extern const DisambiguationStrategyVTable strategy_fork_resolve_vtable;
 
+/* Defined in strategy_bayesian.c */
+extern const DisambiguationStrategyVTable strategy_bayesian_vtable;
+
 /* Placeholder vtables for strategies not yet implemented.
 ** These return "unresolved" for every conflict. */
 static void *stub_init(const Extension *const *extensions, uint32_t n) {
@@ -103,6 +106,7 @@ static const DisambiguationStrategyVTable *get_builtin_vtable(LimeStrategy strat
     case STRAT_FORK_RESOLVE:
         return &strategy_fork_resolve_vtable;
     case STRAT_BAYESIAN:
+        return &strategy_bayesian_vtable;
     case STRAT_LLM:
         /* Not yet implemented -- return stub */
         return &stub_vtable;
