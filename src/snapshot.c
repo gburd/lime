@@ -51,8 +51,15 @@ static void destroy_snapshot(ParserSnapshot *snap) {
     free(snap->yy_fallback);
     free(snap->grammar_source);
 
-    /* JIT context (if any). */
-    jit_detach_from_snapshot(snap);
+    /* JIT context (if any).  jit_detach_from_snapshot is declared
+    ** weak in jit_context.h so this snapshot.c file can be bundled
+    ** into the dynamically-built .so produced by lime_snapshot_create
+    ** without dragging in the JIT library.  When the symbol is not
+    ** linked (the .so case), the weak reference resolves to NULL and
+    ** we skip the call. */
+    if (jit_detach_from_snapshot != NULL) {
+        jit_detach_from_snapshot(snap);
+    }
 
     free(snap);
 }

@@ -217,7 +217,19 @@ JITStatus jit_attach_to_snapshot(ParserSnapshot *snap);
 ** reaches zero, but can also be called manually to free JIT resources
 ** earlier.
 */
-void jit_detach_from_snapshot(ParserSnapshot *snap);
+/*
+** Detach and dispose any JIT context attached to this snapshot.
+**
+** Declared as weak so that snapshot.c -- which is bundled into
+** the dynamically-built .so produced by lime_snapshot_create --
+** can be linked without the JIT library.  When the JIT library
+** *is* linked (the production case), the strong definition in
+** jit_context.c wins and the call dispatches normally.  When
+** it's NOT (the .so-build case), the symbol resolves to NULL
+** at link time and snapshot.c skips the call -- safe because a
+** snapshot built that way never has jit_ctx set anyway.
+*/
+__attribute__((weak)) void jit_detach_from_snapshot(ParserSnapshot *snap);
 
 /*
 ** Runtime dispatch: look up the shift action for a state+lookahead pair.
