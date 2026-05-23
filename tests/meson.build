@@ -1047,6 +1047,12 @@ test_snapshot_create = executable('test_snapshot_create',
   'test_snapshot_create.c',
   include_directories : include_directories('../src'),
   dependencies : lime_parser_dep,
+  # Export executable symbols so the .so produced by
+  # lime_snapshot_create at runtime can resolve snapshot_release /
+  # create_base_snapshot / etc. via dlopen against the parent
+  # binary.  Required on FreeBSD (where the default is hidden);
+  # harmless on Linux / macOS where the default is already export.
+  export_dynamic : true,
 )
 
 test('snapshot_create', test_snapshot_create,
@@ -1065,6 +1071,7 @@ test_extension_rebuild = executable('test_extension_rebuild',
   test_runtime_arith_gen,
   include_directories : include_directories('../src'),
   dependencies : lime_parser_dep,
+  export_dynamic : true,
 )
 
 test('extension_rebuild', test_extension_rebuild,

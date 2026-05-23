@@ -380,7 +380,6 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
     snprintf(inc_b, sizeof(inc_b), "-I%s", src_root);
 
     char snapshot_build_c[1024] = {0};
-    char snapshot_c_path[1024] = {0};
     {
         const char *env = getenv("LIME_SNAPSHOT_BUILD_C");
         if (env && env[0] != '\0') {
@@ -402,33 +401,6 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
                 if (stat(candidates[i], &sst) == 0) {
                     strncpy(snapshot_build_c, candidates[i], sizeof(snapshot_build_c) - 1);
                     break;
-                }
-            }
-        }
-        /* Also locate snapshot.c -- snapshot_build.c calls
-        ** snapshot_release on its error path, and on FreeBSD the
-        ** default ld behaviour is to NOT export executable symbols
-        ** to dlopen'd shared libs.  Bundling snapshot.c into the .so
-        ** makes the resulting module self-contained on every
-        ** supported platform (no -rdynamic / dynamic_lookup needed). */
-        const char *env_s = getenv("LIME_SNAPSHOT_C");
-        if (env_s && env_s[0] != '\0') {
-            struct stat sst;
-            if (stat(env_s, &sst) == 0) {
-                strncpy(snapshot_c_path, env_s, sizeof(snapshot_c_path) - 1);
-            }
-        }
-        if (snapshot_c_path[0] == '\0' && snapshot_build_c[0] != '\0') {
-            /* Derive snapshot.c path from snapshot_build.c path. */
-            const char *bld = snapshot_build_c;
-            const char *slash = strrchr(bld, '/');
-            size_t base_len = slash ? (size_t)(slash - bld + 1) : 0;
-            if (base_len + sizeof("snapshot.c") <= sizeof(snapshot_c_path)) {
-                memcpy(snapshot_c_path, bld, base_len);
-                memcpy(snapshot_c_path + base_len, "snapshot.c", sizeof("snapshot.c"));
-                struct stat sst;
-                if (stat(snapshot_c_path, &sst) != 0) {
-                    snapshot_c_path[0] = '\0';
                 }
             }
         }
@@ -456,13 +428,19 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
     cc_argv[ai++] = inc_b;
     cc_argv[ai++] = snap_c;
     cc_argv[ai++] = snapshot_build_c;
-    if (snapshot_c_path[0] != '\0') {
-        cc_argv[ai++] = snapshot_c_path;
-    }
     cc_argv[ai++] = "-o";
     cc_argv[ai++] = so_path;
 #if defined(__APPLE__)
     cc_argv[ai++] = "-Wl,-undefined,dynamic_lookup";
+#elif defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__) \
+        || defined(__NetBSD__) || defined(__DragonFly__) || defined(__sun)
+    /* On ELF Unix, allow the .so to leave symbols unresolved -- they
+    ** will be looked up from the parent executable at dlopen time
+    ** (the parent is built with -rdynamic / -Wl,--export-dynamic so
+    ** its symbols are visible).  Without this, FreeBSD's default ld
+    ** behaviour rejects the .so with "Undefined symbol foo" for any
+    ** function it doesn't see in its own object files. */
+    cc_argv[ai++] = "-Wl,--unresolved-symbols=ignore-all";
 #endif
     cc_argv[ai] = NULL;
     if (run_cmd(cc_argv, error) != 0) {
