@@ -43,6 +43,17 @@ examples/isolation/isol_parser
 examples/jsonpath/jsonpath_parser
 examples/mongodb/mongodb_parser
 examples/pg/pg_tokenize
+# PG example: the generated parser sources are large (3-4 MB each)
+# and are deeply coupled to the PostgreSQL header tree, so they
+# cannot be compiled standalone anyway.  Users regenerate via
+# `make` or the meson custom_target as needed.
+examples/pg/gram.c
+examples/pg/gram.h
+examples/pg/gram.out
+examples/pg/gram_snapshot.c
+examples/pg/pg_grammar.c
+examples/pg/pg_grammar.h
+examples/pg/pg_grammar.out
 examples/pgbench/pgbench_parse
 examples/replication/repl_parser
 examples/syncrep/syncrep_parser

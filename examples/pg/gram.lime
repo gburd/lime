@@ -40,6 +40,17 @@
 %syntax_error { parser_yyerror("syntax error"); }
 %parse_failure { parser_yyerror("parse failure"); }
 
+/*
+ * The PostgreSQL SQL grammar has substantial precedence-resolved
+ * shift/reduce ambiguity (operator precedence, optional clauses,
+ * dangling ELSE etc.).  Both bison-on-PG and lime resolve these
+ * via precedence declarations + default-shift; the remaining
+ * conflicts are accepted by design.  Pinning %expect lets `lime`
+ * exit cleanly while still flagging any change in conflict count
+ * (which would indicate a grammar drift or a generator regression).
+ */
+%expect 1665
+
 %start_symbol parse_toplevel
 
 /* Type declarations for all non-terminals */

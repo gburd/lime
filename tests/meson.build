@@ -1141,3 +1141,54 @@ test_destructor = executable('test_destructor',
 )
 
 test('destructor', test_destructor)
+
+# ====================================================================
+# PostgreSQL grammar regression test (gated by -Dpg_grammar=true)
+# ====================================================================
+# The PG SQL grammar is the largest LR(1) machine Lime hosts:
+#   - 3,842 states, 3,584 rules, 557 terminals
+#   - 145,227-entry action table (which exposes int16_t overflow on
+#     yy_shift_ofst / yy_reduce_ofst -- the int32 widening lives in
+#     src/snapshot.h)
+#   - 1,665 conflicts resolved by precedence + default-shift
+#
+# Regenerating gram_snapshot.c takes ~3.8 s, so this test is opt-in.
+# Enable it in CI sweeps that need to exercise stress-test corners:
+#     meson configure builddir -Dpg_grammar=true
+if get_option('pg_grammar')
+  pg_gram_snapshot_gen = custom_target('pg_gram_snapshot',
+    input   : meson.project_source_root() / 'examples/pg/gram.lime',
+    output  : ['gram.c', 'gram.h', 'gram_snapshot.c'],
+    command : [
+      lime_exe,
+      '-T' + meson.project_source_root() / 'limpar.c',
+      '-n',
+      '-d@OUTDIR@',
+      '@INPUT@',
+    ],
+  )
+
+  # Compile only the snapshot file (not gram.c, which depends on
+  # the PostgreSQL header tree).  Use a wrapper static library so
+  # we can pass the necessary -Wno-* flags without polluting the
+  # whole project.
+  pg_gram_snapshot_lib = static_library('pg_gram_snapshot',
+    pg_gram_snapshot_gen[2],   # gram_snapshot.c is the third output
+    c_args : [
+      '-Wno-shorten-64-to-32',
+      '-Wno-constant-conversion',
+      '-Wno-unused-variable',
+    ],
+    include_directories : include_directories('../include', '../src'),
+    dependencies : lime_parser_dep,
+  )
+
+  test_pg_grammar = executable('test_pg_grammar',
+    'test_pg_grammar.c',
+    include_directories : include_directories('../src'),
+    link_with    : pg_gram_snapshot_lib,
+    dependencies : lime_parser_dep,
+  )
+
+  test('pg_grammar', test_pg_grammar, timeout : 120)
+endif

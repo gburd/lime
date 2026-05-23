@@ -18,3 +18,16 @@ option('llvm-static',
                 '(50-80 MB typical) and slower link. ' +
                 'Only effective when LLVM is enabled.',
 )
+
+option('pg_grammar',
+  type        : 'boolean',
+  value       : false,
+  description : 'Build the PostgreSQL-grammar regression test ' +
+                '(tests/test_pg_grammar). Off by default because ' +
+                'regenerating examples/pg/gram_snapshot.c via lime -n ' +
+                'takes ~3.8 s -- only enable for stress runs / CI ' +
+                'sweeps. The 3,842-state PG grammar is the largest ' +
+                'LR(1) machine Lime is asked to host, and the test ' +
+                'guards against int16/int32 overflow and JIT codegen ' +
+                'scaling regressions.',
+)
