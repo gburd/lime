@@ -56,9 +56,9 @@ void jit_detach_from_snapshot(ParserSnapshot *snap) {
 
 /* --- Extension registry stubs --- */
 
-bool lemon_extension_registry_init(void) {
+bool lime_extension_registry_init(void) {
     return true;
 }
 
-void lemon_extension_registry_destroy(void) {
+void lime_extension_registry_destroy(void) {
 }

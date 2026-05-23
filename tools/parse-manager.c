@@ -420,7 +420,7 @@ static int cmd_test(ParserManager *mgr, int argc, char **argv) {
     size_t input_len;
     char *input = read_file(file, &input_len);
     if (!input) {
-        lemon_snapshot_release(snap);
+        lime_snapshot_release(snap);
         return 1;
     }
 
@@ -433,7 +433,7 @@ static int cmd_test(ParserManager *mgr, int argc, char **argv) {
     if (ctx == NULL) {
         errmsg("parse_begin failed");
         free(input);
-        lemon_snapshot_release(snap);
+        lime_snapshot_release(snap);
         return 1;
     }
 
@@ -456,7 +456,7 @@ static int cmd_test(ParserManager *mgr, int argc, char **argv) {
     }
 
     free(input);
-    lemon_snapshot_release(snap);
+    lime_snapshot_release(snap);
     return (rc != 0) ? 1 : 0;
 }
 
@@ -514,7 +514,7 @@ static int cmd_compare(ParserManager *mgr, int argc, char **argv) {
             ms1 = (double)(t1 - t0) / 1e6;
             parse_end(ctx);
         }
-        lemon_snapshot_release(snap1);
+        lime_snapshot_release(snap1);
     }
 
     /* Test parser 2 */
@@ -538,7 +538,7 @@ static int cmd_compare(ParserManager *mgr, int argc, char **argv) {
             ms2 = (double)(t1 - t0) / 1e6;
             parse_end(ctx);
         }
-        lemon_snapshot_release(snap2);
+        lime_snapshot_release(snap2);
     }
 
     /* Report */
@@ -643,7 +643,7 @@ static int cmd_benchmark(ParserManager *mgr, int argc, char **argv) {
         uint64_t t1 = now_ns();
         double avg_ms = (double)(t1 - t0) / 1e6 / iters;
 
-        lemon_snapshot_release(snap);
+        lime_snapshot_release(snap);
 
         printf("  %-40s  %10zu  %10d  %10.3f  %s\n",
                file, input_len, iters, avg_ms,
@@ -687,7 +687,7 @@ static int cmd_version(ParserManager *mgr, int argc, char **argv) {
     printf("Plugin ABI version: %d.%d\n",
            LIME_PLUGIN_ABI_VERSION_MAJOR, LIME_PLUGIN_ABI_VERSION_MINOR);
 
-    const char *ver = lemon_parser_version();
+    const char *ver = lime_parser_version();
     if (ver) {
         printf("Lime parser library: %s\n", ver);
     }

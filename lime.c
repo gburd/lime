@@ -46,7 +46,7 @@ int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
 /*
 ** Lime version string.  Must be kept in sync with the project()
 ** version in meson.build.  Reported by `lime -x` and `lime -v`, and
-** mirrored by lemon_parser_version() in src/version.c.
+** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
 #define LIME_VERSION_STRING "0.2.4"
@@ -6951,7 +6951,7 @@ void ReportHeader(struct lime *lemp)
 ** comes from %name (defaults to "Parse").  Multiple grammars can be
 ** snapshot-emitted into the same binary without colliding.
 **
-** Applications can also call lemon_snapshot_create("foo.y", &err) at
+** Applications can also call lime_snapshot_create("foo.y", &err) at
 ** runtime; that path relies on the build system having emitted a
 ** matching <Prefix>BuildSnapshot earlier so the runtime can dispatch
 ** by grammar name.
@@ -7180,7 +7180,7 @@ void ReportSnapshotInit(struct lime *lemp)
     "}\n"
     "\n"
     "/*\n"
-    "** Generic entry-point alias used by lemon_snapshot_create() at\n"
+    "** Generic entry-point alias used by lime_snapshot_create() at\n"
     "** runtime.  Each generated snapshot file emits this symbol so a\n"
     "** caller that has just dlopen()ed the .so can resolve the\n"
     "** snapshot builder via dlsym(handle, \"lime_snapshot_entry\")\n"

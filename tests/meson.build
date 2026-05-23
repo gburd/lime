@@ -1212,3 +1212,94 @@ if get_option('pg_grammar')
 
   test('pg_grammar', test_pg_grammar, timeout : 120)
 endif
+
+# ====================================================================
+# Property-based tests via Hegel (gated on libhegel availability)
+# ====================================================================
+#
+# Hegel is a Hypothesis-backed property-based testing protocol; the
+# C99 binding ships at https://github.com/gburd/hegel-c.  When
+# present, four PBTs land here, exercising:
+#
+#   1. parser-table roundtrip (test_runtime_pbt)
+#   2. snapshot acquire/release refcount stateful test
+#      (test_snapshot_pbt)
+#   3. JIT vs interpreter equivalence on (state, lookahead)
+#      (test_jit_pbt)
+#   4. JSON allocator-mode equivalence (test_json_pbt)
+#
+# The targets and methodology live in
+# .agent/skills/hegel/references/c/reference.md.  Each test exits
+# 77 (meson skip code) when hegel_session_new() returns NULL so
+# the rest of the suite still runs on hosts without the hegel
+# server binary on PATH.
+hegel_dep = dependency('hegel', required : false)
+
+if hegel_dep.found()
+  message('Hegel property-based tests: ENABLED (hegel ' +
+          hegel_dep.version() + ')')
+
+  # Reuse the runtime arith snapshot generated above by the
+  # existing runtime-engine tests.  No new lime invocations.
+  test_runtime_pbt = executable('test_runtime_pbt',
+    'test_runtime_pbt.c',
+    test_runtime_arith_gen,
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, hegel_dep],
+  )
+  test('runtime_pbt', test_runtime_pbt, timeout : 120)
+
+  test_snapshot_pbt = executable('test_snapshot_pbt',
+    'test_snapshot_pbt.c',
+    test_runtime_arith_gen,
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, hegel_dep],
+  )
+  test('snapshot_pbt', test_snapshot_pbt, timeout : 60)
+
+  test_jit_pbt = executable('test_jit_pbt',
+    'test_jit_pbt.c',
+    test_runtime_arith_gen,
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, hegel_dep],
+  )
+  test('jit_pbt', test_jit_pbt, timeout : 120)
+
+  # JSON allocator-mode PBT consumes the JSON example's parser
+  # sources directly (json.h, json_helpers.c, json_tokenize.c) and
+  # the bench-shared json_grammar custom_target.  Reuse the bench
+  # custom_target by referencing its outputs.
+  if get_option('pg_grammar') or true
+    # json_grammar source lives under bench/; generate it here
+    # on its own custom_target so this test stands alone if the
+    # bench is disabled.
+    json_pbt_gen = custom_target('json_pbt_parser',
+      input   : meson.project_source_root() / 'examples/json/json_grammar.lime',
+      output  : ['json_grammar.c', 'json_grammar.h', 'json_grammar_snapshot.c'],
+      command : [
+        lime_exe,
+        '-T' + meson.project_source_root() / 'limpar.c',
+        '-n',
+        '-d@OUTDIR@',
+        '@INPUT@',
+      ],
+    )
+
+    test_json_pbt = executable('test_json_pbt',
+      'test_json_pbt.c',
+      json_pbt_gen,
+      meson.project_source_root() / 'examples/json/json_helpers.c',
+      meson.project_source_root() / 'examples/json/json_tokenize.c',
+      include_directories : [
+        include_directories('../src'),
+        include_directories('../examples/json'),
+      ],
+      dependencies : [lime_parser_dep, hegel_dep],
+    )
+    test('json_pbt', test_json_pbt, timeout : 120)
+  endif
+else
+  message('Hegel property-based tests: SKIPPED ' +
+          '(install hegel-c to enable; see ' +
+          '.agent/skills/hegel/references/c/reference.md)')
+endif

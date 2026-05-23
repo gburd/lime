@@ -238,28 +238,4 @@ void lime_extension_registry_destroy(void);
 }
 #endif
 
-/*
-** Backward-compatibility aliases for the previous public-API
-** prefix (lemon_*).  As of v0.2.5 the public surface uses lime_*
-** for every function, type, and constant.  The lemon_* names
-** below remain available so that downstream callers (notably
-** PostgreSQL integration tracks) can adopt v0.2.5 without an
-** atomic source rewrite.  These aliases will be removed in
-** v0.4.0; new code should write lime_* directly.
-**
-** Implementation note: macro-level aliasing rather than function
-** wrappers so the deprecated calls have zero runtime cost and
-** debug symbols still point at the real function.  The macros
-** are placed AFTER the extern "C" block so their token
-** replacement happens after the C++ linkage attribute is parsed.
-*/
-#define lemon_parser_version              lime_parser_version
-#define lemon_snapshot_acquire            lime_snapshot_acquire
-#define lemon_snapshot_release            lime_snapshot_release
-#define lemon_snapshot_create             lime_snapshot_create
-#define lemon_snapshot_extend             lime_snapshot_extend
-#define lemon_modifications_to_grammar_text lime_modifications_to_grammar_text
-#define lemon_extension_registry_init     lime_extension_registry_init
-#define lemon_extension_registry_destroy  lime_extension_registry_destroy
-
 #endif /* PARSER_H */

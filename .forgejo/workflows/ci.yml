@@ -92,7 +92,7 @@ jobs:
 
   # Guards against the three-source-of-truth version string drifting:
   # LIME_VERSION_STRING in lime.c, project(version: ...) in meson.build,
-  # and the literal in src/version.c's lemon_parser_version() must all
+  # and the literal in src/version.c's lime_parser_version() must all
   # match.  Cheap to run; fits in the codeberg-tiny 2-min cap.
   version-consistency:
     runs-on: codeberg-tiny
