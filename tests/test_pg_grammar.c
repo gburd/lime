@@ -48,12 +48,14 @@
 **   - lime regenerates the parser tables from gram.lime in ~3.8 s
 **     on Apple M1; the snapshot itself is then materialised from
 **     static initializers in <1 ms.
-**   - lime_jit_compile on a 3,842-state x 557-terminal grammar has
-**     been observed to take >5 minutes on the same hardware (does
-**     not appear to terminate within reasonable bounds).  LLVM's
-**     opt passes do not scale linearly on this size of switch IR.
-**     Tracking as a known scaling issue; the JIT half of this test
-**     is therefore opt-in via the LIME_PG_TEST_JIT=1 env var.
+**   - lime_jit_compile on the PG grammar completes in ~15 ms with
+**     the compact (table-load) codegen path that's enabled above
+**     the IR_SIZE_THRESHOLD in jit_codegen.c.  An earlier version
+**     used a fully-unrolled state x lookahead switch which produced
+**     hundreds of thousands of basic blocks and could not be
+**     compiled by LLVM's default<O2> pipeline within reasonable
+**     bounds; that path is still used for small grammars where its
+**     constant-folding gains outweigh the IR-size cost.
 */
 
 #define _POSIX_C_SOURCE 200809L
@@ -155,22 +157,21 @@ int main(void) {
     }
 
     /* --- JIT compile ----------------------------------------- */
-    /* WARNING: lime_jit_compile on a 3,842-state x 557-terminal
-    ** grammar produces an IR with millions of switch cases.  LLVM's
-    ** optimisation passes do not scale linearly on that input -- on
-    ** an Apple M1 with LLVM 21, jit compile has been observed to
-    ** take >5 minutes (and does not appear to terminate).  This is
-    ** a real scaling regression in the JIT codegen worth its own
-    ** investigation.  For now we make the JIT half opt-in via the
-    ** env var LIME_PG_TEST_JIT=1 so the table-driven assertions
-    ** above (which DO catch the int32 widening regression) can run
-    ** in CI without blowing the test timeout. */
-    if (getenv("LIME_PG_TEST_JIT") == NULL) {
+    /* For small grammars the JIT codegen unrolls the state x
+    ** lookahead machine into ~146,000 basic blocks of LLVM IR with
+    ** constant-folded action returns, which is fast on tiny grammars
+    ** but does not scale to PG-class input.  jit_codegen.c switches
+    ** to a compact table-load path above an IR-size threshold; on
+    ** the PG grammar that path produces ~30 IR instructions and the
+    ** JIT compile completes in tens of milliseconds.
+    **
+    ** Set LIME_PG_TEST_JIT=0 to skip the JIT half (e.g. when running
+    ** under sanitizers that don't play nicely with OrcJIT). */
+    if (getenv("LIME_PG_TEST_JIT") != NULL && strcmp(getenv("LIME_PG_TEST_JIT"), "0") == 0) {
         printf("\n--- JIT compile ---\n");
-        printf("  [SKIP] JIT compile on PG-scale grammar takes minutes; "
-               "set LIME_PG_TEST_JIT=1 to opt in.\n");
+        printf("  [SKIP] LIME_PG_TEST_JIT=0 set -- skipping JIT half.\n");
     } else {
-        printf("\n--- JIT compile (opt-in via LIME_PG_TEST_JIT) ---\n");
+        printf("\n--- JIT compile ---\n");
         clock_gettime(CLOCK_MONOTONIC, &t0);
         int jit_rc = lime_jit_compile(snap);
         clock_gettime(CLOCK_MONOTONIC, &t1);

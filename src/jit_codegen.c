@@ -21,6 +21,7 @@
 #include "snapshot.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -225,6 +226,175 @@ static LLVMValueRef generate_monolithic_parser(LLVMContextRef llvm_ctx, LLVMModu
 **     lookahead matches yy_lookahead at that index, return
 **     yy_action[index]; otherwise return yy_default[state].
 */
+/* ------------------------------------------------------------------ */
+/*  Compact codegen for very large grammars                            */
+/* ------------------------------------------------------------------ */
+
+/*
+** Add an internal-linkage const array global to the module and
+** initialise it with `count` elements from `data`.  Returns the
+** opaque LLVMValueRef for the global.  Used by the compact
+** find_shift_action path to bake the snapshot's tables directly
+** into the JIT module.
+*/
+static LLVMValueRef add_const_array_global(LLVMContextRef llvm_ctx, LLVMModuleRef module,
+                                           const char *name, LLVMTypeRef elt_ty,
+                                           const void *data, uint32_t count, uint32_t elt_size) {
+    (void)llvm_ctx;
+    LLVMTypeRef arr_ty = LLVMArrayType(elt_ty, count);
+    LLVMValueRef g = LLVMAddGlobal(module, arr_ty, name);
+    LLVMSetLinkage(g, LLVMInternalLinkage);
+    LLVMSetGlobalConstant(g, 1);
+
+    /* Build the initializer.  count is bounded by snap->action_count
+    ** which is at most a few hundred thousand; allocate the values
+    ** array on the heap. */
+    LLVMValueRef *vals = malloc((size_t)count * sizeof(LLVMValueRef));
+    if (vals == NULL) {
+        /* Fall back to a zero initializer; the JIT path will be wrong
+        ** but the build won't crash.  Caller checks for NULL is not
+        ** strictly necessary because LLVMConstArray accepts an empty
+        ** initializer too. */
+        LLVMSetInitializer(g, LLVMConstNull(arr_ty));
+        return g;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t v;
+        switch (elt_size) {
+            case 1: v = ((const uint8_t *)data)[i]; break;
+            case 2: v = ((const uint16_t *)data)[i]; break;
+            case 4: v = ((const uint32_t *)data)[i]; break;
+            default: v = 0; break;
+        }
+        /* SignExtend = 0: store as unsigned/exact-bits.  i16 / i32
+        ** array entries are interpreted as 2's complement at use
+        ** sites (yy_shift_ofst is signed), but the bits are the
+        ** same. */
+        vals[i] = LLVMConstInt(elt_ty, v, 0);
+    }
+    LLVMSetInitializer(g, LLVMConstArray(elt_ty, vals, count));
+    free(vals);
+    return g;
+}
+
+/*
+** Compact find_shift_action codegen: emit the action tables as
+** internal-linkage const globals and a small function body that
+** mirrors src/parse_engine.c::find_shift_action exactly.  Result
+** IR is ~30 instructions independent of grammar size, in contrast
+** to generate_find_shift_action() which fully unrolls the
+** state x lookahead switch (millions of basic blocks on PG-scale
+** grammars, where LLVM's mandatory lowering passes do not scale).
+**
+** Algorithm:
+**     uint32_t jit_find_shift_action(uint32_t state, uint32_t la) {
+**         if (state > yy_max_shift) return state;
+**         int32_t ofst = yy_shift_ofst[state];
+**         int32_t idx  = ofst + (int32_t)la;
+**         if (idx >= 0 && idx < lookahead_count
+**             && yy_lookahead[idx] == la) return yy_action[idx];
+**         return yy_default[state];
+**     }
+*/
+static LLVMValueRef generate_find_shift_action_compact(LLVMContextRef llvm_ctx,
+                                                       LLVMModuleRef module,
+                                                       const ParserSnapshot *snap) {
+    LLVMTypeRef i16 = LLVMInt16TypeInContext(llvm_ctx);
+    LLVMTypeRef i32 = LLVMInt32TypeInContext(llvm_ctx);
+
+    /* Bake the four arrays into the module as internal globals. */
+    LLVMValueRef g_action =
+        add_const_array_global(llvm_ctx, module, "lime_yy_action", i16, snap->yy_action,
+                               snap->action_count, 2);
+    LLVMValueRef g_lookahead =
+        add_const_array_global(llvm_ctx, module, "lime_yy_lookahead", i16, snap->yy_lookahead,
+                               snap->lookahead_count, 2);
+    LLVMValueRef g_default =
+        add_const_array_global(llvm_ctx, module, "lime_yy_default", i16, snap->yy_default,
+                               snap->nstate, 2);
+    LLVMValueRef g_shift_ofst =
+        add_const_array_global(llvm_ctx, module, "lime_yy_shift_ofst", i32, snap->yy_shift_ofst,
+                               snap->nstate, 4);
+    LLVMTypeRef arr_action_ty = LLVMArrayType(i16, snap->action_count);
+    LLVMTypeRef arr_lookahead_ty = LLVMArrayType(i16, snap->lookahead_count);
+    LLVMTypeRef arr_default_ty = LLVMArrayType(i16, snap->nstate);
+    LLVMTypeRef arr_shift_ofst_ty = LLVMArrayType(i32, snap->nstate);
+
+    /* Function: uint32_t jit_find_shift_action(uint32_t, uint32_t) */
+    LLVMTypeRef param_types[] = {i32, i32};
+    LLVMTypeRef fn_type = LLVMFunctionType(i32, param_types, 2, 0);
+    LLVMValueRef fn = LLVMAddFunction(module, "jit_find_shift_action", fn_type);
+    LLVMSetFunctionCallConv(fn, LLVMCCallConv);
+    LLVMSetLinkage(fn, LLVMExternalLinkage);
+
+    LLVMValueRef state_i32 = LLVMGetParam(fn, 0);
+    LLVMValueRef la_i32 = LLVMGetParam(fn, 1);
+
+    LLVMBuilderRef b = LLVMCreateBuilderInContext(llvm_ctx);
+    LLVMBasicBlockRef bb_entry = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "entry");
+    LLVMBasicBlockRef bb_passthru = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "passthru");
+    LLVMBasicBlockRef bb_lookup = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "lookup");
+    LLVMBasicBlockRef bb_check_match = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "check_match");
+    LLVMBasicBlockRef bb_hit = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "hit");
+    LLVMBasicBlockRef bb_default = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "default");
+
+    LLVMPositionBuilderAtEnd(b, bb_entry);
+    /* if (state > yy_max_shift) return state; */
+    LLVMValueRef max_shift = LLVMConstInt(i32, snap->yy_max_shift, 0);
+    LLVMValueRef cmp_passthru = LLVMBuildICmp(b, LLVMIntUGT, state_i32, max_shift, "above_max");
+    LLVMBuildCondBr(b, cmp_passthru, bb_passthru, bb_lookup);
+
+    LLVMPositionBuilderAtEnd(b, bb_passthru);
+    LLVMBuildRet(b, state_i32);
+
+    /* lookup: ofst = yy_shift_ofst[state] */
+    LLVMPositionBuilderAtEnd(b, bb_lookup);
+    LLVMValueRef zero_i32 = LLVMConstInt(i32, 0, 0);
+    LLVMValueRef so_idx[] = {zero_i32, state_i32};
+    LLVMValueRef so_ptr =
+        LLVMBuildInBoundsGEP2(b, arr_shift_ofst_ty, g_shift_ofst, so_idx, 2, "so_ptr");
+    LLVMValueRef ofst = LLVMBuildLoad2(b, i32, so_ptr, "ofst");
+
+    /* idx = ofst + la (signed) */
+    LLVMValueRef idx = LLVMBuildAdd(b, ofst, la_i32, "idx");
+
+    /* bounds: idx >= 0 && (uint32_t)idx < lookahead_count */
+    LLVMValueRef geq_zero = LLVMBuildICmp(b, LLVMIntSGE, idx, zero_i32, "ge0");
+    LLVMValueRef lac = LLVMConstInt(i32, snap->lookahead_count, 0);
+    LLVMValueRef lt_lac = LLVMBuildICmp(b, LLVMIntULT, idx, lac, "lt_lac");
+    LLVMValueRef bounds = LLVMBuildAnd(b, geq_zero, lt_lac, "bounds");
+    LLVMBuildCondBr(b, bounds, bb_check_match, bb_default);
+
+    /* check_match: yy_lookahead[idx] == la ? */
+    LLVMPositionBuilderAtEnd(b, bb_check_match);
+    LLVMValueRef la_idx[] = {zero_i32, idx};
+    LLVMValueRef la_ptr =
+        LLVMBuildInBoundsGEP2(b, arr_lookahead_ty, g_lookahead, la_idx, 2, "la_ptr");
+    LLVMValueRef expected = LLVMBuildLoad2(b, i16, la_ptr, "expected");
+    LLVMValueRef la_trunc = LLVMBuildTrunc(b, la_i32, i16, "la_i16");
+    LLVMValueRef matches = LLVMBuildICmp(b, LLVMIntEQ, expected, la_trunc, "matches");
+    LLVMBuildCondBr(b, matches, bb_hit, bb_default);
+
+    /* hit: return yy_action[idx] */
+    LLVMPositionBuilderAtEnd(b, bb_hit);
+    LLVMValueRef act_idx[] = {zero_i32, idx};
+    LLVMValueRef act_ptr =
+        LLVMBuildInBoundsGEP2(b, arr_action_ty, g_action, act_idx, 2, "act_ptr");
+    LLVMValueRef action = LLVMBuildLoad2(b, i16, act_ptr, "action");
+    LLVMBuildRet(b, LLVMBuildZExt(b, action, i32, "ret_action"));
+
+    /* default: return yy_default[state] */
+    LLVMPositionBuilderAtEnd(b, bb_default);
+    LLVMValueRef def_idx[] = {zero_i32, state_i32};
+    LLVMValueRef def_ptr =
+        LLVMBuildInBoundsGEP2(b, arr_default_ty, g_default, def_idx, 2, "def_ptr");
+    LLVMValueRef def_act = LLVMBuildLoad2(b, i16, def_ptr, "def_act");
+    LLVMBuildRet(b, LLVMBuildZExt(b, def_act, i32, "ret_def"));
+
+    LLVMDisposeBuilder(b);
+    return fn;
+}
+
 static LLVMValueRef generate_find_shift_action(LLVMContextRef llvm_ctx, LLVMModuleRef module,
                                                const ParserSnapshot *snap) {
     LLVMTypeRef i16 = LLVMInt16TypeInContext(llvm_ctx);
@@ -412,8 +582,17 @@ JITStatus jit_codegen_generate_into(LLVMContextRef llvm_ctx, LLVMModuleRef modul
 
     /* Always generate the per-token shift-action lookup -- the
     ** runtime push parser (parse_engine_step) calls this once per
-    ** token when the snapshot has JIT code attached. */
-    LLVMValueRef fn2 = generate_find_shift_action(llvm_ctx, module, snap);
+    ** token when the snapshot has JIT code attached.
+    **
+    ** For large grammars use the compact (table-load) variant: it
+    ** emits a small, fixed-size IR that does the same thing as
+    ** parse_engine.c::find_shift_action, with the four data tables
+    ** baked in as internal-linkage globals.  The unrolled-switch
+    ** variant is faster per call (LLVM lowers the action constants
+    ** to immediates) but does not scale to PG-size IR. */
+    LLVMValueRef fn2 = large_grammar
+                           ? generate_find_shift_action_compact(llvm_ctx, module, snap)
+                           : generate_find_shift_action(llvm_ctx, module, snap);
     if (fn2 == NULL) return JIT_ERR_CODEGEN_FAILED;
 
     uint64_t end = now_ns();
