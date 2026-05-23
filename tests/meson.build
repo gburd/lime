@@ -1194,6 +1194,10 @@ if get_option('pg_grammar')
 
   test_pg_grammar = executable('test_pg_grammar',
     'test_pg_grammar.c',
+    pg_gram_snapshot_gen[1],   # gram.h: pull into the build graph so it's
+                               # generated before this target compiles, and
+                               # so meson auto-adds its dir to the include
+                               # path -- the test C file does #include "gram.h".
     include_directories : include_directories('../src'),
     link_with    : pg_gram_snapshot_lib,
     dependencies : lime_parser_dep,
