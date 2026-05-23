@@ -137,7 +137,7 @@ void glr_parser_destroy(GLRParser *parser) {
 ** Mirrors the yy_find_shift_action logic in limpar.c.
 */
 static uint16_t find_shift_action(uint32_t stateno, uint16_t token, const uint16_t *yy_action,
-                                  const uint16_t *yy_lookahead, const int16_t *yy_shift_ofst,
+                                  const uint16_t *yy_lookahead, const int32_t *yy_shift_ofst,
                                   const uint16_t *yy_default, uint32_t lookahead_count,
                                   uint32_t nstate) {
     if (stateno >= nstate) return yy_default[stateno];
@@ -155,7 +155,7 @@ static uint16_t find_shift_action(uint32_t stateno, uint16_t token, const uint16
 */
 static uint16_t find_reduce_action(uint32_t stateno, uint16_t nonterminal,
                                    const uint16_t *yy_action, const uint16_t *yy_lookahead,
-                                   const int16_t *yy_reduce_ofst, const uint16_t *yy_default,
+                                   const int32_t *yy_reduce_ofst, const uint16_t *yy_default,
                                    uint32_t lookahead_count) {
     int32_t ofst = (int32_t)yy_reduce_ofst[stateno];
     int32_t idx = ofst + (int32_t)nonterminal;
@@ -238,7 +238,7 @@ static int glr_merge_heads(GLRParser *parser) {
 
 int glr_parser_feed(GLRParser *parser, uint16_t token, const uint16_t *yy_action,
                     uint32_t action_count, const uint16_t *yy_lookahead, uint32_t lookahead_count,
-                    const int16_t *yy_shift_ofst, const int16_t *yy_reduce_ofst,
+                    const int32_t *yy_shift_ofst, const int32_t *yy_reduce_ofst,
                     const uint16_t *yy_default, uint32_t nstate, const uint16_t *yy_rule_lhs,
                     const int8_t *yy_rule_nrhs, uint32_t nrule, uint16_t min_shiftreduce,
                     uint16_t max_shiftreduce, uint16_t min_reduce, uint16_t max_reduce,

@@ -110,7 +110,7 @@ void glr_parser_destroy(GLRParser *parser);
 */
 int glr_parser_feed(GLRParser *parser, uint16_t token, const uint16_t *yy_action,
                     uint32_t action_count, const uint16_t *yy_lookahead, uint32_t lookahead_count,
-                    const int16_t *yy_shift_ofst, const int16_t *yy_reduce_ofst,
+                    const int32_t *yy_shift_ofst, const int32_t *yy_reduce_ofst,
                     const uint16_t *yy_default, uint32_t nstate, const uint16_t *yy_rule_lhs,
                     const int8_t *yy_rule_nrhs, uint32_t nrule, uint16_t min_shiftreduce,
                     uint16_t max_shiftreduce, uint16_t min_reduce, uint16_t max_reduce,

@@ -92,8 +92,8 @@ uint16_t snap_find_shift_action(const ParserSnapshot *snap, uint16_t stateno, ui
     if (snap == NULL || snap->yy_shift_ofst == NULL) return 0;
     if (stateno >= snap->nstate) return 0;
 
-    int16_t ofst = snap->yy_shift_ofst[stateno];
-    uint32_t idx = (uint32_t)((int32_t)ofst + (int32_t)iLookAhead);
+    int32_t ofst = snap->yy_shift_ofst[stateno];
+    uint32_t idx = (uint32_t)(ofst + (int32_t)iLookAhead);
 
     if (idx < snap->lookahead_count && snap->yy_lookahead[idx] == iLookAhead) {
         return snap->yy_action[idx];
@@ -112,12 +112,12 @@ uint16_t snap_find_reduce_action(const ParserSnapshot *snap, uint16_t stateno,
     if (snap == NULL || snap->yy_reduce_ofst == NULL) return 0;
     if (stateno >= snap->nstate) return 0;
 
-    int16_t ofst = snap->yy_reduce_ofst[stateno];
+    int32_t ofst = snap->yy_reduce_ofst[stateno];
     if (ofst < 0) {
         return snap->yy_default[stateno];
     }
 
-    uint32_t idx = (uint32_t)((int32_t)ofst + (int32_t)iLookAhead);
+    uint32_t idx = (uint32_t)(ofst + (int32_t)iLookAhead);
 
     if (idx < snap->lookahead_count && snap->yy_lookahead[idx] == iLookAhead) {
         return snap->yy_action[idx];

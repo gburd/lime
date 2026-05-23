@@ -413,8 +413,8 @@ static uint16_t table_find_shift_action(const ParserSnapshot *snap, uint16_t sta
                                         uint16_t iLookAhead) {
     if (snap->yy_shift_ofst == NULL) return 0;
 
-    int16_t ofst = snap->yy_shift_ofst[stateno];
-    uint32_t idx = (uint32_t)((int32_t)ofst + (int32_t)iLookAhead);
+    int32_t ofst = snap->yy_shift_ofst[stateno];
+    uint32_t idx = (uint32_t)(ofst + (int32_t)iLookAhead);
 
     if (idx < snap->lookahead_count && snap->yy_lookahead[idx] == iLookAhead) {
         return snap->yy_action[idx];
