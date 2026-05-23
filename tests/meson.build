@@ -1063,6 +1063,19 @@ test('extension_rebuild', test_extension_rebuild,
   is_parallel : false,
 )
 
+# Equivalence test: the JIT-armed parse_token path produces the same
+# accept/reject outcomes as the table-driven path on a battery of
+# well-formed and malformed inputs.  Skipped at runtime when LLVM is
+# unavailable (lime_jit_compile returns non-zero).
+test_jit_parse_equivalence = executable('test_jit_parse_equivalence',
+  'test_jit_parse_equivalence.c',
+  test_runtime_arith_gen,
+  include_directories : include_directories('../src'),
+  dependencies : lime_parser_dep,
+)
+
+test('jit_parse_equivalence', test_jit_parse_equivalence)
+
 # %destructor smoke test: drives a tiny grammar with %destructor
 # directives, exercises both happy-path and error-recovery code paths,
 # and asserts every allocation has a matching free (proving the

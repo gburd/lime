@@ -205,6 +205,153 @@ static LLVMValueRef generate_monolithic_parser(LLVMContextRef llvm_ctx, LLVMModu
 }
 
 /*
+** Generate a per-token shift-action lookup function:
+**
+**   uint16_t jit_find_shift_action(uint16_t state, uint16_t lookahead);
+**
+** This is the function the runtime push parser (parse_engine_step in
+** src/parse_engine.c) calls once per token when a snapshot has JIT
+** code attached.  Its body is a fully-inlined nested switch over
+** (state, lookahead) -> action that LLVM lowers to native jump
+** tables -- avoiding the indirect-load chain through yy_shift_ofst /
+** yy_lookahead / yy_action / yy_default that the table-driven path
+** has to walk.
+**
+** Algorithm matches src/parse_engine.c::find_shift_action exactly:
+**
+**   - State above max_shift returns the state code itself
+**     (encoded shift-reduce; the engine handles dispatch).
+**   - Otherwise look up the (state, lookahead) entry; if the
+**     lookahead matches yy_lookahead at that index, return
+**     yy_action[index]; otherwise return yy_default[state].
+*/
+static LLVMValueRef generate_find_shift_action(LLVMContextRef llvm_ctx, LLVMModuleRef module,
+                                               const ParserSnapshot *snap) {
+    LLVMTypeRef i16 = LLVMInt16TypeInContext(llvm_ctx);
+    LLVMTypeRef i32 = LLVMInt32TypeInContext(llvm_ctx);
+
+    /*
+    ** uint32_t (uint32_t state, uint32_t lookahead)
+    **
+    ** We use i32 for the return type and the parameters so the
+    ** aarch64 / x86_64 ABIs put a well-defined 32-bit value in the
+    ** return register.  Returning an LLVM i16 directly leaves the
+    ** upper 16 bits of the return register undefined, and most C
+    ** ABIs require the caller (not callee) to zero-extend small
+    ** values -- so reading back through a `uint16_t (*)(...)`
+    ** function pointer gets garbage in the upper bits.
+    **
+    ** The JIT helper this maps to is declared as
+    ** uint32_t (*)(uint32_t, uint32_t) on the C side
+    ** (JITFindShiftActionFn) and the runtime engine masks to
+    ** uint16_t for use.
+    */
+    LLVMTypeRef param_types[] = {i32, i32};
+    LLVMTypeRef fn_type = LLVMFunctionType(i32, param_types, 2, 0);
+
+    LLVMValueRef fn = LLVMAddFunction(module, "jit_find_shift_action", fn_type);
+    LLVMSetFunctionCallConv(fn, LLVMCCallConv);
+    LLVMSetLinkage(fn, LLVMExternalLinkage);
+
+    LLVMValueRef param_state_i32 = LLVMGetParam(fn, 0);
+    LLVMValueRef param_la_i32 = LLVMGetParam(fn, 1);
+
+    LLVMBuilderRef builder = LLVMCreateBuilderInContext(llvm_ctx);
+
+    LLVMBasicBlockRef entry_bb = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "entry");
+    LLVMPositionBuilderAtEnd(builder, entry_bb);
+
+    /* Truncate the i32 args to i16 for the switch keys (the table
+    ** values are all i16 by construction). */
+    LLVMValueRef param_state =
+        LLVMBuildTrunc(builder, param_state_i32, i16, "state_i16");
+    LLVMValueRef param_la = LLVMBuildTrunc(builder, param_la_i32, i16, "la_i16");
+
+    /* Mirror find_shift_action: if (stateno > yy_max_shift) return stateno; */
+    LLVMBasicBlockRef shift_bb = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "in_shift_range");
+    LLVMBasicBlockRef passthru_bb = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "passthru");
+
+    LLVMValueRef max_shift_const = LLVMConstInt(i16, snap->yy_max_shift, 0);
+    LLVMValueRef cmp_above_max =
+        LLVMBuildICmp(builder, LLVMIntUGT, param_state, max_shift_const, "above_max");
+    LLVMBuildCondBr(builder, cmp_above_max, passthru_bb, shift_bb);
+
+    LLVMPositionBuilderAtEnd(builder, passthru_bb);
+    LLVMBuildRet(builder, LLVMBuildZExt(builder, param_state, i32, "ret_passthru"));
+
+    /* shift_bb: switch on state. */
+    LLVMPositionBuilderAtEnd(builder, shift_bb);
+
+    LLVMBasicBlockRef state_default_bb =
+        LLVMAppendBasicBlockInContext(llvm_ctx, fn, "state_default");
+
+    LLVMValueRef state_switch =
+        LLVMBuildSwitch(builder, param_state, state_default_bb, snap->nstate);
+
+    for (uint32_t s = 0; s < snap->nstate; s++) {
+        char bb_name[64];
+        snprintf(bb_name, sizeof(bb_name), "s%u", s);
+        LLVMBasicBlockRef sbb = LLVMAppendBasicBlockInContext(llvm_ctx, fn, bb_name);
+        LLVMAddCase(state_switch, LLVMConstInt(i16, s, 0), sbb);
+
+        LLVMPositionBuilderAtEnd(builder, sbb);
+
+        int16_t ofst = snap->yy_shift_ofst[s];
+        uint16_t default_action = snap->yy_default[s];
+
+        if (ofst < 0 || ofst >= (int16_t)snap->lookahead_count) {
+            LLVMBuildRet(builder, LLVMConstInt(i32, default_action, 0));
+            continue;
+        }
+
+        uint32_t valid = 0;
+        uint32_t idx_lo = (uint32_t)ofst;
+        uint32_t idx_hi = idx_lo + snap->yy_ntoken;
+        if (idx_hi > snap->lookahead_count) idx_hi = snap->lookahead_count;
+        for (uint32_t k = idx_lo; k < idx_hi; k++) {
+            uint16_t expected = snap->yy_lookahead[k];
+            uint16_t token = (uint16_t)(k - idx_lo);
+            if (expected == token) valid++;
+        }
+
+        if (valid == 0) {
+            LLVMBuildRet(builder, LLVMConstInt(i32, default_action, 0));
+            continue;
+        }
+
+        char defname[80];
+        snprintf(defname, sizeof(defname), "s%u_default", s);
+        LLVMBasicBlockRef la_default_bb = LLVMAppendBasicBlockInContext(llvm_ctx, fn, defname);
+
+        LLVMValueRef la_switch = LLVMBuildSwitch(builder, param_la, la_default_bb, valid);
+
+        for (uint32_t k = idx_lo; k < idx_hi; k++) {
+            uint16_t expected = snap->yy_lookahead[k];
+            uint16_t token = (uint16_t)(k - idx_lo);
+            if (expected != token) continue;
+
+            uint16_t action_val = snap->yy_action[k];
+
+            char abname[80];
+            snprintf(abname, sizeof(abname), "s%u_la%u", s, token);
+            LLVMBasicBlockRef abb = LLVMAppendBasicBlockInContext(llvm_ctx, fn, abname);
+            LLVMAddCase(la_switch, LLVMConstInt(i16, token, 0), abb);
+            LLVMPositionBuilderAtEnd(builder, abb);
+            LLVMBuildRet(builder, LLVMConstInt(i32, action_val, 0));
+        }
+
+        LLVMPositionBuilderAtEnd(builder, la_default_bb);
+        LLVMBuildRet(builder, LLVMConstInt(i32, default_action, 0));
+    }
+
+    LLVMPositionBuilderAtEnd(builder, state_default_bb);
+    LLVMBuildRet(builder, LLVMConstInt(i32, snap->yy_no_action, 0));
+
+    LLVMDisposeBuilder(builder);
+    return fn;
+}
+
+/*
 ** OrcJIT-compatible entry point: generates IR into an externally-provided
 ** module rather than relying on JITContext internals. This decouples
 ** codegen from the JIT engine lifetime, which OrcJIT requires since
@@ -223,14 +370,24 @@ JITStatus jit_codegen_generate_into(LLVMContextRef llvm_ctx, LLVMModuleRef modul
 
     if (fn == NULL) return JIT_ERR_CODEGEN_FAILED;
 
+    /* Also generate the per-token shift-action lookup that the
+    ** runtime push parser (parse_engine_step) calls per token.  This
+    ** is the function that turns lime_jit_compile() from a batch-only
+    ** speedup into a real per-token JIT acceleration. */
+    LLVMValueRef fn2 = generate_find_shift_action(llvm_ctx, module, snap);
+    if (fn2 == NULL) return JIT_ERR_CODEGEN_FAILED;
+
     uint64_t end = now_ns();
 
     if (stats_out != NULL) {
         stats_out->compile_time_ns = end - start;
         stats_out->states_compiled = snap->nstate;
         stats_out->states_total = snap->nstate;
-        /* Estimate code size: ~200 bytes per state on average */
-        stats_out->code_size_bytes = snap->nstate * 200;
+        /* Estimate code size: ~200 bytes per state on average for
+        ** the monolithic loop, plus a similar amount for the
+        ** per-token lookup since they share the same state x
+        ** lookahead structure. */
+        stats_out->code_size_bytes = snap->nstate * 400;
     }
 
     return JIT_OK;

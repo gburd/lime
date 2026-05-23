@@ -39,6 +39,7 @@ struct JITContext {
     LLVMOrcThreadSafeContextRef ts_ctx; /* Thread-safe wrapper of llvm_ctx */
 
     void *parse_sequence_fn;    /* Monolithic jit_parse_sequence fn */
+    void *find_shift_action_fn; /* Per-token jit_find_shift_action fn */
     uint32_t nstates;           /* Number of states                 */
     uint32_t *state_hit_counts; /* Per-state hit counting           */
     uint32_t nstate_functions;  /* Number of per-state functions    */
@@ -214,6 +215,22 @@ JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap) {
     ctx->stats.states_compiled = snap->nstate;
     ctx->stats.states_total = snap->nstate;
 
+    /* Look up the per-token find_shift_action function the runtime
+    ** push parser uses when a snapshot has JIT code attached.  This
+    ** is what makes lime_jit_compile() actually accelerate
+    ** parse_token (rather than only the synthetic batch path). */
+    LimeJitAddress fa_addr = 0;
+    err = LLVMOrcLLJITLookup(ctx->lljit, &fa_addr, "jit_find_shift_action");
+    if (err == LLVMErrorSuccess && fa_addr != 0) {
+        ctx->find_shift_action_fn = (void *)(uintptr_t)fa_addr;
+    } else if (err != LLVMErrorSuccess) {
+        /* The lookup failure isn't fatal -- the batch path still
+        ** works, the runtime engine just won't use the JIT.  Drain
+        ** the error so the LLVM error chain doesn't leak. */
+        consume_llvm_error(err, JIT_OK);
+        ctx->find_shift_action_fn = NULL;
+    }
+
     /* Allocate per-state hit counters for warmup tracking */
     ctx->state_hit_counts = calloc(snap->nstate, sizeof(uint32_t));
 
@@ -225,6 +242,18 @@ JITShiftActionFn jit_get_shift_action(const JITContext *ctx, uint32_t state_id) 
     (void)ctx;
     (void)state_id;
     return NULL;
+}
+
+JITFindShiftActionFn jit_get_find_shift_action(const JITContext *ctx) {
+    if (ctx == NULL) return NULL;
+    /* Cast through uintptr_t to silence -Wpedantic about
+    ** object-vs-function pointers. */
+    union {
+        void *ptr;
+        JITFindShiftActionFn fn;
+    } cast;
+    cast.ptr = ctx->find_shift_action_fn;
+    return cast.fn;
 }
 
 JITStatus jit_warmup(JITContext *ctx, const uint32_t *hot_states, uint32_t n) {
@@ -274,6 +303,11 @@ JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap) {
 JITShiftActionFn jit_get_shift_action(const JITContext *ctx, uint32_t state_id) {
     (void)ctx;
     (void)state_id;
+    return NULL;
+}
+
+JITFindShiftActionFn jit_get_find_shift_action(const JITContext *ctx) {
+    (void)ctx;
     return NULL;
 }
 

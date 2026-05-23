@@ -88,8 +88,37 @@ static void stack_pop_n(ParseStack *s, uint32_t n) {
 /*  but operates on the snapshot's action arrays.                       */
 /* ------------------------------------------------------------------ */
 
+/*
+** find_shift_action -- the per-token action lookup hot path.
+**
+** When the snapshot has JIT code attached (snap->jit_ctx != NULL,
+** populated by lime_jit_compile), we dispatch through the JIT'd
+** function pointer instead of doing the table-driven walk.  The JIT
+** function (generate_find_shift_action in src/jit_codegen.c) is a
+** fully-inlined nested switch lowered to native jump tables, which
+** avoids the indirect-load chain through yy_shift_ofst / yy_lookahead
+** / yy_action / yy_default.
+**
+** PERFORMANCE NOTE -- LOAD-BEARING: This is the dispatch site that
+** turns lime_jit_compile() from a batch-only speedup into a real
+** per-token JIT acceleration.  bench/bench_jit_real_parser shows the
+** delta (with JIT vs without) on a real Lime-generated parser.  If a
+** future refactor moves this dispatch elsewhere, please verify the
+** bench still shows the JIT-armed path beating the table-driven
+** path.
+*/
 static uint16_t find_shift_action(const ParserSnapshot *snap, uint16_t stateno,
                                   uint16_t lookahead) {
+    if (snap->jit_ctx != NULL) {
+        JITFindShiftActionFn jit_fn = jit_get_find_shift_action((JITContext *)snap->jit_ctx);
+        if (jit_fn != NULL) {
+            /* Cast args up to uint32_t for the JIT'd function (see
+            ** the typedef in include/jit_context.h for why), then
+            ** mask the result back to uint16_t for engine use. */
+            return (uint16_t)jit_fn((uint32_t)stateno, (uint32_t)lookahead);
+        }
+    }
+
     if (stateno > snap->yy_max_shift) return stateno;
     if (snap->yy_shift_ofst == NULL) return snap->yy_no_action;
 

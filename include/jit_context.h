@@ -79,6 +79,24 @@ typedef struct JITContext JITContext;
 */
 typedef uint16_t (*JITShiftActionFn)(uint16_t iLookAhead);
 
+/*
+** Per-token shift-action lookup, parameterised by both the parser
+** state and the lookahead.  This is the function the runtime push
+** parser (parse_engine_step) calls per token when a snapshot has
+** JIT code attached -- it replaces the table-driven
+** find_shift_action() with a fully-inlined nested switch baked into
+** native code by LLVM.
+**
+** Returns the action code as a 32-bit value the engine masks down
+** to uint16_t for use.  The 32-bit signature is load-bearing: the
+** aarch64 / x86_64 C ABIs require callers to zero-extend small
+** return types, but LLVM's `i16` return puts only the low 16 bits
+** in the return register, leaving the upper bits undefined.  Using
+** i32 throughout lets the C side read a well-defined value via
+** uint32_t.
+*/
+typedef uint32_t (*JITFindShiftActionFn)(uint32_t state, uint32_t lookahead);
+
 /* ------------------------------------------------------------------ */
 /*  Public API                                                         */
 /* ------------------------------------------------------------------ */
@@ -121,6 +139,20 @@ JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap);
 ** table-driven path).
 */
 JITShiftActionFn jit_get_shift_action(const JITContext *ctx, uint32_t state_id);
+
+/*
+** Look up the JIT-compiled per-token shift-action function.
+**
+** Unlike jit_get_shift_action() (which returned a per-state function
+** in the original codegen design), this returns ONE function that
+** takes both `state` and `lookahead` arguments and returns the
+** action code.  parse_engine_step() calls this per token when a
+** snapshot has JIT code attached, replacing the table-driven path.
+**
+** Returns the function pointer when jit_compile_snapshot() has run
+** successfully, NULL otherwise.
+*/
+JITFindShiftActionFn jit_get_find_shift_action(const JITContext *ctx);
 
 /*
 ** Pre-warm the JIT for a set of hot parser states.
