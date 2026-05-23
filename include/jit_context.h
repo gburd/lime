@@ -57,6 +57,10 @@ typedef struct JITStats {
     uint64_t compile_time_ns; /**< Wall-clock nanoseconds spent compiling */
     uint64_t code_size_bytes; /**< Approximate generated code size in bytes */
     bool available;           /**< True if JIT support is available at runtime */
+    bool skip_opts;           /**< True if codegen elected to skip optimisation
+                                   passes (very large grammars where O2 does
+                                   not scale).  Caller in jit_context.c reads
+                                   this and bypasses LIME_JIT_RUN_O2_PASSES. */
 } JITStats;
 
 /* ------------------------------------------------------------------ */

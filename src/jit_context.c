@@ -181,8 +181,16 @@ JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap) {
     LLVMDisposeMessage(error);
 
     /* Run optimization passes (compat shim picks PassBuilder on
-    ** LLVM 16+ or legacy PassManagerBuilder on LLVM 14-15). */
-    LIME_JIT_RUN_O2_PASSES(module);
+    ** LLVM 16+ or legacy PassManagerBuilder on LLVM 14-15).
+    ** Codegen sets stats.skip_opts when the grammar is large enough
+    ** that LLVM's default<O2> pipeline does not terminate in
+    ** reasonable bounds (see jit_codegen.c rationale).  In that
+    ** case we skip the pipeline and let LLVM's mandatory codegen
+    ** lower the IR -- the IR is structured (every switch arm is a
+    ** constant-return) so no opts are needed for correctness. */
+    if (!ctx->stats.skip_opts) {
+        LIME_JIT_RUN_O2_PASSES(module);
+    }
 
     /* Wrap module in a thread-safe module for OrcJIT submission */
     LLVMOrcThreadSafeModuleRef ts_mod = LLVMOrcCreateNewThreadSafeModule(module, ctx->ts_ctx);
@@ -199,18 +207,25 @@ JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap) {
 
     /* Look up the monolithic parse function via OrcJIT.  LimeJitAddress
     ** resolves to LLVMOrcExecutorAddress on LLVM 15+ and to
-    ** LLVMOrcJITTargetAddress on LLVM 14 -- both are uint64_t. */
-    LimeJitAddress addr = 0;
-    err = LLVMOrcLLJITLookup(ctx->lljit, &addr, "jit_parse_sequence");
-    if (err != LLVMErrorSuccess || addr == 0) {
-        if (err != LLVMErrorSuccess) {
-            consume_llvm_error(err, JIT_ERR_LOOKUP_FAILED);
+    ** LLVMOrcJITTargetAddress on LLVM 14 -- both are uint64_t.
+    ** This lookup is conditional: codegen skips emitting
+    ** jit_parse_sequence on very large grammars (see ctx->stats.skip_opts
+    ** rationale), in which case the lookup would fail.  The runtime
+    ** engine never depends on it -- only the bench-only
+    ** jit_parse_batch() API does. */
+    if (!ctx->stats.skip_opts) {
+        LimeJitAddress addr = 0;
+        err = LLVMOrcLLJITLookup(ctx->lljit, &addr, "jit_parse_sequence");
+        if (err != LLVMErrorSuccess || addr == 0) {
+            if (err != LLVMErrorSuccess) {
+                consume_llvm_error(err, JIT_ERR_LOOKUP_FAILED);
+            }
+            return JIT_ERR_LOOKUP_FAILED;
         }
-        return JIT_ERR_LOOKUP_FAILED;
+        ctx->parse_sequence_fn = (void *)(uintptr_t)addr;
+    } else {
+        ctx->parse_sequence_fn = NULL;
     }
-
-    /* Store function pointer in context */
-    ctx->parse_sequence_fn = (void *)(uintptr_t)addr;
     ctx->nstates = snap->nstate;
     ctx->stats.states_compiled = snap->nstate;
     ctx->stats.states_total = snap->nstate;

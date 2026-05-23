@@ -365,15 +365,54 @@ JITStatus jit_codegen_generate_into(LLVMContextRef llvm_ctx, LLVMModuleRef modul
 
     uint64_t start = now_ns();
 
-    /* Generate single monolithic parse function */
-    LLVMValueRef fn = generate_monolithic_parser(llvm_ctx, module, snap);
+    /*
+    ** Size-based codegen heuristic.  The monolithic parse function
+    ** (jit_parse_sequence) and the per-token lookup function
+    ** (jit_find_shift_action) share the same nested switch shape:
+    ** outer switch on state (nstate cases) with an inner switch on
+    ** lookahead per state (up to nterminal cases).  Total basic-block
+    ** count scales with nstate * average_actions_per_state.
+    **
+    ** On medium grammars (e.g. ~500 states, ~50 terminals) this is
+    ** fine.  On the full PostgreSQL SQL grammar (3,842 states x 557
+    ** terminals) the resulting IR has hundreds of thousands of basic
+    ** blocks and LLVM's default<O2> pipeline does not appear to
+    ** terminate in reasonable bounds (>5 minutes on Apple M1 / LLVM
+    ** 21).
+    **
+    ** Two mitigations applied above the threshold:
+    **
+    **   1. Skip generation of the monolithic parse function.  Only
+    **      jit_parse_batch() (a bench-only API) and jit_comparison.c
+    **      use it; the production runtime engine calls
+    **      jit_find_shift_action per token.  Halves the IR size at no
+    **      runtime cost.
+    **
+    **   2. Signal "skip O2" to the caller via stats_out->skip_opts.
+    **      jit_context.c reads the flag and runs only verify + codegen
+    **      without optimisation passes.  The IR is structured (every
+    **      switch arm is a constant return) so LLVM's default codegen
+    **      lowers it to a jump table without help.
+    **
+    ** Threshold chosen so the in-tree examples (arithmetic ~11 states,
+    ** COBOL ~80 states, calculator ~30 states, jsonpath ~120 states)
+    ** all stay well below it and continue to benefit from O2; only
+    ** real production grammars cross it.
+    */
+    const uint64_t IR_SIZE_THRESHOLD = 500000;
+    uint64_t ir_size_estimate = (uint64_t)snap->nstate * (uint64_t)snap->nterminal;
+    bool large_grammar = ir_size_estimate > IR_SIZE_THRESHOLD;
 
-    if (fn == NULL) return JIT_ERR_CODEGEN_FAILED;
+    if (!large_grammar) {
+        /* Generate the monolithic parse function (bench-path).  Skipped
+        ** for large grammars -- see comment above. */
+        LLVMValueRef fn = generate_monolithic_parser(llvm_ctx, module, snap);
+        if (fn == NULL) return JIT_ERR_CODEGEN_FAILED;
+    }
 
-    /* Also generate the per-token shift-action lookup that the
-    ** runtime push parser (parse_engine_step) calls per token.  This
-    ** is the function that turns lime_jit_compile() from a batch-only
-    ** speedup into a real per-token JIT acceleration. */
+    /* Always generate the per-token shift-action lookup -- the
+    ** runtime push parser (parse_engine_step) calls this once per
+    ** token when the snapshot has JIT code attached. */
     LLVMValueRef fn2 = generate_find_shift_action(llvm_ctx, module, snap);
     if (fn2 == NULL) return JIT_ERR_CODEGEN_FAILED;
 
@@ -383,11 +422,13 @@ JITStatus jit_codegen_generate_into(LLVMContextRef llvm_ctx, LLVMModuleRef modul
         stats_out->compile_time_ns = end - start;
         stats_out->states_compiled = snap->nstate;
         stats_out->states_total = snap->nstate;
+        stats_out->skip_opts = large_grammar;
         /* Estimate code size: ~200 bytes per state on average for
         ** the monolithic loop, plus a similar amount for the
         ** per-token lookup since they share the same state x
-        ** lookahead structure. */
-        stats_out->code_size_bytes = snap->nstate * 400;
+        ** lookahead structure.  Halve the estimate for large
+        ** grammars where we skipped the monolithic function. */
+        stats_out->code_size_bytes = snap->nstate * (large_grammar ? 200 : 400);
     }
 
     return JIT_OK;
