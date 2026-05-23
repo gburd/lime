@@ -190,6 +190,7 @@ See **[docs/README.md](docs/README.md)** for the full index.  Key documents:
 | [docs/ALGORITHM.md](docs/ALGORITHM.md) | LALR(1) theory and implementation |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Performance tuning |
 | [docs/BENCHMARKS_VS_BISON.md](docs/BENCHMARKS_VS_BISON.md) | Head-to-head comparison with Bison |
+| [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) | Multi-host benchmark numbers (nuc + M3 Pro) with proper statistics |
 | [docs/COMPARISON.md](docs/COMPARISON.md) | Comparison with Yacc, Bison, ANTLR |
 
 ### Doxygen
