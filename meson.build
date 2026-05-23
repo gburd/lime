@@ -16,8 +16,31 @@ project('lime-parser', 'c', 'cpp',
 
 cc = meson.get_compiler('c')
 
-# Expose POSIX and GNU extensions (needed for pthread_rwlock_t, etc.)
-add_project_arguments('-D_GNU_SOURCE', language : 'c')
+# Expose POSIX and GNU extensions (needed for pthread_rwlock_t,
+# strdup, clock_gettime, etc.).  Multiple macros are defined for
+# portability across libc implementations:
+#   _GNU_SOURCE         -- glibc / musl: enables every extension
+#   _POSIX_C_SOURCE     -- portable POSIX feature-test macro,
+#                          required on Solaris / illumos for
+#                          functions like strdup
+#   __EXTENSIONS__      -- Solaris / illumos magic word for
+#                          BSD/SVR4 extensions on top of POSIX
+#   _DARWIN_C_SOURCE    -- macOS: exposes BSD extensions in
+#                          standards-conforming mode
+add_project_arguments(
+  '-D_GNU_SOURCE',
+  '-D_POSIX_C_SOURCE=200809L',
+  '-D__EXTENSIONS__',
+  '-D_DARWIN_C_SOURCE',
+  language : 'c',
+)
+add_project_arguments(
+  '-D_GNU_SOURCE',
+  '-D_POSIX_C_SOURCE=200809L',
+  '-D__EXTENSIONS__',
+  '-D_DARWIN_C_SOURCE',
+  language : 'cpp',
+)
 
 # Project-wide include directory
 inc = include_directories('include')
