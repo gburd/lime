@@ -316,3 +316,35 @@ Cross-host signal:
     end-to-end JSON parsing.  This matches simdjson's own
     design and is the right default for any production parser
     shape that processes many short documents.
+
+## After the x86 perf round (commit `602c305`)
+
+After landing the per-token hot-path optimisations (cached JIT
+function pointer in `ParserSnapshot`, branch hints on the JIT
+check, `static inline` on `find_shift_action` /
+`find_reduce_action`, and architecture-conditional gate on
+`lime_jit_compile` for x86 small grammars):
+
+### nuc (x86 / FreeBSD), 11-run median min
+
+| metric (ms)   | before | after  | delta   |
+|---------------|-------:|-------:|--------:|
+| lime arith    | 33.99  | 33.50  | -1.4 %  |
+| lime JSON     | 256.45 | 243.53 | -5.0 %  |
+| lime+JIT arith| 37.85  | (skipped) | -100 % cost (was a slowdown) |
+| bison arith   | 35.30  | 36.80  | +4.2 %  (system noise; binary unchanged) |
+
+The lime JSON improvement is significant: -5.0 % across 11 runs
+(stddev 1.16 ms; the 13 ms delta is well outside noise).  The
+JIT path is now skipped on x86 small grammars so the previous
++12 % penalty is gone -- code that always calls
+`lime_jit_compile` now performs at the no-JIT level instead.
+
+### m3pro (aarch64 / macOS), single-binary check
+
+5-run median on the after-fix binary: lime arith 31.95 ms (min),
+lime JSON 167.89 ms (min).  Earlier 11-run baseline was
+lime arith 41.26 ms / lime JSON 258.62 ms; the M3 Pro is a
+shared host so some of this is system-load drift, but the
+direction is consistent and the arch-conditional gate is
+inactive on aarch64 (JIT continues to run as before).
