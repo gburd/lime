@@ -84,6 +84,25 @@ meson setup builddir-ubsan -Db_sanitize=undefined && ninja -C builddir-ubsan tes
 Always run sanitizers after non-trivial changes.  The CI does this
 automatically (see `.github/workflows/ci.yml`, `.woodpecker/ci.yml`).
 
+### Property-based testing (Hegel)
+
+A vendored Hegel skill lives at `.agent/skills/hegel/`.  When
+the user asks to "add property-based tests", "add PBTs", "fuzz
+this", "add coverage with random inputs", or similar, load
+`.agent/skills/hegel/SKILL.md` for the methodology and
+`.agent/skills/hegel/references/c/reference.md` for the
+hegel-c C99 API.  The C reference also lists Lime-specific
+suggested property targets ranked by impact-per-effort
+(parser-table roundtrip, snapshot refcount stateful test,
+JIT-vs-interpreter equivalence, int32-offset arithmetic on
+large grammars, allocator-mode equivalence).
+
+Hegel-c is not currently a build dependency of the repo.  If
+you add PBTs, gate them on `dependency('hegel', required :
+false)` in meson and exit 77 (skip) when
+`hegel_session_new()` returns NULL so the suite still works
+on hosts without the hegel server installed.
+
 ## Code Conventions
 
 ### C style
