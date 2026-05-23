@@ -22,6 +22,16 @@ examples/*/*.h
 !examples/*/main_conflicts.c
 !examples/*/*_ext.c
 
+# COBOL example: ship the hand-written tokenizer + state header,
+# but exclude the generated parser .c/.h.
+!examples/cobol/tokenize.c
+!examples/cobol/tokenize.h
+!examples/cobol/cobol_state.h
+examples/cobol/cobol_grammar.c
+examples/cobol/cobol_grammar.h
+examples/cobol/cobol_grammar.out
+examples/cobol/cobol_parser
+
 # M5.1: hand-written test driver for the bootscanner port
 !examples/pg_bootscanner/test_bootscanner.c
 !examples/pg_bootscanner/*.lex
