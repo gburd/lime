@@ -562,6 +562,13 @@ struct lime {
   char *filename;          /* Name of the input file */
   char *outname;           /* Name of the current output file */
   char *tokenprefix;       /* A prefix added to token names in the .h file */
+  char *symbolprefix;      /* %symbol_prefix STR -- prefixes every internal
+                           ** YY_* macro and yy* type/function name in the
+                           ** emitted .c so two grammars combined into one
+                           ** translation unit (or examined via nm) do not
+                           ** collide.  See docs/lime_grammar(5).  Berkeley DB
+                           ** style: e.g. %symbol_prefix CB_ renames yyParser
+                           ** to CB_yyParser, YYNTOKEN to CB_YYNTOKEN, etc. */
   char *stackSizeLimit;    /* Function to return the stack size limit */
   char *reallocFunc;       /* Function to use to allocate stack space */
   char *freeFunc;          /* Function to use to free stack space */
@@ -3200,6 +3207,17 @@ static void parseonetoken(struct pstate *psp)
           psp->declargslot = &psp->gp->vardest;
         }else if( strcmp(x,"token_prefix")==0 ){
           psp->declargslot = &psp->gp->tokenprefix;
+          psp->insertLineMacro = 0;
+        }else if( strcmp(x,"symbol_prefix")==0 ){
+          /* Berkeley-DB-style namespace prefix for the internal
+          ** YY_* macros and yy* types/functions Lime emits.  The
+          ** generator emits a header block at the top of the .c
+          ** file that #define-aliases each internal name to
+          ** <prefix><name>, so the preprocessor renames every use
+          ** without us having to edit limpar.c.  Any non-empty
+          ** string is accepted; conventionally it ends in '_'.
+          ** See ReportTable() for the emitted block. */
+          psp->declargslot = &psp->gp->symbolprefix;
           psp->insertLineMacro = 0;
         }else if( strcmp(x,"syntax_error")==0 ){
           psp->declargslot = &(psp->gp->error);
@@ -5852,6 +5870,110 @@ static int notnull(const char *z){
 }
 
 
+/*
+** Emit the %symbol_prefix #define block at the top of a generated
+** source or header file.  When the user wrote %symbol_prefix CB_,
+** every internal YY_* macro and yy* type/function name gets aliased
+** to CB_<name> via the preprocessor, so two grammars combined into
+** one translation unit (or examined via nm / debug info) do not
+** collide on the internal namespace.
+**
+** When no prefix is set, this emits nothing.  The list of names
+** below is the closed set of identifiers the limpar.c template and
+** ReportTable() itself emit; a future template change that adds new
+** internal names should also extend this list.
+*/
+static void emit_symbol_prefix_block(FILE *out, struct lime *lemp, int *lineno) {
+  if (lemp->symbolprefix == NULL || lemp->symbolprefix[0] == '\0') return;
+
+  /* Strip any surrounding {} that the directive parser leaves on the
+  ** value (Lime's brace-arg parsing wraps multi-token values). */
+  char *p = lemp->symbolprefix;
+  while (*p == '{' || ISSPACE(*p)) p++;
+  size_t plen = strlen(p);
+  while (plen > 0 && (p[plen-1] == '}' || ISSPACE(p[plen-1]))) plen--;
+  if (plen == 0) return;
+
+  /* Stash the cleaned prefix back on lemp so subsequent emissions
+  ** (e.g. ReportHeader) can use it without re-cleaning. */
+  static char cleaned[64];
+  if (plen >= sizeof(cleaned)) plen = sizeof(cleaned) - 1;
+  memcpy(cleaned, p, plen);
+  cleaned[plen] = '\0';
+  lemp->symbolprefix = cleaned;
+
+  static const char *yy_names[] = {
+    /* Action and rule tables emitted by ReportTable */
+    "yy_action", "yy_lookahead", "yy_shift_ofst", "yy_reduce_ofst",
+    "yy_default", "yyTokenName", "yyRuleName",
+    "yyRuleInfoLhs", "yyRuleInfoNRhs",
+    /* Trace globals */
+    "yyTraceFILE", "yyTracePrompt",
+    /* Internal types */
+    "yyParser", "yyStackEntry", "YYMINORTYPE",
+    /* Internal helpers (file-static today, but their names still appear
+    ** in debug info / object dumps) */
+    "yyGrowStack", "yy_destructor", "yy_pop_parser_stack",
+    "yy_find_shift_action", "yy_find_reduce_action", "yyStackOverflow",
+    "yyTraceShift", "yy_shift", "yy_reduce", "yy_accept",
+    "yy_parse_failed", "yy_syntax_error",
+    NULL,
+  };
+  /*
+  ** YY_* macros safe to prefix.  We DO NOT prefix names that are
+  ** tested in #if / #ifdef / #ifndef expressions inside limpar.c,
+  ** because those tests would see the prefixed name (defined as
+  ** the unprefixed identifier) and resolve incorrectly.  See
+  ** docs/lime_grammar(5) for the full list of conditional names.
+  **
+  ** Names intentionally OMITTED:
+  **   YYWILDCARD, YYFALLBACK, YYLOCATIONTYPE,
+  **   YYTRACKMAXSTACKDEPTH, YYNOERRORRECOVERY, YYAOT,
+  **   YYERRORSYMBOL, YYEMPTY, YYSIZELIMIT, YYMALLOCARGTYPE,
+  **   YYPARSEFREENEVERNULL  -- tested with #ifdef / #ifndef
+  **   YYSTACKDEPTH, YYDYNSTACK, YYGROWABLESTACK, YYCOVERAGE,
+  **   YYFIRSTTOKEN  -- tested with #if <value>
+  **   YYREALLOC, YYFREE  -- function-like aliases
+  **
+  ** These names remain in their unprefixed form in the emitted .c.
+  ** That is acceptable because (a) they are file-static defines and
+  ** thus carry no link-time risk, and (b) the dominant collision
+  ** vector -- combining two grammars into one TU -- is solved by
+  ** prefixing the table arrays and types.
+  */
+  static const char *yy_macros[] = {
+    "YYCODETYPE", "YYNOCODE", "YYACTIONTYPE",
+    "YYNRHS_MAX",
+    "YYNSTATE", "YYNRULE", "YYNRULE_WITH_ACTION", "YYNTOKEN",
+    "YY_MAX_SHIFT", "YY_MIN_SHIFTREDUCE", "YY_MAX_SHIFTREDUCE",
+    "YY_ERROR_ACTION", "YY_ACCEPT_ACTION", "YY_NO_ACTION",
+    "YY_MIN_REDUCE", "YY_MAX_REDUCE",
+    "YY_MIN_DSTRCTR", "YY_MAX_DSTRCTR",
+    "YY_NLOOKAHEAD", "YY_ACTTAB_COUNT",
+    "YY_SHIFT_COUNT", "YY_SHIFT_MIN", "YY_SHIFT_MAX",
+    "YY_REDUCE_COUNT", "YY_REDUCE_MIN", "YY_REDUCE_MAX",
+    NULL,
+  };
+
+  fprintf(out,
+    "/* symbol_prefix=%s -- alias every internal YY_ macro and yy\n"
+    "** symbol so this grammar's internal namespace does not collide\n"
+    "** with another Lime-generated parser linked into the same\n"
+    "** binary.  See lime.c::emit_symbol_prefix_block. */\n",
+    cleaned);
+  *lineno += 4;
+  for (int i = 0; yy_names[i] != NULL; i++) {
+    fprintf(out, "#define %s %s%s\n", yy_names[i], cleaned, yy_names[i]);
+    (*lineno)++;
+  }
+  for (int i = 0; yy_macros[i] != NULL; i++) {
+    fprintf(out, "#define %s %s%s\n", yy_macros[i], cleaned, yy_macros[i]);
+    (*lineno)++;
+  }
+  fprintf(out, "\n");
+  (*lineno)++;
+}
+
 /* Generate C source code for the parser */
 void ReportTable(
   struct lime *lemp,
@@ -5973,7 +6095,13 @@ void ReportTable(
     }
     fprintf(out, "*/\n"); lineno++;
   }
-  
+
+  /* %symbol_prefix block: alias every internal YY_ macro and yy*
+  ** name so this grammar's namespace doesn't collide with another
+  ** Lime parser linked into the same image.  No-op when
+  ** %symbol_prefix is unset. */
+  emit_symbol_prefix_block(out, lemp, &lineno);
+
   /* The first %include directive begins with a C-language comment,
   ** then skip over the header comment of the template file
   */

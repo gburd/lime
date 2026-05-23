@@ -1076,6 +1076,47 @@ test_jit_parse_equivalence = executable('test_jit_parse_equivalence',
 
 test('jit_parse_equivalence', test_jit_parse_equivalence)
 
+# %symbol_prefix collision test: two grammars with different
+# %symbol_prefix values must coexist in a single translation unit
+# without internal-name collision.  Without the directive, both .c
+# files emit yy_action / yyParser / YYNTOKEN / etc. -- preprocessor
+# would not even compile them together.  See lime.c::emit_symbol_prefix_block.
+test_symbol_prefix_a_gen = custom_target('test_symbol_prefix_a_parser',
+  input   : ['test_symbol_prefix_a_grammar.y'],
+  output  : ['test_symbol_prefix_a_grammar.c', 'test_symbol_prefix_a_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_symbol_prefix_b_gen = custom_target('test_symbol_prefix_b_parser',
+  input   : ['test_symbol_prefix_b_grammar.y'],
+  output  : ['test_symbol_prefix_b_grammar.c', 'test_symbol_prefix_b_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_symbol_prefix = executable('test_symbol_prefix',
+  'test_symbol_prefix.c',
+  test_symbol_prefix_a_gen,
+  test_symbol_prefix_b_gen,
+  # The include_directories('../src') we'd otherwise add is unneeded
+  # here -- meson auto-adds the per-target build dir for custom_target
+  # outputs.  Adding ../src actually shadows that; without it the
+  # generated .h files resolve correctly via the implicit build-dir
+  # search path.
+  dependencies : lime_parser_dep,
+)
+
+test('symbol_prefix', test_symbol_prefix)
+
 # %destructor smoke test: drives a tiny grammar with %destructor
 # directives, exercises both happy-path and error-recovery code paths,
 # and asserts every allocation has a matching free (proving the
