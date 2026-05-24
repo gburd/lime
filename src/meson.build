@@ -25,12 +25,9 @@ lib_sources = files(
   'parser_composition.c',
   'parser_fork.c',
   'utf8.c',
-  'lime_ast.c',
-  'glr.c',
   'execution_policy.c',
   'extension_registry.c',
   'grammar_context.c',
-  'context_switch.c',
   'lime_error.c',
 )
 
@@ -91,7 +88,7 @@ llvm_dep = dependency('llvm',
   required : llvm_opt,
 )
 
-jit_sources = files('jit_context.c', 'jit_codegen.c', 'jit_policy.c', 'jit_tokenizer.c')
+jit_sources = files('jit_context.c', 'jit_codegen.c', 'jit_policy.c')
 jit_c_args = []
 jit_deps = []
 
