@@ -14,7 +14,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <io.h>
+#define dup2 _dup2
+#define close _close
+#define open _open
+#else
 #include <unistd.h>
+#endif
 #include <fcntl.h>
 
 #include "lex_ast.h"

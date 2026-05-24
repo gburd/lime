@@ -44,7 +44,14 @@
 #include <string.h>
 #include <stdbool.h>
 #include <sys/stat.h>
+#if defined(_WIN32)
+#include <io.h>
+#define dup2 _dup2
+#define close _close
+#define open _open
+#else
 #include <unistd.h>
+#endif
 
 extern ParserSnapshot *ArithBuildSnapshot(void);
 

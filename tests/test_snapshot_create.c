@@ -29,7 +29,14 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <sys/stat.h>
+#if defined(_WIN32)
+#include <io.h>
+#define dup2 _dup2
+#define close _close
+#define open _open
+#else
 #include <unistd.h>
+#endif
 
 static int n_pass = 0, n_fail = 0;
 #define CHECK(cond, msg)                                                                           \

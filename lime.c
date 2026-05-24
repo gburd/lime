@@ -68,7 +68,14 @@ extern int access(const char *path, int mode);
 }
 #endif
 #else
+#if defined(_WIN32)
+#include <io.h>
+#define dup2 _dup2
+#define close _close
+#define open _open
+#else
 #include <unistd.h>
+#endif
 #endif
 
 /* #define PRIVATE static */
