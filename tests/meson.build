@@ -1,4 +1,13 @@
 # Test executables
+# Per-test extra warnings.  Several tests intentionally take
+# parameters they don't reference (callback signatures fixed by
+# Lime's API), so silence -Wunused-parameter where it would be
+# noise.  Use cc.get_supported_arguments so MSVC silently drops
+# the gcc/clang-only flag rather than failing with
+# 'invalid numeric argument /Wno-unused-parameter'.
+cc = meson.get_compiler('c')
+nounusedparam = cc.get_supported_arguments(['-Wno-unused-parameter'])
+
 test_version = executable('test_version',
   'test_version.c',
   dependencies : lime_parser_dep,
@@ -265,7 +274,7 @@ test_diagnostics = executable('test_diagnostics',
   'test_diagnostics.c',
   test_diag_gen,
   dependencies : lime_parser_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('diagnostics', test_diagnostics)
@@ -287,7 +296,7 @@ test_alternation = executable('test_alternation',
   'test_alternation.c',
   test_alt_gen,
   dependencies : lime_parser_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('alternation', test_alternation)
@@ -314,7 +323,7 @@ test_first_token = executable('test_first_token',
   'test_first_token.c',
   test_first_token_gen,
   dependencies : lime_parser_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('first_token', test_first_token)
@@ -339,7 +348,7 @@ test_locations = executable('test_locations',
   'test_locations.c',
   test_locations_gen,
   dependencies : lime_parser_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('locations', test_locations)
@@ -367,7 +376,7 @@ test_yylloc_default = executable('test_yylloc_default',
   'test_yylloc_default.c',
   test_yylloc_default_gen,
   dependencies : lime_parser_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('yylloc_default', test_yylloc_default)
@@ -396,7 +405,7 @@ test_yylloc_action_assign = executable('test_yylloc_action_assign',
   'test_yylloc_action_assign.c',
   test_yylloc_action_assign_gen,
   dependencies : lime_parser_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('yylloc_action_assign', test_yylloc_action_assign)
@@ -432,8 +441,7 @@ test_action_string_literal = executable('test_action_string_literal',
   'test_action_string_literal.c',
   test_action_string_literal_gen,
   dependencies : lime_parser_dep,
-  c_args : ['-Wno-unused-parameter',
-            '-DACTION_STRLIT_GEN_C="' + test_action_string_literal_gen_c + '"'],
+  c_args : nounusedparam + ['-DACTION_STRLIT_GEN_C="' + test_action_string_literal_gen_c + '"'],
 )
 
 test('action_string_literal', test_action_string_literal)
@@ -444,7 +452,7 @@ test('action_string_literal', test_action_string_literal)
 test_lex_tokenize = executable('test_lex_tokenize',
   'test_lex_tokenize.c',
   dependencies : lime_lex_compiler_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_tokenize', test_lex_tokenize)
@@ -454,7 +462,7 @@ test('lex_tokenize', test_lex_tokenize)
 test_lex_parse = executable('test_lex_parse',
   'test_lex_parse.c',
   dependencies : lime_lex_compiler_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_parse', test_lex_parse)
@@ -464,7 +472,7 @@ test('lex_parse', test_lex_parse)
 test_lex_resolve = executable('test_lex_resolve',
   'test_lex_resolve.c',
   dependencies : lime_lex_compiler_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_resolve', test_lex_resolve)
@@ -476,7 +484,7 @@ test('lex_resolve', test_lex_resolve)
 test_lex_round_trip = executable('test_lex_round_trip',
   'test_lex_round_trip.c',
   dependencies : lime_lex_compiler_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_round_trip', test_lex_round_trip)
@@ -487,7 +495,7 @@ test('lex_round_trip', test_lex_round_trip)
 test_lex_regex = executable('test_lex_regex',
   'test_lex_regex.c',
   dependencies : lime_lex_compiler_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_regex', test_lex_regex)
@@ -499,7 +507,7 @@ test('lex_regex', test_lex_regex)
 test_lex_nfa = executable('test_lex_nfa',
   'test_lex_nfa.c',
   dependencies : lime_lex_compiler_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_nfa', test_lex_nfa)
@@ -508,7 +516,7 @@ test('lex_nfa', test_lex_nfa)
 test_lex_dfa = executable('test_lex_dfa',
   'test_lex_dfa.c',
   dependencies : lime_lex_compiler_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_dfa', test_lex_dfa)
@@ -519,7 +527,7 @@ test('lex_dfa', test_lex_dfa)
 test_lex_dfa_min = executable('test_lex_dfa_min',
   'test_lex_dfa_min.c',
   dependencies : lime_lex_compiler_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_dfa_min', test_lex_dfa_min)
@@ -530,7 +538,7 @@ test('lex_dfa_min', test_lex_dfa_min)
 test_lex_combine = executable('test_lex_combine',
   'test_lex_combine.c',
   dependencies : lime_lex_compiler_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_combine', test_lex_combine)
@@ -541,7 +549,7 @@ test('lex_combine', test_lex_combine)
 test_lex_compile = executable('test_lex_compile',
   'test_lex_compile.c',
   dependencies : lime_lex_compiler_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_compile', test_lex_compile)
@@ -554,7 +562,7 @@ test('lex_compile', test_lex_compile)
 test_lex_lexer_include = executable('test_lex_lexer_include',
   'test_lex_lexer_include.c',
   dependencies : lime_lex_compiler_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_lexer_include', test_lex_lexer_include)
@@ -566,7 +574,7 @@ test('lex_lexer_include', test_lex_lexer_include)
 test_lex_introspect = executable('test_lex_introspect',
   'test_lex_introspect.c',
   dependencies : lime_lex_compiler_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_introspect', test_lex_introspect)
@@ -577,7 +585,7 @@ test('lex_introspect', test_lex_introspect)
 test_lex_emit = executable('test_lex_emit',
   'test_lex_emit.c',
   dependencies : lime_lex_compiler_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_emit', test_lex_emit)
@@ -603,7 +611,7 @@ test_lex_runtime_gen = custom_target('test_lex_runtime_lex',
 test_lex_runtime = executable('test_lex_runtime',
   'test_lex_runtime.c',
   test_lex_runtime_gen,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_runtime', test_lex_runtime)
@@ -629,7 +637,7 @@ test_lex_actions_gen = custom_target('test_lex_actions_lex',
 test_lex_actions = executable('test_lex_actions',
   'test_lex_actions.c',
   test_lex_actions_gen,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_actions', test_lex_actions)
@@ -657,7 +665,7 @@ test_lex_include_gen = custom_target('test_lex_include_lex',
 test_lex_include = executable('test_lex_include',
   'test_lex_include.c',
   test_lex_include_gen,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_include', test_lex_include)
@@ -684,7 +692,7 @@ test_lex_m3_integration_gen = custom_target('test_lex_m3_integration_lex',
 test_lex_m3_integration = executable('test_lex_m3_integration',
   'test_lex_m3_integration.c',
   test_lex_m3_integration_gen,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_m3_integration', test_lex_m3_integration)
@@ -717,7 +725,7 @@ test_lex_buf_gen = custom_target('test_lex_buf_lex',
 test_lex_buf = executable('test_lex_buf',
   'test_lex_buf.c',
   test_lex_buf_gen,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_buf', test_lex_buf)
@@ -763,7 +771,7 @@ test_lex_eof = executable('test_lex_eof',
   'test_lex_eof.c',
   test_lex_eof_gen,
   test_lex_eof_none_gen,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_eof', test_lex_eof)
@@ -798,8 +806,7 @@ test_lex_per_rule_gen_c = meson.current_build_dir() / 'test_lex_per_rule_grammar
 test_lex_per_rule = executable('test_lex_per_rule',
   'test_lex_per_rule.c',
   test_lex_per_rule_gen,
-  c_args : ['-Wno-unused-parameter',
-            '-DPER_RULE_GEN_C="' + test_lex_per_rule_gen_c + '"'],
+  c_args : nounusedparam + ['-DPER_RULE_GEN_C="' + test_lex_per_rule_gen_c + '"'],
 )
 
 test('lex_per_rule', test_lex_per_rule)
@@ -829,7 +836,7 @@ test_lex_terminate_frame_gen = custom_target('test_lex_terminate_frame_lex',
 test_lex_terminate_frame = executable('test_lex_terminate_frame',
   'test_lex_terminate_frame.c',
   test_lex_terminate_frame_gen,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_terminate_frame', test_lex_terminate_frame)
@@ -857,7 +864,7 @@ test_lex_extra_arg_gen = custom_target('test_lex_extra_arg_lex',
 test_lex_extra_arg = executable('test_lex_extra_arg',
   'test_lex_extra_arg.c',
   test_lex_extra_arg_gen,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lex_extra_arg', test_lex_extra_arg)
@@ -885,7 +892,7 @@ test_drain = executable('test_drain',
   'test_drain.c',
   test_drain_gen,
   dependencies : lime_parser_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('drain', test_drain)
@@ -913,7 +920,7 @@ test_default_reduce = executable('test_default_reduce',
   'test_default_reduce.c',
   test_default_reduce_gen,
   dependencies : lime_parser_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('default_reduce', test_default_reduce)
@@ -939,7 +946,7 @@ test_lookahead = executable('test_lookahead',
   'test_lookahead.c',
   test_lookahead_gen,
   dependencies : lime_parser_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('lookahead', test_lookahead)
@@ -963,7 +970,7 @@ test_syntax_error = executable('test_syntax_error',
   'test_syntax_error.c',
   test_syn_err_gen,
   dependencies : lime_parser_dep,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : nounusedparam,
 )
 
 test('syntax_error', test_syntax_error)

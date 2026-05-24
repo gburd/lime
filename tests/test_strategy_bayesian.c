@@ -46,7 +46,7 @@ static int fail_count = 0;
     } while (0)
 
 /* Soft equality for float means (3 d.p.). */
-static bool near(float a, float b) {
+static bool float_near(float a, float b) {
     return fabsf(a - b) < 0.001f;
 }
 
@@ -111,7 +111,7 @@ static void test_cold_start(void) {
     ConflictPoint cp = make_conflict(/*token=*/100, /*state=*/5, a, b);
     StrategyResult r = disambiguation_resolve(ctx, &cp, NULL);
     ASSERT(r.nwinners == 1, "single winner");
-    ASSERT(near(r.confidence, 0.5f), "cold-start confidence = 0.5");
+    ASSERT(float_near(r.confidence, 0.5f), "cold-start confidence = 0.5");
     strategy_result_cleanup(&r);
     disambiguation_destroy(ctx);
     destroy_extension_registry(reg);
@@ -144,7 +144,7 @@ static void test_biased_feedback(void) {
     ** beta = 1.  Posterior mean = 11/12 = 0.9166... */
     StrategyResult r = disambiguation_resolve(ctx, &cp, NULL);
     ASSERT(r.winning_contexts[0].ext_id == a, "ext-a still wins after success run");
-    ASSERT(near(r.confidence, 11.0f / 12.0f), "ext-a confidence = 11/12 after 10 successes");
+    ASSERT(float_near(r.confidence, 11.0f / 12.0f), "ext-a confidence = 11/12 after 10 successes");
     strategy_result_cleanup(&r);
 
     /* Now feed 11 failures.  Each round, ext-a is still ahead of
@@ -163,7 +163,7 @@ static void test_biased_feedback(void) {
 
     StrategyResult r3 = disambiguation_resolve(ctx, &cp, NULL);
     ASSERT(r3.winning_contexts[0].ext_id == b, "ext-b takes over once ext-a falls below 0.5");
-    ASSERT(near(r3.confidence, 0.5f), "ext-b confidence still at the 0.5 prior");
+    ASSERT(float_near(r3.confidence, 0.5f), "ext-b confidence still at the 0.5 prior");
     strategy_result_cleanup(&r3);
 
     disambiguation_destroy(ctx);
@@ -192,7 +192,7 @@ static void test_independence(void) {
 
     /* cp2 should still be cold (mean 0.5). */
     StrategyResult r = disambiguation_resolve(ctx, &cp2, NULL);
-    ASSERT(near(r.confidence, 0.5f), "cp2 remains cold despite cp1 training");
+    ASSERT(float_near(r.confidence, 0.5f), "cp2 remains cold despite cp1 training");
     strategy_result_cleanup(&r);
 
     /* And cp1 should remain trained. */
@@ -230,7 +230,7 @@ static void test_posterior_mean(void) {
     }
 
     StrategyResult r = disambiguation_resolve(ctx, &cp, NULL);
-    ASSERT(near(r.confidence, 4.0f / 6.0f), "confidence matches alpha / (alpha + beta)");
+    ASSERT(float_near(r.confidence, 4.0f / 6.0f), "confidence matches alpha / (alpha + beta)");
     strategy_result_cleanup(&r);
 
     disambiguation_destroy(ctx);
