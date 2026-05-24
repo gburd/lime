@@ -559,13 +559,17 @@ test('lex_compile', test_lex_compile)
 # contribute rules to the compiled DFA, in include-list order.
 # When absent, every ruleset's rules are pulled (legacy).  An
 # undefined ruleset name in %lexer_include bumps error_count.
-test_lex_lexer_include = executable('test_lex_lexer_include',
-  'test_lex_lexer_include.c',
-  dependencies : lime_lex_compiler_dep,
-  c_args : nounusedparam,
-)
+# Skipped on Windows: relies on POSIX pipe() to capture stderr,
+# which has no direct MSVC equivalent (would need _pipe() rework).
+if host_machine.system() != 'windows'
+  test_lex_lexer_include = executable('test_lex_lexer_include',
+    'test_lex_lexer_include.c',
+    dependencies : lime_lex_compiler_dep,
+    c_args : nounusedparam,
+  )
 
-test('lex_lexer_include', test_lex_lexer_include)
+  test('lex_lexer_include', test_lex_lexer_include)
+endif
 
 # M4.2 of the lexer subsystem: lime_lex_compiled_to_text
 # introspection serializer.  Round-trippable .lex dump of a
@@ -582,13 +586,19 @@ test('lex_introspect', test_lex_introspect)
 # M3.1 of the lexer subsystem: emit DFA tables + longest-match
 # driver as compilable C source.  Foundation for the M3.2+
 # runtime API layer.
-test_lex_emit = executable('test_lex_emit',
-  'test_lex_emit.c',
-  dependencies : lime_lex_compiler_dep,
-  c_args : nounusedparam,
-)
+# runtime API layer.
+# Skipped on Windows: relies on POSIX open_memstream() which has
+# no direct MSVC equivalent.  Could be rewritten with a tmpfile
+# round-trip; tracked as a follow-up.
+if host_machine.system() != 'windows'
+  test_lex_emit = executable('test_lex_emit',
+    'test_lex_emit.c',
+    dependencies : lime_lex_compiler_dep,
+    c_args : nounusedparam,
+  )
 
-test('lex_emit', test_lex_emit)
+  test('lex_emit', test_lex_emit)
+endif
 
 # M3.3 of the lexer subsystem: push-driven runtime API.
 # End-to-end pipeline test: lime -X compiles the .lex grammar
