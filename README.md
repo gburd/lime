@@ -372,8 +372,20 @@ per-parse overhead is a small fraction of total parse time.  See
 ```bash
 ninja -C builddir test                # all tests
 ./scripts/measure_coverage.sh         # coverage report
+./scripts/check_coverage.sh           # coverage gate (CI uses this)
 ./scripts/check_memory.sh             # valgrind
 ```
+
+The coverage gate enforces a floor on `src/` (the runtime library
+that production users link against): line coverage ≥ 78%, branch
+coverage ≥ 60% as of v0.2.7.  Override locally for ad-hoc checks:
+
+```bash
+LIME_COV_MIN_LINES=85 LIME_COV_MIN_BRANCHES=70 \
+    ./scripts/check_coverage.sh
+```
+
+Floors should ratchet upward as coverage improves.
 
 Sanitizer builds:
 

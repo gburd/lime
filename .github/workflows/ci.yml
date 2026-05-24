@@ -79,6 +79,26 @@ jobs:
     - name: Valgrind check
       run: scripts/check_memory.sh
 
+  # Coverage gate.  Fails the build if src/ line coverage drops below
+  # LIME_COV_MIN_LINES (default 78) or branch coverage drops below
+  # LIME_COV_MIN_BRANCHES (default 60).  These are conservative floors
+  # versus the current measured numbers (~80% lines, ~63% branches as
+  # of v0.2.7); raise as coverage improves.  The goal is to ratchet
+  # upward, not hold steady.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc meson ninja-build pkg-config gcovr
+
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Run coverage gate
+      run: scripts/check_coverage.sh
+
   # Keep the three sources of the version string aligned:
   # LIME_VERSION_STRING in lime.c, project(version: ...) in meson.build,
   # and the mirror in src/version.c.  Fails loudly if a bump forgets
