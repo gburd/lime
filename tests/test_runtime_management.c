@@ -831,7 +831,11 @@ static void test_list_formatted_empty(void) {
     ParserManager *mgr = parser_manager_create(NULL);
 
     /* Write to /dev/null to avoid cluttering test output */
+    #if defined(_WIN32)
+    FILE *f = fopen("nul", "w");
+#else
     FILE *f = fopen("/dev/null", "w");
+#endif
     if (f == NULL) {
         FAIL("cannot open /dev/null");
         parser_manager_destroy(mgr);
@@ -863,7 +867,11 @@ static void test_list_formatted_with_plugins(void) {
     parser_manager_register(mgr, &mock_plugin_v2, NULL, &h2);
     parser_manager_set_active(mgr, h1, "grammar.y");
 
+    #if defined(_WIN32)
+    FILE *f = fopen("nul", "w");
+#else
     FILE *f = fopen("/dev/null", "w");
+#endif
     if (f == NULL) {
         FAIL("cannot open /dev/null");
         parser_manager_destroy(mgr);
