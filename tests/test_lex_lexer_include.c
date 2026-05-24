@@ -27,6 +27,8 @@
 #define dup2 _dup2
 #define close _close
 #define open _open
+#define STDERR_FILENO 2
+typedef long long ssize_t;
 #else
 #include <unistd.h>
 #endif
