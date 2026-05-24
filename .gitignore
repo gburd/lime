@@ -81,6 +81,7 @@ __pycache__/
 coverage-report/
 
 # Agent tool working directories
+.agent/
 .claude/
 .kiro/
 .cursor/
@@ -92,6 +93,17 @@ config/
 # Agent / editor tool config dropped in the worktree
 .mcp.json
 opencode.json
+CLAUDE.md
+AGENTS.md
+.cursorrules
+
+# Out-of-tree correspondence with downstream consumers (PG team
+# letter exchange, etc.).  Kept on disk while drafts are in flight,
+# never committed.  These are the agent's working notes, not project
+# artifacts -- the project's record of intent lives in commit
+# messages, ROADMAP, and the docs/ tree.
+Lime-Letter-*.txt
+Lime-Reply-*.txt
 
 # JSON example: generated parser sources + binary
 examples/json/json_grammar.c
