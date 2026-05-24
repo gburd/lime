@@ -15,7 +15,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Install dependencies
       run: |
@@ -45,7 +45,7 @@ jobs:
       matrix:
         sanitizer: [address, thread, undefined]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Install dependencies
       run: |
@@ -64,7 +64,7 @@ jobs:
   valgrind:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Install dependencies
       run: |
@@ -86,7 +86,7 @@ jobs:
   version-consistency:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: Check all three version sources agree
       run: scripts/check_version_consistency.sh
 
@@ -106,7 +106,7 @@ jobs:
           - { name: "static",   args: "-Dllvm=enabled -Dllvm-static=true" }
           - { name: "disabled", args: "-Dllvm=disabled" }
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Install dependencies
       run: |
