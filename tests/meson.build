@@ -1076,23 +1076,29 @@ test('extension_e2e', test_extension_e2e)
 # End-to-end test of lime_snapshot_create() -- the runtime
 # subprocess pipeline that takes a .y file, runs lime + cc on it,
 # dlopens the result, and returns a ParserSnapshot.  Skipped at
-# runtime when lime/cc are not available.
-test_snapshot_create = executable('test_snapshot_create',
-  'test_snapshot_create.c',
-  include_directories : include_directories('../src'),
-  dependencies : lime_parser_dep,
-  # Export executable symbols so the .so produced by
-  # lime_snapshot_create at runtime can resolve snapshot_release /
-  # create_base_snapshot / etc. via dlopen against the parent
-  # binary.  Required on FreeBSD (where the default is hidden);
-  # harmless on Linux / macOS where the default is already export.
-  export_dynamic : true,
-)
+# runtime when lime/cc are not available.  Skipped at configure
+# time on Windows: the underlying fork/exec/dlopen path is
+# stubbed (returns NULL with a "not yet supported" error) on
+# this platform, so the test would always skip-at-runtime; no
+# value in compiling it.
+if host_machine.system() != 'windows'
+  test_snapshot_create = executable('test_snapshot_create',
+    'test_snapshot_create.c',
+    include_directories : include_directories('../src'),
+    dependencies : lime_parser_dep,
+    # Export executable symbols so the .so produced by
+    # lime_snapshot_create at runtime can resolve snapshot_release /
+    # create_base_snapshot / etc. via dlopen against the parent
+    # binary.  Required on FreeBSD (where the default is hidden);
+    # harmless on Linux / macOS where the default is already export.
+    export_dynamic : true,
+  )
 
-test('snapshot_create', test_snapshot_create,
-  workdir : meson.project_source_root(),
-  is_parallel : false,
-)
+  test('snapshot_create', test_snapshot_create,
+    workdir : meson.project_source_root(),
+    is_parallel : false,
+  )
+endif
 
 # End-to-end exercise of runtime LALR(1) automaton rebuild via the
 # subprocess pipeline.  Adds a postfix-factorial extension to the
@@ -1100,18 +1106,21 @@ test('snapshot_create', test_snapshot_create,
 # concatenates the original grammar source with the serialised
 # modifications and reruns lime+cc, then parses input that exercises
 # the new rule.  Skipped at runtime when lime or cc is unavailable.
-test_extension_rebuild = executable('test_extension_rebuild',
-  'test_extension_rebuild.c',
-  test_runtime_arith_gen,
-  include_directories : include_directories('../src'),
-  dependencies : lime_parser_dep,
-  export_dynamic : true,
-)
+# Same Windows-skip rationale as test_snapshot_create above.
+if host_machine.system() != 'windows'
+  test_extension_rebuild = executable('test_extension_rebuild',
+    'test_extension_rebuild.c',
+    test_runtime_arith_gen,
+    include_directories : include_directories('../src'),
+    dependencies : lime_parser_dep,
+    export_dynamic : true,
+  )
 
-test('extension_rebuild', test_extension_rebuild,
-  workdir : meson.project_source_root(),
-  is_parallel : false,
-)
+  test('extension_rebuild', test_extension_rebuild,
+    workdir : meson.project_source_root(),
+    is_parallel : false,
+  )
+endif
 
 # Equivalence test: the JIT-armed parse_token path produces the same
 # accept/reject outcomes as the table-driven path on a battery of
