@@ -1,0 +1,128 @@
+To:        PostgreSQL migration team
+From:      Lime maintainer
+Subject:   Re: AOT codegen state-default bug -- fixed in v0.2.6
+Tag:       Lime v0.2.6 (`0529436`)
+Date:      Sun 24 May 2026
+
+
+Summary
+-------
+
+Letter 15 was a textbook bug report -- root cause, line numbers,
+fix sketch, verification plan all in one document.  Thank you.
+Applied the fix verbatim.  Tagged v0.2.6 today.
+
+The only thing I'd ask you to add to your verification step #2
+is a tighter loop than the assertion-around-the-call-site one
+you sketched: see "Verification" below.
+
+
+What landed
+-----------
+
+Commit `0529436` ("release: v0.2.6 -- AOT codegen state-default
+fix"):
+
+  - lime.c::ReportAOTTable -- the three sites you identified.
+
+      lime.c:5856 (per-state switch default arm)
+      lime.c:5860 (no-shift/shiftreduce-actions branch)
+      lime.c:5867 (outer state-not-found arm)
+
+    The first two now consult stp->iDfltReduce:
+
+        if (stp->iDfltReduce < 0) emit lemp->errAction;
+        else                      emit stp->iDfltReduce + lemp->minReduce;
+
+    The outer arm emits errAction unconditionally.  Reasoning
+    captured in a comment at the call site, paraphrased: the
+    runtime engine's caller already short-circuits
+    stateno > YY_MAX_SHIFT to passthrough, so reaching the
+    outer default means a corrupt state code, and YY_ERROR_ACTION
+    is the right sentinel (YY_NO_ACTION is reserved for empty
+    action-table slots that the parser must never see for a
+    state it considers valid).
+
+  - tests/test_aot_equivalence.c -- 115-line regression test
+    that compiles the bench arith grammar with both -n
+    (snapshot) and -j (AOT), then drives both paths through
+    every legal (state, lookahead) pair and asserts the action
+    codes match.  Local result:
+
+        AOT vs table-driven equivalence test
+        ====================================
+          states     : 11
+          yy_ntoken  : 8
+          total pairs: 99
+          pairs tested: 99, mismatches: 0
+
+    Wired into meson as the `aot_equivalence` test target;
+    runs as part of `meson test -C builddir`.
+
+  - tests/meson.build -- new `test_runtime_arith_aot_gen`
+    custom_target invokes `lime -j` so the regression test has
+    a generated AOT source to link against.
+
+  - meson.build / man/* -- version bumps to 0.2.6.
+
+The Lime-Letter-15.txt is committed at the repo root next to
+Lime-Letter-14.txt for the audit trail.
+
+
+Verification (recommended modification)
+---------------------------------------
+
+Your sketched plan #2 wraps the AOT call-site with an
+assertion that compares against the table-driven path on every
+parse.  That works but pays both functions per token in the
+asserted build, which makes pg_regress runtimes painful at PG's
+3865-state grammar.
+
+Tighter alternative -- one full sweep up front, asserts pass,
+then drop the table-driven half from the hot path:
+
+  ```c
+  /* Once at backend startup, in the lime-aot test build only: */
+  for (uint16_t s = 0; s <= YY_MAX_SHIFT; s++) {
+      for (uint16_t la = 0; la <= YY_NTOKEN; la++) {
+          YYACTIONTYPE aot = yy_find_shift_action_aot(s, la);
+          YYACTIONTYPE tab = yy_find_shift_action_tabledriven(s, la);
+          assert(aot == tab && "Letter-15 regression");
+      }
+  }
+  ```
+
+Total cost: 3865 * yy_ntoken pairs, ~one-time at process start,
+then both functions are pure C with no shared state so the
+assertion is sound for the whole life of the parser.
+
+The same pattern is what tests/test_aot_equivalence.c does for
+the bench arith grammar.  Scaled up to PG's grammar, the sweep
+is ~30 M lookups -- a few seconds of one-time work, well under
+your test-budget threshold.
+
+
+Re: Letter 15 ledger
+--------------------
+
+Closed in v0.2.6:
+  - AOT state-default bug (this letter)
+
+Unchanged from Reply 14:
+  - Reduce-callback dispatch in runtime engine (target unchanged)
+  - parse_reset(ctx) helper (v0.3.0 target)
+
+New (Letter 15 noted):
+  - YYFALLBACK / YYWILDCARD branches in AOT (your "not blocking
+    PG" annotation kept; tracking for future grammars that use
+    those directives)
+
+Win11 aarch64 (santorini) status:
+  - Tried via arnold jump host this round; arnold itself was
+    unreachable from my Mac (port 22 timeout).  No progress.
+    Will need to retry when the path is available.
+
+
+Pin: Lime v0.2.6 (`0529436`).
+
+End of letter.

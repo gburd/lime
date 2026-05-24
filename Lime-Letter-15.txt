@@ -1,0 +1,267 @@
+To:        Lime maintainer
+From:      PostgreSQL migration team
+Subject:   AOT codegen state-default bug.  Reproducer + concrete fix
+           sketch + post-fix benchmark plan.
+Tag:       Lime v0.2.5 (`4c2c077`, post-tag head)
+Date:      Sat 23 May 2026
+
+
+Summary
+-------
+
+v0.2.5 lands cleanly.  Adopted v0.2.5 across the board:
+
+  - cube workaround revert (commit c1d05209ace) -- "A cube"
+    string restored under P0-NEW-11 fix.
+  - AOT (-j) infrastructure wired end-to-end on the PG side
+    (commit e40b9d9dfd0) -- pglime --aot, lime_aot_kw,
+    lime_aot meson option, -DYYAOT in src/backend/parser.
+
+Tests at 346/0/35 with AOT default-disabled.
+
+Then I tried to flip lime_aot=enabled and hit one bug.  This
+letter reports it with concrete data and a fix sketch.
+
+
+Bug: AOT default-action is YY_NO_ACTION instead of yy_default[stateno]
+======================================================================
+
+Reproducer
+----------
+
+  $ git clone --branch lime https://github.com/gburd/postgres
+  $ cd postgres
+  $ meson setup builddir -Dlime_aot=enabled
+  $ ninja -C builddir
+  $ meson test -C builddir --suite setup
+
+Result: initdb fails immediately during the post-bootstrap
+initialization phase:
+
+  postgres: gram.c:67572: base_yy:
+    Assertion `yyact == YY_ERROR_ACTION' failed.
+  child process exited with exit code 134
+
+The failing assertion is in the standard lemon yy_state_machine:
+
+  /* gram.c:67572 */
+  }else{
+    assert( yyact == YY_ERROR_ACTION );   /* <-- here */
+    yyminorunion.yy0 = yyminor;
+    ...
+  }
+
+The parser branches on yyact's value: shift / shiftreduce /
+reduce / accept / error are the legal sentinels.  When AOT
+returns a value that doesn't match any of those, the assertion
+fires.
+
+
+Root cause
+----------
+
+`ReportAOTTable` in lime.c emits the same global constant
+(`lemp->noAction` -- the YY_NO_ACTION sentinel) as the default
+return for every state's switch case AND for the outer state-
+not-found case:
+
+  /* lime.c:5856 -- inside per-state switch */
+  fprintf(out, "        default: return %d; /* default */\n",
+          lemp->noAction);
+
+  /* lime.c:5860 -- no-actions branch */
+  fprintf(out, "      return %d; /* default */\n", lemp->noAction);
+
+  /* lime.c:5867 -- outer default (state not found) */
+  fprintf(out, "    default: return %d;\n", lemp->noAction);
+
+The table-driven path's analog is the `yy_default[]` array
+emitted at lime.c:6608 -- crucially, with state-SPECIFIC values:
+
+  /* lime.c:6611 -- table-driven yy_default[] emit */
+  if( stp->iDfltReduce<0 ){
+    fprintf(out, " %4d,", lemp->errAction);          // YY_ERROR_ACTION
+  }else{
+    fprintf(out, " %4d,", stp->iDfltReduce + lemp->minReduce);  // a reduce
+  }
+
+
+Concrete impact on PG's gram.lime
+---------------------------------
+
+PG's gram.lime has 3865 states.  Distribution of yy_default[]:
+
+  YY_ERROR_ACTION (10504) :  2534 states  (65.6 %)  -- state has
+                                                       no default
+                                                       reduce; lookahead
+                                                       miss is a
+                                                       syntax error.
+  state-specific reduce   :  1331 states  (34.4 %)  -- state has
+                                                       a default
+                                                       reduce; lookahead
+                                                       miss reduces by
+                                                       this rule.
+
+AOT returns 10506 (YY_NO_ACTION) for every default case in
+every state.  Two failure modes:
+
+  1. For the 2534 error-default states: AOT returns 10506
+     instead of 10504.  Off by one constant value, but still
+     wrong -- the parser core asserts `yyact == YY_ERROR_ACTION`
+     after determining the action is not a shift/reduce/accept,
+     and 10506 fails the test.
+
+  2. For the 1331 reduce-default states: AOT returns 10506
+     instead of the state's reduce action (e.g., yy_default[0]
+     = 12331 = reduce rule 1824).  The parser misses the implicit
+     reduce entirely.  This is the path that fires the assertion
+     during initdb -- the bootstrap parser hits a state where
+     it should default-reduce a lookahead-independent
+     production.
+
+Worked example: state 0.
+
+  yy_default[0] = 12331 (reduce rule 1824 = `parse_toplevel ::=
+                          stmtmulti`).
+  AOT case 0 switch's default: return 10506 (YY_NO_ACTION).
+
+When the parser is in state 0 and the lookahead is anything
+other than the explicit token shifts (ABORT_P, ALTER, ANALYZE,
+...), the table-driven path default-reduces parse_toplevel.
+The AOT path returns YY_NO_ACTION, which the parser treats as
+"no action available" -- but YY_NO_ACTION is a sentinel for
+"this slot is empty in the action table"; the parser's outer
+loop expects to never receive it from yy_find_shift_action()
+when stateno <= YY_MAX_SHIFT.
+
+
+Fix sketch
+----------
+
+`ReportAOTTable` needs to mirror the table-driven yy_default[]
+emit.  Specifically:
+
+```c
+/* Inside the per-state switch -- lime.c:5856 */
+if( stp->iDfltReduce<0 ){
+  fprintf(out, "        default: return %d; /* error action */\n",
+          lemp->errAction);
+}else{
+  fprintf(out, "        default: return %d; /* default reduce rule %d */\n",
+          stp->iDfltReduce + lemp->minReduce,
+          stp->iDfltReduce);
+}
+
+/* No-actions branch -- lime.c:5860 */
+if( stp->iDfltReduce<0 ){
+  fprintf(out, "      return %d; /* error action */\n", lemp->errAction);
+}else{
+  fprintf(out, "      return %d; /* default reduce rule %d */\n",
+          stp->iDfltReduce + lemp->minReduce,
+          stp->iDfltReduce);
+}
+
+/* Outer state-not-found -- lime.c:5867.
+ * stateno > YY_MAX_SHIFT is unreachable from
+ * yy_find_shift_action's guarded entry, so YY_ERROR_ACTION
+ * is the right sentinel here (matches what the table-driven
+ * path's preceding `if (stateno > YY_MAX_SHIFT) return stateno`
+ * implicitly assumes for the error path). */
+fprintf(out, "    default: return %d;\n", lemp->errAction);
+```
+
+Verification
+------------
+
+Once the fix lands, the meson option flip is one line:
+
+  meson_options.txt:
+  -  option('lime_aot', type: 'feature', value: 'disabled', ...)
+  +  option('lime_aot', type: 'feature', value: 'auto', ...)
+
+Test plan when v0.2.6 ships:
+
+  1. Verify ninja builds gram_aot.c (already verified: 38 MB
+     source, 52 MB .o, links cleanly).
+  2. Verify yy_find_shift_action_aot returns same value as
+     yy_find_shift_action for every (state, lookahead) pair
+     by adding a debug assertion around the AOT call site:
+
+        #ifdef YYAOT
+        {
+            YYACTIONTYPE aot = yy_find_shift_action_aot(stateno, iLookAhead);
+            YYACTIONTYPE tab = yy_find_shift_action_tabledriven(...);
+            assert(aot == tab);
+            return aot;
+        }
+        #endif
+
+    Run pg_regress and isolation suites with this assertion
+    enabled; expect 0 failures.
+  3. Drop the assertion, run benchmarks (pgbench-init scale=10,
+    `EXPLAIN(GENERIC_PLAN)` over scan.sql + plpgsql.sql large
+    inputs), report parse-time delta vs table-driven.
+
+Expected upper bound: parse-time delta <5 % per the
+docs/BENCHMARKS_VS_BISON.md "1.04-1.81x faster than Bison"
+range; the table-driven path is already in the same
+ballpark, and AOT mostly removes the indirect-load chain
+yy_shift_ofst[stateno] + yy_lookahead[i] check.
+
+Lower bound: zero perf delta if the C compiler already
+optimises the table-driven inner loop into something close
+to a jump table (gcc 14 with -O2 does decent indirect-call
+PGO when the data is uniform).
+
+Either way, the integration is sound.  Just need the codegen
+correctness.
+
+
+YYFALLBACK / YYWILDCARD note (NOT a bug; for the record)
+--------------------------------------------------------
+
+I initially worried AOT was missing the YYFALLBACK and
+YYWILDCARD branches that the table-driven yy_find_shift_action
+implements.  Verified: PG's gram.lime emits empty yyFallback[]
+(no `%fallback` directives) and YYWILDCARD is undefined (no
+wildcard tokens in the grammar).  Both branches are
+unreachable in our use case.  Withdrew that part of the bug
+report.
+
+If a different grammar uses %fallback or %wildcard, the AOT
+path WOULD need the equivalent branches.  Worth tracking as
+a follow-up but not blocking PG.
+
+
+Open ledger after this letter
+-----------------------------
+
+Closed in v0.2.5 (PG-side cleanup landed):
+  - lime -j AOT crash (b566478)
+  - cube "Cube" -> "A cube" workaround revert (PG c1d05209ace)
+  - AOT integration infrastructure (PG e40b9d9dfd0)
+
+Open:
+  - AOT state-default bug (this letter)
+  - Reduce-callback dispatch in runtime engine (Reply 14)
+  - parse_reset(ctx) helper (Reply 14, v0.3.0 target)
+  - YYFALLBACK / YYWILDCARD branches in AOT (low priority,
+    follow-up after the state-default fix)
+
+
+Repository
+----------
+
+Branch: `lime` at github.com/gburd/postgres
+HEAD:   01b3dffba02
+
+  e40b9d9dfd0  build: bump Lime to v0.2.5; wire AOT
+               infrastructure (default disabled)
+  c1d05209ace  contrib/cube: revert P0-NEW-11 string-rewording
+               workaround under v0.2.4
+  5262c18e353  build: bump Lime to v0.2.4; revert pgc.c
+               EOF-emit workaround
+
+Pin: Lime v0.2.5 (`4c2c077`).
+
+End of letter.
