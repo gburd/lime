@@ -19,7 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
+#include "lime_time.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>

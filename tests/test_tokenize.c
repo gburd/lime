@@ -17,7 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include <time.h>
+#include "lime_time.h"
 
 #include "tokenize.h"
 #include "tokenize_simd.h"

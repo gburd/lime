@@ -53,7 +53,7 @@ static int lime_test_skip_perf(void) {
     const char *e = getenv("LIME_TEST_SKIP_PERF");
     return LIME_BUILT_WITH_SANITIZER || (e != NULL && e[0] != '\0' && e[0] != '0');
 }
-#include <time.h>
+#include "lime_time.h"
 
 /* ------------------------------------------------------------------ */
 /*  Test infrastructure                                                */

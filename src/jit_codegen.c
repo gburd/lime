@@ -23,7 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
+#include "lime_time.h"
 
 #include <llvm-c/Core.h>
 

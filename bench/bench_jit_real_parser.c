@@ -36,7 +36,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <time.h>
+#include "lime_time.h"
 #include <math.h>
 
 #include "parser.h"          /* lime_jit_available, lime_jit_compile */

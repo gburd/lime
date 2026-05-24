@@ -35,7 +35,7 @@
 #include "jit_llvm_compat.h"
 
 #include <stdio.h>
-#include <time.h>
+#include "lime_time.h"
 
 /* ------------------------------------------------------------------ */
 /*  Internal structure                                                  */
