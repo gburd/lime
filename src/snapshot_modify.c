@@ -13,7 +13,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <time.h>
+#endif
 
 /* ------------------------------------------------------------------ */
 /*  Internal helpers                                                    */
@@ -40,9 +44,21 @@ static char *format_error(const char *fmt, const char *detail) {
 ** Get the current wall-clock time in nanoseconds.
 */
 static uint64_t now_ns(void) {
+#if defined(_WIN32)
+    /* Windows wall-clock equivalent of CLOCK_REALTIME.
+    ** GetSystemTimePreciseAsFileTime returns 100-nanosecond
+    ** intervals since 1601-01-01; convert to nanoseconds-since-
+    ** epoch.  The 116444736000000000 constant is the number of
+    ** 100-ns intervals from 1601-01-01 to 1970-01-01. */
+    FILETIME ft;
+    GetSystemTimePreciseAsFileTime(&ft);
+    uint64_t t = ((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+    return (t - 116444736000000000ULL) * 100ULL;
+#else
     struct timespec ts;
     if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return 0;
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+#endif
 }
 
 /*
