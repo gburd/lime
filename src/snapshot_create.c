@@ -47,6 +47,67 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/*
+** Snapshot-create on Windows is a follow-up project (Letter 14
+** open item).  The fork/exec/dlopen primitives this file is
+** built on do not exist on Windows; the equivalent path needs
+** CreateProcess + LoadLibrary + GetProcAddress and a different
+** error-handling shape.  For the v0.2.x MSVC milestone we stub
+** the public entry points to return NULL with an explanatory
+** error so the rest of the build links cleanly and downstream
+** users (notably PG's PG-on-Windows hybrid path) can use the
+** static-parser shape (Shape A in docs/INTEGRATING_LIME.md)
+** which doesn't need this code path.
+*/
+#if defined(_WIN32)
+
+#include "snapshot.h"
+
+static char *win_stub_err(void) {
+    const char *msg = "lime_snapshot_create / lime_compile_grammar_text / "
+                      "create_base_snapshot are not yet supported on Windows. "
+                      "Use the static-parser shape (Shape A in "
+                      "docs/INTEGRATING_LIME.md) on this platform.";
+    char *out = (char *)malloc(strlen(msg) + 1);
+    if (out != NULL) memcpy(out, msg, strlen(msg) + 1);
+    return out;
+}
+
+ParserSnapshot *lime_snapshot_create(const char *grammar_file, char **error) {
+    (void)grammar_file;
+    if (error) *error = win_stub_err();
+    return NULL;
+}
+
+ParserSnapshot *lime_compile_grammar_text(const char *grammar_text,
+                                          size_t len,
+                                          char **error) {
+    (void)grammar_text;
+    (void)len;
+    if (error) *error = win_stub_err();
+    return NULL;
+}
+
+ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
+    (void)grammar_file;
+    if (error) *error = win_stub_err();
+    return NULL;
+}
+
+ParserSnapshot *lime_snapshot_extend(ParserSnapshot *base,
+                                     const char *grammar_text,
+                                     size_t grammar_len,
+                                     char **error) {
+    (void)base;
+    (void)grammar_text;
+    (void)grammar_len;
+    if (error) *error = win_stub_err();
+    return NULL;
+}
+
+#else /* !_WIN32 -- POSIX implementation follows */
+
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -561,3 +622,5 @@ ParserSnapshot *lime_compile_grammar_text(const char *grammar_text, size_t len, 
 ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
     return compile_grammar_file_to_snapshot(grammar_file, error);
 }
+
+#endif /* !_WIN32 */

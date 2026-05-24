@@ -12,6 +12,12 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <time.h>
+#endif
 #include <time.h>
 
 /* ------------------------------------------------------------------ */
@@ -51,9 +57,18 @@ static int8_t *dup_i8(const int8_t *src, uint32_t count) {
 }
 
 static uint64_t now_ns(void) {
+#if defined(_WIN32)
+    /* Windows: QueryPerformanceCounter is the recommended monotonic
+    ** clock; QueryPerformanceFrequency reports its tick rate. */
+    LARGE_INTEGER counter, frequency;
+    QueryPerformanceCounter(&counter);
+    QueryPerformanceFrequency(&frequency);
+    return (uint64_t)((counter.QuadPart * 1000000000ULL) / frequency.QuadPart);
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+#endif
 }
 
 /* ------------------------------------------------------------------ */
