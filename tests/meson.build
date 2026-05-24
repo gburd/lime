@@ -1147,6 +1147,50 @@ test_aot_equivalence = executable('test_aot_equivalence',
 
 test('aot_equivalence', test_aot_equivalence)
 
+# Letter 16 (May 2026) regression: AOT codegen used to silently
+# drop explicit ERROR action-table entries from the per-state
+# action loop.  This test uses a tiny grammar with %nonassoc on
+# a comparison operator -- the conflict resolver promotes the
+# shift action to ERROR when same-precedence shift/reduce can't
+# break the tie via associativity, producing explicit ERROR
+# action entries that the AOT path must emit.  Pre-fix the
+# AOT-vs-table sweep diverges on ~3 states; post-fix silent.
+test_aot_error_gen = custom_target('aot_error_gen',
+  input   : ['aot_error_grammar.y'],
+  output  : ['aot_error_grammar.c', 'aot_error_grammar.h',
+             'aot_error_grammar_snapshot.c'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-n',  # emit *_snapshot.c with <Prefix>BuildSnapshot
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_aot_error_aot_gen = custom_target('aot_error_aot_gen',
+  input   : ['aot_error_grammar.y'],
+  output  : ['aot_error_grammar_aot.c'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-j',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_aot_error_actions = executable('test_aot_error_actions',
+  'test_aot_error_actions.c',
+  test_aot_error_gen,
+  test_aot_error_aot_gen,
+  include_directories : include_directories('../src'),
+  dependencies : lime_parser_dep,
+  c_args : nounusedparam,
+)
+
+test('aot_error_actions', test_aot_error_actions)
+
 # %symbol_prefix collision test: two grammars with different
 # %symbol_prefix values must coexist in a single translation unit
 # without internal-name collision.  Without the directive, both .c

@@ -1,0 +1,114 @@
+From:      Lime maintainer
+Subject:   Re: AOT codegen explicit-ERROR omission -- fixed in v0.2.7
+Tag:       Lime v0.2.7
+Date:      Sun 24 May 2026
+
+
+Summary
+-------
+
+Letter 16's bug report is correct, and the fix sketch is
+correct in shape but with two refinements I want to flag.
+Tagged v0.2.7 today.
+
+Refinements:
+
+  1. The field is `lemp->accAction`, not `lemp->acceptAction`
+     -- one letter, no behavioural impact, just don't bother
+     trying the literal copy-paste.
+
+  2. ACCEPT actions in Lemon attach to the start NON-terminal
+     (lime.c:1398: `Action_add(&lemp->sorted[0]->ap, ACCEPT,
+     startRule->lhs, 0)`), not to a terminal.  The terminal-
+     side AOT switch (`yy_find_shift_action_aot`) must skip
+     them.  This is the same filter the table-driven emit
+     applies at lime.c:6467
+     (`if (ap->sp->index >= lemp->nterminal) continue`).
+     Without it, your test sweep would actually have caught
+     a *new* regression: state 0's start-symbol ACCEPT entry
+     starts emitting `case <start-nt-index>: return accAction`,
+     which collides with the table-driven oracle that returns
+     yy_default[0] for the same (state, lookahead) pair.
+     I verified this empirically on the bench arith grammar
+     in tests/test_aot_equivalence.c -- pre-filter the AOT
+     answer was 26 (accAction) and the table-driven oracle
+     was 25 (yy_default[0] = errAction).  Filtering fixes it.
+
+So the final fix has three parts (lime.c::ReportAOTTable):
+
+  a. Add `if( ap->sp->index>=lemp->nterminal ) continue;`
+     at the top of *both* the has_actions sweep and the
+     case-emit loop.
+
+  b. Add `else if( ap->type==ERROR )` emitting
+     `lemp->errAction`.  No ACCEPT case (filtered out by (a)).
+
+  c. Add ERROR to the has_actions sweep predicate so states
+     with only ERROR overrides + a default reduce still get
+     a switch body emitted.
+
+
+Verification
+------------
+
+Locally on m3pro: 76 OK / 0 Fail (one new test, see below).
+Existing test_aot_equivalence on the bench arith grammar
+still passes; the new test_aot_error_actions on a comparison-
+operator grammar with %nonassoc on three ops at the same
+precedence catches the bug post-revert (9 mismatches, exactly
+the table=errAction / aot=reduce shape you reported).
+
+Pre-fix on the new regression grammar:
+
+    [MISMATCH] state=7 la=4: table=17 aot=24
+    AOT vs table-driven divergence on 9 pair(s)
+
+Post-fix:
+
+    PASS: 70 pairs swept, 41 errAction entries, 0 divergence
+
+Ask: please re-run your `yyaot_verify` sweep against v0.2.7
+on PG's gram.lime to confirm the 30M-pair sweep is silent.
+Once it is, flipping `lime_aot` from 'disabled' to 'auto' in
+PG's meson_options.txt should be all that's needed.
+
+
+Test cosmetics
+--------------
+
+Two small additions to the regression-coverage story:
+
+  - `tests/aot_error_grammar.y` -- a 38-line grammar with
+    `%nonassoc LT GT EQ` that produces 9 explicit ERROR
+    cases via the same shape as PG's gram.lime.
+
+  - `tests/test_aot_error_actions.c` -- the AOT-vs-table
+    sweep, plus an err_pairs > 0 setup-validation guard so a
+    future grammar tweak can't silently neuter the test.
+
+Same harness shape as your `yyaot_verify`, just compiled at
+build time so CI catches future regressions in this codepath.
+
+
+Open ledger
+-----------
+
+Closed in v0.2.6:
+  - AOT state-default emission (Letter 15)             ✅
+
+Closed in v0.2.7:
+  - AOT explicit ERROR action-table entries
+    (Letter 16)                                        ✅
+
+Open:
+  - Reduce-callback dispatch in runtime engine
+    (Reply 14, ROADMAP)                                ⏳
+  - parse_reset(ctx) helper (Reply 14, v0.3.0 target)  ⏳
+  - YYFALLBACK / YYWILDCARD branches in AOT
+    (Letter 15, low priority)                          ⏳
+  - Real Windows lime_snapshot_create (CreateProcess +
+    LoadLibrary) (Letter 14, v0.3.x+ target)           ⏳
+
+End of letter.
+
+-- gregburd

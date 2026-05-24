@@ -5826,9 +5826,31 @@ void ReportAOTTable(struct lime *lemp){
     struct action *ap;
     int has_actions = 0;
 
-    /* Check if this state has any shift/shiftreduce actions */
+    /* Check if this state has any explicit actions to emit.
+    ** Letter 16 (May 2026) -- PG re-ran the verification sweep
+    ** I recommended in Reply 15 and found a second AOT codegen
+    ** omission: ERROR and ACCEPT action types were silently
+    ** dropped from the per-state action loop, so states with
+    ** explicit error overrides (state, lookahead) -> error in
+    ** the LALR analysis fell through to the default reduce.
+    ** PG's gram.lime hit this on ~30 (state, lookahead) pairs.
+    ** Counting ERROR / ACCEPT here, and emitting them in the
+    ** loop below, makes the AOT path produce identical actions
+    ** to the table-driven path on every (s, la) pair.
+    **
+    ** Crucial filter: skip actions attached to NON-terminal
+    ** symbols.  yy_find_shift_action_aot is the token-side
+    ** lookup, so the switch may only contain terminal cases.
+    ** Mirrors the table-driven emit at lime.c:6467
+    ** (`if (ap->sp->index >= lemp->nterminal) continue;`),
+    ** which is what keeps ACCEPT out of yy_action[]'s token
+    ** half -- ACCEPT in Lemon attaches to the start
+    ** non-terminal (lime.c:1398) and is detected on the reduce
+    ** side, not the shift side. */
     for(ap=stp->ap; ap; ap=ap->next){
-      if( ap->type==SHIFT || ap->type==SHIFTREDUCE ){
+      if( ap->sp->index>=lemp->nterminal ) continue;
+      if( ap->type==SHIFT || ap->type==SHIFTREDUCE
+          || ap->type==REDUCE || ap->type==ERROR ){
         has_actions = 1;
         break;
       }
@@ -5838,6 +5860,9 @@ void ReportAOTTable(struct lime *lemp){
     if( has_actions ){
       fprintf(out, "      switch(iLookAhead){\n");
       for(ap=stp->ap; ap; ap=ap->next){
+        /* Same terminal-only filter as the has_actions sweep
+        ** above; mirrors lime.c:6467 in the table-driven emit. */
+        if( ap->sp->index>=lemp->nterminal ) continue;
         if( ap->type==SHIFT ){
           fprintf(out, "        case %d: return %d; /* %s -> shift state %d */\n",
                   ap->sp->index,
@@ -5856,7 +5881,28 @@ void ReportAOTTable(struct lime *lemp){
                   ap->x.rp->iRule + lemp->minReduce,
                   ap->sp->name,
                   ap->x.rp->iRule);
+        }else if( ap->type==ERROR ){
+          /* Explicit (state, lookahead) -> error override from
+          ** the LALR analysis.  Mirrors lime.c:4786 in the
+          ** table-driven emit (case ERROR: act = errAction).
+          ** Without this case the AOT loop falls through to
+          ** the state default, which on default-reduce states
+          ** silently reduces instead of erroring -- the bug
+          ** Letter 16 reported. */
+          fprintf(out, "        case %d: return %d; /* %s -> error (explicit override) */\n",
+                  ap->sp->index,
+                  lemp->errAction,
+                  ap->sp->name);
         }
+        /* Note: ACCEPT, SSCONFLICT, SRCONFLICT, RRCONFLICT,
+        ** SH_RESOLVED, RD_RESOLVED, NOT_USED do not reach this
+        ** point.  ACCEPT is filtered above (nonterminal-attached);
+        ** the conflict / resolved / not-used types are collapsed
+        ** by CompressTables before ReportAOTTable runs.  We don't
+        ** sanity-assert because the table-driven emit at
+        ** lime.c:4786 doesn't either, and adding an assert in
+        ** lime would diverge from Lemon's "trust the table
+        ** compiler" stance. */
       }
       /* Per-state default.  Mirrors the table-driven yy_default[]
       ** emit at lime.c:6611: when iDfltReduce<0 the state has no
