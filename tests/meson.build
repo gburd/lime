@@ -80,6 +80,17 @@ test_token_table_coverage = executable('test_token_table_coverage',
 
 test('token_table_coverage', test_token_table_coverage)
 
+# UTF-8 unit tests -- direct exercise of utf8_decode / utf8_encode /
+# utf8_char_length / utf8_is_id_start / utf8_is_id_continue.  Closes
+# the coverage gap where src/utf8.c was previously only exercised via
+# src/tokenize.c's narrow happy paths.
+test_utf8 = executable('test_utf8',
+  'test_utf8.c',
+  dependencies : lime_parser_dep,
+)
+
+test('utf8', test_utf8)
+
 test_parse_context_coverage = executable('test_parse_context_coverage',
   'test_parse_context_coverage.c',
   dependencies : lime_parser_dep,
