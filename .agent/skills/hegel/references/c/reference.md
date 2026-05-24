@@ -335,6 +335,33 @@ Do not abort the test binary, do not return 1 (failure).  77 is
 the standard "test was skipped" exit code recognised by both
 meson's `test()` and automake's testsuite driver.
 
+## Known upstream limitation: protocol version skew (May 2026)
+
+As of v0.2.5, the Lime flake ships hegel-c 0.1.0 (the only
+release at gburd/hegel-c) and hegel-core 0.9.1 (latest).  These
+two versions do not currently interoperate: hegel-c spawns the
+server with a Unix-socket path as a positional argument, while
+the modern hegel-core server takes no positional arguments and
+communicates over stdin/stdout:
+
+    Usage: hegel [OPTIONS]
+    Error: Got unexpected extra argument (/tmp/hegel-XXXXX/socket)
+    hegel: timed out waiting for server socket
+
+The error is hegel-c-side -- it timed out waiting for a socket
+that the server never created.  The flake correctly provides
+both pieces, the C library compiles and links, the PBT binaries
+launch cleanly, and they soft-skip (exit 77) when the
+handshake fails.
+
+This will resolve when either:
+
+  * hegel-c is updated to use the stdin/stdout transport, or
+  * the hegel-core flake input is pinned to a commit before
+    the protocol switch.
+
+Track upstream at https://github.com/gburd/hegel-c.
+
 ## Further reading
 
   - https://hegel.dev — Hegel home page, user docs

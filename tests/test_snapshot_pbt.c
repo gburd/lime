@@ -33,6 +33,7 @@
 #include <hegel/generators.h>
 
 #include <stdatomic.h>
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 

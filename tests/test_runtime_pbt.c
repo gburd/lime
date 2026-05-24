@@ -27,6 +27,7 @@
 #include <hegel/generators.h>
 
 #include <inttypes.h>
+#include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
