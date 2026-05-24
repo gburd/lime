@@ -22,6 +22,7 @@
 */
 #include "parse_context.h"
 #include "snapshot.h"
+#include "lime_time.h"
 #include "jit_context.h"
 
 #include <stdint.h>
@@ -129,19 +130,18 @@ typedef uint32_t (*lime_jit_shift_fn)(uint32_t state, uint32_t lookahead);
 static inline uint16_t find_shift_action(const ParserSnapshot *snap, uint16_t stateno,
                                          uint16_t lookahead) {
     lime_jit_shift_fn jit_fn = (lime_jit_shift_fn)snap->jit_find_shift_fn;
-    if (__builtin_expect(jit_fn != NULL, 0)) {
+    if (LIME_UNLIKELY(jit_fn != NULL)) {
         return (uint16_t)jit_fn((uint32_t)stateno, (uint32_t)lookahead);
     }
 
-    if (__builtin_expect(stateno > snap->yy_max_shift, 0)) return stateno;
-    if (__builtin_expect(snap->yy_shift_ofst == NULL, 0)) return snap->yy_no_action;
+    if (LIME_UNLIKELY(stateno > snap->yy_max_shift)) return stateno;
+    if (LIME_UNLIKELY(snap->yy_shift_ofst == NULL)) return snap->yy_no_action;
 
     int32_t ofst = snap->yy_shift_ofst[stateno];
     int32_t idx = ofst + (int32_t)lookahead;
 
-    if (__builtin_expect(idx >= 0 && (uint32_t)idx < snap->lookahead_count
-                             && snap->yy_lookahead[idx] == lookahead,
-                         1)) {
+    if (LIME_LIKELY(idx >= 0 && (uint32_t)idx < snap->lookahead_count
+                             && snap->yy_lookahead[idx] == lookahead)) {
         return snap->yy_action[idx];
     }
     return snap->yy_default[stateno];
@@ -149,14 +149,13 @@ static inline uint16_t find_shift_action(const ParserSnapshot *snap, uint16_t st
 
 static inline uint16_t find_reduce_action(const ParserSnapshot *snap, uint16_t stateno,
                                           uint16_t lookahead) {
-    if (__builtin_expect(snap->yy_reduce_ofst == NULL, 0)) return snap->yy_no_action;
+    if (LIME_UNLIKELY(snap->yy_reduce_ofst == NULL)) return snap->yy_no_action;
 
     int32_t ofst = snap->yy_reduce_ofst[stateno];
     int32_t idx = ofst + (int32_t)lookahead;
 
-    if (__builtin_expect(idx >= 0 && (uint32_t)idx < snap->lookahead_count
-                             && snap->yy_lookahead[idx] == lookahead,
-                         1)) {
+    if (LIME_LIKELY(idx >= 0 && (uint32_t)idx < snap->lookahead_count
+                             && snap->yy_lookahead[idx] == lookahead)) {
         return snap->yy_action[idx];
     }
     return snap->yy_default[stateno];
