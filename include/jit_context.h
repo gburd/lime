@@ -218,18 +218,43 @@ JITStatus jit_attach_to_snapshot(ParserSnapshot *snap);
 ** earlier.
 */
 /*
+** LIME_WEAK -- portability shim for the weak-symbol mechanism.
+** On gcc/clang this expands to __attribute__((weak)).  On MSVC
+** there is no equivalent; the macro expands to nothing and the
+** caller must guard the dispatch differently (the current call
+** site in src/snapshot.c does an `if (jit_detach_from_snapshot
+** != NULL)` check, which on MSVC always evaluates true since
+** the strong symbol is the only one available -- but that's
+** fine because on MSVC we don't ship the snapshot.c-into-.so
+** path that the weak symbol was protecting; lime_snapshot_create
+** on Windows links snapshot.c directly into the .dll along
+** with everything else).
+*/
+#if defined(__GNUC__) || defined(__clang__)
+#define LIME_WEAK __attribute__((weak))
+#else
+#define LIME_WEAK
+#endif
+
+/*
 ** Detach and dispose any JIT context attached to this snapshot.
 **
-** Declared as weak so that snapshot.c -- which is bundled into
-** the dynamically-built .so produced by lime_snapshot_create --
-** can be linked without the JIT library.  When the JIT library
-** *is* linked (the production case), the strong definition in
-** jit_context.c wins and the call dispatches normally.  When
-** it's NOT (the .so-build case), the symbol resolves to NULL
-** at link time and snapshot.c skips the call -- safe because a
-** snapshot built that way never has jit_ctx set anyway.
+** Declared as weak (where the compiler supports it) so that
+** snapshot.c -- which is bundled into the dynamically-built .so
+** produced by lime_snapshot_create -- can be linked without the
+** JIT library.  When the JIT library *is* linked (the production
+** case), the strong definition in jit_context.c wins and the
+** call dispatches normally.  When it's NOT (the .so-build case
+** on platforms that have weak symbols), the symbol resolves to
+** NULL at link time and snapshot.c skips the call -- safe
+** because a snapshot built that way never has jit_ctx set anyway.
+**
+** On MSVC the weak attribute is unavailable; the .so-build path
+** is also unavailable on Windows in v0.2.x (no equivalent of
+** dlopen for runtime-built .dlls), so the lack of weakness is
+** moot there.
 */
-__attribute__((weak)) void jit_detach_from_snapshot(ParserSnapshot *snap);
+LIME_WEAK void jit_detach_from_snapshot(ParserSnapshot *snap);
 
 /*
 ** Runtime dispatch: look up the shift action for a state+lookahead pair.

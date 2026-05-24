@@ -42,6 +42,33 @@ add_project_arguments(
   language : 'cpp',
 )
 
+# MSVC-specific compile flags.
+#   /experimental:c11atomics
+#       -- enable <stdatomic.h> support; default-off in MSVC's
+#          C frontend without this flag, and our snapshot
+#          refcount + JIT policy code rely on it.
+#   /D_CRT_SECURE_NO_WARNINGS
+#       -- silence the C4996 warnings for posix-style names
+#          (strerror, strdup, sprintf, etc.) that map to
+#          _strerror_s / _strdup / _sprintf_s in MSVC libc.
+#          Lime is C11 portable; we use the standard names.
+#   /Dstrdup=_strdup
+#       -- strdup is renamed in MSVC's CRT; map back so the
+#          source compiles unchanged.
+cc = meson.get_compiler('c')
+if cc.get_id() == 'msvc'
+  add_project_arguments(
+    '/experimental:c11atomics',
+    '/D_CRT_SECURE_NO_WARNINGS',
+    '/Dstrdup=_strdup',
+    language : 'c',
+  )
+  add_project_arguments(
+    '/D_CRT_SECURE_NO_WARNINGS',
+    language : 'cpp',
+  )
+endif
+
 # Project-wide include directory
 inc = include_directories('include')
 
