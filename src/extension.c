@@ -93,7 +93,7 @@ void destroy_extension_registry(ExtensionRegistry *reg) {
     reg->count = 0;
     reg->capacity = 0;
 
-    pthread_rwlock_unlock(&reg->lock);
+    LIME_RWLOCK_WRUNLOCK(&reg->lock);
     pthread_rwlock_destroy(&reg->lock);
     free(reg);
 }
@@ -111,7 +111,7 @@ bool register_extension(ExtensionRegistry *reg, const ExtensionInfo *info, Exten
     /* Check for duplicate name */
     for (uint32_t i = 0; i < reg->count; i++) {
         if (reg->extensions[i].name != NULL && strcmp(reg->extensions[i].name, info->name) == 0) {
-            pthread_rwlock_unlock(&reg->lock);
+            LIME_RWLOCK_WRUNLOCK(&reg->lock);
             return false;
         }
     }
@@ -119,7 +119,7 @@ bool register_extension(ExtensionRegistry *reg, const ExtensionInfo *info, Exten
     /* Grow if needed */
     if (reg->count >= reg->capacity) {
         if (!grow_registry(reg)) {
-            pthread_rwlock_unlock(&reg->lock);
+            LIME_RWLOCK_WRUNLOCK(&reg->lock);
             return false;
         }
     }
@@ -144,14 +144,14 @@ bool register_extension(ExtensionRegistry *reg, const ExtensionInfo *info, Exten
         /* Allocation failure -- roll back */
         free(e->version);
         memset(e, 0, sizeof(*e));
-        pthread_rwlock_unlock(&reg->lock);
+        LIME_RWLOCK_WRUNLOCK(&reg->lock);
         return false;
     }
 
     reg->count++;
     *id_out = id;
 
-    pthread_rwlock_unlock(&reg->lock);
+    LIME_RWLOCK_WRUNLOCK(&reg->lock);
     return true;
 }
 
@@ -167,12 +167,12 @@ bool load_extension(ExtensionRegistry *reg, ExtensionID id,
     pthread_rwlock_wrlock(&reg->lock);
     Extension *e = find_entry(reg, id);
     if (e == NULL) {
-        pthread_rwlock_unlock(&reg->lock);
+        LIME_RWLOCK_WRUNLOCK(&reg->lock);
         if (error != NULL) *error = dup_string("extension not found");
         return false;
     }
     if (e->state != EXT_REGISTERED && e->state != EXT_UNLOADED) {
-        pthread_rwlock_unlock(&reg->lock);
+        LIME_RWLOCK_WRUNLOCK(&reg->lock);
         if (error != NULL) *error = dup_string("extension not in loadable state");
         return false;
     }
@@ -183,7 +183,7 @@ bool load_extension(ExtensionRegistry *reg, ExtensionID id,
     bool ok = e->get_modifications(e->user_data, base_snapshot, &mods, &nmods);
     if (!ok) {
         e->state = EXT_ERROR;
-        pthread_rwlock_unlock(&reg->lock);
+        LIME_RWLOCK_WRUNLOCK(&reg->lock);
         if (error != NULL) *error = dup_string("get_modifications failed");
         return false;
     }
@@ -192,7 +192,7 @@ bool load_extension(ExtensionRegistry *reg, ExtensionID id,
     e->nmodifications = nmods;
     e->state = EXT_LOADED;
 
-    pthread_rwlock_unlock(&reg->lock);
+    LIME_RWLOCK_WRUNLOCK(&reg->lock);
     return true;
 }
 
@@ -202,11 +202,11 @@ bool unload_extension(ExtensionRegistry *reg, ExtensionID id) {
     pthread_rwlock_wrlock(&reg->lock);
     Extension *e = find_entry(reg, id);
     if (e == NULL) {
-        pthread_rwlock_unlock(&reg->lock);
+        LIME_RWLOCK_WRUNLOCK(&reg->lock);
         return false;
     }
     if (e->state != EXT_LOADED) {
-        pthread_rwlock_unlock(&reg->lock);
+        LIME_RWLOCK_WRUNLOCK(&reg->lock);
         return false;
     }
 
@@ -218,7 +218,7 @@ bool unload_extension(ExtensionRegistry *reg, ExtensionID id) {
     e->nmodifications = 0;
     e->state = EXT_UNLOADED;
 
-    pthread_rwlock_unlock(&reg->lock);
+    LIME_RWLOCK_WRUNLOCK(&reg->lock);
     return true;
 }
 
@@ -231,7 +231,7 @@ const Extension *find_extension(ExtensionRegistry *reg, ExtensionID id) {
     /* Note: caller should hold a lock, but for simple lookups we take one */
     pthread_rwlock_rdlock(&reg->lock);
     Extension *e = find_entry(reg, id);
-    pthread_rwlock_unlock(&reg->lock);
+    LIME_RWLOCK_RDUNLOCK(&reg->lock);
     return e;
 }
 
@@ -243,7 +243,7 @@ uint32_t get_loaded_extension_count(ExtensionRegistry *reg) {
     for (uint32_t i = 0; i < reg->count; i++) {
         if (reg->extensions[i].state == EXT_LOADED) loaded++;
     }
-    pthread_rwlock_unlock(&reg->lock);
+    LIME_RWLOCK_RDUNLOCK(&reg->lock);
     return loaded;
 }
 
@@ -290,7 +290,7 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
         if (combined == NULL || ext_id_per_mod == NULL) {
             free(combined);
             free(ext_id_per_mod);
-            pthread_rwlock_unlock(&reg->lock);
+            LIME_RWLOCK_RDUNLOCK(&reg->lock);
             if (error) *error = strdup("publish_modified_snapshot: out of memory");
             return false;
         }
@@ -305,7 +305,7 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
             }
         }
     }
-    pthread_rwlock_unlock(&reg->lock);
+    LIME_RWLOCK_RDUNLOCK(&reg->lock);
 
     /* Detect and resolve conflicts ourselves so we have access to the
     ** ext_id_per_mod[] mapping when invoking on_conflict callbacks. */

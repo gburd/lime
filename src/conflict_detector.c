@@ -264,7 +264,7 @@ uint32_t detect_token_conflicts(ExtensionRegistry *reg, MultiGrammarConflictResu
         }
     }
 
-    pthread_rwlock_unlock(&reg->lock);
+    LIME_RWLOCK_RDUNLOCK(&reg->lock);
 
     /*
     ** Any token name claimed by more than one extension is a conflict.
@@ -383,7 +383,7 @@ uint32_t detect_rule_conflicts(ExtensionRegistry *reg, uint16_t token, int state
         ncontexts++;
     }
 
-    pthread_rwlock_unlock(&reg->lock);
+    LIME_RWLOCK_RDUNLOCK(&reg->lock);
 
     /* Only count as a conflict if more than one grammar handles it */
     if (cp != NULL && ncontexts > 1) {
@@ -429,14 +429,14 @@ uint32_t detect_semantic_conflicts(ExtensionRegistry *reg, uint16_t token, int s
     }
 
     if (n_loaded < 2) {
-        pthread_rwlock_unlock(&reg->lock);
+        LIME_RWLOCK_RDUNLOCK(&reg->lock);
         return 0;
     }
 
     /* Index array for loaded extensions */
     uint32_t *loaded_idx = calloc(n_loaded, sizeof(uint32_t));
     if (loaded_idx == NULL) {
-        pthread_rwlock_unlock(&reg->lock);
+        LIME_RWLOCK_RDUNLOCK(&reg->lock);
         return 0;
     }
     {
@@ -530,7 +530,7 @@ uint32_t detect_semantic_conflicts(ExtensionRegistry *reg, uint16_t token, int s
 
 done:
     free(loaded_idx);
-    pthread_rwlock_unlock(&reg->lock);
+    LIME_RWLOCK_RDUNLOCK(&reg->lock);
     return found;
 }
 
@@ -601,7 +601,7 @@ ConflictPoint detect_conflict(ExtensionRegistry *reg, uint16_t token, int state)
         conflict_point_add_context(&cp, &ctx);
     }
 
-    pthread_rwlock_unlock(&reg->lock);
+    LIME_RWLOCK_RDUNLOCK(&reg->lock);
 
     /* Determine the conflict level based on what we found */
     if (cp.ncontexts > 1) {
@@ -679,7 +679,7 @@ bool detect_all_multi_grammar_conflicts(ExtensionRegistry *reg,
         }
     }
 
-    pthread_rwlock_unlock(&reg->lock);
+    LIME_RWLOCK_RDUNLOCK(&reg->lock);
 
     /* Check each token for rule-level conflicts */
     for (uint32_t t = 0; t < n_tokens; t++) {

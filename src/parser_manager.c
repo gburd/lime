@@ -311,7 +311,7 @@ void parser_manager_destroy(ParserManager *mgr) {
     mgr->count = 0;
     mgr->capacity = 0;
 
-    pthread_rwlock_unlock(&mgr->lock);
+    LIME_RWLOCK_WRUNLOCK(&mgr->lock);
     pthread_rwlock_destroy(&mgr->lock);
     free(mgr);
 }
@@ -424,7 +424,7 @@ ParserManagerStatus parser_manager_load(ParserManager *mgr, const char *path, vo
     pthread_rwlock_wrlock(&mgr->lock);
     ParserManagerStatus st =
         register_plugin_locked(mgr, plugin, dl_handle, resolved, true, user_data, handle_out);
-    pthread_rwlock_unlock(&mgr->lock);
+    LIME_RWLOCK_WRUNLOCK(&mgr->lock);
 
     if (st != PM_OK) {
         /* On failure, close the library.  Note: register_plugin_locked
@@ -446,7 +446,7 @@ ParserManagerStatus parser_manager_register(ParserManager *mgr, const LimeParser
     pthread_rwlock_wrlock(&mgr->lock);
     ParserManagerStatus st =
         register_plugin_locked(mgr, plugin, NULL, NULL, false, user_data, handle_out);
-    pthread_rwlock_unlock(&mgr->lock);
+    LIME_RWLOCK_WRUNLOCK(&mgr->lock);
 
     return st;
 }
@@ -468,7 +468,7 @@ ParserManagerStatus parser_manager_unload(ParserManager *mgr, LimePluginHandle h
     }
 
     if (idx == UINT32_MAX) {
-        pthread_rwlock_unlock(&mgr->lock);
+        LIME_RWLOCK_WRUNLOCK(&mgr->lock);
         return PM_ERR_PLUGIN_NOT_FOUND;
     }
 
@@ -483,7 +483,7 @@ ParserManagerStatus parser_manager_unload(ParserManager *mgr, LimePluginHandle h
     /* Remove from registry */
     remove_entry_at(mgr, idx);
 
-    pthread_rwlock_unlock(&mgr->lock);
+    LIME_RWLOCK_WRUNLOCK(&mgr->lock);
 
     /* Call destroy outside the lock to avoid deadlock if the plugin
     ** tries to do anything that acquires a lock. */
@@ -516,7 +516,7 @@ ParserManagerStatus parser_manager_set_active(ParserManager *mgr, LimePluginHand
 
     PluginEntry *e = find_entry(mgr, handle);
     if (e == NULL) {
-        pthread_rwlock_unlock(&mgr->lock);
+        LIME_RWLOCK_WRUNLOCK(&mgr->lock);
         return PM_ERR_PLUGIN_NOT_FOUND;
     }
 
@@ -525,14 +525,14 @@ ParserManagerStatus parser_manager_set_active(ParserManager *mgr, LimePluginHand
     if (grammar_file != NULL) {
         /* Plugin must support snapshot creation */
         if (e->plugin->create_snapshot == NULL) {
-            pthread_rwlock_unlock(&mgr->lock);
+            LIME_RWLOCK_WRUNLOCK(&mgr->lock);
             return PM_ERR_CAPABILITY_MISSING;
         }
 
         char *error = NULL;
         new_snap = e->plugin->create_snapshot(grammar_file, &error);
         if (new_snap == NULL) {
-            pthread_rwlock_unlock(&mgr->lock);
+            LIME_RWLOCK_WRUNLOCK(&mgr->lock);
             free(error);
             return PM_ERR_SNAPSHOT_FAILED;
         }
@@ -543,7 +543,7 @@ ParserManagerStatus parser_manager_set_active(ParserManager *mgr, LimePluginHand
             char *val_error = NULL;
             if (!e->plugin->validate_snapshot(new_snap, &val_error)) {
                 snapshot_release(new_snap);
-                pthread_rwlock_unlock(&mgr->lock);
+                LIME_RWLOCK_WRUNLOCK(&mgr->lock);
                 free(val_error);
                 return PM_ERR_VALIDATION_FAILED;
             }
@@ -565,7 +565,7 @@ ParserManagerStatus parser_manager_set_active(ParserManager *mgr, LimePluginHand
 
     mgr->active_handle = handle;
 
-    pthread_rwlock_unlock(&mgr->lock);
+    LIME_RWLOCK_WRUNLOCK(&mgr->lock);
     return PM_OK;
 }
 
@@ -577,7 +577,7 @@ LimePluginHandle parser_manager_get_active(const ParserManager *mgr) {
     ** on all practical platforms. We use a read lock for consistency. */
     pthread_rwlock_rdlock((pthread_rwlock_t *)&mgr->lock);
     LimePluginHandle h = mgr->active_handle;
-    pthread_rwlock_unlock((pthread_rwlock_t *)&mgr->lock);
+    LIME_RWLOCK_RDUNLOCK((pthread_rwlock_t *)&mgr->lock);
 
     return h;
 }
@@ -621,7 +621,7 @@ ParserSnapshot *parser_manager_get_snapshot(ParserManager *mgr) {
         snapshot_acquire(snap);
     }
 
-    pthread_rwlock_unlock((pthread_rwlock_t *)&mgr->lock);
+    LIME_RWLOCK_RDUNLOCK((pthread_rwlock_t *)&mgr->lock);
     return snap;
 }
 
@@ -657,13 +657,13 @@ ParserManagerStatus parser_manager_get_plugin_info(const ParserManager *mgr,
     }
 
     if (e == NULL) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&mgr->lock);
+        LIME_RWLOCK_RDUNLOCK((pthread_rwlock_t *)&mgr->lock);
         return PM_ERR_PLUGIN_NOT_FOUND;
     }
 
     fill_plugin_info(mgr, e, info);
 
-    pthread_rwlock_unlock((pthread_rwlock_t *)&mgr->lock);
+    LIME_RWLOCK_RDUNLOCK((pthread_rwlock_t *)&mgr->lock);
     return PM_OK;
 }
 
@@ -684,7 +684,7 @@ ParserManagerStatus parser_manager_list_plugins(const ParserManager *mgr, LimePl
 
     *actual_count = mgr->count;
 
-    pthread_rwlock_unlock((pthread_rwlock_t *)&mgr->lock);
+    LIME_RWLOCK_RDUNLOCK((pthread_rwlock_t *)&mgr->lock);
     return PM_OK;
 }
 
@@ -696,7 +696,7 @@ LimePluginHandle parser_manager_find_by_name(const ParserManager *mgr, const cha
     PluginEntry *e = find_entry_by_name((ParserManager *)mgr, name);
     LimePluginHandle h = (e != NULL) ? e->handle : LIME_PLUGIN_HANDLE_INVALID;
 
-    pthread_rwlock_unlock((pthread_rwlock_t *)&mgr->lock);
+    LIME_RWLOCK_RDUNLOCK((pthread_rwlock_t *)&mgr->lock);
     return h;
 }
 
@@ -705,7 +705,7 @@ uint32_t parser_manager_plugin_count(const ParserManager *mgr) {
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&mgr->lock);
     uint32_t n = mgr->count;
-    pthread_rwlock_unlock((pthread_rwlock_t *)&mgr->lock);
+    LIME_RWLOCK_RDUNLOCK((pthread_rwlock_t *)&mgr->lock);
 
     return n;
 }

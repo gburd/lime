@@ -538,7 +538,7 @@ static void *swap_reader_thread(void *arg) {
         ** This guarantees the snapshot isn't freed between load and acquire. */
         pthread_rwlock_rdlock(&ctx->swap_lock);
         ParserSnapshot *ref = snapshot_acquire(ctx->current);
-        pthread_rwlock_unlock(&ctx->swap_lock);
+        LIME_RWLOCK_RDUNLOCK(&ctx->swap_lock);
 
         if (ref == NULL) {
             atomic_fetch_add(&ctx->errors, 1);
@@ -581,7 +581,7 @@ static void *swap_writer_thread(void *arg) {
         ParserSnapshot *old = ctx->current;
         ctx->current = new_snap;
         snapshot_release(old);
-        pthread_rwlock_unlock(&ctx->swap_lock);
+        LIME_RWLOCK_WRUNLOCK(&ctx->swap_lock);
 
         /* Yield to let readers interleave */
         for (volatile int j = 0; j < 2000; j++) {}

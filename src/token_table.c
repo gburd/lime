@@ -158,13 +158,13 @@ int lookup_token(TokenTable *table, const char *str, size_t len) {
 
         if (tok->lexeme_len == len && memcmp_ci(tok->lexeme, str, len) == 0) {
             int code = tok->token_code;
-            pthread_rwlock_unlock(&table->lock);
+            LIME_RWLOCK_RDUNLOCK(&table->lock);
             return code;
         }
         idx = tok->next_in_chain;
     }
 
-    pthread_rwlock_unlock(&table->lock);
+    LIME_RWLOCK_RDUNLOCK(&table->lock);
     return -1;
 }
 
@@ -183,7 +183,7 @@ bool add_token(TokenTable *table, const char *lexeme, int token_code, ExtensionI
     while (idx != INVALID_INDEX) {
         TokenDefinition *tok = &table->tokens[idx];
         if (tok->lexeme_len == len && memcmp_ci(tok->lexeme, lexeme, len) == 0) {
-            pthread_rwlock_unlock(&table->lock);
+            LIME_RWLOCK_WRUNLOCK(&table->lock);
             return false; /* duplicate */
         }
         idx = tok->next_in_chain;
@@ -191,7 +191,7 @@ bool add_token(TokenTable *table, const char *lexeme, int token_code, ExtensionI
 
     /* Ensure we have room. */
     if (!ensure_capacity(table)) {
-        pthread_rwlock_unlock(&table->lock);
+        LIME_RWLOCK_WRUNLOCK(&table->lock);
         return false;
     }
 
@@ -202,7 +202,7 @@ bool add_token(TokenTable *table, const char *lexeme, int token_code, ExtensionI
     /* Copy the lexeme string. */
     char *dup = malloc(len + 1);
     if (!dup) {
-        pthread_rwlock_unlock(&table->lock);
+        LIME_RWLOCK_WRUNLOCK(&table->lock);
         return false;
     }
     memcpy(dup, lexeme, len + 1);
@@ -224,7 +224,7 @@ bool add_token(TokenTable *table, const char *lexeme, int token_code, ExtensionI
     /* Bump version AFTER changes are visible so readers will retry. */
     atomic_fetch_add_explicit(&table->version, 1, memory_order_release);
 
-    pthread_rwlock_unlock(&table->lock);
+    LIME_RWLOCK_WRUNLOCK(&table->lock);
     return true;
 }
 
@@ -256,6 +256,6 @@ bool remove_tokens_by_extension(TokenTable *table, ExtensionID ext_id) {
         atomic_fetch_add_explicit(&table->version, 1, memory_order_release);
     }
 
-    pthread_rwlock_unlock(&table->lock);
+    LIME_RWLOCK_WRUNLOCK(&table->lock);
     return true;
 }
