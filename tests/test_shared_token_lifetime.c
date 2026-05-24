@@ -11,7 +11,7 @@
 #include <string.h>
 #include <stdatomic.h>
 #include <assert.h>
-#include <pthread.h>
+#include "lime_threads.h"
 
 #include "parser.h"
 #include "snapshot.h"

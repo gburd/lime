@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdatomic.h>
-#include <pthread.h>
+#include "lime_threads.h"
 
 #define INVALID_INDEX 0xFFFFFFFF
 

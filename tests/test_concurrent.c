@@ -14,7 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
+#include "lime_threads.h"
 #include <stdatomic.h>
 #include <assert.h>
 

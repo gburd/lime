@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdatomic.h>
-#include <pthread.h>
+#include "lime_threads.h"
 
 #include "parser_operations.h"
 #include "parser.h"

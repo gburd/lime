@@ -19,7 +19,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdatomic.h>
-#include <pthread.h>
+#include "lime_threads.h"
 
 #ifndef _WIN32
 #include <dlfcn.h>

@@ -18,7 +18,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <pthread.h>
+#include "lime_threads.h"
 
 /* Re-use the ExtensionID type from the token table. */
 typedef uint32_t ExtensionID;
