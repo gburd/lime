@@ -23,7 +23,7 @@ test_pg_bootscanner_gen = custom_target('pg_bootscanner_lex',
 test_pg_bootscanner = executable('test_pg_bootscanner',
   'test_bootscanner.c',
   test_pg_bootscanner_gen,
-  c_args : ['-Wno-unused-parameter'],
+  c_args : meson.get_compiler('c').get_supported_arguments(['-Wno-unused-parameter']),
 )
 
 test('pg_bootscanner', test_pg_bootscanner)

@@ -28,7 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <time.h>
+#include "lime_time.h"
 
 #include "tokenize_simd.h"
 

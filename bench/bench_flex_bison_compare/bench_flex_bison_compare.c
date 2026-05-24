@@ -32,6 +32,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include "lime_time.h"
 #include <time.h>
 #include <sys/resource.h>
 
@@ -144,7 +145,7 @@ static double bench_lime(ParserSnapshot *snap, int iters) {
         parse_end(ctx);
     }
     uint64_t t1 = now_ns();
-    __asm__ volatile("" : : "r"(total));
+    LIME_USE(total);
     return (double)(t1 - t0) / 1e6;
 }
 
@@ -163,7 +164,7 @@ static double bench_bison(int iters) {
         bison__delete_buffer(buf);
     }
     uint64_t t1 = now_ns();
-    __asm__ volatile("" : : "r"(total));
+    LIME_USE(total);
     return (double)(t1 - t0) / 1e6;
 }
 
@@ -307,7 +308,7 @@ static double bench_lime_json(ParserSnapshot *snap, int iters) {
         parse_end(ctx);
     }
     uint64_t t1 = now_ns();
-    __asm__ volatile("" : : "r"(total));
+    LIME_USE(total);
     return (double)(t1 - t0) / 1e6;
 }
 
@@ -320,7 +321,7 @@ static double bench_bison_json(int iters) {
         json__delete_buffer(buf);
     }
     uint64_t t1 = now_ns();
-    __asm__ volatile("" : : "r"(total));
+    LIME_USE(total);
     return (double)(t1 - t0) / 1e6;
 }
 

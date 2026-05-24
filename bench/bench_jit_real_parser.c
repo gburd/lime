@@ -142,7 +142,7 @@ static uint64_t time_parse_loop(const Tok *toks, uint32_t tokens_per_expr, uint3
     uint64_t t1 = now_ns();
 
     /* Make sure the optimiser doesn't elide the work. */
-    __asm__ volatile("" : : "r"(total));
+    LIME_USE(total);
 
     return t1 - t0;
 }

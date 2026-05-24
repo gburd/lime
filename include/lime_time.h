@@ -103,4 +103,26 @@ static inline uint64_t lime_now_realtime_ns(void) {
 #endif
 }
 
+/*
+** LIME_USE(x) -- prevent the compiler from optimising away a
+** computation whose result the program doesn't otherwise need.
+** Useful in benchmarks where we time the cost of producing a
+** value we don't actually consume.
+**
+** On gcc/clang the canonical pattern is `__asm__ volatile(""
+** : : "r"(x))` which forces x into a register and stops the
+** dead-code eliminator at that point.  MSVC has no equivalent
+** inline-asm syntax in C; instead we route x through a
+** `volatile` storage location which the compiler cannot
+** optimise across.
+*/
+#if defined(__GNUC__) || defined(__clang__)
+#define LIME_USE(x) __asm__ volatile("" : : "r"(x))
+#elif defined(_MSC_VER)
+#define LIME_USE(x) do { volatile long long _lime_use_sink = (long long)(x); \
+                         (void)_lime_use_sink; } while (0)
+#else
+#define LIME_USE(x) ((void)(x))
+#endif
+
 #endif /* LIME_TIME_H */
