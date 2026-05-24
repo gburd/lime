@@ -66,6 +66,29 @@ does not expose stable per-core pinning.
   * **Pinning:** none (no per-core taskset analogue exposed in
     this OpenIndiana userland).
 
+### santorini — Win11 ARM64 / MSVC
+
+  * **CPU:** Qualcomm Snapdragon (ARMv8 Family 8 Model D4B, ARM64).
+  * **OS:** Windows 11 (NT 10.0.26200.0).
+  * **Compiler:** MSVC 14.50.35726 (Visual Studio 18 Community,
+    Host=ARM64 / target=ARM64).
+  * **simdjson:** not installed; bench_simdjson_compare is
+    skipped at configure time.
+  * **JIT:** disabled (`-Dllvm=disabled`); LLVM not installed
+    on this host.
+  * **lime_snapshot_create / lime_compile_grammar_text /
+    lime_snapshot_extend** are stub-NULL on Windows in v0.2.x
+    (the fork/exec/dlopen primitives have no Windows analog;
+    the static-parser shape -- Shape A in
+    docs/INTEGRATING_LIME.md -- works on every platform and is
+    the right path on Windows for now).
+  * **Tests:** 70 OK / 0 Fail / 1 Skipped (`jit_parse_equivalence`
+    skipped because LLVM/JIT is disabled).  The 4 PBT files
+    (`tests/test_*_pbt.c`) and the 2 lex-internals tests that
+    use POSIX `pipe` / `open_memstream` are configure-skipped
+    on this platform.
+  * **Pinning:** none (no equivalent of cpuset on Windows).
+
 The nuc and rv are the trustworthy hosts: dedicated, mostly idle,
 predictable schedulers.  icarus is similarly dedicated.  The M3
 Pro is a developer laptop; its per-run stddev is **5-17× larger**

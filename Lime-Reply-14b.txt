@@ -1,0 +1,139 @@
+From:      Lime maintainer
+Subject:   Win11 ARM64 / MSVC build status (closing the deferred ask from Letter 14)
+Tag:       Lime mainline, post-v0.2.6
+Date:      Sun 24 May 2026
+
+
+Summary
+-------
+
+Letter 14 asked: "How do we use Lime on Windows?" and noted that
+Win11/MSVC was deferred because the test host had been
+unreachable.  This is the close-out note.
+
+The host (a Snapdragon ARM64 box running Win11 / VS 18 Community
+/ MSVC 14.50) came back online.  Lime now builds cleanly and the
+test suite passes:
+
+    Ok:                70
+    Fail:               0
+    Skipped:            1     (jit_parse_equivalence -- LLVM
+                              not installed on this host;
+                              meson sets -Dllvm=disabled and
+                              the equivalence test self-skips)
+
+The build uses the meson + ninja path with `-Dpg_grammar=false
+-Dllvm=disabled`.  No additional flags or workarounds are
+needed.  The single-file build (`cl /Felime.exe lime.c`) also
+compiles, though I haven't wired CI for that variant yet.
+
+
+Portability layers added
+------------------------
+
+This came together over ~15 commits between e49aa63 and 0e3fdc3.
+The interesting layers, by header / file:
+
+  - `include/lime_threads.h`
+      pthread -> SRWLOCK / CRITICAL_SECTION / _beginthreadex
+      shim.  POSIX is passthrough.  Adds explicit
+      LIME_RWLOCK_RDUNLOCK / LIME_RWLOCK_WRUNLOCK macros for
+      cases where read- vs write-side release matters
+      (Windows SRWLOCK has separate paths; pthread does not).
+
+  - `include/lime_time.h`
+      Provides `lime_now_ns()` / `lime_now_realtime_ns()`
+      portably and shims `clock_gettime` / `CLOCK_MONOTONIC` /
+      `CLOCK_REALTIME` / `struct timespec` for MSVC.  Also
+      hosts the project's general-portability macros now:
+      `LIME_LIKELY` / `LIME_UNLIKELY` (no-op on MSVC; wraps
+      `__builtin_expect` on gcc/clang) and `LIME_USE` (the
+      benchmark optimisation barrier; uses `__asm__ volatile`
+      on gcc/clang and a `volatile` storage sink on MSVC).
+
+  - `meson.build`
+      MSVC-specific block:
+        /experimental:c11atomics    enable C11 _Atomic
+        /D_CRT_SECURE_NO_WARNINGS   silence strdup/strtok/etc.
+        /Dstrdup=_strdup            map POSIX name to MSVC
+                                    underscore variant
+      Plus `cc.get_supported_arguments()` wrapping every
+      gcc-only flag (-Wno-unused-parameter et al) so MSVC
+      silently drops them.
+
+  - Per-test `<unistd.h>` shim mapping `dup2/close/open` to
+    `_dup2/_close/_open` via `<io.h>`, in 6 test files that
+    use the POSIX names directly.
+
+  - 42 audited `pthread_rwlock_unlock` call sites converted
+    to LIME_RWLOCK_RDUNLOCK / LIME_RWLOCK_WRUNLOCK based on
+    which lock-acquire each pairs with.  This was the
+    landmine that produced 3 timeout cases on the first
+    full test run; after the audit they all pass.
+
+
+What's stubbed on Windows
+-------------------------
+
+Three public APIs depend on the fork+exec+dlopen pipeline that
+Windows simply doesn't provide in the same shape:
+
+  - `lime_snapshot_create()`
+  - `lime_compile_grammar_text()`
+  - `lime_snapshot_extend()`
+
+These return NULL with the error string "...are not yet
+supported on Windows. Use the static-parser shape (Shape A in
+docs/INTEGRATING_LIME.md) on this platform."  A real Windows
+implementation (CreateProcess + LoadLibrary + GetProcAddress)
+is tracked as a follow-up but is not on the v0.2.x critical
+path.
+
+The 4 PBT files (test_*_pbt.c) plus 2 lex-internals tests that
+use POSIX `pipe` / `open_memstream` are configure-skipped on
+Windows; everything else runs.
+
+
+Recommended path for a PG-on-Windows hybrid
+-------------------------------------------
+
+Given the above, the only Lime path that makes sense on Windows
+right now is **Shape A** from `docs/INTEGRATING_LIME.md`:
+generate the parser at *build* time with `lime` as a host
+build tool, ship the generated `parser.c` / `parser.h`, and
+load no extensions at runtime.  This shape:
+
+  - has zero runtime dependency on `lime` itself,
+  - has zero runtime dependency on a C compiler,
+  - works identically on every supported platform (POSIX +
+    Windows),
+  - matches the existing PG packaging story (gram.c /
+    gram.h are checked into the build tree on Windows
+    today via the bison MSYS2 shim).
+
+The runtime extension shapes (B and C) require the
+fork/exec/dlopen path; these are POSIX-only in v0.2.x.  On
+Windows you'd see them light up in v0.3.x or v0.4.x once we
+implement the CreateProcess + LoadLibrary equivalent.
+
+
+Verification on your end
+------------------------
+
+If the PG team wants to reproduce: a Snapdragon ARM64 / VS 18
+host with meson 1.10 + ninja 1.12 + git 2.x is sufficient.
+
+    git clone https://codeberg.org/gregburd/lime
+    cd lime
+    "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\VsDevCmd.bat" -arch=arm64 -host_arch=arm64
+    meson setup builddir -Dpg_grammar=false -Dllvm=disabled
+    ninja -C builddir
+    meson test -C builddir --no-rebuild
+
+Should produce 70 OK / 0 Fail / 1 Skipped.
+
+Same set of patches works for x64 MSVC; I haven't tested it
+because the ARM64 host was the deferred case.  If you have an
+x64 host and find a divergence I'd want to hear about it.
+
+-- gregburd
