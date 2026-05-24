@@ -54,11 +54,18 @@
 ** built on do not exist on Windows; the equivalent path needs
 ** CreateProcess + LoadLibrary + GetProcAddress and a different
 ** error-handling shape.  For the v0.2.x MSVC milestone we stub
-** the public entry points to return NULL with an explanatory
-** error so the rest of the build links cleanly and downstream
-** users (notably PG's PG-on-Windows hybrid path) can use the
-** static-parser shape (Shape A in docs/INTEGRATING_LIME.md)
-** which doesn't need this code path.
+** only the internal helpers that other translation units may
+** reference (create_base_snapshot, lime_compile_grammar_text)
+** so the rest of the build links cleanly.  The public
+** lime_snapshot_create / lime_snapshot_extend already live in
+** src/snapshot.c as thin wrappers around create_base_snapshot,
+** so the Windows stub of create_base_snapshot returning NULL
+** with an explanatory error is enough to make the public API
+** behave correctly: it returns a documented "not yet supported
+** on Windows" error string.  Downstream users (notably PG'\''s
+** PG-on-Windows hybrid path) can use the static-parser shape
+** (Shape A in docs/INTEGRATING_LIME.md) which doesn'\''t need
+** this code path.
 */
 #if defined(_WIN32)
 
@@ -74,7 +81,7 @@ static char *win_stub_err(void) {
     return out;
 }
 
-ParserSnapshot *lime_snapshot_create(const char *grammar_file, char **error) {
+ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
     (void)grammar_file;
     if (error) *error = win_stub_err();
     return NULL;
@@ -85,23 +92,6 @@ ParserSnapshot *lime_compile_grammar_text(const char *grammar_text,
                                           char **error) {
     (void)grammar_text;
     (void)len;
-    if (error) *error = win_stub_err();
-    return NULL;
-}
-
-ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
-    (void)grammar_file;
-    if (error) *error = win_stub_err();
-    return NULL;
-}
-
-ParserSnapshot *lime_snapshot_extend(ParserSnapshot *base,
-                                     const char *grammar_text,
-                                     size_t grammar_len,
-                                     char **error) {
-    (void)base;
-    (void)grammar_text;
-    (void)grammar_len;
     if (error) *error = win_stub_err();
     return NULL;
 }
