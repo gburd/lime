@@ -1015,6 +1015,23 @@ test_runtime_arith_gen = custom_target('test_runtime_arith_parser',
   ],
 )
 
+# AOT codegen output for the same arith grammar -- generates
+# bench_arith_grammar_aot.c via the `lime -j` flag.  Used by the
+# AOT regression test below to check that the AOT path's
+# yy_find_shift_action_aot() agrees with the table-driven
+# yy_find_shift_action() across every (state, lookahead) pair.
+test_runtime_arith_aot_gen = custom_target('test_runtime_arith_aot',
+  input   : ['../bench/bench_arith_grammar.y'],
+  output  : ['bench_arith_grammar_aot.c'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-j',  # emit *_aot.c
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
 # End-to-end: take a real lime-generated parser, build a runtime
 # snapshot from it via <Prefix>BuildSnapshot, then drive parse_token
 # against it.  Proves Claim C3 in test_claims_proof.
@@ -1091,6 +1108,18 @@ test_jit_parse_equivalence = executable('test_jit_parse_equivalence',
 )
 
 test('jit_parse_equivalence', test_jit_parse_equivalence)
+
+# Letter-15 regression: AOT path must agree with the
+# table-driven path for every (state, lookahead) pair.
+test_aot_equivalence = executable('test_aot_equivalence',
+  'test_aot_equivalence.c',
+  test_runtime_arith_gen,
+  test_runtime_arith_aot_gen,
+  include_directories : include_directories('../src'),
+  dependencies : lime_parser_dep,
+)
+
+test('aot_equivalence', test_aot_equivalence)
 
 # %symbol_prefix collision test: two grammars with different
 # %symbol_prefix values must coexist in a single translation unit

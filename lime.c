@@ -5851,15 +5851,47 @@ void ReportAOTTable(struct lime *lemp){
                   ap->x.rp->iRule);
         }
       }
-      fprintf(out, "        default: return %d; /* default */\n",
-              lemp->noAction);
+      /* Per-state default.  Mirrors the table-driven yy_default[]
+      ** emit at lime.c:6611: when iDfltReduce<0 the state has no
+      ** default reduce and a lookahead miss is a syntax error;
+      ** otherwise the lookahead miss reduces by iDfltReduce.
+      ** PG's Letter 15 (May 2026) reported this site emitting a
+      ** uniform YY_NO_ACTION sentinel, which the parser core
+      ** then rejected via assert(yyact == YY_ERROR_ACTION) on
+      ** the 65 % of states with no default reduce, and which
+      ** caused silent reduce-skipping on the 35 % that did. */
+      if( stp->iDfltReduce<0 ){
+        fprintf(out, "        default: return %d; /* error action */\n",
+                lemp->errAction);
+      }else{
+        fprintf(out, "        default: return %d; /* default reduce rule %d */\n",
+                stp->iDfltReduce + lemp->minReduce,
+                stp->iDfltReduce);
+      }
       fprintf(out, "      }\n");
     }else{
-      fprintf(out, "      return %d; /* default */\n", lemp->noAction);
+      /* Same per-state-default rule as above, applied to the
+      ** "no shift/shiftreduce actions" branch (state has only
+      ** reduces or is the empty start state).  iDfltReduce
+      ** drives the choice. */
+      if( stp->iDfltReduce<0 ){
+        fprintf(out, "      return %d; /* error action */\n", lemp->errAction);
+      }else{
+        fprintf(out, "      return %d; /* default reduce rule %d */\n",
+                stp->iDfltReduce + lemp->minReduce,
+                stp->iDfltReduce);
+      }
     }
   }
 
-  fprintf(out, "    default: return %d;\n", lemp->noAction);
+  /* Outer state-not-found.  yy_find_shift_action's caller has
+  ** already guarded `stateno > YY_MAX_SHIFT` (which short-
+  ** circuits to passthrough) so reaching this branch means a
+  ** state code that was never enumerated -- i.e., corrupt input.
+  ** YY_ERROR_ACTION is the right sentinel; YY_NO_ACTION is a
+  ** marker for empty action-table slots and the parser's outer
+  ** loop must never see it for a state it considers valid. */
+  fprintf(out, "    default: return %d;\n", lemp->errAction);
   fprintf(out, "  }\n");
   fprintf(out, "}\n");
   fclose(out);
