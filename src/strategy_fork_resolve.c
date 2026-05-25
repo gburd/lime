@@ -184,7 +184,9 @@ static const char *tiebreak_name(TiebreakRule rule) {
 **   - If the fork has a cloned parser state (state_data != NULL),
 **     the token could be fed to the actual parser engine.  Currently
 **     this increments tokens_consumed and returns true, pending
-**     integration with the context switching layer (Task #7).
+**     integration with the parser-fork dispatch layer (ROADMAP item 1
+**     -- the in-process LALR rebuild that lets a fork drive a
+**     mutated snapshot one step at a time).
 **
 **   - If the fork has no parser state (static mode), the token is
 **     assumed to be accepted.
@@ -202,7 +204,8 @@ static bool feed_token_to_fork(ParseFork *fork, int token_code) {
     fork->tokens_consumed++;
 
     /*
-    ** TODO(Task #7): When the context switching layer is complete,
+    ** TODO(ROADMAP item 1): When the in-process rebuild can drive
+    ** a parser-fork one step at a time against a mutated snapshot,
     ** this will:
     **
     **   void *parser = parse_fork_get_parser(fork);
@@ -243,7 +246,7 @@ static bool is_statement_end(const ParseFork *fork) {
     }
 
     /*
-    ** TODO(Task #7): Check the cloned parser's stack for an accept state.
+    ** TODO(ROADMAP item 1): Check the cloned parser's stack for an accept state.
     **
     **   void *parser = parse_fork_get_parser((ParseFork*)fork);
     **   if (parser != NULL) {
@@ -405,7 +408,8 @@ static void *fork_resolve_init(const Extension *const *extensions, uint32_t next
 **     to simulate forking.  Creates lightweight forks with priority
 **     and token-count metadata for the tiebreaker.
 **   - Runtime mode (parse_ctx != NULL): Creates real parser forks
-**     via fork_parser() and feeds tokens.  (Requires Task #7.)
+**     via fork_parser() and feeds tokens.  (Requires ROADMAP item 1
+**     -- in-process LALR rebuild for fork-side parser stepping.)
 */
 static bool fork_resolve_resolve(void *strategy_context, const ConflictPoint *conflict,
                                  struct ParseContext *parse_ctx, int lookahead,

@@ -129,7 +129,8 @@ grammar):
   optimisation level today.  A future tiered model could keep cold
   states on the table-driven path and JIT only the hot ones, which
   would reduce compile latency for very large grammars (the PG
-  grammar at ~2700 states currently takes ~30 ms to JIT).
+  PG grammar at ~3,842 states currently takes ~19 ms to JIT via
+  the compact path).
 
 **Source-tree references.**
 

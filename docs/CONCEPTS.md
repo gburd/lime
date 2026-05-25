@@ -120,18 +120,28 @@ are actively parsing with the previous snapshot.
 ## SIMD Tokenization
 
 Lime's tokenizer uses SIMD instructions (AVX2 on x86, NEON on ARM) to
-classify characters in parallel — 32 bytes at a time on AVX2.  This
-delivers 5-10x faster lexing compared to scalar character-by-character
-scanning.  A scalar fallback is always available.
+classify characters in parallel — 32 bytes at a time on AVX2.  The
+classification primitive itself runs 4-8x faster than scalar
+character-by-character scanning.  At the full-tokenizer level the
+speedup is more modest -- typically 1.5-2x -- because the loop
+overhead and emit path absorb the rest.  See
+[bench/bench_simd_classify](../bench/bench_simd_classify.c) and
+[PERFORMANCE.md](PERFORMANCE.md) for measured numbers.  A scalar
+fallback is always available.
 
 ## JIT Compilation
 
 The optional LLVM JIT compiles parser action table lookups into native
 machine code at runtime.  This replaces the table-driven interpreter
-loop with direct jumps, yielding 2.5-4.2x speedup on the action lookup
-phase.  JIT is most beneficial for large grammars (500+ states) in
+loop with direct jumps, yielding ~2.3x speedup on the lookup step
+itself (per `bench/jit_comparison`).  Action lookup is roughly 15% of
+total parse time on the arithmetic benchmark, so the *overall* parse
+speedup is in the 1.04-1.10x range on x86 and Apple Silicon (per
+`docs/BENCHMARK_RESULTS.md`); on x86 small grammars JIT can actually
+be a 5-10% regression because compile latency outweighs runtime
+gain.  JIT is most beneficial for large grammars (500+ states) in
 long-running processes.  See [JIT_ANALYSIS.md](JIT_ANALYSIS.md) for
-a detailed cost-benefit analysis.
+the detailed cost-benefit analysis.
 
 ## Module System
 

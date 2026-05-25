@@ -112,11 +112,15 @@ ParserSnapshot *clone_snapshot(const ParserSnapshot *base) {
     snap->create_time_ns = now_ns();
     snap->jit_ctx = NULL; /* JIT context is not inherited */
 
-    /* Grammar data -- shallow copy of pointer arrays for now.
-    ** The actual symbol/rule/state structs are from the base snapshot
-    ** or Lemon internals.  Full deep copy requires Task #3 support.
-    ** For now, we copy the pointers and counts so modifications can
-    ** extend them. */
+    /* Grammar data -- shallow copy of pointer arrays.
+    ** The symbol / rule / state structs themselves are owned by the
+    ** base snapshot (and Lemon's internal arenas behind it).  A real
+    ** deep copy of those structures is the in-process LALR rebuild
+    ** path tracked as item 1 of docs/ROADMAP.md ("In-process LALR(1)
+    ** automaton rebuild library"); the subprocess + dlopen path used
+    ** by `lime_compile_grammar_text` covers the practical need today.
+    ** Pointers + counts are enough for the metadata-only path used
+    ** by create_modified_snapshot. */
     snap->nsymbol = base->nsymbol;
     snap->nterminal = base->nterminal;
     snap->nrule = base->nrule;
@@ -130,8 +134,9 @@ ParserSnapshot *clone_snapshot(const ParserSnapshot *base) {
     }
 
     if (base->nrule > 0 && base->rules != NULL) {
-        /* Rules are a linked list; for clone we copy the head pointer.
-        ** Deep copy of the linked list requires Task #3 support. */
+        /* Rules are a linked list; clone copies the head pointer.
+        ** A deep copy lives in the in-process rebuild path (ROADMAP
+        ** item 1); shallow head is correct for metadata-only paths. */
         snap->rules = base->rules;
     }
 

@@ -247,7 +247,6 @@ tool actually gives you:
 | `ParseTokenName`, `ParseExpectedTokens` | ✗ | ✓ |
 | Copy-on-write snapshots for thread safety | ✗ | ✓ |
 | Error recovery with `error` nonterminal | ✓ | ✓ (inherited from Lemon) |
-| GLR parsing | ✓ | partial |
 | Generalized-LR with merge functions | ✓ | ✗ |
 | IELR(1) / LALR(1) algorithm choice | ✓ | LALR(1) only |
 | Mature, large user base | ✓ | ✗ (newer project) |

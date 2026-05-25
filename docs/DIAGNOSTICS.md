@@ -105,7 +105,7 @@ Inside a `%syntax_error { ... }` block, these identifiers are available:
 | `TOKEN_LOC`  | `YYLOCATIONTYPE`      | Alias for `yyloc`. |
 | `yypParser`  | `void *`              | Parser handle, for passing to `ParseState` etc. |
 
-### Location semantics (P0-NEW-1, since LIMETODO)
+### Location semantics (P0-NEW-1, since v0.2.0)
 
 When the grammar declares `%locations` and parsing is driven by
 `ParseLoc()` (or `parse_token()` with a non-`LIME_LOC_UNKNOWN`

@@ -6,8 +6,9 @@
 ** and re-parsed by the `lime` generator, the result is equivalent to
 ** applying the modifications to a freshly-built snapshot -- the
 ** "subprocess fallback" path for runtime grammar modification that
-** works today even though in-process apply_add_rule() is stubbed
-** (Task #3 / P0-1).
+** works today by routing the merged grammar through the lime + cc
+** + dlopen subprocess pipeline (src/snapshot_create.c).  A pure
+** in-process LALR rebuild is open as ROADMAP item 1.
 **
 ** Not all modifications round-trip cleanly:
 **

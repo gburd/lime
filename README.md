@@ -34,8 +34,19 @@ generator supports runtime grammar modification.  Lime fills that gap.
 - **Runtime extensibility** — Load and unload grammar extensions
   dynamically via a C API, with conflict detection and resolution callbacks.
   No other parser generator offers this.
-- **Performance** — SIMD-accelerated tokenization delivers 5-10x faster
-  lexing.  Optional LLVM JIT provides 2.5-4.2x faster action table lookups.
+- **Performance** — SIMD-accelerated tokenization delivers a
+  measured 1.5-2x speedup on the full tokenizer pipeline (the
+  underlying character-classify primitive runs 4-8x on AVX2; the
+  loop overhead and emit path absorb the rest).  See
+  [docs/PERFORMANCE.md](docs/PERFORMANCE.md) and `bench/bench_simd_classify`.
+  Optional LLVM JIT compiles the action-table lookup into native
+  code, yielding ~2.3x speedup *on the lookup step itself* against
+  the table-driven interpreter on `bench/jit_comparison`; overall
+  end-to-end parse speedup is in the 1.04-1.10x range on x86 and
+  m3pro per `docs/BENCHMARK_RESULTS.md`.  Whether JIT pays off depends
+  heavily on grammar size and how much of total parse time is action
+  lookup; see [docs/JIT_ANALYSIS.md](docs/JIT_ANALYSIS.md) for the
+  cost-benefit analysis.
 - **Thread-safe by design** — Copy-on-write snapshots with atomic reference
   counting allow concurrent parsing with zero shared mutable state.
 - **Modern memory safety** — `%destructor` directives prevent semantic

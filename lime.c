@@ -2001,7 +2001,7 @@ static int lint_grammar(struct lime *lem){
   /* Summary */
   printf("\n");
   if( errors == 0 && warnings == 0 ){
-    printf("✓ No errors or warnings\n");
+    printf("OK: No errors or warnings\n");
   }else{
     fprintf(stderr, "%d errors, %d warnings\n", errors, warnings);
   }
@@ -2345,7 +2345,7 @@ static int format_grammar(struct lime *lem){
   }
 
   fclose(out);
-  printf("✓ Formatted output written to: %s\n", outfile);
+  printf("OK: Formatted output written to: %s\n", outfile);
   printf("  Review the formatted file and rename it if correct:\n");
   printf("    mv %s %s\n", outfile, lem->filename);
 

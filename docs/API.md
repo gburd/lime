@@ -621,9 +621,12 @@ char *lime_modifications_to_grammar_text(
 Render an array of `GrammarModification`s as `.lime`-syntax text that,
 when concatenated after a base grammar and re-parsed by the `lime`
 generator, produces a parser equivalent to applying the modifications.
-This is the intended mechanism for the "subprocess fallback" pattern
-that unblocks runtime extension validation while real in-process
-`apply_add_rule()` (Task #3) is pending.
+This is the mechanism behind `publish_modified_snapshot`'s subprocess
+rebuild path: the merged grammar is fed back through the `lime + cc +
+dlopen` pipeline (`src/snapshot_create.c`).  The pure in-process LALR
+rebuild remains the open item in `docs/ROADMAP.md` (item 1 -- structural
+decoupling of `lime.c`'s `Find*` pipeline from file I/O and global
+state).
 
 **Returns:** malloc'd NUL-terminated buffer; `NULL` on allocation
 failure or bad arguments.  Caller owns the buffer.
