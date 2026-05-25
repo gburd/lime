@@ -25,8 +25,19 @@
 
 %include {
 #include <assert.h>
+#include <stdlib.h>
 #include "json.h"
 }
+
+/* STRING and NUMBER tokens carry malloc'd char* allocated by
+** scan_string_decoded / scan_number in json_tokenize.c.  Other
+** terminals (LBRACE, RBRACE, COMMA, etc.) carry NULL.  When the
+** parser hits a syntax error mid-input the stacked tokens get
+** popped through this destructor; without it the STRING/NUMBER
+** payloads leak (ASan-detected on test_context_switch_error's
+** test_malformed_json case).  free(NULL) is well-defined so the
+** unconditional free is safe for the value-less tokens too. */
+%token_destructor { free((char *)$$); }
 
 %syntax_error {
     fprintf(stderr, "json: syntax error near token code %d\n", yymajor);
