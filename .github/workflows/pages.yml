@@ -1,4 +1,26 @@
-name: Deploy Docs
+name: Build Docs
+
+# This workflow validates that the Doxygen build succeeds on every
+# push.  It does NOT deploy the site -- the canonical site is hosted
+# on Codeberg Pages (.forgejo/workflows/pages.yml).  GitHub is a
+# read-only mirror; if a future operator wants GitHub Pages too,
+# enable Pages in the repo settings (Source: GitHub Actions) and
+# then add back the deploy job:
+#
+#   deploy:
+#     needs: build
+#     runs-on: ubuntu-latest
+#     environment:
+#       name: github-pages
+#       url: ${{ steps.deployment.outputs.page_url }}
+#     steps:
+#       - name: Deploy to GitHub Pages
+#         id: deployment
+#         uses: actions/deploy-pages@v4
+#
+# and grant the workflow `pages: write` permission.  Without Pages
+# enabled in repo settings, that step returns a 404 in 1 second and
+# fails the run.
 
 on:
   push:
@@ -12,8 +34,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -45,23 +65,9 @@ jobs:
           head -20 doxygen-warnings.txt
         fi
 
-    - name: Build site
+    - name: Verify site contents
       run: |
-        mkdir -p _site
-        cp -r docs/api/html/* _site/
-
-    - name: Upload artifact
-      uses: actions/upload-pages-artifact@v3
-      with:
-        path: _site
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-    - name: Deploy to GitHub Pages
-      id: deployment
-      uses: actions/deploy-pages@v4
+        # Smoke check: index.html exists and references the project.
+        test -s docs/api/html/index.html
+        grep -q -i 'lime' docs/api/html/index.html
+        echo "Doxygen site built ($(find docs/api/html -type f | wc -l) files)"
