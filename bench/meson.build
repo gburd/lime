@@ -71,6 +71,16 @@ bench_jit_real_parser = executable('bench_jit_real_parser',
   link_args : ['-lm'],
 )
 
+# GLR overhead benchmark.  Drives the same unambiguous arith input
+# through both the LALR push parser and the GLR engine; reports the
+# fixed overhead of the GSS allocation + per-token step machinery.
+glr_overhead = executable('glr_overhead',
+  'glr_overhead.c',
+  bench_arith_gen,
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
 
 # Optional Flex/Bison comparison harness (skipped at configure time
 # when flex or bison is unavailable -- see subdir's meson.build).

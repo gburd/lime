@@ -91,6 +91,26 @@ test_utf8 = executable('test_utf8',
 
 test('utf8', test_utf8)
 
+# ----------------------------------------------------------------------
+# GLR (Generalized LR) parser tests.  test_gss is a direct unit test
+# of the Graph-Structured Stack primitives; test_glr_no_conflict drives
+# the bench arith snapshot through both LALR and GLR and asserts they
+# agree; test_glr_ambiguous mutates a cloned snapshot to force a
+# runtime fork and exercises the disambiguation callback path.
+#
+# The arith parser is generated below via test_runtime_arith_gen
+# (declared further down for the runtime parse test).  We forward-
+# declare the generated-file dependency by name; meson resolves the
+# ordering at configure time.
+# ----------------------------------------------------------------------
+test_gss = executable('test_gss',
+  'test_gss.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('gss', test_gss)
+
 test_parse_context_coverage = executable('test_parse_context_coverage',
   'test_parse_context_coverage.c',
   dependencies : lime_parser_dep,
@@ -1071,6 +1091,30 @@ test_runtime_parse = executable('test_runtime_parse',
 )
 
 test('runtime_parse', test_runtime_parse)
+
+# ----------------------------------------------------------------------
+# GLR (Generalized LR) end-to-end tests.  These reuse the
+# test_runtime_arith_gen target above (same arith grammar both the
+# bench and the runtime tests use) so we only run the lime codegen
+# step once per build.
+# ----------------------------------------------------------------------
+test_glr_no_conflict = executable('test_glr_no_conflict',
+  'test_glr_no_conflict.c',
+  test_runtime_arith_gen,
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('glr_no_conflict', test_glr_no_conflict)
+
+test_glr_ambiguous = executable('test_glr_ambiguous',
+  'test_glr_ambiguous.c',
+  test_runtime_arith_gen,
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('glr_ambiguous', test_glr_ambiguous)
 
 # End-to-end extension exercise: drives create_modified_snapshot
 # against a real generated parser snapshot and confirms parse_token

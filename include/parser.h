@@ -37,6 +37,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -233,6 +234,92 @@ bool lime_extension_registry_init(void);
 void lime_extension_registry_destroy(void);
 
 /** @} */ /* end ext_init */
+
+/* --- GLR Parsing API ---------------------------------------------- */
+
+/** @defgroup glr_api GLR Parsing API
+ *  @brief Generalized LR parsing -- forks the stack on conflicts.
+ *
+ *  Generalized LR (GLR) parsing handles grammars that LALR(1) cannot
+ *  parse by exploring multiple parse stack heads in parallel.  A
+ *  shift/reduce or reduce/reduce conflict at runtime causes a fork
+ *  rather than a syntax error.  Heads that converge to the same
+ *  parser state are merged; if two reductions produce the same
+ *  nonterminal at the same position the user-provided
+ *  GLRDisambiguateFn is consulted.
+ *
+ *  GLR has zero impact on the LALR fast path: parse_token() does not
+ *  enter GLR code at all.  Callers must explicitly switch a
+ *  ParseContext into GLR mode via lime_parse_glr() before driving it
+ *  with lime_parse_glr_feed().
+ *
+ *  @see docs/GLR.md, include/glr.h, tests/test_glr_no_conflict.c,
+ *       tests/test_glr_ambiguous.c
+ *  @{
+ */
+
+#include "glr.h" /* GLRDisambiguateFn, GLRParser */
+
+/**
+ * @brief Switch a parse context into GLR mode.
+ *
+ * Allocates a Graph-Structured Stack and binds it to the context.
+ * Subsequent calls to lime_parse_glr_feed() drive the GLR engine
+ * against the context's pinned snapshot.
+ *
+ * @param ctx        Active parse context (must have a snapshot pinned).
+ * @param disambig   Disambiguation callback (NULL = strict mode: any
+ *                   merge is reported as -1 unresolvable ambiguity).
+ * @param user_data  Opaque pointer passed back into @p disambig.
+ *
+ * @retval  0 Success (context now in GLR mode, or already was; the
+ *            disambiguation callback is updated either way).
+ * @retval -1 Unused for setup (reserved for symmetry with feed).
+ * @retval -2 Allocation failure or invalid arguments.
+ */
+int lime_parse_glr(ParseContext *ctx, GLRDisambiguateFn disambig, void *user_data);
+
+/**
+ * @brief Feed one terminal to the GLR engine.
+ *
+ * @param ctx    Parse context previously switched into GLR mode.
+ * @param token  Terminal symbol code.
+ *
+ * @retval  0 Success.
+ * @retval -1 Unresolvable ambiguity (no callback or callback returned 0).
+ * @retval -2 All heads died (syntax error on every active path) or
+ *            the context is not in GLR mode.
+ */
+int lime_parse_glr_feed(ParseContext *ctx, uint16_t token);
+
+/**
+ * @brief Test whether the GLR parse has accepted.
+ *
+ * @return true iff exactly one live head sits in the snapshot's
+ *         accept state.  Always false for contexts that are not in
+ *         GLR mode.
+ */
+bool lime_parse_glr_accepted(ParseContext *ctx);
+
+/**
+ * @brief Return the number of active GLR parse heads.
+ *
+ * @return 1 for unambiguous parses, >1 while exploring an ambiguous
+ *         prefix, 0 once all heads have died or the context is not
+ *         in GLR mode.
+ */
+uint32_t lime_parse_glr_head_count(ParseContext *ctx);
+
+/**
+ * @brief Tear down GLR mode on a context, freeing the GSS.
+ *
+ * Idempotent and safe to call on a context that was never in GLR
+ * mode.  The context itself remains valid for further parse_token()
+ * calls (which are unaffected by GLR mode).
+ */
+void lime_parse_glr_end(ParseContext *ctx);
+
+/** @} */ /* end glr_api */
 
 #ifdef __cplusplus
 }
