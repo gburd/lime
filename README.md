@@ -187,6 +187,7 @@ See **[docs/README.md](docs/README.md)** for the full index.  Key documents:
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design |
 | [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md) | Parser error messages and recovery |
 | [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Writing runtime extensions |
+| [docs/CONTEXT_SWITCH.md](docs/CONTEXT_SWITCH.md) | Multi-grammar parsing (e.g. SQL with embedded JSON / XML / JSONPath) |
 | [docs/ALGORITHM.md](docs/ALGORITHM.md) | LALR(1) theory and implementation |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Performance tuning |
 | [docs/BENCHMARKS_VS_BISON.md](docs/BENCHMARKS_VS_BISON.md) | Head-to-head comparison with Bison |
@@ -214,6 +215,7 @@ for a longer walkthrough of each.  Grouped quick reference:
 | [`examples/plugin_template/`](examples/plugin_template/) | Minimal skeleton for packaging a Lime-generated parser as a runtime-loadable plugin (`sql_plugin.c`) and a host application that loads it via `ParserManager` (`plugin_host.c`). |
 | [`examples/jsonb_extension.c`](examples/jsonb_extension.c) | Single-file walkthrough of `MOD_ADD_TOKEN` + `MOD_ADD_RULE` + `MOD_MODIFY_PRECEDENCE` adding PostgreSQL-style JSONB operators (`->`, `->>`, `@>`, `<@`, `?`) to an existing SQL parser. |
 | [`examples/llm_oracle/`](examples/llm_oracle/) | Custom disambiguation strategy that consults an LLM when Lime's built-in strategies decline to resolve a conflict.  Illustrates the disambiguation callback API. |
+| [`examples/multi_grammar_sql_json/`](examples/multi_grammar_sql_json/) | SQL host parser with an embedded JSON sub-grammar.  Shows the runtime trigger-registration API (`context_switch_register_trigger`) that lets a single parser handle multiple languages -- the canonical use case is PostgreSQL-style `SELECT json '{"a":1}' FROM t`.  See [docs/CONTEXT_SWITCH.md](docs/CONTEXT_SWITCH.md). |
 
 ### Non-SQL query languages
 

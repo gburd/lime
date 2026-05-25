@@ -24,6 +24,7 @@
 #include "snapshot.h"
 #include "lime_time.h"
 #include "jit_context.h"
+#include "grammar_context.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -254,6 +255,31 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
     (void)location;    /* generator's typed entry handles those. */
 
     if (ctx == NULL || ctx->snapshot == NULL) return -1;
+
+    /* Optional hook: when a grammar-context stack is attached, give
+    ** it a chance to swap the bound snapshot before we look up the
+    ** action.  The fast path is the LIME_UNLIKELY branch -- a single
+    ** load + statically-predicted-not-taken branch when no stack is
+    ** attached, which is the common case for single-grammar parsers.
+    ** Cost on the no-stack path: ~1 ns / token. */
+    if (LIME_UNLIKELY(ctx->context_stack != NULL)) {
+        if (context_switch_needed(ctx->context_stack, token_code, NULL)) {
+            if (grammar_context_is_root_only(ctx->context_stack)) {
+                /* Token-code-based triggers only here; lexeme-based
+                ** triggers fire from parse_token_lex(). */
+                (void)grammar_context_detect_switch(ctx->context_stack, token_code, NULL, 0);
+            } else {
+                (void)context_switch_detect_exit(ctx->context_stack, token_code, NULL);
+            }
+            ParserSnapshot *top = grammar_context_current_snapshot(ctx->context_stack);
+            if (top != NULL && top != ctx->snapshot) {
+                ParserSnapshot *prev = ctx->snapshot;
+                ctx->snapshot = snapshot_acquire(top);
+                if (prev != NULL) snapshot_release(prev);
+            }
+        }
+    }
+
     ParserSnapshot *snap = ctx->snapshot;
 
     if (snap->yy_action == NULL || snap->yy_default == NULL || snap->yy_rule_info_nrhs == NULL) {

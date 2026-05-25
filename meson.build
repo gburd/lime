@@ -159,6 +159,13 @@ pkgconfig_mod.generate(
   libraries_private : ['-ldl'],
 )
 
+# Multi-grammar context-switch example (SQL host + JSON
+# embedded).  Built BEFORE subdir('tests') so the e2e tests in
+# tests/test_context_switch_e2e.c and test_context_switch_error.c
+# can reference multi_dep (declared in the example's meson.build).
+# See the directory's README.md for the architecture walk-through.
+subdir('examples/multi_grammar_sql_json')
+
 # Build tests
 subdir('tests')
 
@@ -170,8 +177,6 @@ subdir('bench')
 # stays compiled and the .lex -> .c+.h codegen path is
 # exercised on every CI run.
 subdir('examples/pg_bootscanner')
-
-# API documentation via Doxygen
 doxygen = find_program('doxygen', required : false)
 if doxygen.found()
   custom_target('doxygen',

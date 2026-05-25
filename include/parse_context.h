@@ -32,6 +32,18 @@ typedef struct ParseContext ParseContext;
 struct ParseContext {
     ParserSnapshot *snapshot;  /**< Snapshot pinned for this parse session */
     void *engine;              /**< Owned by parse_engine.c (opaque) */
+    /**
+     * Optional grammar-mode boundary detector.  When non-NULL, the
+     * parse engine consults it on every token via the
+     * context_switch.c API to spot embedded-grammar boundaries.  When
+     * NULL (the common single-grammar case) the hook is a single
+     * branch on the parse-engine hot path.
+     *
+     * Borrowed -- not owned by the ParseContext.  The caller owns
+     * the stack and is responsible for destroying it after the
+     * ParseContext.  Attach via parse_attach_context_stack().
+     */
+    struct GrammarContextStack *context_stack;
 };
 
 /*
@@ -75,6 +87,45 @@ int parse_token(ParseContext *ctx, int token_code, void *token_value, int locati
 ** forward-compatible when offsets are always >= 0.
 */
 #define LIME_LOC_UNKNOWN (-1)
+
+/* ------------------------------------------------------------------ */
+/*  Grammar-context binding (optional)                                 */
+/* ------------------------------------------------------------------ */
+
+/* Forward declaration; full type lives in include/grammar_context.h. */
+typedef struct GrammarContextStack GrammarContextStack;
+
+/**
+ * @brief Attach a grammar-mode boundary detector to a parse context.
+ *
+ * When attached, the parse engine consults the stack via
+ * context_switch_needed() / context_switch_detect_exit() on each
+ * token; matching triggers swap @p ctx->snapshot to the embedded
+ * grammar's snapshot for the duration of the embedded region.
+ *
+ * Pass NULL for @p stack to detach.  The stack is borrowed -- the
+ * caller retains ownership and must destroy it after the
+ * ParseContext.
+ *
+ * @param ctx   Parse context to bind.
+ * @param stack Boundary detector, or NULL to detach.
+ */
+void parse_attach_context_stack(ParseContext *ctx, GrammarContextStack *stack);
+
+/**
+ * @brief Feed a token plus its lexeme.
+ *
+ * Behaves like parse_token() except that the supplied lexeme is also
+ * fed through the attached GrammarContextStack (if any) for
+ * trigger-lexeme matching.  Pass NULL for @p lexeme when no lexeme
+ * text is available -- only token-code-based triggers will fire.
+ *
+ * Callers that haven't attached a context stack should keep using
+ * parse_token() directly; this entry point is identical in cost
+ * apart from the extra lexeme parameter on the no-stack fast path.
+ */
+int parse_token_lex(ParseContext *ctx, int token_code, void *token_value, const char *lexeme,
+                    int location);
 
 /* ------------------------------------------------------------------ */
 /*  Snapshot action table lookup helpers                               */

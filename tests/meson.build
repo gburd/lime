@@ -260,6 +260,40 @@ test_grammar_context = executable('test_grammar_context',
 
 test('grammar_context', test_grammar_context)
 
+# Context-switch trigger registry: unit tests for
+# src/context_switch.c (register_trigger / classify_lexeme /
+# needed / detect_exit).
+test_context_switch_unit = executable('test_context_switch_unit',
+  'test_context_switch_unit.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('context_switch_unit', test_context_switch_unit)
+
+# Context-switch end-to-end test -- drives the
+# examples/multi_grammar_sql_json driver through C and asserts on
+# the produced AST shape.  Covers clean trigger + exit, multiple
+# triggers in one input, and the no-triggers fast path.
+test_context_switch_e2e = executable('test_context_switch_e2e',
+  'test_context_switch_e2e.c',
+  dependencies : [lime_parser_dep, multi_dep],
+  include_directories : include_directories('../src'),
+)
+
+test('context_switch_e2e', test_context_switch_e2e)
+
+# Context-switch error-path test -- exercises lex/parse failure
+# paths and registry edge cases (unterminated json region,
+# malformed json body, NULL embedded snapshot).
+test_context_switch_error = executable('test_context_switch_error',
+  'test_context_switch_error.c',
+  dependencies : [lime_parser_dep, multi_dep],
+  include_directories : include_directories('../src'),
+)
+
+test('context_switch_error', test_context_switch_error)
+
 # Extension registry comprehensive tests
 test_extension_registry = executable('test_extension_registry',
   'test_extension_registry.c',
