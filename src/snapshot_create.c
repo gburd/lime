@@ -468,13 +468,24 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
         return NULL;
     }
 
-    char *cc_argv[18];
+    char *cc_argv[24];
     int ai = 0;
     cc_argv[ai++] = (char *)cc_bin;
     cc_argv[ai++] = "-shared";
     cc_argv[ai++] = "-fPIC";
     cc_argv[ai++] = "-O0"; /* fast compile; .so not on the perf path */
     cc_argv[ai++] = "-std=c11";
+    /* Feature-test macros for the same reason the project sets them in
+    ** meson.build: -std=c11 hides clock_gettime, strdup, pthread_*, etc.
+    ** unless one of these is defined.  src/snapshot_build.c uses
+    ** clock_gettime(CLOCK_MONOTONIC, ...) which fails to declare under
+    ** strict c11 on glibc / FreeBSD / illumos.  Mirrors the project-
+    ** wide block in meson.build so the runtime cc invocation matches
+    ** the build-time one. */
+    cc_argv[ai++] = "-D_GNU_SOURCE";
+    cc_argv[ai++] = "-D_POSIX_C_SOURCE=200809L";
+    cc_argv[ai++] = "-D__EXTENSIONS__";
+    cc_argv[ai++] = "-D_DARWIN_C_SOURCE";
     cc_argv[ai++] = inc_a;
     cc_argv[ai++] = inc_b;
     cc_argv[ai++] = snap_c;
@@ -483,6 +494,8 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
     cc_argv[ai++] = so_path;
 #if defined(__APPLE__)
     cc_argv[ai++] = "-Wl,-undefined,dynamic_lookup";
+    /* macOS: -Bsymbolic equivalent.  The Mach-O default already
+    ** prefers the dylib's own symbols, but be explicit. */
 #elif defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__) \
         || defined(__NetBSD__) || defined(__DragonFly__) || defined(__sun)
     /* On ELF Unix, allow the .so to leave symbols unresolved -- they
@@ -492,6 +505,18 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
     ** behaviour rejects the .so with "Undefined symbol foo" for any
     ** function it doesn't see in its own object files. */
     cc_argv[ai++] = "-Wl,--unresolved-symbols=ignore-all";
+    /* Bind references to symbols defined inside this .so to those
+    ** definitions at link time, instead of going through the global
+    ** symbol table at dlopen time.  Without this, lime_snapshot_entry()
+    ** in the merged-grammar .so resolves <Prefix>BuildSnapshot() to
+    ** the host executable's copy (the BASE grammar's, when the host
+    ** test was statically linked against bench_arith_grammar_snapshot.c)
+    ** instead of the .so's own merged-grammar copy.  -Bsymbolic causes
+    ** the .so's internal call to bind to the .so's own definition,
+    ** which is what every consumer of the runtime-rebuild path needs.
+    ** Without it, test_extension_rebuild and test_snapshot_create both
+    ** silently return base-grammar tables and the merge is invisible. */
+    cc_argv[ai++] = "-Wl,-Bsymbolic";
 #endif
     cc_argv[ai] = NULL;
     if (run_cmd(cc_argv, error) != 0) {
