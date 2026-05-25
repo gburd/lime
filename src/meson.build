@@ -88,7 +88,8 @@ llvm_dep = dependency('llvm',
   required : llvm_opt,
 )
 
-jit_sources = files('jit_context.c', 'jit_codegen.c', 'jit_policy.c')
+jit_sources = files('jit_context.c', 'jit_codegen.c', 'jit_policy.c',
+                    'jit_tokenizer.c')
 jit_c_args = []
 jit_deps = []
 

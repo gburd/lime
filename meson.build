@@ -99,6 +99,7 @@ lime_public_headers = [
   'include/jit_context.h',
   'include/jit_llvm_compat.h',
   'include/jit_policy.h',
+  'include/jit_tokenizer.h',
   'include/lime_ast.h',
   'include/lime_error.h',
   'include/lime_location.h',

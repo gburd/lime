@@ -12,6 +12,18 @@ jit_comparison = executable('jit_comparison',
   link_args : ['-lm'],  # Link math library for sqrt()
 )
 
+# Decision-gate benchmark for the JIT-tokenizer feature -- compares
+# `lookup_token` (FNV-1a hash + open-chain) against
+# `jit_tokenizer_classify_keyword` (LLVM-compiled length-bucketed
+# trie).  Used by the "kill-switch" protocol in
+# docs/JIT_TOKENIZER.md to decide whether to integrate the JIT
+# classifier or abandon the feature.
+jit_tokenizer_vs_hash = executable('jit_tokenizer_vs_hash',
+  'jit_tokenizer_vs_hash.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
 extension_overhead = executable('extension_overhead',
   'extension_overhead.c',
   dependencies : lime_parser_dep,

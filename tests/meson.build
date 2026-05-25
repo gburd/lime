@@ -31,6 +31,18 @@ test_jit = executable('test_jit',
 
 test('jit', test_jit)
 
+# JIT keyword-tokenizer unit tests.  Stays in the suite even though
+# the kill-switch benchmark in bench/jit_tokenizer_vs_hash.c voted
+# ABANDON on integration -- the implementation file still ships, so
+# the unit tests exercise its public surface and defensive paths.
+test_jit_tokenizer_unit = executable('test_jit_tokenizer_unit',
+  'test_jit_tokenizer_unit.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('jit_tokenizer_unit', test_jit_tokenizer_unit)
+
 test_snapshot = executable('test_snapshot',
   'test_snapshot.c',
   dependencies : lime_parser_dep,
