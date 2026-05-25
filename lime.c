@@ -278,6 +278,34 @@ static void lemon_strcat(char *dest, const char *src){
 struct rule;
 struct lime;
 struct action;
+struct symbol;
+
+/* Lime-Letter-21: per-token / per-type group records.
+** The formatter (`lime -F`) emits %token / %type sections in
+** declaration order grouped into runs of contiguous same-kind
+** directives.  Each group carries an optional leading comment
+** (the comment block immediately above the run's first directive)
+** plus the symbols collected in source order across the run.
+** Inter-symbol comments INSIDE a run are intentionally dropped --
+** PG-team-accepted cheap variant: section banners between groups
+** capture ~90 % of the lossage at a fraction of the implementation
+** cost of per-individual-symbol comments. */
+typedef struct LimeTokenGroup LimeTokenGroup;
+struct LimeTokenGroup {
+  char            *leading_comment;   /* heap; NULL if no leading comment */
+  struct symbol  **symbols;           /* heap; symbols in this group */
+  int              n_symbols;
+  int              cap_symbols;
+  LimeTokenGroup  *next;              /* declaration-order singly-linked list */
+};
+typedef struct LimeTypeGroup LimeTypeGroup;
+struct LimeTypeGroup {
+  char            *leading_comment;
+  struct symbol  **symbols;
+  int              n_symbols;
+  int              cap_symbols;
+  LimeTypeGroup   *next;
+};
 
 static struct action *Action_new(void);
 static struct action *Action_sort(struct action *);
@@ -678,6 +706,17 @@ struct lime {
   ** trailing banner comment).  Emitted verbatim by `lime -F`
   ** after the final rule.  NULL when the source ended cleanly. */
   char *trailing_comment;
+  /* Lime-Letter-21: declaration-order singly-linked lists of
+  ** %token / %type groups, populated by the parser as each
+  ** directive is recognized and consumed by `lime -F` to emit
+  ** sections that preserve PG's section-banner comments (the
+  ** ~120-150 lines lost on gram.lime in v0.3.4).  NULL for
+  ** grammars with no %token / %type directives -- the formatter
+  ** falls back to a symbol-index-order emit in that case. */
+  LimeTokenGroup *first_token_group;
+  LimeTokenGroup *last_token_group;   /* tail for O(1) append */
+  LimeTypeGroup  *first_type_group;
+  LimeTypeGroup  *last_type_group;
 };
 
 #define MemoryCheck(X) if((X)==0){ \
@@ -2265,30 +2304,109 @@ static int format_grammar(struct lime *lem){
     fmt_emit_brace_body(out, "default_destructor", lem->vardest);
   }
 
-  /* Output token declarations.  Lime-Letter-19: the section banner
-  ** that v0.3.1 emitted (a `Token declarations` line comment) is
-  ** dropped -- on a re-format pass it would be captured by the new
-  ** comment scanner and re-attached to the first %token, producing
-  ** drift.  Per-token comments are not preserved in v0.3.2 (token
-  ** blocks emit in symbol-index order, not source order); see
-  ** Lime-Reply-19.txt. */
-  for(i = 1; i < lem->nterminal; i++){
-    sp = lem->symbols[i];
-    if( sp->type == TERMINAL && strcmp(sp->name, "$") != 0 ){
-      fprintf(out, "%%token %s", sp->name);
-      if( sp->datatype ){
-        fprintf(out, " {%s}", sp->datatype);
+  /* Output token declarations.  Lime-Letter-21: emit %token
+  ** sections in declaration order, one group at a time, with
+  ** each group's leading comment (the section banner above it
+  ** in source) preserved verbatim.  Inter-symbol comments INSIDE
+  ** a group are dropped per the PG-team-accepted v0.3.5 cheap
+  ** variant -- section banners between groups are what PG's
+  ** gram.lime actually documents (12 banners + 5 type banners,
+  ** ~120-150 lines on the `lime -F` round-trip diff before
+  ** this fix).  Falls back to symbol-index order when the
+  ** grammar declared no %token directives (terminals introduced
+  ** purely on RHS) so the formatter still emits a usable file. */
+  if( lem->first_token_group ){
+    LimeTokenGroup *g;
+    /* Mark which terminals appear in some %token group so any
+    ** that don't (introduced only on RHS, or via %type without
+    ** an accompanying %token) can be emitted at the tail of the
+    ** section.  Without this trailing pass an undeclared-but-
+    ** used terminal would be silently lost on round-trip. */
+    char *emitted = (char *)lime_calloc((size_t)lem->nsymbol, 1);
+    for( g = lem->first_token_group; g; g = g->next ){
+      if( g->leading_comment ){
+        fprintf(out, "%s\n", g->leading_comment);
       }
-      fprintf(out, ".\n");
+      for( i = 0; i < g->n_symbols; i++ ){
+        sp = g->symbols[i];
+        if( sp->type == TERMINAL && strcmp(sp->name, "$") != 0 ){
+          fprintf(out, "%%token %s", sp->name);
+          if( sp->datatype ){
+            fprintf(out, " {%s}", sp->datatype);
+          }
+          fprintf(out, ".\n");
+        }
+        if( emitted && sp->index >= 0 && sp->index < lem->nsymbol ){
+          emitted[sp->index] = 1;
+        }
+      }
+    }
+    if( emitted ){
+      for( i = 1; i < lem->nterminal; i++ ){
+        sp = lem->symbols[i];
+        if( !emitted[i] && sp->type == TERMINAL
+            && strcmp(sp->name, "$") != 0 ){
+          fprintf(out, "%%token %s", sp->name);
+          if( sp->datatype ){
+            fprintf(out, " {%s}", sp->datatype);
+          }
+          fprintf(out, ".\n");
+        }
+      }
+      lime_free(emitted);
+    }
+  }else{
+    for(i = 1; i < lem->nterminal; i++){
+      sp = lem->symbols[i];
+      if( sp->type == TERMINAL && strcmp(sp->name, "$") != 0 ){
+        fprintf(out, "%%token %s", sp->name);
+        if( sp->datatype ){
+          fprintf(out, " {%s}", sp->datatype);
+        }
+        fprintf(out, ".\n");
+      }
     }
   }
   fprintf(out, "\n");
 
-  /* Output type declarations.  Same banner-drop rationale as above. */
-  for(i = lem->nterminal; i < lem->nsymbol; i++){
-    sp = lem->symbols[i];
-    if( sp->datatype ){
-      fprintf(out, "%%type %s {%s}\n", sp->name, sp->datatype);
+  /* Output type declarations.  Same group-aware policy as %token
+  ** above.  A %type group's symbols can include terminals (when
+  ** PG writes `%type ICONST {int}` to attach a datatype to a
+  ** token); those are skipped here because the %token loop above
+  ** already emitted them with the {datatype} appended.  This
+  ** matches the pre-Letter-21 index-order behaviour exactly. */
+  if( lem->first_type_group ){
+    LimeTypeGroup *g;
+    char *emitted = (char *)lime_calloc((size_t)lem->nsymbol, 1);
+    for( g = lem->first_type_group; g; g = g->next ){
+      if( g->leading_comment ){
+        fprintf(out, "%s\n", g->leading_comment);
+      }
+      for( i = 0; i < g->n_symbols; i++ ){
+        sp = g->symbols[i];
+        if( sp->type != TERMINAL && sp->datatype ){
+          fprintf(out, "%%type %s {%s}\n", sp->name, sp->datatype);
+        }
+        if( emitted && sp->index >= 0 && sp->index < lem->nsymbol ){
+          emitted[sp->index] = 1;
+        }
+      }
+    }
+    if( emitted ){
+      for( i = lem->nterminal; i < lem->nsymbol; i++ ){
+        sp = lem->symbols[i];
+        if( !emitted[i] && sp->datatype ){
+          fprintf(out, "%%type %s {%s}\n", sp->name, sp->datatype);
+        }
+      }
+      lime_free(emitted);
+    }
+  }else{
+    for(i = lem->nterminal; i < lem->nsymbol; i++){
+      sp = lem->symbols[i];
+      if( sp->datatype ){
+        fprintf(out, "%%type %s {%s}\n", sp->name, sp->datatype);
+      }
     }
   }
   fprintf(out, "\n");
@@ -2370,6 +2488,31 @@ static int format_grammar(struct lime *lem){
   printf("OK: Formatted output written to: %s\n", outfile);
   printf("  Review the formatted file and rename it if correct:\n");
   printf("    mv %s %s\n", outfile, lem->filename);
+
+  /* Lime-Letter-21: free the per-kind group lists.  Symbol pointers
+  ** inside groups are aliases to the global symbol table (owned
+  ** elsewhere); we only own the group records, the leading_comment
+  ** strings, and the symbols[] arrays. */
+  {
+    LimeTokenGroup *g, *next;
+    for( g = lem->first_token_group; g; g = next ){
+      next = g->next;
+      if( g->leading_comment ) lime_free(g->leading_comment);
+      if( g->symbols ) lime_free(g->symbols);
+      lime_free(g);
+    }
+    lem->first_token_group = lem->last_token_group = 0;
+  }
+  {
+    LimeTypeGroup *g, *next;
+    for( g = lem->first_type_group; g; g = next ){
+      next = g->next;
+      if( g->leading_comment ) lime_free(g->leading_comment);
+      if( g->symbols ) lime_free(g->symbols);
+      lime_free(g);
+    }
+    lem->first_type_group = lem->last_type_group = 0;
+  }
 
   lime_free(outfile);
   return 0;
@@ -3147,6 +3290,18 @@ struct pstate {
   ** Attached to rp->leading_comment by commit_current_rule() on
   ** the first commit of an alternation group; cleared on attach. */
   char *pending_rule_comment;
+  /* Lime-Letter-21: the active (open) %token / %type group that
+  ** the next same-kind directive will append to.  NULL when no
+  ** group is open -- either we haven't seen the kind yet, or the
+  ** previous directive was a different kind and closed the run.
+  ** A pending leading comment also forces a new group to open
+  ** (so the comment is attached as that group's banner).  These
+  ** two pointers live on the parser scratch state, not on
+  ** struct lime, because the open-group concept only exists
+  ** during parsing -- the formatter walks the lem->first_*_group
+  ** lists, never these. */
+  LimeTokenGroup *current_token_group;
+  LimeTypeGroup  *current_type_group;
 };
 
 /*
@@ -3229,6 +3384,83 @@ static void attach_directive_comment(struct pstate *psp, char **slot)
   if( *slot ) lime_free(*slot);
   *slot = psp->pending_directive_comment;
   psp->pending_directive_comment = 0;
+}
+
+/*
+** Lime-Letter-21: append `sp` to `g->symbols`, growing the array
+** geometrically.  Silently drops the symbol on OOM (the symbol is
+** still recorded in the global Symbol table, so codegen still
+** works; only the formatter's group-emit loses one entry).
+*/
+static void lime_token_group_append(LimeTokenGroup *g, struct symbol *sp)
+{
+  if( g==0 ) return;
+  if( g->n_symbols >= g->cap_symbols ){
+    int new_cap = g->cap_symbols ? g->cap_symbols * 2 : 4;
+    struct symbol **grown = (struct symbol **)lime_realloc(
+      g->symbols, sizeof(struct symbol *) * (size_t)new_cap);
+    if( grown==0 ) return;
+    g->symbols = grown;
+    g->cap_symbols = new_cap;
+  }
+  g->symbols[g->n_symbols++] = sp;
+}
+
+static void lime_type_group_append(LimeTypeGroup *g, struct symbol *sp)
+{
+  if( g==0 ) return;
+  if( g->n_symbols >= g->cap_symbols ){
+    int new_cap = g->cap_symbols ? g->cap_symbols * 2 : 4;
+    struct symbol **grown = (struct symbol **)lime_realloc(
+      g->symbols, sizeof(struct symbol *) * (size_t)new_cap);
+    if( grown==0 ) return;
+    g->symbols = grown;
+    g->cap_symbols = new_cap;
+  }
+  g->symbols[g->n_symbols++] = sp;
+}
+
+/*
+** Lime-Letter-21: open a new %token group, link it onto the
+** declaration-order list, and return the new group.  Takes
+** ownership of `leading_comment` (heap pointer or NULL) -- on
+** OOM the comment is freed to avoid leaking the parser's
+** pending_directive_comment slot.
+*/
+static LimeTokenGroup *lime_new_token_group(struct lime *gp,
+                                            char *leading_comment)
+{
+  LimeTokenGroup *g = (LimeTokenGroup *)lime_calloc(1, sizeof(*g));
+  if( g==0 ){
+    if( leading_comment ) lime_free(leading_comment);
+    return 0;
+  }
+  g->leading_comment = leading_comment;
+  if( gp->last_token_group ){
+    gp->last_token_group->next = g;
+  }else{
+    gp->first_token_group = g;
+  }
+  gp->last_token_group = g;
+  return g;
+}
+
+static LimeTypeGroup *lime_new_type_group(struct lime *gp,
+                                          char *leading_comment)
+{
+  LimeTypeGroup *g = (LimeTypeGroup *)lime_calloc(1, sizeof(*g));
+  if( g==0 ){
+    if( leading_comment ) lime_free(leading_comment);
+    return 0;
+  }
+  g->leading_comment = leading_comment;
+  if( gp->last_type_group ){
+    gp->last_type_group->next = g;
+  }else{
+    gp->first_type_group = g;
+  }
+  gp->last_type_group = g;
+  return g;
 }
 
 /*
@@ -3612,6 +3844,16 @@ static void parseonetoken(struct pstate *psp)
       break;
     case WAITING_FOR_DECL_KEYWORD:
       if( ISALPHA(x[0]) ){
+        /* Lime-Letter-21: a non-%token / non-%type directive ends
+        ** the current per-kind group run.  Save the open groups
+        ** locally and clear before the strcmp ladder so the
+        ** default behaviour for any directive is "close the runs";
+        ** the %token / %type branches restore their saved pointer
+        ** when they decide to append rather than open a new group. */
+        LimeTokenGroup *saved_token_group = psp->current_token_group;
+        LimeTypeGroup  *saved_type_group  = psp->current_type_group;
+        psp->current_token_group = 0;
+        psp->current_type_group  = 0;
         psp->declkeyword = x;
         psp->declargslot = 0;
         psp->decllinenoslot = 0;
@@ -3726,11 +3968,39 @@ static void parseonetoken(struct pstate *psp)
         }else if( strcmp(x,"destructor")==0 ){
           psp->state = WAITING_FOR_DESTRUCTOR_SYMBOL;
         }else if( strcmp(x,"type")==0 ){
+          /* Lime-Letter-21: open or extend the current %type group.
+          ** A pending leading comment forces a new group; otherwise
+          ** we append to the saved one.  Either way, %token's
+          ** group run is closed (cleared above by the saved-and-
+          ** clear at the top of WAITING_FOR_DECL_KEYWORD). */
+          {
+            char *lc = psp->pending_directive_comment;
+            psp->pending_directive_comment = 0;
+            if( lc!=0 || saved_type_group==0 ){
+              psp->current_type_group =
+                lime_new_type_group(psp->gp, lc);
+            }else{
+              psp->current_type_group = saved_type_group;
+              /* lc is 0 here -- nothing to free. */
+            }
+          }
           psp->state = WAITING_FOR_DATATYPE_SYMBOL;
         }else if( strcmp(x,"fallback")==0 ){
           psp->fallback = 0;
           psp->state = WAITING_FOR_FALLBACK_ID;
         }else if( strcmp(x,"token")==0 ){
+          /* Lime-Letter-21: open or extend the current %token
+          ** group.  Same logic as %type above. */
+          {
+            char *lc = psp->pending_directive_comment;
+            psp->pending_directive_comment = 0;
+            if( lc!=0 || saved_token_group==0 ){
+              psp->current_token_group =
+                lime_new_token_group(psp->gp, lc);
+            }else{
+              psp->current_token_group = saved_token_group;
+            }
+          }
           psp->state = WAITING_FOR_TOKEN_NAME;
         }else if( strcmp(x,"wildcard")==0 ){
           psp->state = WAITING_FOR_WILDCARD_ID;
@@ -3818,6 +4088,11 @@ static void parseonetoken(struct pstate *psp)
           psp->declargslot = &sp->datatype;
           psp->insertLineMacro = 0;
           psp->state = WAITING_FOR_DECL_ARG;
+          /* Lime-Letter-21: record this symbol in the active %type
+          ** group (opened by WAITING_FOR_DECL_KEYWORD when it saw
+          ** "type").  NULL group means OOM upstream -- silently
+          ** drop, codegen still works. */
+          lime_type_group_append(psp->current_type_group, sp);
         }
       }
       break;
@@ -3940,7 +4215,12 @@ static void parseonetoken(struct pstate *psp)
           "%%token argument \"%s\" should be a token", x);
         psp->errorcnt++;
       }else{
-        (void)Symbol_new(x);
+        struct symbol *sp = Symbol_new(x);
+        /* Lime-Letter-21: record each token name in the active
+        ** %token group.  Multiple names on one source line
+        ** (`%token A B C.`) all flow through here, one at a
+        ** time, and append to the same group. */
+        lime_token_group_append(psp->current_token_group, sp);
       }
       break;
     case WAITING_FOR_WILDCARD_ID:

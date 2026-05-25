@@ -147,6 +147,28 @@ test('formatter_labels', test_formatter_labels,
   ],
 )
 
+# Lime-Letter-21 (v0.3.5): per-%token-group and per-%type-group
+# leading-comment preservation.  v0.3.4 emitted both sections in
+# symbol-index order with no comment slots, dropping ~120-150 lines
+# of section banners on every PG `lime -F` round-trip across
+# gram.lime's 12 keyword-section banners + 5 type-block banners.
+# This is the cheap variant PG accepted: one banner slot per RUN
+# of contiguous same-kind directives, inter-symbol comments inside
+# a run dropped.  Eight sub-tests cover header preservation, three
+# %token banners, two %type banners, declaration-order emit (vs
+# index-order shuffle), and idempotence.
+test_formatter_token_groups = executable('test_formatter_token_groups',
+  'test_formatter_token_groups.c',
+  dependencies : lime_parser_dep,
+)
+
+test('formatter_token_groups', test_formatter_token_groups,
+  args : [
+    lime_exe.full_path(),
+    meson.current_source_dir() / 'test_formatter_token_groups_grammar.lime',
+  ],
+)
+
 test_parse_context_coverage = executable('test_parse_context_coverage',
   'test_parse_context_coverage.c',
   dependencies : lime_parser_dep,

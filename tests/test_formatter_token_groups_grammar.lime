@@ -1,0 +1,61 @@
+/*
+ * test_formatter_token_groups_grammar.lime -- regression fixture
+ * for Lime-Letter-21 (PostgreSQL migration team) v0.3.5.
+ *
+ * v0.3.4 stripped the section-banner comments PG uses inside
+ * %token / %type runs in gram.lime (~120-150 lines lost across 12
+ * keyword-section banners + 5 type-block banners).  PG accepted
+ * the cheap variant: one leading-comment slot per RUN of
+ * contiguous %token / %type directives, dropping inter-symbol
+ * comments inside the run.  This fixture exercises:
+ *
+ *   - 3 distinct %token groups, each with a banner above it
+ *   - 2 distinct %type  groups, each with a banner above it
+ *   - declaration-order emit (not symbol-index shuffle)
+ *   - a non-token directive between %token blocks (which closes
+ *     the prior %token run, so the next %token without a banner
+ *     opens a new bannerless group)
+ *   - idempotence under repeated `lime -F`
+ */
+
+%name TokenGroupsTest
+%token_type {int}
+
+/* First section: numeric literals.  PG's %token <ival> ICONST
+** PARAM analogue -- in Lime each token gets its own line. */
+%token ICONST.
+%token PARAM.
+
+/* Second section: string literals (block separator, banner B). */
+%token IDENT.
+%token FCONST.
+
+/* Third section: keywords -- single directive, multiple names. */
+%token ABORT_P ABSENT ABSOLUTE_P.
+
+/* Productions returning Node-tree shapes (banner T1). */
+%type stmt {int}
+%type select_stmt {int}
+
+/* Productions returning Lists (banner T2). */
+%type stmt_list {int}
+
+/* Trailing rule -- format must accept this and emit it after the
+** %type section.  Keeps the grammar non-empty so format_grammar()
+** does not hit the empty-grammar fallback path.  Use a non-terminal
+** RHS reference (stmt_list) so the formatter has a non-trivial
+** rule body too. */
+program(P) ::= stmt_list(L). {
+	P = L;
+}
+
+stmt_list(L) ::= stmt(S). {
+	L = S;
+}
+
+stmt(S) ::= ICONST(I). {
+	S = I;
+}
+select_stmt(S) ::= IDENT(I). {
+	S = I;
+}
