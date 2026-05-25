@@ -2302,11 +2302,33 @@ static int format_grammar(struct lime *lem){
     ** rule of the group has a leading_comment; the others emit
     ** without one. */
     if( rp->leading_comment ) fprintf(out, "%s\n", rp->leading_comment);
-    fprintf(out, "%s ::=", rp->lhs->name);
+    fprintf(out, "%s", rp->lhs->name);
+    /* Lime-Letter-20: emit LHS / RHS letter labels.  These are the
+    ** stack-slot aliases that action bodies reference (the Lime
+    ** equivalent of Bison's $$ / $N).  Stripping them at format time
+    ** while keeping action-body references produces a grammar that
+    ** lints clean but breaks at generated-.c compile time.  Letter 20
+    ** PG team reproducer: contrib/cube/cubeparse.lime had every
+    ** (A) / (B) / (C) stripped and gcc -c failed on the action
+    ** bodies' undeclared identifiers. */
+    if( rp->lhsalias ) fprintf(out, "(%s)", rp->lhsalias);
+    fprintf(out, " ::=");
     for(i = 0; i < rp->nrhs; i++){
       fprintf(out, " %s", rp->rhs[i]->name);
+      if( rp->rhsalias && rp->rhsalias[i] ){
+        fprintf(out, "(%s)", rp->rhsalias[i]);
+      }
     }
     fprintf(out, ".");
+    /* Lime-Letter-20 follow-on: emit explicit [SYMBOL] precedence
+    ** marker.  format_grammar() runs before FindRulePrecedences()
+    ** in main() (see lime.c:2535 vs 2561), so rp->precsym is
+    ** non-NULL only for rules that carried an explicit [X] marker
+    ** in source.  Emitting unconditionally would over-emit for
+    ** rules whose precedence is implicit (inherited from the first
+    ** precedence-bearing RHS terminal); this guard preserves the
+    ** source's intent. */
+    if( rp->precsym ) fprintf(out, " [%s]", rp->precsym->name);
 
     if( rp->code ){
       /* Action bodies, like %include, get a leading #line marker

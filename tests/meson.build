@@ -128,6 +128,25 @@ test('formatter_comments', test_formatter_comments,
   ],
 )
 
+# Lime-Letter-20: regression test asserting LHS / RHS letter labels
+# (`(A)`, `(B)`, etc.) and explicit `[SYMBOL]` precedence markers
+# survive `lime -F`.  Pre-fix v0.3.2 stripped both, producing formatted
+# grammars that lint clean but break gcc on the action bodies'
+# undeclared identifiers.  Six sub-tests cover LHS labels, RHS labels,
+# mixed labeled+unlabeled symbols, precedence markers, label-count
+# parity (formatted vs source), and idempotence.
+test_formatter_labels = executable('test_formatter_labels',
+  'test_formatter_labels.c',
+  dependencies : lime_parser_dep,
+)
+
+test('formatter_labels', test_formatter_labels,
+  args : [
+    lime_exe.full_path(),
+    meson.current_source_dir() / 'test_formatter_labels_grammar.lime',
+  ],
+)
+
 test_parse_context_coverage = executable('test_parse_context_coverage',
   'test_parse_context_coverage.c',
   dependencies : lime_parser_dep,

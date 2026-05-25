@@ -1,0 +1,59 @@
+/*
+ * test_formatter_labels_grammar.lime -- regression fixture for
+ * Lime-Letter-20 (PostgreSQL migration team).
+ *
+ * v0.3.2's formatter stripped LHS / RHS letter labels (`(A)`,
+ * `(B)`, etc.) from rule headers while keeping action-body
+ * references to those labels.  Result: formatted grammars
+ * compiled by lime -> .c -> gcc broke at gcc with "undeclared
+ * identifier" errors on every action body that referenced a
+ * stack-slot alias.
+ *
+ * v0.3.2 also stripped explicit `[SYMBOL]` precedence markers
+ * from rules, silently changing parser semantics around unary
+ * operators.
+ *
+ * This fixture exercises both invariants:
+ *   - LHS labels: `expr(A) ::= ...`
+ *   - RHS labels: `... PLUS expr(B).`
+ *   - Multiple labels per rule: `(A) ::= (B) PLUS (C).`
+ *   - Single-letter labels: A, B, C
+ *   - Multi-character labels: `Lhs`, `Rhs`
+ *   - Explicit precedence: `[UMINUS]`
+ *   - Mixed labeled + unlabeled symbols on the same RHS
+ *
+ * The driver asserts the formatted output contains every label
+ * AND idempotence (format(format(F)) == format(F)).
+ */
+
+%name FmtLabelsTest
+%token_type {int}
+%type expr {int}
+%extra_argument {int *result}
+
+%left PLUS.
+%left TIMES.
+%right UMINUS.
+
+%token PLUS TIMES MINUS LPAREN RPAREN INTEGER.
+
+%include {
+#include <stdio.h>
+}
+
+/* expr is the arithmetic expression non-terminal.  All actions
+ * reference letter-aliased stack slots. */
+program(P) ::= expr(A).               { P = A; *result = A; }
+
+/* Multi-label, multi-RHS aliases. */
+expr(R) ::= expr(L) PLUS expr(M).     { R = L + M; }
+expr(R) ::= expr(L) TIMES expr(M).    { R = L * M; }
+
+/* Mixed labeled + unlabeled symbols (LPAREN / RPAREN unaliased). */
+expr(R) ::= LPAREN expr(M) RPAREN.    { R = M; }
+
+/* Single-RHS-symbol with label. */
+expr(R) ::= INTEGER(N).               { R = N; }
+
+/* Explicit precedence marker -- the [UMINUS] must round-trip. */
+expr(R) ::= MINUS expr(M). [UMINUS]   { R = -M; }
