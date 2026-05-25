@@ -418,6 +418,13 @@ struct rule {
   Boolean doesReduce;      /* Reduce actions occur after optimization */
   Boolean neverReduce;     /* Reduce is theoretically possible, but prevented
                            ** by actions or other outside implementation */
+  /* Lime-Letter-19: heap-alloc'd inter-rule comment block captured
+  ** by the tokenizer during Parse().  Emitted verbatim by `lime -F`
+  ** immediately before the rule's `lhs ::= ...` line.  NULL when
+  ** the rule has no leading comment (or, for non-first alternatives
+  ** in a `|`-alternation group, the comment was attached to the
+  ** first rule of the group). */
+  char *leading_comment;
   struct rule *nextlhs;    /* Next rule with the same LHS */
   struct rule *next;       /* Next rule in the global list */
 };
@@ -639,6 +646,38 @@ struct lime {
   char *ast_prefix;                      /* Prefix for AST types (e.g., "Ast") */
   struct ast_node_def *ast_nodes;        /* Linked list of AST node defs */
   int ast_auto;                          /* True if %ast_auto is active */
+  /* Lime-Letter-19: per-directive leading comments captured by the
+  ** parser, emitted by `lime -F` immediately before the matching
+  ** directive.  Naming mirrors the existing field (`name_comment`
+  ** for `name`, `nexpect_comment` for `nexpect`, etc.).  NULL when
+  ** the source had no comment immediately preceding the directive.
+  ** Per-token / per-type comment slots are intentionally absent;
+  ** those blocks emit in symbol-index order, not source order, and
+  ** preserving per-symbol comments needs a bigger refactor than
+  ** v0.3.2 should carry. */
+  char *name_comment;
+  char *tokentype_comment;
+  char *arg_comment;          /* `extra_argument` */
+  char *ctx_comment;          /* `extra_context`  */
+  char *vartype_comment;      /* `default_type`   */
+  char *start_comment;        /* `start_symbol` / `start` */
+  char *stacksize_comment;
+  char *tokenprefix_comment;
+  char *symbolprefix_comment;
+  char *nexpect_comment;      /* `expect` */
+  char *include_comment;
+  char *error_comment;        /* `syntax_error`  */
+  char *failure_comment;      /* `parse_failure` */
+  char *accept_comment;       /* `parse_accept`  */
+  char *overflow_comment;     /* `stack_overflow` */
+  char *tokendest_comment;    /* `token_destructor`   */
+  char *vardest_comment;      /* `default_destructor` */
+  char *module_comment;       /* covers the module_name/version/description block */
+  /* Lime-Letter-19: any comments captured AFTER the last rule but
+  ** before EOF (typically a closing `// vim:...` modeline or a
+  ** trailing banner comment).  Emitted verbatim by `lime -F`
+  ** after the final rule.  NULL when the source ended cleanly. */
+  char *trailing_comment;
 };
 
 #define MemoryCheck(X) if((X)==0){ \
@@ -2002,16 +2041,33 @@ static const char *fmt_skip_linedir(const char *body) {
 }
 
 /*
-** Trim leading and trailing whitespace from a body before
-** emitting so the formatter is fully idempotent: each pass would
-** otherwise widen the gap between `{` and the body content by one
-** space, drifting the canonical form indefinitely.  Result is a
-** heap-allocated copy the caller must lime_free; returns NULL on
-** OOM.
+** Trim the leading newline (\n / \r) the parser captures at the
+** start of a brace body and strip ALL trailing whitespace.  The
+** emit format is `%directive {\n<body>\n}` -- the parser's body
+** typically begins with the newline that followed the opening `{`.
+** Without trimming that leading newline, every reformat pass would
+** add another blank line at the top of the body, breaking
+** idempotence.
+**
+** Lime-Letter-19: do NOT strip leading spaces or tabs.  Those are
+** body indentation that PG's grammar maintainers rely on for
+** readability of action bodies and %syntax_error / %parse_failure
+** blocks.  The previous incarnation (named fmt_trim_trailing_ws,
+** despite trimming both ends) dedented every body, costing PG ~3000
+** lines of indentation across gram.lime alone.  Idempotence is
+** preserved by the trailing-whitespace trim plus the leading-newline
+** trim; preserving leading horizontal whitespace does not drift.
+**
+** Result is a heap-allocated copy the caller must lime_free; returns
+** NULL on OOM.
 */
-static char *fmt_trim_trailing_ws(const char *body) {
+static char *fmt_trim_body_ws(const char *body) {
   if( body==0 ) return 0;
-  while( *body==' ' || *body=='\t' || *body=='\n' || *body=='\r' ) body++;
+  /* Strip leading \n / \r so the {\n we emit doesn't compound with
+  ** the body's own leading newline (idempotence drift).  Do NOT
+  ** strip leading spaces or tabs -- those are body indentation
+  ** PG relies on for readability (Lime-Letter-19, loss class B). */
+  while( *body=='\n' || *body=='\r' ) body++;
   size_t n = strlen(body);
   while( n>0 && (body[n-1]==' ' || body[n-1]=='\t' || body[n-1]=='\n' ||
                  body[n-1]=='\r') ) n--;
@@ -2032,7 +2088,7 @@ static char *fmt_trim_trailing_ws(const char *body) {
 static void fmt_emit_brace_body(FILE *out, const char *directive,
                                 const char *body) {
   const char *trimmed = fmt_skip_linedir(body);
-  char *clean = fmt_trim_trailing_ws(trimmed);
+  char *clean = fmt_trim_body_ws(trimmed);
   if( clean==0 ){
     fprintf(out, "%%%s {\n%s\n}\n\n", directive, trimmed);
     return;
@@ -2077,6 +2133,7 @@ static int format_grammar(struct lime *lem){
 
   /* Output module directives */
   if( lem->module_name ){
+    if( lem->module_comment ) fprintf(out, "%s\n", lem->module_comment);
     fprintf(out, "%%module_name %s\n", lem->module_name);
     if( lem->module_version ){
       fprintf(out, "%%module_version \"%s\"\n", lem->module_version);
@@ -2133,33 +2190,43 @@ static int format_grammar(struct lime *lem){
 
   /* Output standard Lime directives */
   if( lem->name ){
+    if( lem->name_comment ) fprintf(out, "%s\n", lem->name_comment);
     fprintf(out, "%%name %s\n", lem->name);
   }
   if( lem->tokentype ){
+    if( lem->tokentype_comment ) fprintf(out, "%s\n", lem->tokentype_comment);
     fprintf(out, "%%token_type {%s}\n", lem->tokentype);
   }
   if( lem->arg ){
+    if( lem->arg_comment ) fprintf(out, "%s\n", lem->arg_comment);
     fprintf(out, "%%extra_argument {%s}\n", lem->arg);
   }
   if( lem->ctx ){
+    if( lem->ctx_comment ) fprintf(out, "%s\n", lem->ctx_comment);
     fprintf(out, "%%extra_context {%s}\n", lem->ctx);
   }
   if( lem->vartype ){
+    if( lem->vartype_comment ) fprintf(out, "%s\n", lem->vartype_comment);
     fprintf(out, "%%default_type {%s}\n", lem->vartype);
   }
   if( lem->start ){
+    if( lem->start_comment ) fprintf(out, "%s\n", lem->start_comment);
     fprintf(out, "%%start_symbol %s\n", lem->start);
   }
   if( lem->stacksize ){
+    if( lem->stacksize_comment ) fprintf(out, "%s\n", lem->stacksize_comment);
     fprintf(out, "%%stack_size %s\n", lem->stacksize);
   }
   if( lem->tokenprefix ){
+    if( lem->tokenprefix_comment ) fprintf(out, "%s\n", lem->tokenprefix_comment);
     fprintf(out, "%%token_prefix %s\n", lem->tokenprefix);
   }
   if( lem->symbolprefix ){
+    if( lem->symbolprefix_comment ) fprintf(out, "%s\n", lem->symbolprefix_comment);
     fprintf(out, "%%symbol_prefix %s\n", lem->symbolprefix);
   }
   if( lem->nexpect >= 0 ){
+    if( lem->nexpect_comment ) fprintf(out, "%s\n", lem->nexpect_comment);
     fprintf(out, "%%expect %d\n", lem->nexpect);
   }
   fprintf(out, "\n");
@@ -2167,17 +2234,44 @@ static int format_grammar(struct lime *lem){
   /* Brace-delimited directive bodies (Lime-Letter-18 -- preserve
   ** verbatim; the formatter has no business reformatting C code
   ** embedded in a brace block).  Each is emitted only when the
-  ** parser captured it. */
-  if( lem->include    ) fmt_emit_brace_body(out, "include",            lem->include);
-  if( lem->error      ) fmt_emit_brace_body(out, "syntax_error",       lem->error);
-  if( lem->failure    ) fmt_emit_brace_body(out, "parse_failure",      lem->failure);
-  if( lem->accept     ) fmt_emit_brace_body(out, "parse_accept",       lem->accept);
-  if( lem->overflow   ) fmt_emit_brace_body(out, "stack_overflow",     lem->overflow);
-  if( lem->tokendest  ) fmt_emit_brace_body(out, "token_destructor",   lem->tokendest);
-  if( lem->vardest    ) fmt_emit_brace_body(out, "default_destructor", lem->vardest);
+  ** parser captured it.  Lime-Letter-19 adds the matching
+  ** _comment slot (when present) immediately above the directive. */
+  if( lem->include    ){
+    if( lem->include_comment ) fprintf(out, "%s\n", lem->include_comment);
+    fmt_emit_brace_body(out, "include",            lem->include);
+  }
+  if( lem->error      ){
+    if( lem->error_comment   ) fprintf(out, "%s\n", lem->error_comment);
+    fmt_emit_brace_body(out, "syntax_error",       lem->error);
+  }
+  if( lem->failure    ){
+    if( lem->failure_comment ) fprintf(out, "%s\n", lem->failure_comment);
+    fmt_emit_brace_body(out, "parse_failure",      lem->failure);
+  }
+  if( lem->accept     ){
+    if( lem->accept_comment  ) fprintf(out, "%s\n", lem->accept_comment);
+    fmt_emit_brace_body(out, "parse_accept",       lem->accept);
+  }
+  if( lem->overflow   ){
+    if( lem->overflow_comment ) fprintf(out, "%s\n", lem->overflow_comment);
+    fmt_emit_brace_body(out, "stack_overflow",     lem->overflow);
+  }
+  if( lem->tokendest  ){
+    if( lem->tokendest_comment ) fprintf(out, "%s\n", lem->tokendest_comment);
+    fmt_emit_brace_body(out, "token_destructor",   lem->tokendest);
+  }
+  if( lem->vardest    ){
+    if( lem->vardest_comment ) fprintf(out, "%s\n", lem->vardest_comment);
+    fmt_emit_brace_body(out, "default_destructor", lem->vardest);
+  }
 
-  /* Output token declarations */
-  fprintf(out, "/* Token declarations */\n");
+  /* Output token declarations.  Lime-Letter-19: the section banner
+  ** that v0.3.1 emitted (a `Token declarations` line comment) is
+  ** dropped -- on a re-format pass it would be captured by the new
+  ** comment scanner and re-attached to the first %token, producing
+  ** drift.  Per-token comments are not preserved in v0.3.2 (token
+  ** blocks emit in symbol-index order, not source order); see
+  ** Lime-Reply-19.txt. */
   for(i = 1; i < lem->nterminal; i++){
     sp = lem->symbols[i];
     if( sp->type == TERMINAL && strcmp(sp->name, "$") != 0 ){
@@ -2190,8 +2284,7 @@ static int format_grammar(struct lime *lem){
   }
   fprintf(out, "\n");
 
-  /* Output type declarations */
-  fprintf(out, "/* Type declarations */\n");
+  /* Output type declarations.  Same banner-drop rationale as above. */
   for(i = lem->nterminal; i < lem->nsymbol; i++){
     sp = lem->symbols[i];
     if( sp->datatype ){
@@ -2200,9 +2293,15 @@ static int format_grammar(struct lime *lem){
   }
   fprintf(out, "\n");
 
-  /* Output grammar rules */
-  fprintf(out, "/* Grammar rules */\n");
+  /* Output grammar rules.  Banner dropped: it would otherwise be
+  ** captured as the first rule's leading_comment on a reformat pass. */
   for(rp = lem->rule; rp; rp = rp->next){
+    /* Lime-Letter-19: per-rule leading comment captured by the
+    ** parser at the moment we recognized this rule's LHS NT.
+    ** For rules that arrived via `|` alternation, only the first
+    ** rule of the group has a leading_comment; the others emit
+    ** without one. */
+    if( rp->leading_comment ) fprintf(out, "%s\n", rp->leading_comment);
     fprintf(out, "%s ::=", rp->lhs->name);
     for(i = 0; i < rp->nrhs; i++){
       fprintf(out, " %s", rp->rhs[i]->name);
@@ -2212,18 +2311,37 @@ static int format_grammar(struct lime *lem){
     if( rp->code ){
       /* Action bodies, like %include, get a leading #line marker
       ** prepended by the parser for codegen line tracking
-      ** (Lime-Letter-18).  Strip it before emitting and trim
-      ** trailing whitespace so the formatter is idempotent:
-      ** format(format(F)) == format(F).  We do NOT re-indent the
-      ** body -- whatever the user wrote inside the braces is
-      ** opaque to us, same rationale as %include. */
+      ** (Lime-Letter-18).  Strip it before emitting and trim trailing
+      ** whitespace so the formatter is idempotent: format(format(F))
+      ** == format(F).  Do NOT re-indent the body -- whatever the
+      ** user wrote inside the braces is opaque to us.  Lime-Letter-19:
+      ** also do NOT dedent leading horizontal whitespace -- only the
+      ** leading newline (the byte the parser captured immediately
+      ** after the opening `{`) is stripped, so PG's tab-indented
+      ** action bodies (\tcompute_plus(...);) survive intact.
+      **
+      ** The emit shape is multi-line `. {\n<body>\n}`.  v0.3.1 used
+      ** the single-line wrap `. { %s }`, but with the new (correct)
+      ** preserve-leading-WS trim that drifts on every reformat pass
+      ** (the format string's own leading space accumulates with the
+      ** body's preserved leading space).  The multi-line shape is
+      ** strictly idempotent and matches PG's source convention. */
       const char *code = fmt_skip_linedir(rp->code);
-      char *clean = fmt_trim_trailing_ws(code);
+      char *clean = fmt_trim_body_ws(code);
       const char *body = clean ? clean : code;
-      fprintf(out, " { %s }", body);
+      fprintf(out, " {\n%s\n}", body);
       lime_free(clean);
     }
     fprintf(out, "\n");
+  }
+
+  /* Lime-Letter-19: trailing comments captured between the last
+  ** rule's terminator and EOF (e.g. a closing modeline or banner).
+  ** Emitted with one blank line of separation so the formatter's
+  ** rule-loop \n + this directive's \n leave a single blank line
+  ** above the trailing block, matching the source convention. */
+  if( lem->trailing_comment ){
+    fprintf(out, "\n%s\n", lem->trailing_comment);
   }
 
   fclose(out);
@@ -2986,7 +3104,110 @@ struct pstate {
                               ** the next rule starts (or the group's
                               ** trailing action has been propagated). */
   struct module_dependency *current_dependency; /* Current dependency being parsed */
+  /* Lime-Letter-19: heap buffer of inter-directive comments
+  ** accumulated by the tokenizer since the previous directive or
+  ** rule.  Attached to the next directive/rule's leading-comment
+  ** slot when that boundary is recognized.  NULL/0/0 when empty.
+  ** Grown via pstate_append_comment(); detached via
+  ** pstate_take_pending(). */
+  char  *pending_comments;
+  size_t pending_comments_len;
+  size_t pending_comments_cap;
+  /* Lime-Letter-19: comment block taken from pending_comments at
+  ** the moment we recognize a `%` directive's start.  Held here
+  ** until WAITING_FOR_DECL_KEYWORD assigns it to the matching
+  ** lem->X_comment slot via attach_directive_comment().  Freed in
+  ** parseonetoken() if a recognized directive has no slot of its
+  ** own (e.g. %left / %destructor / %token / %type / %fallback). */
+  char *pending_directive_comment;
+  /* Lime-Letter-19: comment block taken from pending_comments at
+  ** the moment we recognize the LHS non-terminal of a new rule.
+  ** Attached to rp->leading_comment by commit_current_rule() on
+  ** the first commit of an alternation group; cleared on attach. */
+  char *pending_rule_comment;
 };
+
+/*
+** Lime-Letter-19: comment-buffer helpers.
+**
+** The tokenizer (Parse() main loop) calls pstate_append_comment()
+** for every contiguous chunk of inter-directive whitespace +
+** comment text it encounters.  parseonetoken() calls
+** pstate_take_pending() at the moment it recognizes a directive's
+** `%` prefix or a rule's LHS non-terminal, transferring ownership
+** of the buffer to a transient `pending_directive_comment` /
+** `pending_rule_comment` slot.  attach_directive_comment() finally
+** moves the comment from that slot into the matching lem->X_comment
+** field once the directive's keyword is identified.
+**
+** Trim policy: the chunk handed to pstate_append_comment() is
+** trimmed of leading/trailing ASCII whitespace before append, so
+** the formatter's emit (`fprintf(out, "%s\n", comment)`) round-
+** trips cleanly without compounding newlines.  Blank lines between
+** stacked comments inside a chunk are preserved.
+*/
+static void pstate_append_comment(struct pstate *psp,
+                                  const char *start,
+                                  size_t n)
+{
+  /* Trim ASCII whitespace from both ends of [start, start+n). */
+  while( n>0 && (start[0]==' ' || start[0]=='\t' ||
+                 start[0]=='\n' || start[0]=='\r') ){
+    start++; n--;
+  }
+  while( n>0 && (start[n-1]==' ' || start[n-1]=='\t' ||
+                 start[n-1]=='\n' || start[n-1]=='\r') ){
+    n--;
+  }
+  if( n==0 ) return;
+
+  /* Reserve room for the existing buffer (if any), one separator
+  ** newline (if existing), the new chunk, and a NUL terminator. */
+  size_t need = psp->pending_comments_len + n + 2;
+  if( need > psp->pending_comments_cap ){
+    size_t new_cap = psp->pending_comments_cap ? psp->pending_comments_cap*2 : 128;
+    while( new_cap < need ) new_cap *= 2;
+    char *grown = (char*)lime_realloc(psp->pending_comments, new_cap);
+    if( grown==0 ) return;  /* OOM: silently drop the comment */
+    psp->pending_comments     = grown;
+    psp->pending_comments_cap = new_cap;
+  }
+  if( psp->pending_comments_len > 0 ){
+    psp->pending_comments[psp->pending_comments_len++] = '\n';
+  }
+  memcpy(psp->pending_comments + psp->pending_comments_len, start, n);
+  psp->pending_comments_len += n;
+  psp->pending_comments[psp->pending_comments_len] = 0;
+}
+
+/*
+** Detach pending_comments from psp and return ownership to the
+** caller.  psp's buffer is reset to empty (NULL/0/0).  Returns
+** NULL when nothing was pending.
+*/
+static char *pstate_take_pending(struct pstate *psp)
+{
+  char *out = psp->pending_comments;
+  psp->pending_comments     = 0;
+  psp->pending_comments_len = 0;
+  psp->pending_comments_cap = 0;
+  return out;
+}
+
+/*
+** Attach `psp->pending_directive_comment` to `*slot` and clear the
+** pstate slot.  No-op when no comment is pending.  If `*slot` is
+** already non-NULL (e.g. the same directive appears twice with a
+** comment before each occurrence), the prior comment is freed --
+** latest wins.
+*/
+static void attach_directive_comment(struct pstate *psp, char **slot)
+{
+  if( psp->pending_directive_comment==0 ) return;
+  if( *slot ) lime_free(*slot);
+  *slot = psp->pending_directive_comment;
+  psp->pending_directive_comment = 0;
+}
 
 /*
 ** Commit the current accumulated rule (psp->lhs, psp->lhsalias,
@@ -3022,6 +3243,17 @@ static void commit_current_rule(struct pstate *psp)
     rp->code = 0;
     rp->noCode = 1;
     rp->precsym = 0;
+    /* Lime-Letter-19: attach the comment that preceded this rule's
+    ** LHS non-terminal.  pending_rule_comment was taken from
+    ** pending_comments by parseonetoken() when ISLOWER(x[0]) hit
+    ** WAITING_FOR_DECL_OR_RULE; it holds for the lifetime of one
+    ** logical rule (one LHS + RHS group), then resets to NULL.  In
+    ** a `|` alternation group, only the FIRST commit captures the
+    ** comment; subsequent commits in the same group leave
+    ** rp->leading_comment NULL (the formatter is fine with this --
+    ** alternation expands to N rules with the comment on the first). */
+    rp->leading_comment = psp->pending_rule_comment;
+    psp->pending_rule_comment = 0;
     rp->index = psp->gp->nrule++;
     rp->nextlhs = rp->lhs->rule;
     rp->lhs->rule = rp;
@@ -3085,6 +3317,17 @@ static void parseonetoken(struct pstate *psp)
   printf("%s:%d: Token=[%s] state=%d\n",psp->filename,psp->tokenlineno,
     x,psp->state);
 #endif
+  /* Lime-Letter-19: comments captured between the previous token and
+  ** this one are only meaningful at a directive/rule boundary.  When
+  ** we're in the middle of parsing an argument list, a precedence
+  ** symbol list, or a rule's RHS, drop the buffer -- there's no slot
+  ** to attach it to.  The boundary cases (WAITING_FOR_DECL_OR_RULE
+  ** and INITIALIZE) handle the buffer themselves below. */
+  if( psp->state != WAITING_FOR_DECL_OR_RULE
+   && psp->state != INITIALIZE ){
+    char *drop = pstate_take_pending(psp);
+    if( drop ) lime_free(drop);
+  }
   switch( psp->state ){
     case INITIALIZE:
       psp->prevrule = 0;
@@ -3099,16 +3342,44 @@ static void parseonetoken(struct pstate *psp)
         ** precedence mark: the alternation group (if any) ends here
         ** with no attributes to propagate. */
         psp->alt_group_head = 0;
+        /* Lime-Letter-19: take any pending comments as the leading
+        ** comment for the directive whose keyword arrives next.
+        ** Free any previously-held but unattached comment first --
+        ** that means the prior directive had no _comment slot of
+        ** its own (e.g. %left, %destructor) and the comment is
+        ** silently dropped.  attach_directive_comment() in
+        ** WAITING_FOR_DECL_KEYWORD will clear pending_directive_
+        ** comment on a successful attach. */
+        if( psp->pending_directive_comment ){
+          lime_free(psp->pending_directive_comment);
+          psp->pending_directive_comment = 0;
+        }
+        psp->pending_directive_comment = pstate_take_pending(psp);
         psp->state = WAITING_FOR_DECL_KEYWORD;
       }else if( ISLOWER(x[0]) ){
         /* New rule starts: same reasoning -- close out any dangling
         ** alternation group. */
         psp->alt_group_head = 0;
+        /* Lime-Letter-19: take any pending comments as the leading
+        ** comment for this rule.  commit_current_rule() will move
+        ** them onto rp->leading_comment when the rule completes. */
+        if( psp->pending_rule_comment ){
+          lime_free(psp->pending_rule_comment);
+          psp->pending_rule_comment = 0;
+        }
+        psp->pending_rule_comment = pstate_take_pending(psp);
         psp->lhs = Symbol_new(x);
         psp->nrhs = 0;
         psp->lhsalias = 0;
         psp->state = WAITING_FOR_ARROW;
       }else if( x[0]=='{' ){
+        /* Attaching an action body to the prior rule.  Comments
+        ** between the rule's `.` and the `{` have no good home
+        ** (they belong to neither rule); discard. */
+        {
+          char *drop = pstate_take_pending(psp);
+          if( drop ) lime_free(drop);
+        }
         if( psp->prevrule==0 ){
           ErrorMsg(psp->filename,psp->tokenlineno,
             "There is no prior rule upon which to attach the code "
@@ -3129,8 +3400,19 @@ static void parseonetoken(struct pstate *psp)
           propagate_alt_group_attach(psp);
         }
       }else if( x[0]=='[' ){
+        /* Same reasoning as `{`: discard any pending comments. */
+        {
+          char *drop = pstate_take_pending(psp);
+          if( drop ) lime_free(drop);
+        }
         psp->state = PRECEDENCE_MARK_1;
       }else{
+        /* Error path: discard pending comments to avoid carrying them
+        ** into a later boundary that has no relation to them. */
+        {
+          char *drop = pstate_take_pending(psp);
+          if( drop ) lime_free(drop);
+        }
         ErrorMsg(psp->filename,psp->tokenlineno,
           "Token \"%s\" should be either \"%%\" or a nonterminal name.",
           x);
@@ -3316,23 +3598,29 @@ static void parseonetoken(struct pstate *psp)
         if( strcmp(x,"name")==0 ){
           psp->declargslot = &(psp->gp->name);
           psp->insertLineMacro = 0;
+          attach_directive_comment(psp, &psp->gp->name_comment);
         }else if( strcmp(x,"name_prefix")==0 ){
           /* Bison-compat alias for %name.  Bison spells this %name-prefix
           ** with a dash, which Lime's directive tokenizer cannot accept;
           ** a bison->lime converter translates the dash form to this. */
           psp->declargslot = &(psp->gp->name);
           psp->insertLineMacro = 0;
+          attach_directive_comment(psp, &psp->gp->name_comment);
         }else if( strcmp(x,"include")==0 ){
           psp->declargslot = &(psp->gp->include);
+          attach_directive_comment(psp, &psp->gp->include_comment);
         }else if( strcmp(x,"code")==0 ){
           psp->declargslot = &(psp->gp->extracode);
         }else if( strcmp(x,"token_destructor")==0 ){
           psp->declargslot = &psp->gp->tokendest;
+          attach_directive_comment(psp, &psp->gp->tokendest_comment);
         }else if( strcmp(x,"default_destructor")==0 ){
           psp->declargslot = &psp->gp->vardest;
+          attach_directive_comment(psp, &psp->gp->vardest_comment);
         }else if( strcmp(x,"token_prefix")==0 ){
           psp->declargslot = &psp->gp->tokenprefix;
           psp->insertLineMacro = 0;
+          attach_directive_comment(psp, &psp->gp->tokenprefix_comment);
         }else if( strcmp(x,"symbol_prefix")==0 ){
           /* Berkeley-DB-style namespace prefix for the internal
           ** YY_* macros and yy* types/functions Lime emits.  The
@@ -3344,23 +3632,31 @@ static void parseonetoken(struct pstate *psp)
           ** See ReportTable() for the emitted block. */
           psp->declargslot = &psp->gp->symbolprefix;
           psp->insertLineMacro = 0;
+          attach_directive_comment(psp, &psp->gp->symbolprefix_comment);
         }else if( strcmp(x,"syntax_error")==0 ){
           psp->declargslot = &(psp->gp->error);
+          attach_directive_comment(psp, &psp->gp->error_comment);
         }else if( strcmp(x,"parse_accept")==0 ){
           psp->declargslot = &(psp->gp->accept);
+          attach_directive_comment(psp, &psp->gp->accept_comment);
         }else if( strcmp(x,"parse_failure")==0 ){
           psp->declargslot = &(psp->gp->failure);
+          attach_directive_comment(psp, &psp->gp->failure_comment);
         }else if( strcmp(x,"stack_overflow")==0 ){
           psp->declargslot = &(psp->gp->overflow);
+          attach_directive_comment(psp, &psp->gp->overflow_comment);
         }else if( strcmp(x,"extra_argument")==0 ){
           psp->declargslot = &(psp->gp->arg);
           psp->insertLineMacro = 0;
+          attach_directive_comment(psp, &psp->gp->arg_comment);
         }else if( strcmp(x,"extra_context")==0 ){
           psp->declargslot = &(psp->gp->ctx);
           psp->insertLineMacro = 0;
+          attach_directive_comment(psp, &psp->gp->ctx_comment);
         }else if( strcmp(x,"token_type")==0 ){
           psp->declargslot = &(psp->gp->tokentype);
           psp->insertLineMacro = 0;
+          attach_directive_comment(psp, &psp->gp->tokentype_comment);
         }else if( strcmp(x,"location_type")==0 ){
           /* Override of the default LimeLocation YYLOCATIONTYPE.
           ** Reuses the same brace-content state as %token_type:
@@ -3370,6 +3666,7 @@ static void parseonetoken(struct pstate *psp)
         }else if( strcmp(x,"default_type")==0 ){
           psp->declargslot = &(psp->gp->vartype);
           psp->insertLineMacro = 0;
+          attach_directive_comment(psp, &psp->gp->vartype_comment);
         }else if( strcmp(x,"stack_size_limit")==0 ){
           psp->declargslot = &(psp->gp->stackSizeLimit);
           psp->insertLineMacro = 0;
@@ -3382,13 +3679,16 @@ static void parseonetoken(struct pstate *psp)
         }else if( strcmp(x,"stack_size")==0 ){
           psp->declargslot = &(psp->gp->stacksize);
           psp->insertLineMacro = 0;
+          attach_directive_comment(psp, &psp->gp->stacksize_comment);
         }else if( strcmp(x,"start_symbol")==0 ){
           psp->declargslot = &(psp->gp->start);
           psp->insertLineMacro = 0;
+          attach_directive_comment(psp, &psp->gp->start_comment);
         }else if( strcmp(x,"start")==0 ){
           /* Bison-compat alias for %start_symbol. */
           psp->declargslot = &(psp->gp->start);
           psp->insertLineMacro = 0;
+          attach_directive_comment(psp, &psp->gp->start_comment);
         }else if( strcmp(x,"left")==0 ){
           psp->preccounter++;
           psp->declassoc = LEFT;
@@ -3417,6 +3717,7 @@ static void parseonetoken(struct pstate *psp)
         }else if( strcmp(x,"module_name")==0 ){
           psp->declargslot = &(psp->gp->module_name);
           psp->insertLineMacro = 0;
+          attach_directive_comment(psp, &psp->gp->module_comment);
         }else if( strcmp(x,"module_version")==0 ){
           psp->declargslot = &(psp->gp->module_version);
           psp->insertLineMacro = 0;
@@ -3431,6 +3732,7 @@ static void parseonetoken(struct pstate *psp)
           psp->state = WAITING_FOR_MODULE_IMPORT;
         }else if( strcmp(x,"expect")==0 ){
           psp->state = WAITING_FOR_EXPECT_VALUE;
+          attach_directive_comment(psp, &psp->gp->nexpect_comment);
         }else if( strcmp(x,"first_token")==0 ){
           psp->state = WAITING_FOR_FIRST_TOKEN_VALUE;
         }else if( strcmp(x,"locations")==0 ){
@@ -4216,6 +4518,7 @@ void Parse(struct lime *gp)
   ** verbatim (Lime-Letter-18).  We literally slice filebuf so
   ** the user's exact formatting -- spacing, indentation,
   ** mixed line/block comments -- survives. */
+  char *body_start = filebuf;
   {
     char *hp = filebuf;
     while( *hp ){
@@ -4248,20 +4551,37 @@ void Parse(struct lime *gp)
           gp->header_comment[hlen] = 0;
         }
       }
+      /* Lime-Letter-19: skip the header range when the main loop
+      ** runs.  Otherwise the loop would re-scan the header's
+      ** comments and capture them as the FIRST directive's leading
+      ** comment, double-counting the header. */
+      body_start = hp;
     }
   }
 
   /* Now scan the text of the input file */
   lineno = 1;
-  for(cp=filebuf; (c= *cp)!=0; ){
+  for(cp=filebuf; cp<body_start; cp++){
+    if( *cp=='\n' ) lineno++;
+  }
+  /* Lime-Letter-19: tokenizer-side comment capture.  When NULL the
+  ** scanner has not yet seen a comment since the previous token;
+  ** when non-NULL it points at the first byte of the comment
+  ** chunk.  Flushed into psp->pending_comments at the start of
+  ** the next real token (or at end-of-file for the trailing-comment
+  ** slot). */
+  char *comment_region_start = 0;
+  for(cp=body_start; (c= *cp)!=0; ){
     if( c=='\n' ) lineno++;              /* Keep track of the line number */
     if( ISSPACE(c) ){ cp++; continue; }  /* Skip all white space */
     if( c=='/' && cp[1]=='/' ){          /* Skip C++ style comments */
+      if( comment_region_start==0 ) comment_region_start = cp;
       cp+=2;
       while( (c= *cp)!=0 && c!='\n' ) cp++;
       continue;
     }
     if( c=='/' && cp[1]=='*' ){          /* Skip C style comments */
+      if( comment_region_start==0 ) comment_region_start = cp;
       cp+=2;
       if( (*cp)=='/' ) cp++;
       while( (c= *cp)!=0 && (c!='/' || cp[-1]!='*') ){
@@ -4270,6 +4590,14 @@ void Parse(struct lime *gp)
       }
       if( c ) cp++;
       continue;
+    }
+    /* About to start a real token: flush any captured comment chunk
+    ** so it lands on the right side of the upcoming directive/rule
+    ** boundary. */
+    if( comment_region_start ){
+      pstate_append_comment(&ps, comment_region_start,
+                            (size_t)(cp - comment_region_start));
+      comment_region_start = 0;
     }
     ps.tokenstart = cp;                /* Mark the beginning of the token */
     ps.tokenlineno = lineno;           /* Linenumber on which token begins */
@@ -4347,6 +4675,30 @@ void Parse(struct lime *gp)
     parseonetoken(&ps);             /* Parse the token */
     *cp = (char)c;                  /* Restore the buffer */
     cp = nextcp;
+  }
+  /* Lime-Letter-19: end-of-file flush.  Any comments after the last
+  ** real token become the file's trailing_comment, emitted by
+  ** `lime -F` after the final rule.  Must run before lime_free(filebuf)
+  ** because comment_region_start points into filebuf. */
+  if( comment_region_start ){
+    pstate_append_comment(&ps, comment_region_start,
+                          (size_t)(cp - comment_region_start));
+    comment_region_start = 0;
+  }
+  if( ps.pending_comments ){
+    gp->trailing_comment = pstate_take_pending(&ps);
+  }
+  /* Drop any unattached transient slots before filebuf goes away --
+  ** these are heap-allocated copies (NOT pointers into filebuf), so
+  ** the order doesn't strictly matter, but freeing now keeps the
+  ** end-of-Parse() state tidy. */
+  if( ps.pending_directive_comment ){
+    lime_free(ps.pending_directive_comment);
+    ps.pending_directive_comment = 0;
+  }
+  if( ps.pending_rule_comment ){
+    lime_free(ps.pending_rule_comment);
+    ps.pending_rule_comment = 0;
   }
   lime_free(filebuf);                    /* Release the buffer after parsing */
   gp->rule = ps.firstrule;

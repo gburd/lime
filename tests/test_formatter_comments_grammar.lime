@@ -1,0 +1,87 @@
+/*
+ * test_formatter_comments_grammar.lime -- regression fixture for
+ * Lime-Letter-19 (PostgreSQL migration team).
+ *
+ * Two losses block PG from wiring `lime_format_check` into CI on
+ * v0.3.1:
+ *
+ *   A. inter-directive and inter-rule comments stripped (~95 % of
+ *      gram.lime's 8,797-line shrinkage).
+ *   B. leading whitespace inside %syntax_error / %parse_failure /
+ *      action-body brace blocks stripped (lost indentation in
+ *      ~3000 PG action bodies).
+ *
+ * This fixture exercises every post-fix invariant the test driver
+ * asserts: header preservation (Letter 18 regression guard), block-
+ * and line-comment stacks before brace-body and value directives,
+ * brace-body indentation survival, rule-leading multi-line comment
+ * survival, and idempotence under repeated `lime -F` runs.
+ *
+ * Per Letter 19 reply: per-token comments are NOT preserved in
+ * v0.3.2 (the token block emits in symbol-index order, not source
+ * order); the test asserts that limitation explicitly.
+ */
+
+%name FmtCommentsTest
+
+/* Block of commentary describing the token type decision.
+ * Spans multiple lines deliberately -- PG's gram.lime pattern.
+ * The formatter must round-trip every byte of this block.
+ */
+%token_type {int}
+
+// Single-line comment 1, stacked above %extra_argument.
+// Single-line comment 2, contiguous with the first.
+%extra_argument {int *result_out}
+
+%expect 0
+
+/* Block comment introducing the %include.  PG uses these to
+ * document non-trivial header dependencies. */
+%include {
+    /* Body indentation must survive the formatter (Loss class B).
+     * The leading 4-space indent on this comment stays put. */
+#include <stdio.h>
+
+    static int doubled(int x) { return x * 2; }
+}
+
+/*
+ * Error hooks.  Mirrors syncrep_gram.lime's pattern: a multi-
+ * line comment block immediately above the brace-body directive.
+ * Both the comment AND the leading whitespace inside the brace
+ * body must round-trip.
+ */
+%syntax_error {
+    fprintf(stderr, "syntax error near token %d\n", yymajor);
+}
+
+%parse_failure {
+    fprintf(stderr, "parse failed -- giving up\n");
+}
+
+/* This banner comment precedes a %token block.  v0.3.2 does NOT
+ * preserve per-token comments (token blocks emit in symbol-index
+ * order, not source order).  The test asserts this banner is
+ * absent from the formatted output -- documenting the limitation. */
+%token A.
+%token B.
+%token PLUS.
+
+%type expr {int}
+
+/* expr is an arithmetic expression.
+ * Recursive on left to mirror Bison's left-associative default.
+ * The formatter must preserve this multi-line block ABOVE the
+ * rule, with leading whitespace inside the action body intact. */
+expr(R) ::= expr(L) PLUS expr(M). {
+	*result_out = doubled(L + M);
+	R = L + M;
+}
+
+// Single-line comment above a second rule.  Stacks with no blank
+// line between the two `//` lines must also survive.
+expr(R) ::= A. {
+	*result_out = doubled(0);
+	R = 0;
+}

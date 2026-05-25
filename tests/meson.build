@@ -107,6 +107,27 @@ test('formatter', test_formatter,
   ],
 )
 
+# Lime-Letter-19 regression: `lime -F` must (A) preserve inter-
+# directive and inter-rule comments PG's grammar maintainers rely
+# on for documentation, and (B) preserve leading whitespace inside
+# brace bodies (PG's tab-indented %syntax_error / %parse_failure /
+# action bodies).  v0.3.1 stripped both, costing PG 33.5% of every
+# .lime file's bytes through the formatter.  Eight sub-tests cover
+# header, block-comment, //-stack, brace-indent, rule-leading
+# comment, idempotence, empty-grammar regression, and the
+# documented per-token-comment limitation.
+test_formatter_comments = executable('test_formatter_comments',
+  'test_formatter_comments.c',
+  dependencies : lime_parser_dep,
+)
+
+test('formatter_comments', test_formatter_comments,
+  args : [
+    lime_exe.full_path(),
+    meson.current_source_dir() / 'test_formatter_comments_grammar.lime',
+  ],
+)
+
 test_parse_context_coverage = executable('test_parse_context_coverage',
   'test_parse_context_coverage.c',
   dependencies : lime_parser_dep,
