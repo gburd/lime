@@ -169,6 +169,25 @@ test('formatter_token_groups', test_formatter_token_groups,
   ],
 )
 
+# v0.4.0: %dialect NAME { ... } directive (generator-time conditional
+# inclusion).  Drives the lime binary on test_dialect_grammar.lime
+# under several -D combinations and asserts the build fingerprint
+# matches expected inclusion.  Also exercises the CLI shorthand
+# (-Ddialect=NAME == -Ddialect_NAME), idempotence, brace-in-string
+# scan, unterminated/nested error paths, and bad-name rejection.
+# 11 sub-tests; see tests/test_dialect.c.
+test_dialect = executable('test_dialect',
+  'test_dialect.c',
+)
+
+test('dialect', test_dialect,
+  args : [
+    lime_exe.full_path(),
+    meson.project_source_root() / 'limpar.c',
+    meson.current_source_dir() / 'test_dialect_grammar.lime',
+  ],
+)
+
 test_parse_context_coverage = executable('test_parse_context_coverage',
   'test_parse_context_coverage.c',
   dependencies : lime_parser_dep,

@@ -1,0 +1,61 @@
+/*
+** tests/test_dialect_grammar.lime -- v0.4.0 fixture for the
+** %dialect NAME { ... } directive.
+**
+** The grammar declares one always-active rule plus two dialect-
+** scoped rule sets.  Build configurations under test:
+**
+**   no -D                       -> only the always-active rule survives.
+**   -Ddialect=oracle            -> oracle tokens + rule activate.
+**   -Ddialect=mysql             -> mysql tokens + rule activate.
+**   -Ddialect=oracle -Ddialect=mysql
+**                               -> both activate, sharing token namespace.
+**
+** Test fingerprints checked by tests/test_dialect.c key off the
+** presence/absence of ROWNUM, CONNECT_BY, and BACKTICK_IDENT in
+** the generated header.  The driver also runs a parse against
+** the oracle build to confirm dialect-conditional rules execute.
+*/
+
+%name DialectTest
+%token_type {int}
+%type result {int}
+%extra_argument {int *out}
+
+%token NUMBER PLUS.
+
+%dialect oracle {
+    %token ROWNUM CONNECT_BY.
+
+    /* ROWNUM is a pseudo-column in Oracle; the rule writes -1 so
+    ** the runtime test can distinguish it from arithmetic results. */
+    result(R) ::= ROWNUM.            { R = -1; *out = R; }
+    result(R) ::= CONNECT_BY NUMBER(N).  { R = -10 - N; *out = R; }
+}
+
+%dialect mysql {
+    %token BACKTICK_IDENT.
+
+    /* BACKTICK_IDENT models a MySQL `name` quoted identifier. */
+    result(R) ::= BACKTICK_IDENT.    { R = -2; *out = R; }
+}
+
+/* Always-active rule -- present in every dialect build. */
+result(R) ::= NUMBER(N) PLUS NUMBER(M).  { R = N + M; *out = R; }
+
+/* String/char literal containing `}` -- the desugaring brace scan
+** must NOT treat these as the closing brace of the dialect block. */
+%dialect oracle {
+    %token QUOTED_BRACE.
+
+    result(R) ::= QUOTED_BRACE.      {
+        const char *s = "}";          /* `}` inside a string */
+        const char  c = '}';          /* `}` inside a char literal */
+        (void)s; (void)c;
+        R = -3; *out = R;
+    }
+}
+
+/* Empty body -- legal, must produce no rules. */
+%dialect never_defined {
+}

@@ -1813,9 +1813,49 @@ static char *bDefineUsed = 0;  /* True for every -D macro actually used */
 
 /* This routine is called with the argument to each -D command-line option.
 ** Add the macro defined to the azDefine array.
+**
+** Lime v0.4.0: `-Ddialect=NAME` is recognized as shorthand for
+** `-Ddialect_NAME` -- and ONLY for that key.  This pairs with the
+** `%dialect NAME { ... }` directive (desugared in preprocess_input)
+** so users write the same NAME on the CLI and in the grammar.
+** All other `-D` invocations still take a bare macro name; the
+** historical `=value` suffix is dropped exactly as before.  See
+** docs/DIALECT.md.
 */
 static void handle_D_option(char *z){
   char **paz;
+  if( strncmp(z, "dialect=", 8)==0 ){
+    const char *name = z + 8;
+    size_t n = lemonStrlen((char*)name);
+    size_t k;
+    if( n==0 ){
+      fprintf(stderr,"lime: -Ddialect= requires a name\n");
+      exit(1);
+    }
+    if( !ISALPHA((unsigned char)name[0]) && name[0]!='_' ){
+      fprintf(stderr,
+        "lime: -Ddialect=%s: name must start with a letter or '_'\n",
+        name);
+      exit(1);
+    }
+    for(k=1; k<n; k++){
+      if( !ISALNUM((unsigned char)name[k]) && name[k]!='_' ){
+        fprintf(stderr,
+          "lime: -Ddialect=%s: invalid character '%c' in name\n",
+          name, name[k]);
+        exit(1);
+      }
+    }
+    /* Build "dialect_<name>" in a fresh buffer.  Re-points z so the
+    ** rest of this function consumes the rewritten string; the
+    ** original argv entry is left untouched.  Buffer is owned by
+    ** the lime_malloc arena and freed at exit, like every other
+    ** allocation in this file. */
+    char *expanded = (char *) lime_malloc(n + 9); /* "dialect_"+name+NUL */
+    memcpy(expanded, "dialect_", 8);
+    memcpy(expanded + 8, name, n + 1);
+    z = expanded;
+  }
   nDefine++;
   azDefine = (char **) lime_realloc(azDefine, sizeof(azDefine[0])*nDefine);
   if( azDefine==0 ){
@@ -4693,6 +4733,181 @@ pp_syntax_error:
   }
 }
 
+/* Desugar `%dialect NAME { ... }` blocks in place.
+**
+** v0.4.0 introduces `%dialect NAME { body }` as sugar for the
+** equivalent `%ifdef dialect_NAME ... %endif` form, but with the
+** body delimited by braces rather than a closing directive.  This
+** pass runs BEFORE the existing %ifdef pass so the body, if
+** included, can itself contain %ifdef / %ifndef / %if directives
+** and be processed normally.
+**
+** Scanning rules:
+**   - `%dialect` is recognized only at column zero, matching the
+**     existing %ifdef convention (line-anchored).
+**   - The NAME must satisfy [A-Za-z_][A-Za-z0-9_]* .
+**   - The body is the brace-balanced region following the `{`.
+**     The brace scan respects block and line comments and char
+**     and string literals so a `}` inside any of those does not
+**     close the block (mirrors Parse()'s C-action brace scan).
+**   - Nested `%dialect` (a directive at column zero inside another
+**     %dialect's body) is rejected with a clear error.  Users that
+**     genuinely need conditional-on-multiple-dialects rules write
+**     `%ifdef dialect_a %ifdef dialect_b ... %endif %endif`.
+**
+** Inclusion test:
+**   - `dialect_NAME` is searched in azDefine[] -- the same array
+**     %ifdef consults.  If defined, the surrounding `%dialect NAME`
+**     opener and matching `}` are blanked to spaces; the body bytes
+**     are left verbatim for downstream tokenization.
+**   - If not defined, the entire region (directive + body + closing
+**     brace) is blanked to spaces.
+**
+** Either branch preserves newlines exactly so error messages
+** keep correct line numbers (no extra padding, no shifting).
+**
+** All edits are in place; the buffer length never changes, which
+** lets the existing %ifdef pass run over the rewritten buffer
+** without re-thinking offsets.  See docs/DIALECT.md.
+*/
+static void desugar_dialect_blocks(char *z, const char *filename){
+  int i = 0;
+  int lineno = 1;
+  while( z[i] ){
+    if( z[i]=='\n' ){ lineno++; i++; continue; }
+    /* Recognize `%dialect` only at column zero. */
+    if( z[i]!='%' || (i>0 && z[i-1]!='\n') ){ i++; continue; }
+    if( strncmp(&z[i], "%dialect", 8)!=0
+        || !ISSPACE((unsigned char)z[i+8]) ){
+      i++;
+      continue;
+    }
+    int dir_start = i;
+    int dir_lineno = lineno;
+    int j = i + 8;
+    /* Skip horizontal whitespace before NAME.  A newline here is
+    ** rejected -- the directive header is a single line. */
+    while( z[j]==' ' || z[j]=='\t' ) j++;
+    if( !ISALPHA((unsigned char)z[j]) && z[j]!='_' ){
+      fprintf(stderr,
+        "%s:%d: %%dialect: expected identifier after directive\n",
+        filename, dir_lineno);
+      exit(1);
+    }
+    int name_start = j;
+    while( ISALNUM((unsigned char)z[j]) || z[j]=='_' ) j++;
+    int name_end = j;
+    int name_len = name_end - name_start;
+    /* Allow newlines between NAME and `{` so users may format the
+    ** opening brace on its own line. */
+    while( z[j] && ISSPACE((unsigned char)z[j]) ){
+      if( z[j]=='\n' ) lineno++;
+      j++;
+    }
+    if( z[j] != '{' ){
+      fprintf(stderr,
+        "%s:%d: %%dialect %.*s: expected '{' after name\n",
+        filename, dir_lineno, name_len, &z[name_start]);
+      exit(1);
+    }
+    int brace_open = j;
+    /* Walk the body, level-counted.
+    ** Scanning rules:
+    **   - block comments and line comments are skipped intact
+    **   - char and string literals (with backslash escapes) are
+    **     skipped intact
+    **   - any `%dialect` at column zero inside the body is a hard
+    **     error (no nested %dialect).
+    ** Mirrors Parse()'s C-action brace scan. */
+    int level = 1;
+    int k = brace_open + 1;
+    while( z[k] && level>0 ){
+      char c = z[k];
+      if( c=='\n' ){ lineno++; k++; continue; }
+      if( c=='/' && z[k+1]=='*' ){
+        k += 2;
+        while( z[k] && !(z[k-1]=='*' && z[k]=='/') ){
+          if( z[k]=='\n' ) lineno++;
+          k++;
+        }
+        if( z[k] ) k++;
+        continue;
+      }
+      if( c=='/' && z[k+1]=='/' ){
+        k += 2;
+        while( z[k] && z[k]!='\n' ) k++;
+        continue;
+      }
+      if( c=='\'' || c=='\"' ){
+        char start = c;
+        char prev = 0;
+        for(k++; z[k] && (z[k]!=start || prev=='\\'); k++){
+          if( z[k]=='\n' ) lineno++;
+          if( prev=='\\' ) prev = 0;
+          else              prev = z[k];
+        }
+        if( z[k] ) k++;
+        continue;
+      }
+      if( c=='%' && (k==0 || z[k-1]=='\n')
+          && strncmp(&z[k], "%dialect", 8)==0
+          && ISSPACE((unsigned char)z[k+8]) ){
+        fprintf(stderr,
+          "%s:%d: nested %%dialect inside %%dialect %.*s is not "
+          "allowed; use explicit %%ifdef nesting instead\n",
+          filename, lineno, name_len, &z[name_start]);
+        exit(1);
+      }
+      if( c=='{' ){
+        level++;
+      }else if( c=='}' ){
+        level--;
+        if( level==0 ) break;
+      }
+      k++;
+    }
+    if( level!=0 ){
+      fprintf(stderr,
+        "%s:%d: unterminated %%dialect %.*s (missing '}')\n",
+        filename, dir_lineno, name_len, &z[name_start]);
+      exit(1);
+    }
+    int brace_close = k;
+    /* Look up dialect_NAME in azDefine[]. */
+    int defined = 0;
+    int m;
+    for(m=0; m<nDefine; m++){
+      const char *macro = azDefine[m];
+      if( strncmp(macro, "dialect_", 8)==0
+          && (int)strlen(macro+8) == name_len
+          && strncmp(macro+8, &z[name_start], (size_t)name_len)==0 ){
+        if( !bDefineUsed[m] ){
+          bDefineUsed[m] = 1;
+          nDefineUsed++;
+        }
+        defined = 1;
+        break;
+      }
+    }
+    if( defined ){
+      /* Blank the opener `%dialect NAME ... {` and the closing `}`,
+      ** leaving the body verbatim. */
+      int p;
+      for(p=dir_start; p<=brace_open; p++){
+        if( z[p]!='\n' ) z[p] = ' ';
+      }
+      if( z[brace_close]!='\n' ) z[brace_close] = ' ';
+    }else{
+      /* Blank the entire region; newlines preserved. */
+      int p;
+      for(p=dir_start; p<=brace_close; p++){
+        if( z[p]!='\n' ) z[p] = ' ';
+      }
+    }
+    i = brace_close + 1;
+  }
+}
+
 /* Run the preprocessor over the input file text.  The global variables
 ** azDefine[0] through azDefine[nDefine-1] contains the names of all defined
 ** macros.  This routine looks for "%ifdef" and "%ifndef" and "%endif" and
@@ -4806,6 +5021,11 @@ void Parse(struct lime *gp)
   }
   fclose(fp);
   filebuf[filesize] = 0;
+
+  /* v0.4.0: desugar %dialect NAME { ... } into included-or-blanked
+  ** body BEFORE the existing %ifdef pass so the body, if kept, is
+  ** processed normally.  See docs/DIALECT.md. */
+  desugar_dialect_blocks(filebuf, ps.filename);
 
   /* Make an initial pass through the file to handle %ifdef and %ifndef */
   preprocess_input(filebuf);
