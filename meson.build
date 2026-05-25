@@ -1,5 +1,5 @@
 project('lime-parser', 'c', 'cpp',
-  version : '0.3.0',
+  version : '0.3.1',
   default_options : [
     'c_std=c11',
     'warning_level=2',
@@ -32,6 +32,7 @@ add_project_arguments(
   '-D_POSIX_C_SOURCE=200809L',
   '-D__EXTENSIONS__',
   '-D_DARWIN_C_SOURCE',
+  '-DLIME_VERSION_STRING="' + meson.project_version() + '"',
   language : 'c',
 )
 add_project_arguments(
@@ -39,6 +40,7 @@ add_project_arguments(
   '-D_POSIX_C_SOURCE=200809L',
   '-D__EXTENSIONS__',
   '-D_DARWIN_C_SOURCE',
+  '-DLIME_VERSION_STRING="' + meson.project_version() + '"',
   language : 'cpp',
 )
 

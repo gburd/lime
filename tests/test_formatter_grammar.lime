@@ -1,0 +1,58 @@
+/*
+ * test_formatter_grammar.lime -- regression fixture for Lime-Letter-18.
+ *
+ * The PG migration team asked the formatter to preserve copyright
+ * headers and %include block bodies so `lime -F` could be wired
+ * into CI as a format-check.  Pre-fix the formatter stripped both.
+ *
+ * Portions Copyright (c) 1996-2026, Regression Test Authors
+ * Portions Copyright (c) 1994, Regents of the University of California
+ *
+ * IDENTIFICATION
+ *      tests/test_formatter_grammar.lime
+ *
+ * This file is parsed by `lime -F` from tests/test_formatter.c; the
+ * test driver compares the generated .formatted file against the
+ * expected golden output to assert the round-trip preserves both the
+ * file-level comment block (this comment) and every brace-delimited
+ * directive body below.
+ */
+
+%name FmtTest
+
+%token_type {int}
+
+%extra_argument {int *result_out}
+
+%expect 0
+
+%include {
+#include <stdio.h>
+#include <stdlib.h>
+
+/*
+ * A non-trivial %include block.  Mixed declarations, code,
+ * and comments.  The formatter must not touch the bytes
+ * between the opening { and the matching }.
+ */
+#ifdef __GNUC__
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+
+static int doubled(int x) { return x * 2; }
+}
+
+%syntax_error {
+    fprintf(stderr, "syntax error near token %d\n", yymajor);
+}
+
+%parse_failure {
+    fprintf(stderr, "parse failed -- giving up\n");
+}
+
+%token A B PLUS.
+
+%type expr {int}
+
+expr(R) ::= A(L) PLUS B(M).  { R = doubled(L + M); *result_out = R; }
+expr(R) ::= A(L).            { R = L; }

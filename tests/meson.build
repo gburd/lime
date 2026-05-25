@@ -91,6 +91,22 @@ test_utf8 = executable('test_utf8',
 
 test('utf8', test_utf8)
 
+# Lime-Letter-18 regression: `lime -F` must preserve copyright
+# headers and brace-block directive bodies (e.g. %include) that
+# the parser cannot meaningfully reformat, and must be idempotent
+# under repeated runs (so PG can wire it as a CI format-check).
+test_formatter = executable('test_formatter',
+  'test_formatter.c',
+  dependencies : lime_parser_dep,
+)
+
+test('formatter', test_formatter,
+  args : [
+    lime_exe.full_path(),
+    meson.current_source_dir() / 'test_formatter_grammar.lime',
+  ],
+)
+
 test_parse_context_coverage = executable('test_parse_context_coverage',
   'test_parse_context_coverage.c',
   dependencies : lime_parser_dep,

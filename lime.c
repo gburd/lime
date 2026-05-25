@@ -49,7 +49,7 @@ int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "0.3.0"
+#define LIME_VERSION_STRING "0.3.1"
 #endif
 
 
@@ -603,6 +603,14 @@ struct lime {
   struct imported_symbol *imports;        /* Linked list of imported symbols */
   /* %expect directive: expected number of conflicts, -1 if unset */
   int nexpect;
+  /* File-level comment captured verbatim from the input.  Holds
+  ** everything between byte 0 and the first non-comment,
+  ** non-whitespace byte.  Used by the formatter (`lime -F`) to
+  ** round-trip copyright headers, IDENTIFICATION blocks, and
+  ** any other top-of-file documentation that the parser would
+  ** otherwise discard.  See Lime-Letter-18.  NULL when the file
+  ** starts with a directive at byte 0. */
+  char *header_comment;
   /* %locations directive: true if location tracking is enabled */
   int has_locations;
   /* %location_type {Type} -- override the type used for source
@@ -1966,6 +1974,73 @@ static int lint_grammar(struct lime *lem){
 ** Format a grammar file - rewrite with consistent formatting.
 ** Returns 0 on success, non-zero on error.
 */
+/*
+** Skip a leading `#line N "..."\n` directive in a brace-block body.
+** The parser injects these into captured bodies (lem->include /
+** lem->error / etc.) for codegen line tracking.  When the formatter
+** re-emits a body verbatim those markers must NOT survive -- the
+** user wrote `%include { #include <stdio.h> ... }` and that's what
+** we should round-trip.  Returns a pointer that, when followed by
+** the matching close brace, yields the original user content.
+**
+** Handles both the leading marker and an optional one-blank-line
+** prefix (the parser's emit pattern).  If the body has no leading
+** #line, returns the body unchanged.  Multiple stacked %include
+** directives may produce multiple internal #line markers; this
+** strips only the leading one.  Multi-include grammars are an edge
+** case; the common single-%include shape round-trips cleanly.
+*/
+static const char *fmt_skip_linedir(const char *body) {
+  if( body==0 ) return 0;
+  while( *body=='\n' ) body++;
+  if( strncmp(body, "#line ", 6)==0 ){
+    const char *nl = strchr(body, '\n');
+    if( nl ) body = nl + 1;
+  }
+  while( *body=='\n' ) body++;
+  return body;
+}
+
+/*
+** Trim leading and trailing whitespace from a body before
+** emitting so the formatter is fully idempotent: each pass would
+** otherwise widen the gap between `{` and the body content by one
+** space, drifting the canonical form indefinitely.  Result is a
+** heap-allocated copy the caller must lime_free; returns NULL on
+** OOM.
+*/
+static char *fmt_trim_trailing_ws(const char *body) {
+  if( body==0 ) return 0;
+  while( *body==' ' || *body=='\t' || *body=='\n' || *body=='\r' ) body++;
+  size_t n = strlen(body);
+  while( n>0 && (body[n-1]==' ' || body[n-1]=='\t' || body[n-1]=='\n' ||
+                 body[n-1]=='\r') ) n--;
+  char *out = (char*)lime_malloc(n + 1);
+  if( out==0 ) return 0;
+  memcpy(out, body, n);
+  out[n] = 0;
+  return out;
+}
+
+/*
+** Emit a brace-delimited directive body for `lime -F` consumption:
+** `%name {\n<body>\n}\n\n` with leading #line markers stripped and
+** trailing whitespace trimmed.  Used for %include, %syntax_error,
+** %parse_failure, %parse_accept, %stack_overflow, %token_destructor,
+** and %default_destructor (Lime-Letter-18).
+*/
+static void fmt_emit_brace_body(FILE *out, const char *directive,
+                                const char *body) {
+  const char *trimmed = fmt_skip_linedir(body);
+  char *clean = fmt_trim_trailing_ws(trimmed);
+  if( clean==0 ){
+    fprintf(out, "%%%s {\n%s\n}\n\n", directive, trimmed);
+    return;
+  }
+  fprintf(out, "%%%s {\n%s\n}\n\n", directive, clean);
+  lime_free(clean);
+}
+
 static int format_grammar(struct lime *lem){
   FILE *out;
   struct rule *rp;
@@ -1988,8 +2063,17 @@ static int format_grammar(struct lime *lem){
     return 1;
   }
 
-  /* Output header comment */
-  fprintf(out, "/* Formatted by Lime */\n\n");
+  /* Header comment (Lime-Letter-18 -- preserve copyright /
+  ** IDENTIFICATION / module-doc verbatim).  If captured, emit it
+  ** as-is followed by a single blank line; if not captured (file
+  ** opens with a directive at byte 0), fall back to the
+  ** boilerplate banner so the formatter remains visibly idempotent.
+  */
+  if( lem->header_comment ){
+    fprintf(out, "%s\n\n", lem->header_comment);
+  }else{
+    fprintf(out, "/* Formatted by Lime */\n\n");
+  }
 
   /* Output module directives */
   if( lem->module_name ){
@@ -2060,7 +2144,37 @@ static int format_grammar(struct lime *lem){
   if( lem->ctx ){
     fprintf(out, "%%extra_context {%s}\n", lem->ctx);
   }
+  if( lem->vartype ){
+    fprintf(out, "%%default_type {%s}\n", lem->vartype);
+  }
+  if( lem->start ){
+    fprintf(out, "%%start_symbol %s\n", lem->start);
+  }
+  if( lem->stacksize ){
+    fprintf(out, "%%stack_size %s\n", lem->stacksize);
+  }
+  if( lem->tokenprefix ){
+    fprintf(out, "%%token_prefix %s\n", lem->tokenprefix);
+  }
+  if( lem->symbolprefix ){
+    fprintf(out, "%%symbol_prefix %s\n", lem->symbolprefix);
+  }
+  if( lem->nexpect >= 0 ){
+    fprintf(out, "%%expect %d\n", lem->nexpect);
+  }
   fprintf(out, "\n");
+
+  /* Brace-delimited directive bodies (Lime-Letter-18 -- preserve
+  ** verbatim; the formatter has no business reformatting C code
+  ** embedded in a brace block).  Each is emitted only when the
+  ** parser captured it. */
+  if( lem->include    ) fmt_emit_brace_body(out, "include",            lem->include);
+  if( lem->error      ) fmt_emit_brace_body(out, "syntax_error",       lem->error);
+  if( lem->failure    ) fmt_emit_brace_body(out, "parse_failure",      lem->failure);
+  if( lem->accept     ) fmt_emit_brace_body(out, "parse_accept",       lem->accept);
+  if( lem->overflow   ) fmt_emit_brace_body(out, "stack_overflow",     lem->overflow);
+  if( lem->tokendest  ) fmt_emit_brace_body(out, "token_destructor",   lem->tokendest);
+  if( lem->vardest    ) fmt_emit_brace_body(out, "default_destructor", lem->vardest);
 
   /* Output token declarations */
   fprintf(out, "/* Token declarations */\n");
@@ -2096,14 +2210,18 @@ static int format_grammar(struct lime *lem){
     fprintf(out, ".");
 
     if( rp->code ){
-      fprintf(out, " {\n");
-      /* Output code with proper indentation */
-      const char *code = rp->code;
-      fprintf(out, "  %s", code);
-      if( code[strlen(code)-1] != '\n' ){
-        fprintf(out, "\n");
-      }
-      fprintf(out, "}");
+      /* Action bodies, like %include, get a leading #line marker
+      ** prepended by the parser for codegen line tracking
+      ** (Lime-Letter-18).  Strip it before emitting and trim
+      ** trailing whitespace so the formatter is idempotent:
+      ** format(format(F)) == format(F).  We do NOT re-indent the
+      ** body -- whatever the user wrote inside the braces is
+      ** opaque to us, same rationale as %include. */
+      const char *code = fmt_skip_linedir(rp->code);
+      char *clean = fmt_trim_trailing_ws(code);
+      const char *body = clean ? clean : code;
+      fprintf(out, " { %s }", body);
+      lime_free(clean);
     }
     fprintf(out, "\n");
   }
@@ -4090,6 +4208,47 @@ void Parse(struct lime *gp)
   if( gp->printPreprocessed ){
     printf("%s\n", filebuf);
     return;
+  }
+
+  /* Capture file-level comments / whitespace BEFORE the first
+  ** non-comment, non-whitespace byte.  Used by `lime -F` to
+  ** round-trip copyright headers and IDENTIFICATION blocks
+  ** verbatim (Lime-Letter-18).  We literally slice filebuf so
+  ** the user's exact formatting -- spacing, indentation,
+  ** mixed line/block comments -- survives. */
+  {
+    char *hp = filebuf;
+    while( *hp ){
+      if( ISSPACE((unsigned char)*hp) ){ hp++; continue; }
+      if( hp[0]=='/' && hp[1]=='/' ){
+        hp+=2;
+        while( *hp && *hp!='\n' ) hp++;
+        continue;
+      }
+      if( hp[0]=='/' && hp[1]=='*' ){
+        hp+=2;
+        while( *hp && !(hp[-1]=='*' && hp[0]=='/') ) hp++;
+        if( *hp ) hp++;
+        continue;
+      }
+      break;
+    }
+    if( hp > filebuf ){
+      size_t hlen = (size_t)(hp - filebuf);
+      /* Trim trailing whitespace from the captured header so the
+      ** formatter can reinsert exactly one blank line between the
+      ** header and the first directive.  Leading whitespace is
+      ** preserved so file-leading blank lines (rare but valid)
+      ** don't surprise the user.  */
+      while( hlen>0 && ISSPACE((unsigned char)filebuf[hlen-1]) ) hlen--;
+      if( hlen>0 ){
+        gp->header_comment = (char*)lime_malloc(hlen + 1);
+        if( gp->header_comment ){
+          memcpy(gp->header_comment, filebuf, hlen);
+          gp->header_comment[hlen] = 0;
+        }
+      }
+    }
   }
 
   /* Now scan the text of the input file */
