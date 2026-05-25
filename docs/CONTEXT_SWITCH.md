@@ -219,6 +219,77 @@ comparison per token.  The bracket-depth-driven exit path runs
 through `grammar_context_close_bracket()` and is independent of
 `context_switch_detect_exit()`.
 
+## Common conventions
+
+Lime ships zero hard-coded triggers — registration is the host
+parser's responsibility.  Here are conventions that have proven
+useful for hosts that mix multiple sub-languages:
+
+### SQL + JSON literal
+
+```c
+context_switch_register_trigger(stack, "json", json_snap, "json");
+```
+
+Triggers on the SQL keyword `json` followed by a quoted literal:
+`SELECT json '{"a":1}' FROM t`.  Matches PostgreSQL's `json '...'`
+shorthand.  See `examples/multi_grammar_sql_json/`.
+
+### SQL + JSONPath
+
+```c
+context_switch_register_trigger(stack, "jsonpath", jsonpath_snap, "jsonpath");
+```
+
+For `JSON_TABLE(... PATH 'jsonpath $.a.b' ...)`-style usage.
+The trigger fires on the literal keyword `jsonpath` so the
+JSONPath sub-grammar parses the body of the path string.
+
+### PostgreSQL XMLPARSE / XMLELEMENT
+
+```c
+context_switch_register_trigger(stack, "XMLPARSE",   xml_snap, "xml");
+context_switch_register_trigger(stack, "XMLELEMENT", xml_snap, "xml");
+```
+
+Two triggers, one shared XML sub-grammar.  Both keywords are
+followed by `(... XML ...)` syntax that the XML parser handles.
+
+### Embedded EDN / Datalog literals
+
+```c
+context_switch_register_trigger(stack, "{:", edn_snap, "edn");
+```
+
+Datalog and EDN use `{:` as an unambiguous opening delimiter.
+The bracket-depth-driven exit fires when the matching `}` brings
+depth back to zero.
+
+### Multiple variants of one sub-language
+
+```c
+context_switch_register_trigger(stack, "sql/pg",     pg_snap,    "sql_pg");
+context_switch_register_trigger(stack, "sql/sqlite", sqlite_snap, "sql_sqlite");
+context_switch_register_trigger(stack, "sql/oracle", oracle_snap, "sql_oracle");
+```
+
+Three SQL dialects sharing the same host parser, distinguished
+by trigger prefix.  Useful for migration tools that need to parse
+multiple dialect inputs in a single pass.
+
+### What to avoid
+
+- **Don't register triggers shorter than 2 characters.**  Single-
+  character triggers risk false positives (e.g. registering `j`
+  would match the start of every identifier beginning with `j`).
+- **Don't register triggers that overlap by prefix.**  If both
+  `json` and `jsonpath` are registered, the registry's first-match
+  wins is sensitive to registration order.  Register longest first
+  if you need both.
+- **Don't register a trigger from inside an active parse.**  The
+  registry is intended to be set up once during snapshot
+  construction; runtime mutation is not supported.
+
 ## Design tradeoffs and known follow-ups
 
 - **Single-trigger-per-lexeme.**  The registry rejects duplicate

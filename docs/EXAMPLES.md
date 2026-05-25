@@ -46,6 +46,33 @@ to an existing parser.
 This file is intended as a copy-and-modify template for extension
 developers.
 
+## Multi-Grammar SQL + JSON (`examples/multi_grammar_sql_json/`)
+
+A host SQL parser that switches into a JSON sub-grammar on the
+`json '{...}'` literal pattern.  Shows the runtime trigger-
+registration API in action.
+
+**What it demonstrates:**
+- `context_switch_register_trigger()` -- attach a lexeme trigger
+  to an embedded `ParserSnapshot *`
+- The parse-engine hook that swaps the bound snapshot when a
+  trigger fires
+- Bracket-depth-driven exit back to the host grammar
+- Position tracking through both halves so error messages stay
+  meaningful
+
+**Input that exercises it:**
+```sql
+SELECT id, json '{"a":1, "b":[2,3]}' FROM t WHERE id = 5;
+```
+
+The host SQL parser handles the SELECT/WHERE skeleton; the JSON
+sub-grammar parses `{"a":1, "b":[2,3]}` into a typed AST.
+
+See [`docs/CONTEXT_SWITCH.md`](CONTEXT_SWITCH.md) for the full
+API surface and the `examples/multi_grammar_sql_json/README.md`
+walkthrough.
+
 ## Plugin Template (`examples/plugin_template/`)
 
 A minimal, reusable template for building SQL parser plugins.

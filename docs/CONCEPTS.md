@@ -149,9 +149,38 @@ Modules can be composed with the `lime-compose` tool, which resolves
 dependencies via topological sort and merges grammars.  See
 <a href="MODULE_FORMAT.md">MODULE_FORMAT.md</a>.
 
+## Multi-Grammar Parsing
+
+A single Lime parser can handle inputs that mix multiple
+languages.  The host grammar (e.g. SQL) registers trigger lexemes
+that, when seen in the token stream, switch the parser into a
+sub-grammar (e.g. JSON, JSONPath, XML).  When the sub-grammar's
+scope closes — bracket depth returns to zero or an explicit exit
+token fires — the parser resumes in the host grammar.
+
+The mechanism is purely runtime: there are no built-in triggers,
+and the host grammar is unchanged.  Triggers are registered
+against a `GrammarContextStack` that the parser carries alongside
+its `ParserSnapshot`:
+
+```c
+context_switch_register_trigger(stack, "json", json_snap, "json");
+```
+
+After registration, the parse-engine hook (`parse_engine_step`)
+checks the trigger registry on each token; if no triggers are
+registered the cost is one load + statically-predicted-not-taken
+branch per token.  Single-grammar parsers pay nothing for the
+multi-grammar machinery being present.
+
+See [CONTEXT_SWITCH.md](CONTEXT_SWITCH.md) for the API and
+`examples/multi_grammar_sql_json/` for a worked example
+(SQL host + JSON embedded).
+
 ## Further Reading
 
 - [API Reference](API.md) — function-level documentation
 - [Architecture](ARCHITECTURE.md) — component diagram and data flow
 - [Extensions](EXTENSIONS.md) — writing extensions step by step
+- [Context Switch](CONTEXT_SWITCH.md) — multi-grammar parsing
 - [Algorithm](ALGORITHM.md) — LALR(1) theory and Lime's implementation
