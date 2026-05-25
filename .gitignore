@@ -21,6 +21,9 @@ examples/*/*.h
 !examples/*/main.c
 !examples/*/main_conflicts.c
 !examples/*/*_ext.c
+!examples/multi_grammar_sql_json/multi.h
+!examples/multi_grammar_sql_json/multi_driver.c
+!examples/multi_grammar_sql_json/multi_helpers.c
 
 # COBOL example: ship the hand-written tokenizer + state header,
 # but exclude the generated parser .c/.h.
