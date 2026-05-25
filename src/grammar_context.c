@@ -256,6 +256,20 @@ bool grammar_context_is_root_only(const GrammarContextStack *stack) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Mode-table introspection (used by context_switch.c)                */
+/* ------------------------------------------------------------------ */
+
+uint32_t grammar_context_mode_count(const GrammarContextStack *stack) {
+    if (stack == NULL) return 0;
+    return stack->nmode;
+}
+
+const GrammarModeInfo *grammar_context_mode_at(const GrammarContextStack *stack, uint32_t i) {
+    if (stack == NULL || i >= stack->nmode) return NULL;
+    return &stack->modes[i];
+}
+
+/* ------------------------------------------------------------------ */
 /*  Switch callback                                                    */
 /* ------------------------------------------------------------------ */
 

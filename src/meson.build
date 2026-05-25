@@ -28,6 +28,7 @@ lib_sources = files(
   'execution_policy.c',
   'extension_registry.c',
   'grammar_context.c',
+  'context_switch.c',
   'lime_error.c',
 )
 
