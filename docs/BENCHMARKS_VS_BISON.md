@@ -247,7 +247,7 @@ tool actually gives you:
 | `ParseTokenName`, `ParseExpectedTokens` | ✗ | ✓ |
 | Copy-on-write snapshots for thread safety | ✗ | ✓ |
 | Error recovery with `error` nonterminal | ✓ | ✓ (inherited from Lemon) |
-| Generalized-LR with merge functions | ✓ | ✗ |
+| Generalized-LR with merge functions | ✓ | ✓ (since v0.3.4; opt-in via `lime_parse_glr()`, ~5–8× slower than LALR fast path on unambiguous input -- see [GLR.md](GLR.md)) |
 | IELR(1) / LALR(1) algorithm choice | ✓ | LALR(1) only |
 | Mature, large user base | ✓ | ✗ (newer project) |
 
@@ -257,8 +257,6 @@ tool actually gives you:
 
   * Your grammar is fixed at build time and will never change at
     runtime.
-  * You need GLR with merge functions (Bison's `%glr-parser` with
-    `%merge`).
   * You need IELR(1) over LALR(1) -- some grammars need it.
   * You want the longest production track record available.
 

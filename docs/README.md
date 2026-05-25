@@ -28,6 +28,7 @@
 | [MIGRATION_FROM_YACC.md](MIGRATION_FROM_YACC.md) | Porting Yacc grammars to Lime |
 | [MIGRATION_FROM_FLEX.md](MIGRATION_FROM_FLEX.md) | Porting flex scanners to Lime `.lex` grammars |
 | [JIT_ANALYSIS.md](JIT_ANALYSIS.md) | JIT compilation cost-benefit analysis |
+| [GLR.md](GLR.md) | Generalized-LR parser support: API, performance, when to use |
 | [PARSER_PLUGIN_DESIGN.md](PARSER_PLUGIN_DESIGN.md) | Plugin system design |
 | [LEXER_DESIGN.md](LEXER_DESIGN.md) | Lexer component design |
 | [LEXER_SCANNER_AUDIT.md](LEXER_SCANNER_AUDIT.md) | Empirical audit of 6 PG flex scanners |

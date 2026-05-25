@@ -90,3 +90,15 @@ bench_simd_classify = executable('bench_simd_classify',
   dependencies : lime_parser_dep,
   include_directories : include_directories('../src'),
 )
+
+# GLR overhead benchmark.  Drives the same unambiguous arith input
+# through both the LALR push parser and the GLR engine; reports the
+# fixed overhead of the GSS allocation + per-token step machinery.
+# Resurrected from feat/glr branch in v0.3.4.
+glr_overhead = executable('glr_overhead',
+  'glr_overhead.c',
+  bench_arith_gen,
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+

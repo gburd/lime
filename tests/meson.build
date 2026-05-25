@@ -155,6 +155,23 @@ test_parse_context_coverage = executable('test_parse_context_coverage',
 
 test('parse_context_coverage', test_parse_context_coverage)
 
+# ----------------------------------------------------------------------
+# GLR (Generalized LR) parser tests.
+# test_gss is a direct unit test of the Graph-Structured Stack
+# primitives.  test_glr_no_conflict and test_glr_ambiguous drive
+# the arith snapshot (generated below as test_runtime_arith_gen)
+# and require GLR's lime_parse_glr_* runtime entry points.
+# Resurrected from feat/glr branch in v0.3.4.
+# ----------------------------------------------------------------------
+test_gss = executable('test_gss',
+  'test_gss.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('gss', test_gss)
+
+
 test_snapshot_modify_extended = executable('test_snapshot_modify_extended',
   'test_snapshot_modify_extended.c',
   dependencies : lime_parser_dep,
@@ -1161,6 +1178,27 @@ test_runtime_parse = executable('test_runtime_parse',
 )
 
 test('runtime_parse', test_runtime_parse)
+
+# GLR end-to-end tests.  Reuse test_runtime_arith_gen above (same
+# arith grammar both the bench and the runtime tests use).
+test_glr_no_conflict = executable('test_glr_no_conflict',
+  'test_glr_no_conflict.c',
+  test_runtime_arith_gen,
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('glr_no_conflict', test_glr_no_conflict)
+
+test_glr_ambiguous = executable('test_glr_ambiguous',
+  'test_glr_ambiguous.c',
+  test_runtime_arith_gen,
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('glr_ambiguous', test_glr_ambiguous)
+
 
 # End-to-end extension exercise: drives create_modified_snapshot
 # against a real generated parser snapshot and confirms parse_token
