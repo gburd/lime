@@ -37,6 +37,8 @@
 | [PARSER_PLUGIN_DESIGN.md](PARSER_PLUGIN_DESIGN.md) | Plugin system design |
 | [LEXER_DESIGN.md](LEXER_DESIGN.md) | Lexer component design |
 | [LEXER_SCANNER_AUDIT.md](LEXER_SCANNER_AUDIT.md) | Empirical audit of 6 PG flex scanners |
+| [LSP.md](LSP.md) | `lime-lsp` Language Server: capability surface, diagnostics flow, editor wire-up. See also [`editors/lime-lsp-config.md`](../editors/lime-lsp-config.md). |
+| [LSP_DESIGN.md](LSP_DESIGN.md) | Original (v0.2.x) LSP design sketch. Phase 1 implemented in v0.5.0; see LSP.md. |
 | [MODULE_FORMAT.md](MODULE_FORMAT.md) | Modular grammar file format |
 | [LITERATE_FORMAT.md](LITERATE_FORMAT.md) | Literate grammar format |
 

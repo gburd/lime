@@ -1,0 +1,10 @@
+/*
+ * dirty.lime -- grammar with one warning lint_grammar surfaces:
+ * non-terminal `unused` has a %type declaration but no rules.
+ * Used by the diagnostics sub-test.
+ */
+%name LspDirty
+%token A B.
+%type unused {int}
+
+start ::= A B.

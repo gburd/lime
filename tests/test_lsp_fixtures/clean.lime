@@ -1,0 +1,13 @@
+/*
+ * clean.lime -- well-formed grammar with no lint errors.
+ *
+ * Used by test_lsp's lifecycle, definition, hover, and
+ * documentSymbol sub-tests.  Adjustments here will need
+ * matching tweaks in test_lsp.c's expected line numbers.
+ */
+%name LspClean
+%token PLUS MINUS NUMBER.
+
+start ::= expr.
+expr ::= NUMBER PLUS NUMBER.
+expr ::= NUMBER MINUS NUMBER.

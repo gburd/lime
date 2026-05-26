@@ -1,6 +1,15 @@
 # Lime Language Server (LSP) — Design Sketch
 
-**Status:** design only.  This document describes what an LSP
+**Status:** **Phase 1 implemented in v0.5.0.**  See
+[`LSP.md`](LSP.md) for the implementation guide and
+[`../editors/lime-lsp-config.md`](../editors/lime-lsp-config.md)
+for editor wire-up recipes.  The original design notes are kept
+below for historical context; deferred features are tracked in
+LSP.md's _Limitations and future work_ section.
+
+---
+
+This document describes what an LSP
 server for `.lime` files would do; **no implementation exists in
 this repo today.**  Stub `editors/lime-mode.el` and
 `editors/lime.vim` already provide font-lock-only support;

@@ -15,6 +15,29 @@ test_version = executable('test_version',
 
 test('version', test_version)
 
+# v0.5.0: end-to-end Lime LSP exercise.  Spawns the real
+# `lime-lsp` binary, drives it over JSON-RPC framed stdin/stdout,
+# and asserts on:
+#   - lifecycle (initialize/initialized/shutdown/exit)
+#   - publishDiagnostics from a buffer with a known lint warning
+#   - textDocument/definition (cursor on `expr` -> `expr ::=` line)
+#   - textDocument/hover (directive doc + non-terminal info)
+#   - textDocument/documentSymbol (full outline)
+# Args: <lime-lsp-bin> <lime-bin> <fixtures-dir>.
+test_lsp = executable('test_lsp',
+  'test_lsp.c',
+  c_args : nounusedparam,
+)
+
+test('lsp', test_lsp,
+  args : [
+    lime_lsp_exe.full_path(),
+    lime_exe.full_path(),
+    meson.current_source_dir() / 'test_lsp_fixtures',
+  ],
+  timeout : 60,
+)
+
 test_tokenize = executable('test_tokenize',
   'test_tokenize.c',
   dependencies : lime_parser_dep,

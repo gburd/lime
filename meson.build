@@ -154,6 +154,12 @@ lime_exe = executable('lime',
   install : true,
 )
 
+# v0.5.0: standalone Lime Language Server (lime-lsp).  Lives under
+# src/lsp/ and links nothing from lime_parser_lib so the runtime
+# hot-path stays untouched -- it shells out to the lime binary
+# above for diagnostics.  See docs/LSP.md.
+subdir('src/lsp')
+
 # pkg-config file so downstream meson/cmake/autotools builds can
 # locate Lime via dependency('lime') / pkg_check_modules(LIME ..) /
 # PKG_CHECK_MODULES.  Generated AFTER subdir('src') because we
