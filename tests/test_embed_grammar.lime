@@ -1,0 +1,30 @@
+/* tests/test_embed_grammar.lime
+**
+** v0.4.4 fixture: %embed lang TRIGGER 'lex' ENTRY_TOKEN TOKEN.
+**
+** Two embed directives in declaration order.  The directive is
+** ergonomic sugar over context_switch_register_trigger(); this
+** fixture exercises:
+**   - parser recognition of two distinct %embed lines
+**   - declaration-order preservation through %embed_table[]
+**   - both ALNUM ('json') and non-ALNUM (':-') trigger lexemes
+**   - ENTRY_TOKEN binding to declared terminals (STRING, IDENT)
+*/
+
+%name EmbedTest
+
+%token_type {void *}
+
+%token STRING IDENT NUMBER LBRACE RBRACE.
+
+/* Section banner above json -- exercised by reverse-validation of
+** the formatter round-trip. */
+%embed json TRIGGER 'json' ENTRY_TOKEN STRING.
+%embed datalog TRIGGER ':-' ENTRY_TOKEN IDENT.
+
+%type result {void *}
+%extra_argument {void **out}
+
+result(R) ::= STRING(S).  { R = S; *out = R; }
+result(R) ::= IDENT(I).   { R = I; *out = R; }
+result(R) ::= NUMBER(N).  { R = N; *out = R; }

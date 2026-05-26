@@ -311,6 +311,25 @@ struct LimeTypeGroup {
   LimeTypeGroup   *next;
 };
 
+/* v0.4.4: %embed lang TRIGGER 'lex' ENTRY_TOKEN TOKEN.
+** One record per directive; accumulated in declaration order on
+** struct lime via first_embed/last_embed.  ReportSnapshotInit()
+** emits a static <Prefix>_embed_table[] driving runtime calls to
+** context_switch_register_trigger() at parse setup, plus the
+** public <Prefix>SetEmbedSnapshot() / <Prefix>RegisterEmbedTriggers()
+** helpers.  The directive is pure ergonomic sugar over the
+** existing context_switch.c runtime API; no runtime changes. */
+typedef struct LimeEmbedDirective LimeEmbedDirective;
+struct LimeEmbedDirective {
+  char                 *name;            /* mode label, e.g. "json" */
+  char                 *trigger_lexeme;  /* unquoted lexeme text */
+  struct symbol        *entry_token;     /* must exist in symbol table */
+  char                 *origin_file;     /* for diagnostics */
+  int                   origin_line;
+  char                 *leading_comment; /* preserved by `lime -F` */
+  LimeEmbedDirective   *next;            /* declaration-order list */
+};
+
 static struct action *Action_new(void);
 static struct action *Action_sort(struct action *);
 
@@ -814,6 +833,11 @@ struct lime {
   LimeTokenGroup *last_token_group;   /* tail for O(1) append */
   LimeTypeGroup  *first_type_group;
   LimeTypeGroup  *last_type_group;
+  /* v0.4.4: %embed directives in declaration order.  NULL when no
+  ** %embed appeared in the grammar (zero-cost when unused -- the
+  ** snapshot codegen emits no _embed_table / helper functions). */
+  LimeEmbedDirective *first_embed;
+  LimeEmbedDirective *last_embed;
 };
 
 #define MemoryCheck(X) if((X)==0){ \
@@ -2657,6 +2681,25 @@ static int format_grammar(struct lime *lem){
     if( max_prec >= 0 ) fprintf(out, "\n");
   }
 
+  /* v0.4.4: %embed directives in declaration order.  Each entry's
+  ** leading_comment (preserved by the parser) emits immediately
+  ** above the directive line so PG-style banner comments survive
+  ** the round trip.  The trigger lexeme is wrapped in single
+  ** quotes -- that's the canonical form even when the source used
+  ** double quotes (the formatter normalises). */
+  if( lem->first_embed ){
+    LimeEmbedDirective *e;
+    for( e = lem->first_embed; e; e = e->next ){
+      if( e->leading_comment ) fprintf(out, "%s\n", e->leading_comment);
+      fprintf(out, "%%embed %s TRIGGER '%s' ENTRY_TOKEN %s.\n",
+              e->name ? e->name : "",
+              e->trigger_lexeme ? e->trigger_lexeme : "",
+              (e->entry_token && e->entry_token->name)
+                ? e->entry_token->name : "");
+    }
+    fprintf(out, "\n");
+  }
+
   /* Output grammar rules.  Banner dropped: it would otherwise be
   ** captured as the first rule's leading_comment on a reformat pass. */
   for(rp = lem->rule; rp; rp = rp->next){
@@ -2758,6 +2801,18 @@ static int format_grammar(struct lime *lem){
       lime_free(g);
     }
     lem->first_type_group = lem->last_type_group = 0;
+  }
+  /* v0.4.4: free %embed records.  name/trigger_lexeme/origin_file
+  ** are Strsafe-interned so they live with the global string pool;
+  ** only the leading_comment is heap-owned by the directive. */
+  {
+    LimeEmbedDirective *e, *next;
+    for( e = lem->first_embed; e; e = next ){
+      next = e->next;
+      if( e->leading_comment ) lime_free(e->leading_comment);
+      lime_free(e);
+    }
+    lem->first_embed = lem->last_embed = 0;
   }
 
   lime_free(outfile);
@@ -3741,6 +3796,18 @@ int main(int argc, char **argv){
 
     /* Generate snapshot initialization code if -n flag is set */
     if( snapshotFlag ) ReportSnapshotInit(&lem);
+    else if( lem.first_embed ){
+      /* v0.4.4: %embed sugar emits its runtime wiring into the
+      ** snapshot file.  Without `-n` the directive's effect is
+      ** silently dropped; warn so the user catches the missing
+      ** flag rather than wondering why their triggers are not
+      ** registered. */
+      fprintf(stderr,
+        "%s: warning: %%embed directive(s) present but -n was not "
+        "passed; embed table and helpers were NOT emitted.  Re-run "
+        "with -n to enable runtime trigger registration.\n",
+        lem.filename ? lem.filename : "lime");
+    }
 
     /* Generate AOT-compiled action table if -j flag is set */
     if( aotFlag ) ReportAOTTable(&lem);
@@ -4239,7 +4306,18 @@ enum e_state {
   ** matches the symbol name, then transitions to
   ** WAITING_FOR_OVERRIDE_TYPE_BODY which reads the {Type} body
   ** via the standard WAITING_FOR_DECL_ARG mechanism. */
-  WAITING_FOR_OVERRIDE_TYPE_SYM
+  WAITING_FOR_OVERRIDE_TYPE_SYM,
+  /* v0.4.4: %embed NAME TRIGGER 'lex' ENTRY_TOKEN TOKEN.
+  ** Eight-token directive parsed via a chain of states.  The
+  ** trigger lexeme arrives wrapped in single (or double) quotes;
+  ** the parser tokenizes the quoted run as one token whose first
+  ** byte is the opening quote (see Parse() in this file). */
+  WAITING_FOR_EMBED_NAME,
+  WAITING_FOR_EMBED_TRIGGER_KW,
+  WAITING_FOR_EMBED_TRIGGER_LEXEME,
+  WAITING_FOR_EMBED_ENTRY_KW,
+  WAITING_FOR_EMBED_ENTRY_TOKEN,
+  WAITING_FOR_EMBED_TERMINATOR
 };
 struct pstate {
   char *filename;       /* Name of the input file */
@@ -5370,6 +5448,35 @@ static void parseonetoken(struct pstate *psp)
             lime_free(psp->pending_directive_comment);
             psp->pending_directive_comment = 0;
           }
+        }else if( strcmp(x,"embed")==0 ){
+          /* v0.4.4: %embed NAME TRIGGER 'lex' ENTRY_TOKEN TOKEN.
+          ** Sugar over context_switch_register_trigger().  Each
+          ** directive accumulates a LimeEmbedDirective onto
+          ** lem->first_embed/last_embed; ReportSnapshotInit()
+          ** emits a static <Prefix>_embed_table[] plus runtime
+          ** helpers for setting snapshot pointers and registering
+          ** triggers on a GrammarContextStack.  See docs/EMBED.md. */
+          {
+            LimeEmbedDirective *e = (LimeEmbedDirective *)
+              lime_calloc(1, sizeof(*e));
+            MemoryCheck(e);
+            e->origin_file = psp->filename;
+            e->origin_line = psp->tokenlineno;
+            /* Take any pending leading comment for v0.3.5-style
+            ** preservation through `lime -F`. */
+            if( psp->pending_directive_comment ){
+              e->leading_comment = psp->pending_directive_comment;
+              psp->pending_directive_comment = 0;
+            }
+            if( psp->gp->last_embed ){
+              psp->gp->last_embed->next = e;
+            }else{
+              psp->gp->first_embed = e;
+            }
+            psp->gp->last_embed = e;
+            /* The next token must be the mode-label NAME. */
+            psp->state = WAITING_FOR_EMBED_NAME;
+          }
         }else{
           ErrorMsg(psp->filename,psp->tokenlineno,
             "Unknown declaration keyword: \"%%%s\".",x);
@@ -6034,6 +6141,107 @@ static void parseonetoken(struct pstate *psp)
         }
       }
       break;
+    /* v0.4.4: %embed state machine.  Token sequence is
+    **   NAME TRIGGER 'lex' ENTRY_TOKEN TOKEN .
+    ** with NAME and TOKEN as identifiers, TRIGGER and ENTRY_TOKEN
+    ** as upper-case keyword identifiers, and 'lex' as a quoted
+    ** lexeme (single or double quotes accepted -- see Parse()'s
+    ** top-level tokenizer).  All errors transition to
+    ** RESYNC_AFTER_DECL_ERROR so the rest of the file still parses. */
+    case WAITING_FOR_EMBED_NAME:
+      if( !ISALPHA(x[0]) ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "%%embed: expected mode-label identifier, got \"%s\".", x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }else{
+        psp->gp->last_embed->name = (char *)Strsafe(x);
+        psp->state = WAITING_FOR_EMBED_TRIGGER_KW;
+      }
+      break;
+    case WAITING_FOR_EMBED_TRIGGER_KW:
+      if( strcmp(x,"TRIGGER")!=0 ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "%%embed %s: expected TRIGGER keyword, got \"%s\".",
+          psp->gp->last_embed->name ? psp->gp->last_embed->name : "?",
+          x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }else{
+        psp->state = WAITING_FOR_EMBED_TRIGGER_LEXEME;
+      }
+      break;
+    case WAITING_FOR_EMBED_TRIGGER_LEXEME:
+      /* The tokenizer hands us a quoted-string token whose first
+      ** byte is the opening quote (with the close-quote stripped
+      ** to NUL by the *cp = 0 step in Parse()).  Both single and
+      ** double quotes are accepted as openers. */
+      if( x[0]!='\'' && x[0]!='\"' ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "%%embed %s: expected quoted trigger lexeme, got \"%s\".",
+          psp->gp->last_embed->name ? psp->gp->last_embed->name : "?",
+          x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }else if( x[1]==0 ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "%%embed %s: trigger lexeme is empty",
+          psp->gp->last_embed->name ? psp->gp->last_embed->name : "?");
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }else{
+        psp->gp->last_embed->trigger_lexeme = (char *)Strsafe(&x[1]);
+        psp->state = WAITING_FOR_EMBED_ENTRY_KW;
+      }
+      break;
+    case WAITING_FOR_EMBED_ENTRY_KW:
+      if( strcmp(x,"ENTRY_TOKEN")!=0 ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "%%embed %s: expected ENTRY_TOKEN keyword, got \"%s\".",
+          psp->gp->last_embed->name ? psp->gp->last_embed->name : "?",
+          x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }else{
+        psp->state = WAITING_FOR_EMBED_ENTRY_TOKEN;
+      }
+      break;
+    case WAITING_FOR_EMBED_ENTRY_TOKEN:
+      if( !ISUPPER(x[0]) ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "%%embed %s: ENTRY_TOKEN must be a terminal name (got \"%s\")",
+          psp->gp->last_embed->name ? psp->gp->last_embed->name : "?",
+          x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }else{
+        struct symbol *sp = Symbol_find(x);
+        if( sp==0 ){
+          ErrorMsg(psp->filename,psp->tokenlineno,
+            "%%embed %s: ENTRY_TOKEN \"%s\" is not a declared "
+            "terminal (add a `%%token %s.` directive first)",
+            psp->gp->last_embed->name ? psp->gp->last_embed->name : "?",
+            x, x);
+          psp->errorcnt++;
+          psp->state = RESYNC_AFTER_DECL_ERROR;
+        }else{
+          psp->gp->last_embed->entry_token = sp;
+          psp->state = WAITING_FOR_EMBED_TERMINATOR;
+        }
+      }
+      break;
+    case WAITING_FOR_EMBED_TERMINATOR:
+      if( x[0]!='.' ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "%%embed %s: expected `.` terminator, got \"%s\".",
+          psp->gp->last_embed->name ? psp->gp->last_embed->name : "?",
+          x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }else{
+        psp->state = WAITING_FOR_DECL_OR_RULE;
+      }
+      break;
     case RESYNC_AFTER_RULE_ERROR:
 /*      if( x[0]=='.' ) psp->state = WAITING_FOR_DECL_OR_RULE;
 **      break; */
@@ -6673,9 +6881,17 @@ static void parse_lime_file_recursive(struct pstate *psp,
     }
     psp->tokenstart = cp;
     psp->tokenlineno = lineno;
-    if( c=='\"' ){
+    if( c=='\"' || c=='\'' ){
+      /* v0.4.4: single-quoted strings join double-quoted strings
+      ** as a top-level token shape.  Used by `%embed ... TRIGGER
+      ** 'lex' ...`; no other directive consumes a top-level
+      ** quoted lexeme today, so this widening is safe.  Keeping
+      ** the close-quote stripped (NUL'd) matches the existing
+      ** double-quote handling -- callers see psp->tokenstart
+      ** point at the opening quote, with the body NUL-terminated. */
+      int quote = c;
       cp++;
-      while( (c= *cp)!=0 && c!='\"' ){
+      while( (c= *cp)!=0 && c!=quote ){
         if( c=='\n' ) lineno++;
         cp++;
       }
@@ -9556,8 +9772,11 @@ void ReportHeader(struct lime *lemp)
   if( lemp->tokenprefix ) prefix = lemp->tokenprefix;
   else                    prefix = "";
   /* Skip change-detection when AST nodes are present (header has complex
-  ** content beyond simple #define lines) */
-  if( !lemp->ast_nodes ){
+  ** content beyond simple #define lines).  v0.4.4: also skip when
+  ** %embed directives are present -- the trailing helper-prototypes
+  ** block won't show up in the existing-file scan that only walks
+  ** the #define lines. */
+  if( !lemp->ast_nodes && !lemp->first_embed ){
     in = file_open(lemp,".h","rb");
     if( in ){
       int nextChar;
@@ -9655,6 +9874,25 @@ void ReportHeader(struct lime *lemp)
               "%s_new_##Type(arena, ##__VA_ARGS__)\n", ap);
 
       fprintf(out,"\n#endif /* LIME_AST_TYPES_DEFINED */\n");
+    }
+
+    /* v0.4.4: %embed sugar -- emit forward declarations of the
+    ** generated <Prefix>SetEmbedSnapshot / <Prefix>RegisterEmbedTriggers
+    ** helpers when one or more `%embed` directives are present.
+    ** The bodies live in <Prefix>_snapshot.c (gated on -n / snapshot
+    ** generation); user code includes this header to call them.
+    ** Forward-declares ParserSnapshot and GrammarContextStack so the
+    ** caller does not have to include grammar_context.h transitively
+    ** unless they want to. */
+    if( lemp->first_embed ){
+      const char *embed_name = lemp->name ? lemp->name : "Parse";
+      fprintf(out,
+        "\n/* v0.4.4: %%embed runtime helpers (sugar over "
+        "context_switch_register_trigger). */\n"
+        "#include \"grammar_context.h\"\n"
+        "int %sSetEmbedSnapshot(const char *name, ParserSnapshot *snap);\n"
+        "int %sRegisterEmbedTriggers(GrammarContextStack *stack);\n",
+        embed_name, embed_name);
     }
     fclose(out);
   }
@@ -9933,6 +10171,114 @@ void ReportSnapshotInit(struct lime *lemp)
     lemp->minReduce,
     name
   );
+
+  /* ------------------------------------------------------------ */
+  /*  v0.4.4: %embed lang TRIGGER 'lex' ENTRY_TOKEN TOKEN.        */
+  /* ------------------------------------------------------------ */
+  /*
+  ** When the grammar declared one or more `%embed` directives,
+  ** emit:
+  **   - a static <Prefix>_embed_table[] populated from the
+  **     directive list at codegen time (snap pointers NULL'd, to
+  **     be late-bound by the user via <Prefix>SetEmbedSnapshot)
+  **   - <Prefix>SetEmbedSnapshot(name, snap): late-bind a runtime
+  **     ParserSnapshot to a declared %embed name
+  **   - <Prefix>RegisterEmbedTriggers(stack): walk the table and
+  **     call context_switch_register_trigger() for each entry
+  **     whose snap has been wired up
+  **
+  ** The directive sugars OVER the existing context_switch.c API;
+  ** this codegen is ergonomic only -- no runtime code paths
+  ** change.  When no %embed directives are declared, none of this
+  ** machinery is emitted (zero-cost when unused).
+  */
+  if( lemp->first_embed ){
+    LimeEmbedDirective *e;
+    int n_entries = 0;
+    for( e = lemp->first_embed; e; e = e->next ) n_entries++;
+
+    fprintf(out,
+      "\n/* ------------------------------------------------------------- */\n"
+      "/*  v0.4.4: %%embed sugar -- runtime grammar-mode triggers.       */\n"
+      "/* ------------------------------------------------------------- */\n"
+      "#include \"grammar_context.h\"\n"
+      "\n"
+      "typedef struct %sEmbedEntry {\n"
+      "    const char       *name;             /* mode label */\n"
+      "    const char       *trigger;          /* trigger lexeme */\n"
+      "    int               entry_token_code; /* %%embed ENTRY_TOKEN */\n"
+      "    ParserSnapshot   *snap;             /* late-bound by user */\n"
+      "} %sEmbedEntry;\n"
+      "\n"
+      "static %sEmbedEntry %s_embed_table[] = {\n",
+      name, name, name, name);
+
+    for( e = lemp->first_embed; e; e = e->next ){
+      int code = e->entry_token ? e->entry_token->index : 0;
+      const char *p;
+      fprintf(out, "    { \"");
+      /* Mode labels are identifiers; quote-escape unconditionally
+      ** (cheap and safe). */
+      for( p = e->name ? e->name : ""; *p; p++ ){
+        if( *p=='\\' || *p=='\"' ) fputc('\\', out);
+        fputc((unsigned char)*p, out);
+      }
+      fprintf(out, "\", \"");
+      /* Trigger lexemes are user-supplied free-form bytes;
+      ** escape both backslash and double-quote so non-ALNUM
+      ** triggers (e.g. ':-', '<<') round-trip cleanly. */
+      for( p = e->trigger_lexeme ? e->trigger_lexeme : ""; *p; p++ ){
+        if( *p=='\\' || *p=='\"' ) fputc('\\', out);
+        fputc((unsigned char)*p, out);
+      }
+      fprintf(out, "\", %d, NULL },\n", code + lemp->first_token);
+    }
+    fprintf(out,
+      "    { NULL, NULL, 0, NULL }\n"
+      "};\n"
+      "\n"
+      "/*\n"
+      "** User-callable: late-bind a runtime ParserSnapshot to a declared\n"
+      "** %%embed mode name.  Must be called BEFORE %sRegisterEmbedTriggers.\n"
+      "** Returns 0 on success, -1 if @p name is not a declared %%embed.\n"
+      "*/\n"
+      "int %sSetEmbedSnapshot(const char *name, ParserSnapshot *snap) {\n"
+      "    if (name == NULL) return -1;\n"
+      "    for (int i = 0; %s_embed_table[i].name != NULL; i++) {\n"
+      "        if (strcmp(%s_embed_table[i].name, name) == 0) {\n"
+      "            %s_embed_table[i].snap = snap;\n"
+      "            return 0;\n"
+      "        }\n"
+      "    }\n"
+      "    return -1;\n"
+      "}\n"
+      "\n"
+      "/*\n"
+      "** User-callable: register every wired-up %%embed entry on @p stack\n"
+      "** via context_switch_register_trigger().  Entries whose snap is\n"
+      "** still NULL (the user did not call %sSetEmbedSnapshot for them)\n"
+      "** are silently skipped, so partial wiring works.  Returns the\n"
+      "** number of triggers actually registered.\n"
+      "*/\n"
+      "int %sRegisterEmbedTriggers(GrammarContextStack *stack) {\n"
+      "    int n_registered = 0;\n"
+      "    if (stack == NULL) return 0;\n"
+      "    for (int i = 0; %s_embed_table[i].name != NULL; i++) {\n"
+      "        if (%s_embed_table[i].snap == NULL) continue;\n"
+      "        if (context_switch_register_trigger(\n"
+      "                stack,\n"
+      "                %s_embed_table[i].trigger,\n"
+      "                %s_embed_table[i].snap,\n"
+      "                %s_embed_table[i].name)) {\n"
+      "            n_registered++;\n"
+      "        }\n"
+      "    }\n"
+      "    return n_registered;\n"
+      "}\n",
+      name, name, name, name, name,
+      name, name, name, name, name, name, name);
+    (void)n_entries;
+  }
 
   fclose(out);
 }

@@ -241,6 +241,42 @@ test('diff_conflicts', test_diff_conflicts,
   ],
 )
 
+# v0.4.4: %embed lang TRIGGER 'lex' ENTRY_TOKEN TOKEN.  Sugar over
+# context_switch_register_trigger() that auto-generates the
+# <Prefix>_embed_table[] + <Prefix>SetEmbedSnapshot() +
+# <Prefix>RegisterEmbedTriggers() helpers in the snapshot file.
+# Sub-tests 1-8 drive the lime binary; sub-test 9 links against a
+# pre-built fixture parser and exercises the runtime classify path.
+test_embed_gen = custom_target('test_embed_parser',
+  input   : ['test_embed_grammar.lime'],
+  output  : ['test_embed_grammar.c',
+             'test_embed_grammar.h',
+             'test_embed_grammar_snapshot.c'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-n',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_embed = executable('test_embed',
+  'test_embed.c',
+  test_embed_gen,
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+  c_args : nounusedparam,
+)
+
+test('embed', test_embed,
+  args : [
+    lime_exe.full_path(),
+    meson.project_source_root() / 'limpar.c',
+    meson.current_source_dir() / 'test_embed_grammar.lime',
+  ],
+)
+
 test_parse_context_coverage = executable('test_parse_context_coverage',
   'test_parse_context_coverage.c',
   dependencies : lime_parser_dep,
