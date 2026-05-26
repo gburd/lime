@@ -1,0 +1,19 @@
+/*
+** tests/extends_fixtures/unified.lime -- v0.4.1 diamond top.
+** Extends BOTH oracle.lime and mysql.lime.  Both transitively
+** %extends ansi_sql.lime; the diamond converges on ansi's rules.
+**
+** Diamond resolution per docs/EXTENDS.md:
+**   - select_clause: oracle overrode, mysql did not -> oracle wins (Rule 5)
+**   - where_clause:  mysql overrode, oracle did not -> mysql wins (Rule 5)
+**   - oracle's CONNECT_BY rule + mysql's LIMIT rule both present
+**   - ansi's "where_clause ::= ." (empty) preserved on both arms
+**     -> dedup
+*/
+
+%extends "oracle.lime"
+%extends "mysql.lime"
+
+/* Sanity rule: the unified parser is a strict superset of both
+** dialects, so the action body merges arithmetic from both. */
+result(R) ::= NUMBER(N).   { R = N; *out = R; }

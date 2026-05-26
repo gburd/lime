@@ -1,0 +1,32 @@
+/*
+** tests/extends_fixtures/ansi_sql.lime -- v0.4.1 base grammar for
+** the %extends inheritance test fixture.  Models a tiny ANSI SQL
+** SELECT/WHERE skeleton.  Two derivatives (oracle.lime,
+** mysql.lime) extend it and override different rules; unified.lime
+** then extends both to exercise the diamond-resolution path.
+*/
+
+%name AnsiSql
+%token_type {int}
+%type stmt {int}
+%type result {int}
+%extra_argument {int *out}
+
+%include {
+#include <stdio.h>
+#include <stdlib.h>
+}
+
+%token IDENT NUMBER STAR.
+%token SELECT FROM WHERE EQUALS.
+
+%type select_clause {int}
+%type where_clause  {int}
+
+stmt(S) ::= result(R).                            { S = R; *out = R; }
+
+result(R) ::= select_clause(S) where_clause(W).   { R = S + W; }
+
+select_clause(R) ::= SELECT STAR FROM IDENT.      { R = 1;  /* ANSI */ }
+where_clause(R)  ::= WHERE IDENT EQUALS NUMBER.   { R = 10; /* ANSI */ }
+where_clause(R)  ::= .                            { R = 0;  /* empty */ }

@@ -1,0 +1,16 @@
+/*
+** tests/extends_fixtures/mysql.lime -- v0.4.1 derived dialect.
+** Extends the ANSI base, overrides where_clause, and adds a
+** MySQL-specific BACKTICK_IDENT alternative.
+*/
+
+%extends "ansi_sql.lime"
+
+%token BACKTICK_IDENT LIMIT.
+
+%override
+where_clause(R) ::= WHERE IDENT EQUALS NUMBER.   { R = 50; /* MySQL */ }
+
+where_clause(R) ::= WHERE BACKTICK_IDENT EQUALS NUMBER. { R = 60; }
+result(R) ::= select_clause(S) where_clause(W) LIMIT NUMBER(N).
+                                                 { R = S + W + N; *out = R; }

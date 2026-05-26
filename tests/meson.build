@@ -188,6 +188,22 @@ test('dialect', test_dialect,
   ],
 )
 
+# v0.4.1: %extends + %override + %remove + %override_type +
+# diamond inheritance.  Drives lime against tests/extends_fixtures/
+# (ansi_sql / oracle / mysql / unified) and several inline
+# fixtures generated at runtime (cycle, conflict, alias-identity).
+# 12 sub-tests; see tests/test_extends.c for the full matrix.
+test_extends = executable('test_extends',
+  'test_extends.c',
+)
+test('extends', test_extends,
+  args : [
+    lime_exe.full_path(),
+    meson.project_source_root() / 'limpar.c',
+    meson.current_source_dir() / 'extends_fixtures',
+  ],
+)
+
 test_parse_context_coverage = executable('test_parse_context_coverage',
   'test_parse_context_coverage.c',
   dependencies : lime_parser_dep,

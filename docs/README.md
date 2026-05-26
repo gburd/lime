@@ -20,6 +20,7 @@
 | [CI.md](CI.md) | Continuous integration setup, jobs, and runner tiers |
 | [EXTENSIONS.md](EXTENSIONS.md) | Writing runtime grammar extensions |
 | [DIALECT.md](DIALECT.md) | `%dialect NAME { ... }` directive: generator-time conditional rule inclusion |
+| [EXTENDS.md](EXTENDS.md) | `%extends "base.lime"` + `%override` / `%remove` / `%override_type`: file-level grammar inheritance with diamond resolution |
 | [CONTEXT_SWITCH.md](CONTEXT_SWITCH.md) | Multi-grammar parsing: register triggers that switch between sub-grammars at runtime |
 | [PERFORMANCE.md](PERFORMANCE.md) | Performance characteristics and tuning |
 | [EXTENSION_PERFORMANCE.md](EXTENSION_PERFORMANCE.md) | Extension overhead analysis |

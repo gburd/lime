@@ -1,0 +1,15 @@
+/*
+** tests/extends_fixtures/oracle.lime -- v0.4.1 derived dialect.
+** Extends the ANSI base, overrides select_clause to mark Oracle-
+** specific behavior, and adds CONNECT_BY-as-extra-rule.
+*/
+
+%extends "ansi_sql.lime"
+
+%token CONNECT_BY ROWNUM.
+
+%override
+select_clause(R) ::= SELECT STAR FROM IDENT.   { R = 100; /* Oracle */ }
+
+select_clause(R) ::= SELECT ROWNUM FROM IDENT. { R = 200; }
+result(R) ::= CONNECT_BY result(I).            { R = 1000 + I; *out = R; }

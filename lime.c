@@ -12,6 +12,9 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <sys/stat.h>
+#include <stdint.h>
+#include <limits.h>
 
 /*
 ** Stub for the .lex compiler entry point.  The real implementation
@@ -351,6 +354,20 @@ void   OptPrint(void);
 /******** From the file "parse.h" *****************************************/
 void Parse(struct lime *lemp);
 
+/* v0.4.1 forward decls (%extends + diamond machinery).  The full
+** definitions live near the bottom of the file alongside Parse(),
+** but commit_current_rule() (in the parser body, much earlier)
+** needs them to be visible. */
+struct pstate;
+static struct rule *find_rule_by_identity(struct pstate *psp,
+                                          struct rule *probe);
+static const char *resolve_extends_path(const char *current_file,
+                                        const char *target);
+static void parse_lime_file_recursive(struct pstate *psp,
+                                      const char *filename,
+                                      int is_top_level);
+static void unlink_and_free_rule(struct pstate *psp, struct rule *target);
+
 /********* From the file "plink.h" ***************************************/
 struct plink *Plink_new(void);
 void Plink_add(struct plink **, struct config *);
@@ -453,6 +470,45 @@ struct rule {
   ** in a `|`-alternation group, the comment was attached to the
   ** first rule of the group). */
   char *leading_comment;
+  /* v0.4.1 (%extends): provenance for diamond-inheritance and
+  ** %override / %remove identity matching.  origin_file is the
+  ** Strsafe-interned absolute (or as-resolved) path of the
+  ** .lime file the rule was parsed from.  origin_line is the
+  ** line of the rule's LHS within that file.  Both NULL/0 only
+  ** if commit_current_rule is called outside of any file (never
+  ** in practice). */
+  const char *origin_file;
+  int   origin_line;
+  /* v0.4.1: %override bookkeeping.  override_depth is INT_MAX for
+  ** rules that have never been the target of a %override (came in
+  ** as plain rules from a base or derived file).  When a %override
+  ** matches a rule, the matched rule's body is replaced and
+  ** override_depth is set to the extends_depth of the file that
+  ** issued the %override.  Diamond resolution: a later %override
+  ** at SHALLOWER depth (closer to the user-invoked file) wins
+  ** unconditionally; same depth from a different origin_file is a
+  ** conflict; deeper depth is silently skipped (the more-derived
+  ** decision already made on this rule stands). */
+  int   override_depth;
+  /* v0.4.1: 1 if this rule has ever been the target of a
+  ** %override directive.  Distinct from override_depth being
+  ** finite because we want a clean boolean for the diamond
+  ** decision tree ("is this rule's body owned by a derived
+  ** file or is it still verbatim from the base?"). */
+  int   is_overridden;
+  /* v0.4.1: 1 if a %remove or conflicting same-depth %override hit
+  ** this rule and the conflict has not yet been resolved by a
+  ** shallower %override.  Swept at end of Parse(); any rule still
+  ** carrying conflict_pending=1 produces a hard error. */
+  int   conflict_pending;
+  /* v0.4.1: file (Strsafe'd) and depth that issued the most
+  ** recent override.  Used for diagnostic strings on diamond
+  ** conflicts so the user sees BOTH paths' filenames. */
+  const char *override_file;
+  /* v0.4.1: when conflict_pending=1, the file that contributed
+  ** the conflicting override / remove.  NULL otherwise. */
+  const char *conflict_file;
+  int conflict_line;
   struct rule *nextlhs;    /* Next rule with the same LHS */
   struct rule *next;       /* Next rule in the global list */
 };
@@ -3278,7 +3334,17 @@ enum e_state {
   WAITING_FOR_AST_NODE_NAME,
   WAITING_FOR_AST_NODE_BODY,
   WAITING_FOR_AST_LIST_NAME,
-  WAITING_FOR_AST_LIST_ELEMENT
+  WAITING_FOR_AST_LIST_ELEMENT,
+  /* v0.4.1: %extends "path.lime" -- expects a quoted string
+  ** literal next.  On match, recursively parse the named file
+  ** before resuming the current file. */
+  WAITING_FOR_EXTENDS_PATH,
+  /* v0.4.1: %override_type SYM {Type} -- two-step state machine
+  ** identical in shape to %type.  WAITING_FOR_OVERRIDE_TYPE_SYM
+  ** matches the symbol name, then transitions to
+  ** WAITING_FOR_OVERRIDE_TYPE_BODY which reads the {Type} body
+  ** via the standard WAITING_FOR_DECL_ARG mechanism. */
+  WAITING_FOR_OVERRIDE_TYPE_SYM
 };
 struct pstate {
   char *filename;       /* Name of the input file */
@@ -3342,6 +3408,36 @@ struct pstate {
   ** lists, never these. */
   LimeTokenGroup *current_token_group;
   LimeTypeGroup  *current_type_group;
+  /* v0.4.1: %extends bookkeeping.  active_extends is a fixed-size
+  ** stack of Strsafe'd filenames currently being recursively
+  ** parsed.  extends_depth==0 means we are tokenizing the user-
+  ** invoked top-level file; deeper values mean we are inside
+  ** parse_lime_file_recursive() called from a `%extends "..."`
+  ** directive.  Used both for cycle detection (a path appearing
+  ** twice on the stack means a `%extends` cycle) and for diamond-
+  ** resolution depth comparisons (see struct rule's
+  ** override_depth).  16 levels is plenty -- a real grammar
+  ** inheritance chain rarely exceeds 3-4. */
+#define LIME_EXTENDS_MAX_DEPTH 16
+  const char *active_extends[LIME_EXTENDS_MAX_DEPTH];
+  int extends_depth;
+  /* v0.4.1: when set, the next rule committed by
+  ** commit_current_rule() is treated as a %override target
+  ** rather than a plain new rule.  Set by parseonetoken() when
+  ** it recognises `%override` (without a trailing `_type`); cleared
+  ** unconditionally inside commit_current_rule() so a leftover
+  ** flag never leaks into the next rule. */
+  int pending_override;
+  int pending_override_line;     /* line of `%override` for diagnostics */
+  /* v0.4.1: same role for %remove.  The directive is parsed as a
+  ** rule SHAPE (LHS + RHS); when the rule's terminating `.` is
+  ** hit and pending_remove is set, commit_current_rule() unlinks
+  ** the matching rule from the gp list and frees the just-built
+  ** struct rule (it was a probe, never destined for the grammar).
+  ** %remove takes no action body, so the WAITING_FOR_DECL_OR_RULE
+  ** state at `.` is the natural terminator. */
+  int pending_remove;
+  int pending_remove_line;
 };
 
 /*
@@ -3504,16 +3600,69 @@ static LimeTypeGroup *lime_new_type_group(struct lime *gp,
 }
 
 /*
+** v0.4.1: helper -- unlink a rule from psp->firstrule/lastrule
+** AND from rp->lhs->rule's per-LHS chain.  Used by %remove.  The
+** rule is freed by lime_free; rhs / rhsalias share the same
+** allocation (calloc trick in commit_current_rule), so a single
+** free covers them.  origin/override pointers are Strsafe'd, not
+** owned by the rule -- no separate free needed for them.  We do
+** NOT decrement psp->gp->nrule because rule indexes are reassigned
+** by main() after Parse() returns; leaving a hole in the index
+** space here is harmless.
+*/
+static void unlink_and_free_rule(struct pstate *psp, struct rule *target)
+{
+  struct rule **pp;
+  /* Unlink from the global next-list. */
+  if( psp->firstrule == target ){
+    psp->firstrule = target->next;
+  }else{
+    for(pp = &psp->firstrule; *pp && *pp != target; pp = &(*pp)->next){}
+    if( *pp ) *pp = target->next;
+  }
+  if( psp->lastrule == target ){
+    /* Walk to find the new tail; rare case (remove last rule). */
+    struct rule *r = psp->firstrule;
+    psp->lastrule = 0;
+    while( r ){ psp->lastrule = r; r = r->next; }
+  }
+  /* Unlink from the per-LHS chain. */
+  if( target->lhs ){
+    struct rule **lpp = &target->lhs->rule;
+    while( *lpp && *lpp != target ) lpp = &(*lpp)->nextlhs;
+    if( *lpp ) *lpp = target->nextlhs;
+  }
+  /* Free leading_comment if any. */
+  if( target->leading_comment ){
+    lime_free(target->leading_comment);
+  }
+  lime_free(target);
+}
+
+/*
 ** Commit the current accumulated rule (psp->lhs, psp->lhsalias,
 ** psp->rhs[0..nrhs-1], psp->alias[0..nrhs-1]) to the grammar's rule
 ** list.  Called from the IN_RHS state when a rule-terminator (`.`)
 ** or an alternation (`|`) is seen.  Leaves psp->prevrule pointing at
 ** the newly-committed rule (NULL on allocation failure), and does
 ** not modify psp->state.
+**
+** v0.4.1: branches on psp->pending_override / psp->pending_remove
+** to dispatch to override or remove rather than plain add.
+** Diamond detection runs against the existing rule list when
+** either flag is set.  See docs/EXTENDS.md for the resolution
+** rules (5 distinct cases).
 */
 static void commit_current_rule(struct pstate *psp)
 {
   struct rule *rp;
+  int do_override = psp->pending_override;
+  int do_remove   = psp->pending_remove;
+  /* Clear flags up front so an early return / error doesn't leak
+  ** state into the next rule. */
+  psp->pending_override = 0;
+  psp->pending_remove = 0;
+
   rp = (struct rule *)lime_calloc( sizeof(struct rule) +
        sizeof(struct symbol*)*psp->nrhs + sizeof(char*)*psp->nrhs, 1);
   if( rp==0 ){
@@ -3521,7 +3670,9 @@ static void commit_current_rule(struct pstate *psp)
       "Can't allocate enough memory for this rule.");
     psp->errorcnt++;
     psp->prevrule = 0;
-  }else{
+    return;
+  }
+  {
     int i;
     rp->ruleline = psp->tokenlineno;
     rp->rhs = (struct symbol**)&rp[1];
@@ -3537,29 +3688,190 @@ static void commit_current_rule(struct pstate *psp)
     rp->code = 0;
     rp->noCode = 1;
     rp->precsym = 0;
-    /* Lime-Letter-19: attach the comment that preceded this rule's
-    ** LHS non-terminal.  pending_rule_comment was taken from
-    ** pending_comments by parseonetoken() when ISLOWER(x[0]) hit
-    ** WAITING_FOR_DECL_OR_RULE; it holds for the lifetime of one
-    ** logical rule (one LHS + RHS group), then resets to NULL.  In
-    ** a `|` alternation group, only the FIRST commit captures the
-    ** comment; subsequent commits in the same group leave
-    ** rp->leading_comment NULL (the formatter is fine with this --
-    ** alternation expands to N rules with the comment on the first). */
-    rp->leading_comment = psp->pending_rule_comment;
-    psp->pending_rule_comment = 0;
-    rp->index = psp->gp->nrule++;
-    rp->nextlhs = rp->lhs->rule;
-    rp->lhs->rule = rp;
-    rp->next = 0;
-    if( psp->firstrule==0 ){
-      psp->firstrule = psp->lastrule = rp;
-    }else{
-      psp->lastrule->next = rp;
-      psp->lastrule = rp;
-    }
-    psp->prevrule = rp;
+    /* v0.4.1: provenance for diamond resolution + override matching. */
+    rp->origin_file = psp->filename ? Strsafe(psp->filename) : 0;
+    rp->origin_line = psp->tokenlineno;
+    rp->override_depth = INT_MAX;
+    rp->is_overridden = 0;
+    rp->conflict_pending = 0;
+    rp->override_file = 0;
+    rp->conflict_file = 0;
+    rp->conflict_line = 0;
   }
+
+  /* v0.4.1: dispatch on override / remove flags before anything
+  ** that mutates the gp list.  Both branches consume `rp` -- it
+  ** was built only as a probe with the right identity. */
+  if( do_remove ){
+    struct rule *target = find_rule_by_identity(psp, rp);
+    if( target==0 ){
+#ifdef LIME_STRICT
+      ErrorMsg(psp->filename, psp->pending_remove_line,
+        "%%remove: no rule of matching identity (LHS=%s, %d RHS) "
+        "to remove",
+        rp->lhs ? rp->lhs->name : "?", rp->nrhs);
+      psp->errorcnt++;
+#else
+      fprintf(stderr,
+        "%s:%d: warning: %%remove targets non-existent rule "
+        "(LHS=%s, %d RHS); ignoring\n",
+        psp->filename, psp->pending_remove_line,
+        rp->lhs ? rp->lhs->name : "?", rp->nrhs);
+#endif
+      lime_free(rp);
+      psp->prevrule = 0;
+      return;
+    }
+    /* Diamond rule 8: %override on one path + %remove on another
+    ** at the same depth = conflict.  We err on the side of
+    ** removing (the user's most recent stated intent), but mark
+    ** the rule for end-of-Parse() conflict reporting if the
+    ** existing rule was overridden by a sibling.  Since the rule
+    ** is going away, we can't usefully mark it; emit the error
+    ** synchronously. */
+    if( target->is_overridden
+        && target->override_depth >= psp->extends_depth
+        && target->override_file != 0
+        && target->override_file != Strsafe(psp->filename) ){
+      ErrorMsg(psp->filename, psp->pending_remove_line,
+        "%%remove conflicts with %%override of '%s' from '%s' "
+        "on a sibling %%extends path; add a %%override (or %%remove) "
+        "in the derived file to disambiguate",
+        target->lhs ? target->lhs->name : "?",
+        target->override_file);
+      psp->errorcnt++;
+    }
+    unlink_and_free_rule(psp, target);
+    lime_free(rp);
+    psp->prevrule = 0;
+    return;
+  }
+
+  if( do_override ){
+    struct rule *target = find_rule_by_identity(psp, rp);
+    if( target==0 ){
+      ErrorMsg(psp->filename, psp->pending_override_line,
+        "%%override: no rule of matching identity (LHS=%s, %d RHS) "
+        "to override -- the directive replaces a rule inherited "
+        "via %%extends; check the LHS and RHS sequence match",
+        rp->lhs ? rp->lhs->name : "?", rp->nrhs);
+      psp->errorcnt++;
+      lime_free(rp);
+      psp->prevrule = 0;
+      return;
+    }
+    /* Diamond resolution.  See docs/EXTENDS.md "Override-vs-override". */
+    int new_depth = psp->extends_depth;
+    const char *new_file = rp->origin_file;
+    if( target->is_overridden ){
+      if( new_depth < target->override_depth ){
+        /* Shallower override wins (Rule 6). */
+        target->conflict_pending = 0;
+        target->conflict_file = 0;
+      }else if( new_depth > target->override_depth ){
+        /* More-derived override already on the rule; skip. */
+        lime_free(rp);
+        psp->prevrule = target;
+        return;
+      }else{
+        /* Same depth. */
+        if( target->override_file == new_file ){
+          /* Same file overriding twice: last-wins. */
+        }else{
+          /* Different file at same depth = diamond conflict
+          ** (Rule 4).  Mark for end-of-Parse() error, but
+          ** still apply the new body so downstream codegen
+          ** has a deterministic rule.  The conflict_file slot
+          ** records the LOSING side so the diagnostic can
+          ** name both. */
+          target->conflict_pending = 1;
+          target->conflict_file = target->override_file;
+          target->conflict_line = target->ruleline;
+        }
+      }
+    }
+    /* Apply the override: replace body, aliases, precsym; preserve
+    ** rule index and per-LHS chain links so reduce-action numbering
+    ** stays stable. */
+    {
+      int i;
+      target->lhsalias = rp->lhsalias;
+      for(i=0; i<target->nrhs && i<rp->nrhs; i++){
+        target->rhsalias[i] = rp->rhsalias[i];
+      }
+      target->ruleline = rp->ruleline;
+      target->origin_file = rp->origin_file;
+      target->origin_line = rp->origin_line;
+      target->is_overridden = 1;
+      target->override_depth = new_depth;
+      target->override_file = new_file;
+      /* Clear the prior code/precsym so the rule's trailing
+      ** action+precedence parses fill them on `target` rather
+      ** than `rp` (which we're about to throw away). */
+      target->code = 0;
+      target->codePrefix = 0;
+      target->codeSuffix = 0;
+      target->noCode = 1;
+      target->precsym = 0;
+      target->line = 0;
+    }
+    lime_free(rp);
+    /* Post-override the trailing `{ action }` and `[PRECSYM]`
+    ** parsers in WAITING_FOR_DECL_OR_RULE attach to psp->prevrule.
+    ** Point that at the in-place-replaced target so the body
+    ** lands in the right slot. */
+    psp->prevrule = target;
+    return;
+  }
+
+  /* Plain rule add: diamond-deduplication.  If a rule with the
+  ** same identity already exists, we silently skip the new copy.
+  ** Two channels feed this case:
+  **   1. The same base file is loaded twice via different
+  **      %extends paths (the diamond pattern); the rule is the
+  **      same on both arms, so dropping the second copy is
+  **      lossless.
+  **   2. A previously-overridden rule has been re-encountered as
+  **      a plain re-add from a sibling base file that doesn't
+  **      know about the override; the override stands per Rule 5. */
+  {
+    struct rule *existing = find_rule_by_identity(psp, rp);
+    if( existing != 0 ){
+      lime_free(rp);
+      /* Point prevrule at the existing rule so that any trailing
+      ** action attached to this duplicate writes onto the
+      ** existing.  This matters when a base file is parsed
+      ** through a diamond: the second time around we want the
+      ** action body (if any) to land on the SAME rule object.
+      ** If the existing rule already has a code body, the
+      ** "is not the first to follow the previous rule" guard
+      ** in WAITING_FOR_DECL_OR_RULE will reject the second
+      ** action -- which is what we want for diamonds where
+      ** both paths see the same body verbatim (Strsafe-interned
+      ** string equality means subsequent attaches to the same
+      ** rp->code pointer are no-ops, so the guard fires only on
+      ** truly differing bodies, but parseonetoken doesn't know
+      ** that, so it still errors -- acceptable trade-off). */
+      psp->prevrule = existing;
+      return;
+    }
+  }
+
+  /* Lime-Letter-19 leading-comment attach happens here.  See the
+  ** comment in the previous block for ownership semantics. */
+  rp->leading_comment = psp->pending_rule_comment;
+  psp->pending_rule_comment = 0;
+  rp->index = psp->gp->nrule++;
+  rp->nextlhs = rp->lhs->rule;
+  rp->lhs->rule = rp;
+  rp->next = 0;
+  if( psp->firstrule==0 ){
+    psp->firstrule = psp->lastrule = rp;
+  }else{
+    psp->lastrule->next = rp;
+    psp->lastrule = rp;
+  }
+  psp->prevrule = rp;
 }
 
 /*
@@ -3680,10 +3992,20 @@ static void parseonetoken(struct pstate *psp)
             "fragment which begins on this line.");
           psp->errorcnt++;
         }else if( psp->prevrule->code!=0 ){
-          ErrorMsg(psp->filename,psp->tokenlineno,
-            "Code fragment beginning on this line is not the first "
-            "to follow the previous rule.");
-          psp->errorcnt++;
+          if( psp->extends_depth > 0 ){
+            /* v0.4.1: the previous "rule" was actually deduped
+            ** against an existing rule from a prior %extends arm
+            ** (or this is the same base file pulled in twice via
+            ** a diamond).  The existing rule already carries a
+            ** code body; silently swallow the redundant one.
+            ** A genuine conflict would be flagged at end-of-Parse()
+            ** by the diamond conflict sweep, not here. */
+          }else{
+            ErrorMsg(psp->filename,psp->tokenlineno,
+              "Code fragment beginning on this line is not the first "
+              "to follow the previous rule.");
+            psp->errorcnt++;
+          }
         }else if( strcmp(x, "{NEVER-REDUCE")==0 ){
           psp->prevrule->neverReduce = 1;
           propagate_alt_group_attach(psp);
@@ -3723,10 +4045,16 @@ static void parseonetoken(struct pstate *psp)
           "There is no prior rule to assign precedence \"[%s]\".",x);
         psp->errorcnt++;
       }else if( psp->prevrule->precsym!=0 ){
-        ErrorMsg(psp->filename,psp->tokenlineno,
-          "Precedence mark on this line is not the first "
-          "to follow the previous rule.");
-        psp->errorcnt++;
+        if( psp->extends_depth > 0 ){
+          /* v0.4.1: diamond reload -- existing rule already has
+          ** a precedence mark from the first arm.  Silently
+          ** swallow the redundant one. */
+        }else{
+          ErrorMsg(psp->filename,psp->tokenlineno,
+            "Precedence mark on this line is not the first "
+            "to follow the previous rule.");
+          psp->errorcnt++;
+        }
       }else{
         psp->prevrule->precsym = Symbol_new(x);
       }
@@ -4081,6 +4409,72 @@ static void parseonetoken(struct pstate *psp)
         }else if( strcmp(x,"ast_auto")==0 ){
           psp->gp->ast_auto = 1;
           psp->state = WAITING_FOR_DECL_OR_RULE;
+        }else if( strcmp(x,"extends")==0 ){
+          /* v0.4.1: %extends "path" -- recursively load the named
+          ** Lime grammar file before continuing the current one.
+          ** The directive may appear anywhere a normal directive
+          ** does; conventionally it sits at the top of the
+          ** derived file.  See docs/EXTENDS.md. */
+          psp->state = WAITING_FOR_EXTENDS_PATH;
+        }else if( strcmp(x,"override")==0 ){
+          /* v0.4.1: %override -- the next rule REPLACES a rule of
+          ** matching identity (LHS + RHS sequence) inherited from a
+          ** %extends'd file.  Errors at commit time if no match
+          ** found.  Diamond resolution: a shallower-depth override
+          ** wins; same-depth overrides from different files are a
+          ** conflict (collected and errored at end of Parse()). */
+          if( psp->pending_override ){
+            ErrorMsg(psp->filename,psp->tokenlineno,
+              "%%override repeated without an intervening rule");
+            psp->errorcnt++;
+          }
+          psp->pending_override = 1;
+          psp->pending_override_line = psp->tokenlineno;
+          /* No state change -- the next token is expected to be the
+          ** LHS of a normal-looking rule, which will be picked up
+          ** by WAITING_FOR_DECL_OR_RULE. */
+          psp->state = WAITING_FOR_DECL_OR_RULE;
+          /* Drop any pending leading comment; it would otherwise
+          ** be attached to the override-target rule, but the
+          ** target rule's leading_comment slot is already owned
+          ** by the base file's declaration of it. */
+          if( psp->pending_directive_comment ){
+            lime_free(psp->pending_directive_comment);
+            psp->pending_directive_comment = 0;
+          }
+        }else if( strcmp(x,"override_type")==0 ){
+          /* v0.4.1: %override_type SYM {Type}.  Mirrors %type's
+          ** state machine but without the "already defined"
+          ** guard -- widening an existing type IS the point.
+          ** Lime warns at codegen time when a widening actually
+          ** happens (the user is asserting ABI compatibility). */
+          psp->state = WAITING_FOR_OVERRIDE_TYPE_SYM;
+          if( psp->pending_directive_comment ){
+            lime_free(psp->pending_directive_comment);
+            psp->pending_directive_comment = 0;
+          }
+        }else if( strcmp(x,"remove")==0 ){
+          /* v0.4.1: %remove rule-shape.  -- delete a rule of
+          ** matching identity from the merged grammar.  No action
+          ** body; the directive ends at the rule's terminating
+          ** `.`.  Soft-fails (warn) when the target rule does
+          ** not exist, unless LIME_STRICT is defined (see
+          ** meson.build), in which case the same condition is
+          ** a hard error.  Diamond conflict (override on one path,
+          ** remove on another at the same depth) is errored at
+          ** end-of-Parse(). */
+          if( psp->pending_remove ){
+            ErrorMsg(psp->filename,psp->tokenlineno,
+              "%%remove repeated without an intervening rule");
+            psp->errorcnt++;
+          }
+          psp->pending_remove = 1;
+          psp->pending_remove_line = psp->tokenlineno;
+          psp->state = WAITING_FOR_DECL_OR_RULE;
+          if( psp->pending_directive_comment ){
+            lime_free(psp->pending_directive_comment);
+            psp->pending_directive_comment = 0;
+          }
         }else{
           ErrorMsg(psp->filename,psp->tokenlineno,
             "Unknown declaration keyword: \"%%%s\".",x);
@@ -4116,11 +4510,29 @@ static void parseonetoken(struct pstate *psp)
         psp->state = RESYNC_AFTER_DECL_ERROR;
       }else{
         struct symbol *sp = Symbol_find(x);
-        if((sp) && (sp->datatype)){
+        if((sp) && (sp->datatype) && psp->extends_depth==0){
           ErrorMsg(psp->filename,psp->tokenlineno,
             "Symbol %%type \"%s\" already defined", x);
           psp->errorcnt++;
           psp->state = RESYNC_AFTER_DECL_ERROR;
+        }else if((sp) && (sp->datatype)){
+          /* v0.4.1: diamond %extends reload -- the same base file
+          ** has been pulled in via two paths and is re-declaring a
+          ** %type we already have.  Silently consume the {body}
+          ** without overwriting the existing string by routing
+          ** WAITING_FOR_DECL_ARG to a static throwaway slot.  This
+          ** is correct for IDENTICAL re-declarations (the diamond
+          ** convergence case); a CONFLICTING re-declaration would
+          ** silently take the first-loaded version, which is the
+          ** same first-wins policy applied to plain rules. */
+          static char *type_discard_slot = 0;
+          if( type_discard_slot ){
+            lime_free(type_discard_slot);
+            type_discard_slot = 0;
+          }
+          psp->declargslot = &type_discard_slot;
+          psp->insertLineMacro = 0;
+          psp->state = WAITING_FOR_DECL_ARG;
         }else{
           if (!sp){
             sp = Symbol_new(x);
@@ -4624,6 +5036,109 @@ static void parseonetoken(struct pstate *psp)
         psp->state = RESYNC_AFTER_DECL_ERROR;
       }
       break;
+    case WAITING_FOR_EXTENDS_PATH:
+      /* v0.4.1: `%extends "path"` -- token text starts with `"`
+      ** with the closing quote consumed by the tokenizer (the byte
+      ** at the close-quote position has been NUL'd; *psp->tokenstart
+      ** == '"' and the path follows).  Validate, resolve, recurse. */
+      if( x[0]!='\"' || x[1]==0 ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "%%extends expects a quoted filename, got \"%s\"", x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }else if( psp->extends_depth >= LIME_EXTENDS_MAX_DEPTH ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "%%extends nesting exceeds %d levels (cycle suspected)",
+          LIME_EXTENDS_MAX_DEPTH);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }else{
+        const char *target = &x[1];
+        const char *resolved =
+          resolve_extends_path(psp->filename, target);
+        if( resolved==0 ){
+          ErrorMsg(psp->filename,psp->tokenlineno,
+            "%%extends: cannot find file \"%s\" (searched relative "
+            "to current file%s)",
+            target,
+            getenv("LIME_PATH")?" and LIME_PATH":"");
+          psp->errorcnt++;
+          psp->state = WAITING_FOR_DECL_OR_RULE;
+        }else{
+          /* Cycle check: refuse to follow a path that's already
+          ** active on the extends stack (pointer-equal because
+          ** Strsafe interns). */
+          int i;
+          int is_cycle = 0;
+          for(i=0;i<psp->extends_depth;i++){
+            if( psp->active_extends[i]==resolved ){ is_cycle=1; break; }
+          }
+          if( is_cycle ){
+            ErrorMsg(psp->filename,psp->tokenlineno,
+              "%%extends cycle: \"%s\" is already being parsed",
+              resolved);
+            psp->errorcnt++;
+          }else{
+            char *saved_filename = psp->filename;
+            int saved_state = psp->state;
+            /* Push and recurse.  Inside the recursive call the
+            ** state machine starts fresh in WAITING_FOR_DECL_OR_RULE
+            ** so the base file is parsed as a self-contained
+            ** sequence of directives + rules. */
+            psp->active_extends[psp->extends_depth++] = resolved;
+            psp->state = WAITING_FOR_DECL_OR_RULE;
+            parse_lime_file_recursive(psp, resolved, 0);
+            psp->extends_depth--;
+            psp->filename = saved_filename;
+            psp->state = saved_state;
+          }
+          psp->state = WAITING_FOR_DECL_OR_RULE;
+        }
+      }
+      break;
+    case WAITING_FOR_OVERRIDE_TYPE_SYM:
+      if( !ISALPHA(x[0]) ){
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "Symbol name missing after %%override_type keyword");
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }else{
+        struct symbol *sp = Symbol_find(x);
+        if( sp==0 ){
+          ErrorMsg(psp->filename,psp->tokenlineno,
+            "%%override_type target symbol \"%s\" not declared "
+            "(no %%type, no %%token, no rule reference)", x);
+          psp->errorcnt++;
+          psp->state = RESYNC_AFTER_DECL_ERROR;
+        }else{
+          /* v0.4.1: redirect to the standard WAITING_FOR_DECL_ARG
+          ** path that reads the brace-delimited type body, exactly
+          ** like %type does -- but PRESERVE the existing datatype
+          ** for the warning we emit when the body lands.  We can't
+          ** easily wedge into the post-arg-collected hook, so we
+          ** stash the old value in declargslot's previous content
+          ** by emitting the warning HERE, before the arg is
+          ** collected.  The widening warning is intentionally
+          ** noisy (PG-style ABI compat reminder). */
+          if( sp->datatype && sp->datatype[0] ){
+            fprintf(stderr,
+              "%s:%d: warning: %%override_type widens %s from "
+              "existing type; user-responsibility ABI compat\n",
+              psp->filename, psp->tokenlineno, sp->name);
+          }
+          /* Free the existing datatype so WAITING_FOR_DECL_ARG
+          ** stores the new one rather than appending. */
+          if( sp->datatype ){
+            /* sp->datatype was lime_realloc'd; safe to lime_free. */
+            lime_free(sp->datatype);
+            sp->datatype = 0;
+          }
+          psp->declargslot = &sp->datatype;
+          psp->insertLineMacro = 0;
+          psp->state = WAITING_FOR_DECL_ARG;
+        }
+      }
+      break;
     case RESYNC_AFTER_RULE_ERROR:
 /*      if( x[0]=='.' ) psp->state = WAITING_FOR_DECL_OR_RULE;
 **      break; */
@@ -4971,14 +5486,178 @@ static void preprocess_input(char *z){
   }
 }
 
-/* In spite of its name, this function is really a scanner.  It read
-** in the entire input file (all at once) then tokenizes it.  Each
-** token is passed to the function "parseonetoken" which builds all
-** the appropriate data structures in the global state vector "gp".
+/*
+** v0.4.1: identity hash + equality for `%override` / `%remove` /
+** diamond detection.
+**
+** Rule identity is `(LHS_name, RHS_symbol_sequence_in_order)`.  Alias
+** names (LHS alias, per-RHS aliases) are intentionally excluded:
+** `expr(A) ::= expr(B) PLUS expr(C).` and `expr(X) ::= expr(Y) PLUS
+** expr(Z).` denote the SAME rule shape.  Action body and precedence
+** mark are also excluded -- they're what `%override` REPLACES, so
+** they must not participate in the matching key.  See
+** docs/EXTENDS.md "Rule identity".
+**
+** Hash is djb2 mixed -- not cryptographic, just decent distribution
+** so `find_rule_by_identity` can short-circuit on most negative
+** lookups before the O(nrhs) name compare.
 */
-void Parse(struct lime *gp)
+static uint32_t lime_djb2(const char *s){
+  uint32_t h = 5381;
+  while( *s ){ h = ((h << 5) + h) ^ (uint32_t)(unsigned char)(*s++); }
+  return h;
+}
+static uint32_t rule_identity_hash(struct rule *rp){
+  uint32_t h;
+  int i;
+  if( rp==0 || rp->lhs==0 ) return 0;
+  h = lime_djb2(rp->lhs->name);
+  for(i=0; i<rp->nrhs; i++){
+    /* MULTITERMINAL chains are stable -- subsym[0]'s name is the
+    ** primary; we hash that for identity (compound terminals are
+    ** an internal optimisation, not part of the user-visible
+    ** rule shape). */
+    struct symbol *sp = rp->rhs[i];
+    const char *nm = sp ? sp->name : "?";
+    h = (h * 1315423911u) ^ lime_djb2(nm);
+  }
+  return h;
+}
+static int rule_identity_eq(struct rule *a, struct rule *b){
+  int i;
+  if( a==b ) return 1;
+  if( a==0 || b==0 ) return 0;
+  if( a->lhs != b->lhs ) return 0;
+  if( a->nrhs != b->nrhs ) return 0;
+  for(i=0; i<a->nrhs; i++){
+    /* Symbols are interned via Symbol_new(), so pointer-equal iff
+    ** name-equal.  Cheaper than strcmp. */
+    if( a->rhs[i] != b->rhs[i] ) return 0;
+  }
+  return 1;
+}
+
+/*
+** Walk the linked rule list looking for a rule whose identity
+** (LHS + RHS sequence) matches `probe`.  Returns NULL when no
+** match.  Linear in the number of rules; for typical grammars
+** (~1000 rules) this is cheap enough that we don't index --
+** %extends-time mutations are rare relative to the parsing
+** workload.  If a future grammar pushes this above noise, swap
+** in a hash table keyed on rule_identity_hash().
+*/
+static struct rule *find_rule_by_identity(struct pstate *psp,
+                                          struct rule *probe){
+  struct rule *rp;
+  for(rp = psp->firstrule; rp; rp = rp->next){
+    if( rule_identity_eq(rp, probe) ) return rp;
+  }
+  return 0;
+}
+
+/*
+** Resolve `%extends "target"` against the current file's directory.
+** Returns a Strsafe-interned absolute-or-relative path on success,
+** NULL on failure.  Search order:
+**
+**   1. Absolute path (target[0]=='/'): take as-is.
+**   2. Relative to the current file's directory.
+**   3. Each colon-separated entry in the LIME_PATH env var, in
+**      order.
+**
+** Failure is signalled to the caller, which emits a diagnostic
+** with the surrounding %extends line number.  No fallback to
+** CWD: that has bitten enough Make-based build systems where
+** CWD shifts as the project grows.  If the user wants CWD,
+** they can set `LIME_PATH=.` explicitly.
+*/
+static const char *resolve_extends_path(const char *current_file,
+                                        const char *target){
+  struct stat st;
+  char buf[4096];
+  /* 1. Absolute path. */
+  if( target[0]=='/' ){
+    if( stat(target, &st)==0 ) return Strsafe(target);
+    return 0;
+  }
+  /* 2. Relative to current file's directory. */
+  if( current_file ){
+    const char *slash = strrchr(current_file, '/');
+    if( slash ){
+      size_t dlen = (size_t)(slash - current_file + 1);
+      if( dlen + strlen(target) + 1 < sizeof(buf) ){
+        memcpy(buf, current_file, dlen);
+        strcpy(buf + dlen, target);
+        if( stat(buf, &st)==0 ) return Strsafe(buf);
+      }
+    }else{
+      /* current_file has no `/` -- it lives in CWD.  Try target
+      ** in CWD. */
+      if( stat(target, &st)==0 ) return Strsafe(target);
+    }
+  }
+  /* 3. LIME_PATH search. */
+  {
+    const char *path = getenv("LIME_PATH");
+    if( path && *path ){
+      const char *p = path;
+      while( *p ){
+        const char *colon = strchr(p, ':');
+        size_t plen = colon ? (size_t)(colon - p) : strlen(p);
+        if( plen > 0 && plen + 1 + strlen(target) + 1 < sizeof(buf) ){
+          memcpy(buf, p, plen);
+          buf[plen] = '/';
+          strcpy(buf + plen + 1, target);
+          if( stat(buf, &st)==0 ) return Strsafe(buf);
+        }
+        if( !colon ) break;
+        p = colon + 1;
+      }
+    }
+  }
+  return 0;
+}
+
+/*
+** v0.4.1: forward declarations are at the top of the file (search
+** `parse_lime_file_recursive`) so commit_current_rule() can see
+** them.  Definitions follow.
+*/
+
+/*
+** v0.4.1: factored out of Parse().  Reads `filename`, runs the
+** preprocessor passes, and tokenizes into psp->gp's accumulating
+** rule/symbol/directive state.  Used both for the top-level user-
+** invoked file (is_top_level==1) and for files brought in by
+** `%extends` (is_top_level==0).
+**
+** Differences between the two:
+**   - Top-level captures the file's leading comment block as
+**     gp->header_comment (used by `lime -F` to round-trip the
+**     copyright/IDENTIFICATION header).  Recursive calls do not
+**     -- their leading comment, if any, lands inside the merged
+**     grammar where it cannot meaningfully be re-emitted.
+**   - Top-level expects psp->state to start at INITIALIZE so the
+**     prevrule / firstrule / lastrule / nrule slots get reset.
+**     Recursive calls pre-set state to WAITING_FOR_DECL_OR_RULE
+**     so the existing accumulator survives.
+**
+** Memory: filebuf is freed at the end of this function.  Action
+** bodies and identifiers within filebuf are interned via Strsafe()
+** before that, so the rule / symbol tables outlive filebuf.
+**
+** State save/restore: the caller (parseonetoken) is responsible
+** for saving and restoring psp->filename across the recursive
+** call.  This function temporarily sets psp->filename to the new
+** file but does not restore on return -- a recursive %extends
+** would otherwise need to thread the saved filename through
+** parse_lime_file_recursive's locals, which buys nothing.
+*/
+static void parse_lime_file_recursive(struct pstate *psp,
+                                      const char *filename,
+                                      int is_top_level)
 {
-  struct pstate ps;
+  struct lime *gp = psp->gp;
   FILE *fp;
   char *filebuf;
   unsigned int filesize;
@@ -4986,18 +5665,14 @@ void Parse(struct lime *gp)
   int c;
   char *cp, *nextcp;
   int startline = 0;
+  char *comment_region_start = 0;
+  char *body_start;
 
-  memset(&ps, '\0', sizeof(ps));
-  ps.gp = gp;
-  ps.filename = gp->filename;
-  ps.errorcnt = 0;
-  ps.state = INITIALIZE;
-
-  /* Begin by reading the input file */
-  fp = fopen(ps.filename,"rb");
+  fp = fopen(filename,"rb");
   if( fp==0 ){
-    ErrorMsg(ps.filename,0,"Can't open this file for reading.");
+    ErrorMsg(filename,0,"Can't open this file for reading.");
     gp->errorcnt++;
+    psp->errorcnt++;
     return;
   }
   fseek(fp,0,2);
@@ -5005,43 +5680,42 @@ void Parse(struct lime *gp)
   rewind(fp);
   filebuf = (char *)lime_malloc( filesize+1 );
   if( filesize>100000000 || filebuf==0 ){
-    ErrorMsg(ps.filename,0,"Input file too large.");
+    ErrorMsg(filename,0,"Input file too large.");
     lime_free(filebuf);
     gp->errorcnt++;
+    psp->errorcnt++;
     fclose(fp);
     return;
   }
   if( fread(filebuf,1,filesize,fp)!=filesize ){
-    ErrorMsg(ps.filename,0,"Can't read in all %d bytes of this file.",
+    ErrorMsg(filename,0,"Can't read in all %d bytes of this file.",
       filesize);
     lime_free(filebuf);
     gp->errorcnt++;
+    psp->errorcnt++;
     fclose(fp);
     return;
   }
   fclose(fp);
   filebuf[filesize] = 0;
 
-  /* v0.4.0: desugar %dialect NAME { ... } into included-or-blanked
-  ** body BEFORE the existing %ifdef pass so the body, if kept, is
-  ** processed normally.  See docs/DIALECT.md. */
-  desugar_dialect_blocks(filebuf, ps.filename);
+  /* Set the active filename for diagnostics + provenance.  Caller
+  ** restores on return (in the %extends case). */
+  psp->filename = (char *)filename;
 
-  /* Make an initial pass through the file to handle %ifdef and %ifndef */
+  /* v0.4.0: %dialect desugaring runs before %ifdef preprocessing. */
+  desugar_dialect_blocks(filebuf, filename);
   preprocess_input(filebuf);
-  if( gp->printPreprocessed ){
+  if( is_top_level && gp->printPreprocessed ){
     printf("%s\n", filebuf);
+    lime_free(filebuf);
     return;
   }
 
-  /* Capture file-level comments / whitespace BEFORE the first
-  ** non-comment, non-whitespace byte.  Used by `lime -F` to
-  ** round-trip copyright headers and IDENTIFICATION blocks
-  ** verbatim (Lime-Letter-18).  We literally slice filebuf so
-  ** the user's exact formatting -- spacing, indentation,
-  ** mixed line/block comments -- survives. */
-  char *body_start = filebuf;
-  {
+  body_start = filebuf;
+  if( is_top_level ){
+    /* Capture file-level comments / whitespace BEFORE the first
+    ** non-comment, non-whitespace byte (Lime-Letter-18). */
     char *hp = filebuf;
     while( *hp ){
       if( ISSPACE((unsigned char)*hp) ){ hp++; continue; }
@@ -5060,11 +5734,6 @@ void Parse(struct lime *gp)
     }
     if( hp > filebuf ){
       size_t hlen = (size_t)(hp - filebuf);
-      /* Trim trailing whitespace from the captured header so the
-      ** formatter can reinsert exactly one blank line between the
-      ** header and the first directive.  Leading whitespace is
-      ** preserved so file-leading blank lines (rare but valid)
-      ** don't surprise the user.  */
       while( hlen>0 && ISSPACE((unsigned char)filebuf[hlen-1]) ) hlen--;
       if( hlen>0 ){
         gp->header_comment = (char*)lime_malloc(hlen + 1);
@@ -5073,10 +5742,6 @@ void Parse(struct lime *gp)
           gp->header_comment[hlen] = 0;
         }
       }
-      /* Lime-Letter-19: skip the header range when the main loop
-      ** runs.  Otherwise the loop would re-scan the header's
-      ** comments and capture them as the FIRST directive's leading
-      ** comment, double-counting the header. */
       body_start = hp;
     }
   }
@@ -5086,23 +5751,16 @@ void Parse(struct lime *gp)
   for(cp=filebuf; cp<body_start; cp++){
     if( *cp=='\n' ) lineno++;
   }
-  /* Lime-Letter-19: tokenizer-side comment capture.  When NULL the
-  ** scanner has not yet seen a comment since the previous token;
-  ** when non-NULL it points at the first byte of the comment
-  ** chunk.  Flushed into psp->pending_comments at the start of
-  ** the next real token (or at end-of-file for the trailing-comment
-  ** slot). */
-  char *comment_region_start = 0;
   for(cp=body_start; (c= *cp)!=0; ){
-    if( c=='\n' ) lineno++;              /* Keep track of the line number */
-    if( ISSPACE(c) ){ cp++; continue; }  /* Skip all white space */
-    if( c=='/' && cp[1]=='/' ){          /* Skip C++ style comments */
+    if( c=='\n' ) lineno++;
+    if( ISSPACE(c) ){ cp++; continue; }
+    if( c=='/' && cp[1]=='/' ){
       if( comment_region_start==0 ) comment_region_start = cp;
       cp+=2;
       while( (c= *cp)!=0 && c!='\n' ) cp++;
       continue;
     }
-    if( c=='/' && cp[1]=='*' ){          /* Skip C style comments */
+    if( c=='/' && cp[1]=='*' ){
       if( comment_region_start==0 ) comment_region_start = cp;
       cp+=2;
       if( (*cp)=='/' ) cp++;
@@ -5113,39 +5771,36 @@ void Parse(struct lime *gp)
       if( c ) cp++;
       continue;
     }
-    /* About to start a real token: flush any captured comment chunk
-    ** so it lands on the right side of the upcoming directive/rule
-    ** boundary. */
     if( comment_region_start ){
-      pstate_append_comment(&ps, comment_region_start,
+      pstate_append_comment(psp, comment_region_start,
                             (size_t)(cp - comment_region_start));
       comment_region_start = 0;
     }
-    ps.tokenstart = cp;                /* Mark the beginning of the token */
-    ps.tokenlineno = lineno;           /* Linenumber on which token begins */
-    if( c=='\"' ){                     /* String literals */
+    psp->tokenstart = cp;
+    psp->tokenlineno = lineno;
+    if( c=='\"' ){
       cp++;
       while( (c= *cp)!=0 && c!='\"' ){
         if( c=='\n' ) lineno++;
         cp++;
       }
       if( c==0 ){
-        ErrorMsg(ps.filename,startline,
+        ErrorMsg(filename,startline,
             "String starting on this line is not terminated before "
             "the end of the file.");
-        ps.errorcnt++;
+        psp->errorcnt++;
         nextcp = cp;
       }else{
         nextcp = cp+1;
       }
-    }else if( c=='{' ){               /* A block of C code */
+    }else if( c=='{' ){
       int level;
       cp++;
       for(level=1; (c= *cp)!=0 && (level>1 || c!='}'); cp++){
         if( c=='\n' ) lineno++;
         else if( c=='{' ) level++;
         else if( c=='}' ) level--;
-        else if( c=='/' && cp[1]=='*' ){  /* Skip comments */
+        else if( c=='/' && cp[1]=='*' ){
           int prevc;
           cp = &cp[2];
           prevc = 0;
@@ -5154,11 +5809,11 @@ void Parse(struct lime *gp)
             prevc = c;
             cp++;
           }
-        }else if( c=='/' && cp[1]=='/' ){  /* Skip C++ style comments too */
+        }else if( c=='/' && cp[1]=='/' ){
           cp = &cp[2];
           while( (c= *cp)!=0 && c!='\n' ) cp++;
           if( c ) lineno++;
-        }else if( c=='\'' || c=='\"' ){    /* String a character literals */
+        }else if( c=='\'' || c=='\"' ){
           int startchar, prevc;
           startchar = c;
           prevc = 0;
@@ -5170,61 +5825,115 @@ void Parse(struct lime *gp)
         }
       }
       if( c==0 ){
-        ErrorMsg(ps.filename,ps.tokenlineno,
+        ErrorMsg(filename,psp->tokenlineno,
           "C code starting on this line is not terminated before "
           "the end of the file.");
-        ps.errorcnt++;
+        psp->errorcnt++;
         nextcp = cp;
       }else{
         nextcp = cp+1;
       }
-    }else if( ISALNUM(c) ){          /* Identifiers */
+    }else if( ISALNUM(c) ){
       while( (c= *cp)!=0 && (ISALNUM(c) || c=='_') ) cp++;
       nextcp = cp;
-    }else if( c==':' && cp[1]==':' && cp[2]=='=' ){ /* The operator "::=" */
+    }else if( c==':' && cp[1]==':' && cp[2]=='=' ){
       cp += 3;
       nextcp = cp;
     }else if( (c=='/' || c=='|') && ISALPHA(cp[1]) ){
       cp += 2;
       while( (c = *cp)!=0 && (ISALNUM(c) || c=='_') ) cp++;
       nextcp = cp;
-    }else{                          /* All other (one character) operators */
+    }else{
       cp++;
       nextcp = cp;
     }
     c = *cp;
-    *cp = 0;                        /* Null terminate the token */
-    parseonetoken(&ps);             /* Parse the token */
-    *cp = (char)c;                  /* Restore the buffer */
+    *cp = 0;
+    parseonetoken(psp);
+    *cp = (char)c;
     cp = nextcp;
   }
-  /* Lime-Letter-19: end-of-file flush.  Any comments after the last
-  ** real token become the file's trailing_comment, emitted by
-  ** `lime -F` after the final rule.  Must run before lime_free(filebuf)
-  ** because comment_region_start points into filebuf. */
   if( comment_region_start ){
-    pstate_append_comment(&ps, comment_region_start,
+    pstate_append_comment(psp, comment_region_start,
                           (size_t)(cp - comment_region_start));
     comment_region_start = 0;
   }
-  if( ps.pending_comments ){
-    gp->trailing_comment = pstate_take_pending(&ps);
+  /* Trailing-comment slot is per-FILE in concept but per-PARSE in
+  ** practice (the formatter only round-trips the top-level file).
+  ** Drop the recursive call's trailing comments to avoid an
+  ** earlier file's trailer clobbering the top-level file's. */
+  if( psp->pending_comments ){
+    char *pending = pstate_take_pending(psp);
+    if( is_top_level ){
+      gp->trailing_comment = pending;
+    }else{
+      lime_free(pending);
+    }
   }
-  /* Drop any unattached transient slots before filebuf goes away --
-  ** these are heap-allocated copies (NOT pointers into filebuf), so
-  ** the order doesn't strictly matter, but freeing now keeps the
-  ** end-of-Parse() state tidy. */
-  if( ps.pending_directive_comment ){
-    lime_free(ps.pending_directive_comment);
-    ps.pending_directive_comment = 0;
+  if( psp->pending_directive_comment ){
+    lime_free(psp->pending_directive_comment);
+    psp->pending_directive_comment = 0;
   }
-  if( ps.pending_rule_comment ){
-    lime_free(ps.pending_rule_comment);
-    ps.pending_rule_comment = 0;
+  if( psp->pending_rule_comment ){
+    lime_free(psp->pending_rule_comment);
+    psp->pending_rule_comment = 0;
   }
-  lime_free(filebuf);                    /* Release the buffer after parsing */
+  lime_free(filebuf);
+}
+
+/* In spite of its name, this function is really a scanner.  It read
+** in the entire input file (all at once) then tokenizes it.  Each
+** token is passed to the function "parseonetoken" which builds all
+** the appropriate data structures in the global state vector "gp".
+*/
+void Parse(struct lime *gp)
+{
+  struct pstate ps;
+
+  memset(&ps, '\0', sizeof(ps));
+  ps.gp = gp;
+  ps.filename = gp->filename;
+  ps.errorcnt = 0;
+  ps.state = INITIALIZE;
+  ps.extends_depth = 0;
+  ps.pending_override = 0;
+  ps.pending_remove = 0;
+
+  parse_lime_file_recursive(&ps, gp->filename, 1);
+  if( gp->printPreprocessed ){
+    /* The recursive helper already printed; bail without
+    ** finalising the rule list. */
+    gp->errorcnt = ps.errorcnt;
+    return;
+  }
+
   gp->rule = ps.firstrule;
   gp->errorcnt = ps.errorcnt;
+
+  /* v0.4.1: end-of-parse diamond conflict sweep.  Any rule whose
+  ** conflict_pending flag is still set means two `%extends` paths
+  ** disagreed on either an override body or an override-vs-remove
+  ** decision and the user did not resolve the conflict in the
+  ** derived file.  Per the locked design rules 4 and 8 in
+  ** docs/EXTENDS.md, this is a hard error.  We print a separate
+  ** diagnostic for each conflict so a single run reports them all. */
+  {
+    struct rule *rp;
+    for(rp = gp->rule; rp; rp = rp->next){
+      if( rp->conflict_pending ){
+        ErrorMsg(rp->origin_file ? rp->origin_file : ps.filename,
+          rp->origin_line,
+          "diamond inheritance conflict: rule '%s' has conflicting "
+          "%%override / %%remove from '%s' (line %d) and '%s'; add "
+          "a %%override in the derived file to disambiguate",
+          rp->lhs ? rp->lhs->name : "?",
+          rp->conflict_file ? rp->conflict_file : "?",
+          rp->conflict_line,
+          rp->override_file ? rp->override_file : (rp->origin_file ? rp->origin_file : "?"));
+        gp->errorcnt++;
+      }
+    }
+  }
 
   /* Validate module metadata */
   if( gp->module_name && !gp->module_version ){

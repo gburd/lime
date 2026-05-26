@@ -1,5 +1,5 @@
 project('lime-parser', 'c', 'cpp',
-  version : '0.4.0',
+  version : '0.4.1',
   default_options : [
     'c_std=c11',
     'warning_level=2',
@@ -43,6 +43,22 @@ add_project_arguments(
   '-DLIME_VERSION_STRING="' + meson.project_version() + '"',
   language : 'cpp',
 )
+
+# v0.4.1: LIME_STRICT toggles strict diagnostics for `%extends`-time
+# rule mutations.  Auto-on for buildtypes that already imply
+# debugging:
+#   - debug          : asserts on, optimizations off
+#   - debugoptimized : asserts on, optimizations on (project default)
+# Release builds (`buildtype=release`, `plain`, `minsize`) leave the
+# strict path off so production users see warnings instead of hard
+# errors when `%remove` targets a non-existent rule (the canonical
+# soft-failure case -- still useful when a base file evolves under a
+# pinned derived file).  See docs/EXTENDS.md for the full list of
+# diagnostics gated on LIME_STRICT.
+if get_option('buildtype') == 'debug' or get_option('buildtype') == 'debugoptimized'
+  add_project_arguments('-DLIME_STRICT', language : 'c')
+  add_project_arguments('-DLIME_STRICT', language : 'cpp')
+endif
 
 # MSVC-specific compile flags.
 #   /experimental:c11atomics
