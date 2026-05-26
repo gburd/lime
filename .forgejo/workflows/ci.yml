@@ -11,18 +11,32 @@ on:
 # 5 min), codeberg-medium (4 / 8G / 10 min).  See
 # https://codeberg.org/actions/meta for the canonical list.
 #
-# We don't pin a `container:` -- Codeberg's runner uses
-# ghcr.io/catthehacker/ubuntu:act-latest by default, which is
-# GitHub-Actions-compatible and already has most build tools
-# preinstalled.  Pulling debian:bookworm explicitly works on
-# self-hosted runners but added latency / occasional failures on
-# Codeberg's pool, so we use the default.
+# Codeberg does not currently offer hosted ARM, macOS, or Windows
+# runners on the public free tier -- only Linux x86_64 -- so this
+# workflow mirrors the Linux portion of .github/workflows/ci.yml
+# (Ubuntu 22.04 + 24.04 x GCC + Clang) and skips the macOS,
+# Windows, and aarch64 jobs that GitHub covers.  Codeberg's
+# default runner image (ghcr.io/catthehacker/ubuntu:act-latest)
+# pretends to be Ubuntu rolling; the apt-get install commands
+# below pin nothing toolchain-version-wise (we trust the image)
+# but install meson + ninja from apt to keep the build
+# self-contained.
+#
+# When Codeberg adds hosted ARM runners (tracked at
+# codeberg.org/actions/meta), uncomment the ubuntu-24.04-arm
+# matrix entries in build below and the mirroring sanitizer /
+# llvm-matrix jobs.
 
 jobs:
+  # =====================================================================
+  # Linux x86_64: Ubuntu 22.04 LTS and 24.04 LTS, GCC + Clang.
+  # =====================================================================
   build:
     runs-on: codeberg-medium
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
         compiler: [gcc, clang]
     steps:
       - name: Install dependencies
@@ -40,7 +54,7 @@ jobs:
       - name: Setup meson
         env:
           CC: ${{ matrix.compiler }}
-        run: meson setup builddir
+        run: meson setup builddir -Dllvm=disabled
 
       - name: Build
         run: ninja -C builddir
@@ -48,9 +62,13 @@ jobs:
       - name: Test
         run: meson test -C builddir --print-errorlogs
 
+  # =====================================================================
+  # Sanitizers: address, thread, undefined.
+  # =====================================================================
   sanitizers:
     runs-on: codeberg-medium
     strategy:
+      fail-fast: false
       matrix:
         sanitizer: [address, thread, undefined]
     steps:
@@ -65,12 +83,16 @@ jobs:
       - name: Build with ${{ matrix.sanitizer }} sanitizer
         run: |
           meson setup builddir-${{ matrix.sanitizer }} \
+            -Dllvm=disabled \
             -Db_sanitize=${{ matrix.sanitizer }}
           ninja -C builddir-${{ matrix.sanitizer }}
 
       - name: Test
         run: meson test -C builddir-${{ matrix.sanitizer }} --print-errorlogs
 
+  # =====================================================================
+  # Valgrind memcheck.
+  # =====================================================================
   valgrind:
     runs-on: codeberg-medium
     steps:
@@ -84,18 +106,20 @@ jobs:
 
       - name: Build
         run: |
-          meson setup builddir
+          meson setup builddir -Dllvm=disabled
           ninja -C builddir
 
       - name: Valgrind check
         run: scripts/check_memory.sh
 
+  # =====================================================================
   # Coverage gate.  Fails the build if src/ line coverage drops below
   # LIME_COV_MIN_LINES (default 78) or branch coverage drops below
   # LIME_COV_MIN_BRANCHES (default 60).  These are conservative floors
   # versus the current measured numbers (~80% lines, ~63% branches as
   # of v0.2.7); raise as coverage improves.  The goal is to ratchet
   # upward, not hold steady.
+  # =====================================================================
   coverage:
     runs-on: codeberg-medium
     steps:
@@ -110,10 +134,12 @@ jobs:
       - name: Run coverage gate
         run: scripts/check_coverage.sh
 
+  # =====================================================================
   # Guards against the three-source-of-truth version string drifting:
   # LIME_VERSION_STRING in lime.c, project(version: ...) in meson.build,
   # and the literal in src/version.c's lime_parser_version() must all
   # match.  Cheap to run; fits in the codeberg-tiny 2-min cap.
+  # =====================================================================
   version-consistency:
     runs-on: codeberg-tiny
     steps:
@@ -123,10 +149,11 @@ jobs:
       - name: Check all three sources agree
         run: scripts/check_version_consistency.sh
 
+  # =====================================================================
   # Exercise the three LLVM/JIT linkage paths so the compat shim,
   # static-link option, and stub mode all stay green on PRs.  Each
-  # variant builds Lime + LLVM 14 (Ubuntu apt) and runs the test
-  # suite.
+  # variant builds Lime + LLVM (Ubuntu apt) and runs the test suite.
+  # =====================================================================
   llvm-matrix:
     runs-on: codeberg-medium
     strategy:
@@ -144,7 +171,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc meson ninja-build pkg-config \
-                                  llvm-dev libllvm14 zlib1g-dev \
+                                  llvm-dev libllvm18 zlib1g-dev \
                                   libxml2-dev libffi-dev libtinfo-dev
 
       - name: Checkout

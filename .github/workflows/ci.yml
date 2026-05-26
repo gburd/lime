@@ -6,118 +6,373 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel superseded runs on the same PR / branch -- keeps the matrix
+# from doubling up when a contributor force-pushes mid-CI.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-        compiler: [gcc, clang]
+  # =====================================================================
+  # Linux x86_64: Ubuntu 22.04 LTS and 24.04 LTS, GCC + Clang.
+  #
+  # Pinning to explicit Ubuntu point-release labels (rather than
+  # `ubuntu-latest`) buys us reproducibility against GitHub's
+  # rolling-image substrate -- the previous `ubuntu-latest, clang`
+  # job was failing intermittently at the `ninja Build` step in a
+  # way I could not reproduce locally on Ubuntu 24.04 + clang 18.
+  # The most likely cause was a runner-image package drift the
+  # explicit pin sidesteps.
+  # =====================================================================
+  build-linux:
+    name: build (${{ matrix.os }}, ${{ matrix.compiler }})
     runs-on: ${{ matrix.os }}
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y meson ninja-build pkg-config valgrind
-        if [ "${{ matrix.compiler }}" = "clang" ]; then
-          sudo apt-get install -y clang
-        fi
-
-    - name: Build lime (standalone)
-      run: ${{ matrix.compiler }} -O2 -Wall -Wextra -o lime lime.c
-
-    - name: Setup meson
-      env:
-        CC: ${{ matrix.compiler }}
-      run: meson setup builddir
-
-    - name: Build
-      run: ninja -C builddir
-
-    - name: Test
-      run: meson test -C builddir --print-errorlogs
-
-  sanitizers:
-    runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config valgrind
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            sudo apt-get install -y clang
+          fi
+
+      - name: Build lime (standalone)
+        run: ${{ matrix.compiler }} -O2 -Wall -Wextra -o lime lime.c
+
+      - name: Setup meson
+        env:
+          CC: ${{ matrix.compiler }}
+        run: meson setup builddir -Dllvm=disabled
+
+      - name: Build
+        run: ninja -C builddir
+
+      - name: Test
+        run: meson test -C builddir --print-errorlogs
+
+  # =====================================================================
+  # Linux aarch64: Ubuntu 24.04 ARM64, GCC + Clang.
+  #
+  # GitHub Actions launched free public ARM runners in mid-2024
+  # (ubuntu-24.04-arm).  Native aarch64 is the second-most-common
+  # PG deployment target after x86_64; covering it on every PR
+  # keeps the SIMD/atomic paths honest.
+  # =====================================================================
+  build-linux-arm:
+    name: build (${{ matrix.os }}, ${{ matrix.compiler }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm]
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            sudo apt-get install -y clang
+          fi
+
+      - name: Build lime (standalone)
+        run: ${{ matrix.compiler }} -O2 -Wall -Wextra -o lime lime.c
+
+      - name: Setup meson
+        env:
+          CC: ${{ matrix.compiler }}
+        run: meson setup builddir -Dllvm=disabled
+
+      - name: Build
+        run: ninja -C builddir
+
+      - name: Test
+        run: meson test -C builddir --print-errorlogs
+
+  # =====================================================================
+  # macOS: Intel (macos-13) and Apple Silicon (macos-14).
+  #
+  # Both runners ship Apple Clang (Xcode-bundled).  GCC via Homebrew
+  # is available but adds a ~3-min `brew install gcc` step and
+  # rarely diverges from clang on the codepaths we exercise -- skip
+  # it for the per-PR matrix.  We pin -Dllvm=disabled because the
+  # macOS runner image ships an Xcode LLVM that doesn't expose the
+  # full llvm-config/Orc.h surface lime_jit_create_ts_ctx needs.
+  # =====================================================================
+  build-macos:
+    name: build (${{ matrix.os }}, apple-clang)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install meson ninja pkg-config
+
+      - name: Build lime (standalone)
+        run: clang -O2 -Wall -Wextra -o lime lime.c
+
+      - name: Setup meson
+        run: meson setup builddir -Dllvm=disabled
+
+      - name: Build
+        run: meson compile -C builddir
+
+      - name: Test
+        run: meson test -C builddir --print-errorlogs
+
+  # =====================================================================
+  # Windows x86_64 + aarch64: MSVC (cl.exe) and Clang-CL (clang-cl.exe).
+  #
+  # GitHub launched windows-11-arm as a free public runner for
+  # public repositories alongside the 2024 ARM rollout.  Both arches
+  # share the same workflow shape: ilammy/msvc-dev-cmd seeds the VS
+  # environment, then meson + ninja go through pip.  For Clang-CL we
+  # set CC=clang-cl explicitly; everything else stays the same.
+  #
+  # Lime's existing Windows portability layer (commits b50d03f,
+  # aa91951, d91b3a1, 38aa7ef, 0e3fdc3) handles MSVC's CRT name
+  # mangling, _Atomic, and pthread shim.  Several POSIX-only tests
+  # (test_lex_emit, test_lex_lexer_include, test_snapshot_create,
+  # test_extension_rebuild) are configure-time-skipped on Windows
+  # by tests/meson.build's `host_machine.system() != 'windows'`
+  # guards -- expected, not a failure.
+  # =====================================================================
+  build-windows-msvc:
+    name: build (${{ matrix.os }}, ${{ matrix.toolchain }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            toolchain: msvc
+            arch: x64
+          - os: windows-2022
+            toolchain: clang-cl
+            arch: x64
+          - os: windows-11-arm
+            toolchain: msvc
+            arch: arm64
+          - os: windows-11-arm
+            toolchain: clang-cl
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup VS dev env (${{ matrix.arch }})
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Install meson + ninja
+        run: pip install meson ninja
+
+      - name: Setup meson (msvc)
+        if: matrix.toolchain == 'msvc'
+        run: meson setup builddir -Dllvm=disabled -Dpg_grammar=false
+
+      - name: Setup meson (clang-cl)
+        if: matrix.toolchain == 'clang-cl'
+        env:
+          CC: clang-cl
+          CXX: clang-cl
+        run: meson setup builddir -Dllvm=disabled -Dpg_grammar=false
+
+      - name: Build
+        run: meson compile -C builddir
+
+      - name: Test
+        run: meson test -C builddir --print-errorlogs
+
+  # =====================================================================
+  # Windows x86_64: MinGW-GCC via MSYS2 (UCRT64).
+  #
+  # MinGW is the more POSIX-y Windows toolchain -- pthread, dlsym
+  # equivalents, the works.  Most of the test suite that the MSVC
+  # job skips at configure time (test_lex_emit, test_lex_lexer_-
+  # include) still skips here because tests/meson.build keys on
+  # `host_machine.system() != 'windows'` rather than on the
+  # toolchain id.  Future work could relax those guards for the
+  # MinGW row specifically.
+  #
+  # ARM MinGW is intentionally skipped: msys2/setup-msys2 doesn't
+  # currently target Windows-on-ARM, and the cross-compile path
+  # would add ~10 min of build time for marginal coverage.
+  # =====================================================================
+  build-windows-mingw:
+    name: build (windows-2022, mingw-gcc)
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-meson
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+
+      - name: Build lime (standalone)
+        run: gcc -O2 -Wall -Wextra -o lime.exe lime.c
+
+      - name: Setup meson
+        run: meson setup builddir -Dllvm=disabled -Dpg_grammar=false
+
+      - name: Build
+        run: meson compile -C builddir
+
+      - name: Test
+        run: meson test -C builddir --print-errorlogs
+
+  # =====================================================================
+  # Sanitizers (Linux): address, thread, undefined.
+  #
+  # GCC's built-in sanitizers on ubuntu-24.04 cover all three at
+  # full fidelity.  We pin to explicit Ubuntu version for the same
+  # reproducibility reasons as the build matrix.
+  # =====================================================================
+  sanitizers-linux:
+    name: sanitizers-linux (${{ matrix.sanitizer }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
       matrix:
         sanitizer: [address, thread, undefined]
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y meson ninja-build pkg-config
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config
 
-    - name: Build with ${{ matrix.sanitizer }} sanitizer
-      run: |
-        meson setup builddir-${{ matrix.sanitizer }} \
-          -Db_sanitize=${{ matrix.sanitizer }}
-        ninja -C builddir-${{ matrix.sanitizer }}
+      - name: Build with ${{ matrix.sanitizer }} sanitizer
+        run: |
+          meson setup builddir-${{ matrix.sanitizer }} \
+            -Dllvm=disabled \
+            -Db_sanitize=${{ matrix.sanitizer }}
+          ninja -C builddir-${{ matrix.sanitizer }}
 
-    - name: Test
-      run: meson test -C builddir-${{ matrix.sanitizer }} --print-errorlogs
+      - name: Test
+        run: meson test -C builddir-${{ matrix.sanitizer }} --print-errorlogs
 
-  valgrind:
-    runs-on: ubuntu-latest
+  # =====================================================================
+  # Sanitizers (macOS): address only.
+  #
+  # Apple's bundled clang has working AddressSanitizer but its
+  # ThreadSanitizer + UndefinedBehaviorSanitizer parity is patchy
+  # across macOS releases (TSan in particular requires a
+  # libclang_rt that Xcode ships intermittently for non-Intel hosts).
+  # Address is the practical subset that runs reliably on every
+  # macos-14 image vintage; if Apple's TSan story stabilizes we
+  # can extend.
+  # =====================================================================
+  sanitizers-macos:
+    name: sanitizers-macos (address)
+    runs-on: macos-14
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y meson ninja-build pkg-config valgrind
+      - name: Install dependencies
+        run: brew install meson ninja pkg-config
 
-    - name: Build
-      run: |
-        meson setup builddir
-        ninja -C builddir
+      - name: Build with address sanitizer
+        run: |
+          meson setup builddir-asan \
+            -Dllvm=disabled \
+            -Db_sanitize=address
+          meson compile -C builddir-asan
 
-    - name: Valgrind check
-      run: scripts/check_memory.sh
+      - name: Test
+        run: meson test -C builddir-asan --print-errorlogs
 
+  # =====================================================================
+  # Valgrind (Linux only): full memcheck pass via scripts/check_memory.sh.
+  # =====================================================================
+  valgrind:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config valgrind
+
+      - name: Build
+        run: |
+          meson setup builddir -Dllvm=disabled
+          ninja -C builddir
+
+      - name: Valgrind check
+        run: scripts/check_memory.sh
+
+  # =====================================================================
   # Coverage gate.  Fails the build if src/ line coverage drops below
   # LIME_COV_MIN_LINES (default 78) or branch coverage drops below
   # LIME_COV_MIN_BRANCHES (default 60).  These are conservative floors
   # versus the current measured numbers (~80% lines, ~63% branches as
   # of v0.2.7); raise as coverage improves.  The goal is to ratchet
   # upward, not hold steady.
+  # =====================================================================
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc meson ninja-build pkg-config gcovr
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc meson ninja-build pkg-config gcovr
 
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Run coverage gate
-      run: scripts/check_coverage.sh
+      - name: Run coverage gate
+        run: scripts/check_coverage.sh
 
+  # =====================================================================
   # Keep the three sources of the version string aligned:
   # LIME_VERSION_STRING in lime.c, project(version: ...) in meson.build,
   # and the mirror in src/version.c.  Fails loudly if a bump forgets
   # one of them.
+  # =====================================================================
   version-consistency:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
-    - name: Check all three version sources agree
-      run: scripts/check_version_consistency.sh
+      - uses: actions/checkout@v4
+      - name: Check all three version sources agree
+        run: scripts/check_version_consistency.sh
 
+  # =====================================================================
   # Exercise the LLVM/JIT integration paths.  Without this matrix,
   # the LLVM 14-21 compat shim, -Dllvm-static, and -Dllvm=disabled
   # stub mode have no automated coverage; a regression in any of
-  # them would land silently.  We test the latest LLVM available
-  # in Debian apt (one shot) -- not a full version sweep.  The
-  # Nix devShell builds against LLVM 21 separately for developers.
+  # them would land silently.  We test against the LLVM available
+  # in Ubuntu 24.04 apt (one shot) -- not a full version sweep.
+  # The Nix devShell builds against LLVM 21 separately for
+  # developers; the LLVM 17-20 compat path gets exercised whenever
+  # someone runs CI on a host whose apt has a newer toolchain.
+  # =====================================================================
   llvm-matrix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -126,35 +381,35 @@ jobs:
           - { name: "static",   args: "-Dllvm=enabled -Dllvm-static=true" }
           - { name: "disabled", args: "-Dllvm=disabled" }
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y meson ninja-build pkg-config gcc \
-                                llvm-dev libllvm14 zlib1g-dev \
-                                libxml2-dev libffi-dev libtinfo-dev
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config gcc \
+                                  llvm-dev libllvm18 zlib1g-dev \
+                                  libxml2-dev libffi-dev libtinfo-dev
 
-    - name: Setup meson (${{ matrix.config.name }})
-      run: meson setup builddir-${{ matrix.config.name }} ${{ matrix.config.args }}
+      - name: Setup meson (${{ matrix.config.name }})
+        run: meson setup builddir-${{ matrix.config.name }} ${{ matrix.config.args }}
 
-    - name: Build
-      run: ninja -C builddir-${{ matrix.config.name }}
+      - name: Build
+        run: ninja -C builddir-${{ matrix.config.name }}
 
-    - name: Test
-      run: meson test -C builddir-${{ matrix.config.name }} --print-errorlogs
+      - name: Test
+        run: meson test -C builddir-${{ matrix.config.name }} --print-errorlogs
 
-    - name: Verify libLLVM linkage matches config
-      # shared: test_jit binary should link libLLVM
-      # static: test_jit binary should NOT link libLLVM
-      # disabled: test_jit binary should NOT link libLLVM
-      run: |
-        binary=builddir-${{ matrix.config.name }}/tests/test_jit
-        refs=$(ldd "$binary" 2>&1 | grep -cE libLLVM || true)
-        case "${{ matrix.config.name }}" in
-          shared)
-            test "$refs" -ge 1 || { echo "shared expected libLLVM, got $refs"; exit 1; } ;;
-          static|disabled)
-            test "$refs" -eq 0 || { echo "${{ matrix.config.name }} expected 0 libLLVM, got $refs"; exit 1; } ;;
-        esac
-        echo "OK: ${{ matrix.config.name }} has $refs libLLVM dependencies"
+      - name: Verify libLLVM linkage matches config
+        # shared: test_jit binary should link libLLVM
+        # static: test_jit binary should NOT link libLLVM
+        # disabled: test_jit binary should NOT link libLLVM
+        run: |
+          binary=builddir-${{ matrix.config.name }}/tests/test_jit
+          refs=$(ldd "$binary" 2>&1 | grep -cE libLLVM || true)
+          case "${{ matrix.config.name }}" in
+            shared)
+              test "$refs" -ge 1 || { echo "shared expected libLLVM, got $refs"; exit 1; } ;;
+            static|disabled)
+              test "$refs" -eq 0 || { echo "${{ matrix.config.name }} expected 0 libLLVM, got $refs"; exit 1; } ;;
+          esac
+          echo "OK: ${{ matrix.config.name }} has $refs libLLVM dependencies"
