@@ -10978,57 +10978,121 @@ void ReportTable(
   }
   tplt_xfer(lemp->name,in,out,&lineno);
 
-  /* Generate code which execution during each REDUCE action */
-  i = 0;
+  /* Generate code which executes during each REDUCE action.
+  **
+  ** v0.6.0: per-rule reduce action callbacks.  Each rule's
+  ** action is emitted as its own static function
+  ** `yy_rule_<N>(yy_reduce_ctx *ctx)`; the dispatch table
+  ** `yy_rule_reduce_fn[]` maps ruleno -> function pointer.
+  ** This replaces Lemon's classical switch-on-yyruleno; see
+  ** the rationale block at the top of the yy_reduce_ctx
+  ** typedef in limpar.c.
+  */
   for(rp=lemp->rule; rp; rp=rp->next){
-    i += translate_code(lemp, rp);
+    (void)translate_code(lemp, rp);
   }
-  if( i ){
-    fprintf(out,"        YYMINORTYPE yylhsminor;\n"); lineno++;
-  }
-  /* First output rules other than the default: rule */
+  /* Reset codeEmitted so we can walk the rule list again to
+  ** emit per-rule functions.  Composition / extension may
+  ** have left this stale from an earlier pass. */
   for(rp=lemp->rule; rp; rp=rp->next){
-    struct rule *rp2;               /* Other rules with the same action */
-    if( rp->codeEmitted ) continue;
-    if( rp->noCode ){
-      /* No C code actions, so this will be part of the "default:" rule */
-      continue;
-    }
-    fprintf(out,"      case %d: /* ", rp->iRule);
+    rp->codeEmitted = 0;
+  }
+  /* One function per rule.  Rules with identical action
+  ** bodies still emit distinct functions: the LLVM and GNU
+  ** linkers fold identical .text via -fmerge-functions /
+  ** -Wl,--icf=safe, so the on-disk cost is one function tag
+  ** per rule (~80 bytes) and the call-site cost is unchanged.
+  ** Sharing function pointers across alias slots in the
+  ** dispatch table would have saved a few KB on huge
+  ** grammars but at the cost of obscuring per-rule debug
+  ** symbols and PGO instrumentation -- not worth it. */
+  for(rp=lemp->rule; rp; rp=rp->next){
+    fprintf(out,"/* (%d) ", rp->iRule);
     writeRuleText(out, rp);
     fprintf(out, " */\n"); lineno++;
-    for(rp2=rp->next; rp2; rp2=rp2->next){
-      if( rp2->code==rp->code && rp2->codePrefix==rp->codePrefix
-             && rp2->codeSuffix==rp->codeSuffix ){
-        fprintf(out,"      case %d: /* ", rp2->iRule);
-        writeRuleText(out, rp2);
-        fprintf(out," */ yytestcase(yyruleno==%d);\n", rp2->iRule); lineno++;
-        rp2->codeEmitted = 1;
+    fprintf(out,
+            "static void yy_rule_%d(yy_reduce_ctx *yy_ctx){\n",
+            rp->iRule); lineno++;
+    if( rp->noCode ){
+      /* Empty action.  Three sub-cases match the old
+      ** default-case bookkeeping: */
+      if( rp->neverReduce ){
+        fprintf(out,
+          "  (void)yy_ctx;\n"
+          "  /* (%d) NEVER REDUCES */\n"
+          "  assert(0 && \"yy_rule_%d: %%neverreduce rule reached\");\n",
+          rp->iRule, rp->iRule);
+        lineno += 3;
+      }else if( !rp->doesReduce ){
+        fprintf(out,
+          "  (void)yy_ctx;\n"
+          "  /* (%d) OPTIMIZED OUT */\n"
+          "  assert(0 && \"yy_rule_%d: optimized-out rule reached\");\n",
+          rp->iRule, rp->iRule);
+        lineno += 3;
+      }else{
+        fprintf(out, "  (void)yy_ctx;\n"); lineno++;
       }
+    }else{
+      /* Non-empty action: bind the ctx fields to the local
+      ** names the user action body and translate_code's
+      ** prefix/suffix expect (yymsp, yypParser, yylhsminor,
+      ** yyloc_lhs, ARG_FETCH/CTX_FETCH locals).
+      **
+      ** Macro names with the grammar's prefix (e.g.
+      ** CalcARG_FETCH, CalcTOKENTYPE) get assembled by
+      ** concatenating the runtime grammar name to the
+      ** template-substituted root.  We do that explicitly
+      ** here because tplt_xfer's Parse->name substitution
+      ** runs only on text it transfers verbatim, not on
+      ** fprintf'd code from the generator. */
+      fprintf(out,
+        "  yyParser *yypParser = yy_ctx->yypParser; (void)yypParser;\n"
+        "  yyStackEntry *yymsp = yy_ctx->yymsp; (void)yymsp;\n"
+        "  int yyLookahead = yy_ctx->yyLookahead; (void)yyLookahead;\n"
+        "  %sTOKENTYPE yyLookaheadToken = yy_ctx->yyLookaheadToken; (void)yyLookaheadToken;\n"
+        "  YYMINORTYPE yylhsminor; (void)yylhsminor;\n"
+        "#ifdef YYLOCATIONTYPE\n"
+        "  YYLOCATIONTYPE yyloc_lhs = *yy_ctx->yyloc_lhs_ptr; (void)yyloc_lhs;\n"
+        "#endif\n"
+        "  %sARG_FETCH\n"
+        "  %sCTX_FETCH\n",
+        name, name, name);
+      lineno += 10;
+      /* The action body proper: codePrefix + #line +
+      ** { user code } + #line + codeSuffix.  emit_code()
+      ** does the work, including line-directive bookkeeping. */
+      emit_code(out, rp, lemp, &lineno);
+      fprintf(out,
+        "#ifdef YYLOCATIONTYPE\n"
+        "  /* Commit any @$ writes back to yy_reduce's local\n"
+        "  ** so the post-action stack-shift sees them. */\n"
+        "  *yy_ctx->yyloc_lhs_ptr = yyloc_lhs;\n"
+        "#endif\n");
+      lineno += 5;
     }
-    emit_code(out,rp,lemp,&lineno);
-    fprintf(out,"        break;\n"); lineno++;
+    fprintf(out, "}\n\n"); lineno += 2;
     rp->codeEmitted = 1;
   }
-  /* Finally, output the default: rule.  We choose as the default: all
-  ** empty actions. */
-  fprintf(out,"      default:\n"); lineno++;
+
+  /* Dispatch table.  yy_rule_reduce_fn[ruleno] -> per-rule
+  ** function pointer.  yy_reduce indexes into this with the
+  ** runtime ruleno.  An out-of-range index is undefined and
+  ** asserted in yy_reduce. */
+  fprintf(out,
+    "/* Dispatch table -- one entry per rule, parallel to\n"
+    "** yyRuleInfoLhs[] / yyRuleInfoNRhs[].  Composition merges\n"
+    "** grammars by concatenating these arrays. */\n");
+  lineno += 3;
+  fprintf(out,
+    "static void (*const yy_rule_reduce_fn[])(yy_reduce_ctx *) = {\n");
+  lineno++;
   for(rp=lemp->rule; rp; rp=rp->next){
-    if( rp->codeEmitted ) continue;
-    assert( rp->noCode );
-    fprintf(out,"      /* (%d) ", rp->iRule);
+    fprintf(out, "  yy_rule_%d,  /* (%d) ", rp->iRule, rp->iRule);
     writeRuleText(out, rp);
-    if( rp->neverReduce ){
-      fprintf(out, " (NEVER REDUCES) */ assert(yyruleno!=%d);\n",
-              rp->iRule); lineno++;
-    }else if( rp->doesReduce ){
-      fprintf(out, " */ yytestcase(yyruleno==%d);\n", rp->iRule); lineno++;
-    }else{
-      fprintf(out, " (OPTIMIZED OUT) */ assert(yyruleno!=%d);\n",
-              rp->iRule); lineno++;
-    }
+    fprintf(out, " */\n"); lineno++;
   }
-  fprintf(out,"        break;\n"); lineno++;
+  fprintf(out, "};\n"); lineno++;
   tplt_xfer(lemp->name,in,out,&lineno);
 
   /* Generate code which executes if a parse fails */

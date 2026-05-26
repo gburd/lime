@@ -829,6 +829,50 @@ void Parse_clear_lookahead(void *yyp);
 void Parse_drain(void *yyp ParseCTX_PDECL);
 
 /*
+** v0.6.0: per-rule reduce action callbacks.
+**
+** Each grammar rule's reduction code is emitted as its own
+** static function `yy_rule_<N>(yy_reduce_ctx *ctx)` and
+** dispatched through `yy_rule_reduce_fn[ruleno]` below.  This
+** replaces Lemon's classical 30-year switch-on-yyruleno.
+**
+** Why the change:
+**   1. JIT specialisation -- per-rule callbacks let the JIT
+**      inline reduce code into the JIT-compiled trace,
+**      eliminating the indirect call through yy_reduce.
+**   2. Composition + extension -- merging two grammars now
+**      concatenates `yy_rule_reduce_fn[]` arrays trivially
+**      instead of doing source-level switch surgery.
+**   3. Hot-rule annotation -- `__attribute__((hot))` on the
+**      handful of rules a profile says are hottest is now
+**      possible per-function (impossible per switch case).
+**   4. Plugin overrides -- a future feature lets an extension
+**      replace one rule's reduce action by overwriting one
+**      slot in the dispatch array, no whole-grammar rebuild.
+**
+** ABI break vs v0.5.x: the generated .c file's reduce path
+** changes shape but the runtime ABI (ParserSnapshot, the
+** push-parser entry, the JIT) stays put.  See ROADMAP for
+** the v0.6.0 charter.
+*/
+typedef struct yy_reduce_ctx {
+  yyParser *yypParser;             /* The parser */
+  yyStackEntry *yymsp;             /* Top of the parser's stack */
+  int yyLookahead;                 /* Lookahead token or YYNOCODE */
+  ParseTOKENTYPE yyLookaheadToken; /* Value of the lookahead token */
+#ifdef YYLOCATIONTYPE
+  YYLOCATIONTYPE *yyloc_lhs_ptr;   /* &yyloc_lhs in caller; per-rule
+                                   ** functions read AND write through
+                                   ** this pointer so @$ assignments
+                                   ** propagate to the LHS slot. */
+#endif
+} yy_reduce_ctx;
+
+/********** Begin per-rule reduce action functions ****************************/
+%%
+/********** End per-rule reduce action functions ******************************/
+
+/*
 ** Perform a reduce action and the shift that must immediately
 ** follow the reduce.
 **
@@ -860,7 +904,6 @@ static YYACTIONTYPE yy_reduce(
 #  define YYRHSLOC(Rhs, K) ((Rhs)[K])
 # endif
 #endif
-  ParseARG_FETCH
   (void)yyLookahead;
   (void)yyLookaheadToken;
   yymsp = yypParser->yytos;
@@ -899,20 +942,23 @@ static YYACTIONTYPE yy_reduce(
   }
 #endif
 
-  switch( yyruleno ){
-  /* Beginning here are the reduction cases.  A typical example
-  ** follows:
-  **   case 0:
-  **  #line <lineno> <grammarfile>
-  **     { ... }           // User supplied code
-  **  #line <lineno> <thisfile>
-  **     break;
-  */
-/********** Begin reduce actions **********************************************/
-%%
-/********** End reduce actions ************************************************/
-  };
+  /* v0.6.0: dispatch the rule's reduction via the per-rule
+  ** function pointer table.  The bookkeeping below (LHS lookup,
+  ** stack pop+push, location commit) is unchanged. */
   assert( yyruleno<sizeof(yyRuleInfoLhs)/sizeof(yyRuleInfoLhs[0]) );
+  assert( yyruleno<(sizeof(yy_rule_reduce_fn)/sizeof(yy_rule_reduce_fn[0])) );
+  {
+    yy_reduce_ctx yy_ctx;
+    yy_ctx.yypParser = yypParser;
+    yy_ctx.yymsp = yymsp;
+    yy_ctx.yyLookahead = yyLookahead;
+    yy_ctx.yyLookaheadToken = yyLookaheadToken;
+#ifdef YYLOCATIONTYPE
+    yy_ctx.yyloc_lhs_ptr = &yyloc_lhs;
+#endif
+    yy_rule_reduce_fn[yyruleno](&yy_ctx);
+  }
+
   yygoto = yyRuleInfoLhs[yyruleno];
   yysize = yyRuleInfoNRhs[yyruleno];
   yyact = yy_find_reduce_action(yymsp[yysize].stateno,(YYCODETYPE)yygoto);

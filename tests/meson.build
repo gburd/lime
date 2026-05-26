@@ -1513,6 +1513,41 @@ test_default_reduce = executable('test_default_reduce',
 
 test('default_reduce', test_default_reduce)
 
+# v0.6.0: per-rule reduce action callbacks replace the historical
+# yy_reduce switch.  The test (a) audits the generated .c file
+# for the presence of per-rule yy_rule_<N> functions and the
+# yy_rule_reduce_fn[] dispatch table, (b) drives the parser with
+# several token streams and asserts the result + rule-firing
+# trace match a hand-evaluated oracle, (c) checks the dispatch
+# array is `static const` so composition can concatenate it
+# safely, (d) verifies the function naming schema is
+# `yy_rule_<N>` so a future profile-guided pass can splice in
+# __attribute__((hot)) by name.
+test_per_rule_reduce_gen = custom_target('test_per_rule_reduce_parser',
+  input   : ['test_per_rule_reduce_grammar.y'],
+  output  : ['test_per_rule_reduce_grammar.c',
+             'test_per_rule_reduce_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_per_rule_reduce = executable('test_per_rule_reduce',
+  'test_per_rule_reduce.c',
+  test_per_rule_reduce_gen,
+  dependencies : lime_parser_dep,
+  c_args : nounusedparam,
+)
+
+test('per_rule_reduce', test_per_rule_reduce,
+  args : [
+    meson.current_build_dir() / 'test_per_rule_reduce_grammar.c',
+  ],
+)
+
 # P0-NEW-5: action-time lookahead access (bison's yychar/yyclearin
 # equivalent).  An empty production's action reads the parser's
 # pending lookahead via Parse_get_lookahead() and signals it was
