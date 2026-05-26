@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <stdint.h>
 #include <limits.h>
+#include <errno.h>
 
 /*
 ** Stub for the .lex compiler entry point.  The real implementation
@@ -618,6 +619,41 @@ struct ast_node_def {
   struct ast_node_def *next;   /* Next node definition */
 };
 
+/* v0.4.3 (lime --diff-conflicts): record-keeping side channel for
+** unresolved LALR conflicts.  Populated by FindActions() after each
+** call to resolve_conflict() that returned non-zero.  Used ONLY by
+** --diff-conflicts mode; for normal `lime grammar.lime` runs the
+** list is built but never read, costing one alloc per conflict (PG-
+** scale grammars: ~1700 entries, well under 1ms).
+**
+** State IDs are NOT a stable cross-grammar identity (adding any rule
+** renumbers states).  The symbolic identity used by --diff-conflicts
+** is built from rule LHS/RHS shape + lookahead + kind via
+** conflict_symbolic_key(); state_id here is purely cosmetic. */
+typedef enum {
+  LIME_CONFLICT_SR = 1,   /* shift/reduce */
+  LIME_CONFLICT_RR = 2,   /* reduce/reduce */
+  LIME_CONFLICT_SS = 3    /* shift/shift (pathological, kept for completeness) */
+} LimeConflictKind;
+
+typedef struct ConflictRecord ConflictRecord;
+struct ConflictRecord {
+  int               state_id;       /* numeric state id (cosmetic) */
+  struct symbol    *lookahead;      /* the lookahead terminal */
+  LimeConflictKind  kind;
+  /* For SR: rule_a is the SHIFT-side rule (a config in the source
+  ** state with dot before lookahead); rule_b is the REDUCE rule.
+  ** For RR: rule_a and rule_b are both reduce rules.
+  ** For SS: both NULL (states only). */
+  struct rule      *rule_a;
+  struct rule      *rule_b;
+  /* For SR: shift_target is the lookahead terminal (the symbol
+  ** being shifted), kept distinct from rule_a for clarity in JSON.
+  ** NULL for RR/SS. */
+  struct symbol    *shift_target;
+  ConflictRecord   *next;            /* singly-linked, declaration order */
+};
+
 /* The state vector for the entire parser generator is recorded as
 ** follows.  (LEMON uses no global variables and makes little use of
 ** static variables.  Fields in the following structure can be thought
@@ -671,6 +707,11 @@ struct lime {
   char *reallocFunc;       /* Function to use to allocate stack space */
   char *freeFunc;          /* Function to use to free stack space */
   int nconflict;           /* Number of parsing conflicts */
+  /* v0.4.3: linked list of unresolved conflicts, populated by
+  ** FindActions() in declaration order.  See ConflictRecord
+  ** comment above.  NULL for grammars with zero conflicts. */
+  ConflictRecord *conflict_list;
+  ConflictRecord *conflict_tail;
   int nactiontab;          /* Number of entries in the yy_action[] table */
   int nlookaheadtab;       /* Number of entries in yy_lookahead[] */
   int tablesize;           /* Total table size of all tables in bytes */
@@ -1491,6 +1532,62 @@ void FindFollowSets(struct lime *lemp)
 
 static int resolve_conflict(struct action *,struct action *);
 
+/* v0.4.3: append a ConflictRecord to lemp->conflict_list when
+** resolve_conflict() reports the (apx,apy) pair as unresolved.
+** Pure side channel -- does not change which actions live or die,
+** only observes them.  See struct ConflictRecord above. */
+static void record_conflict(struct lime *lemp,
+                            struct state *stp,
+                            struct action *apx,
+                            struct action *apy)
+{
+  ConflictRecord *cr;
+  cr = (ConflictRecord *)lime_calloc(1, sizeof(*cr));
+  cr->state_id  = stp->statenum;
+  cr->lookahead = apx->sp;     /* == apy->sp by resolve_conflict's assertion */
+  cr->next = 0;
+
+  /* Inspect the post-resolution action types to classify.  resolve_conflict
+  ** sets apy->type to SRCONFLICT for shift/reduce, RRCONFLICT for
+  ** reduce/reduce, and SSCONFLICT (on apy) for shift/shift. */
+  if( apy->type==SRCONFLICT ){
+    cr->kind         = LIME_CONFLICT_SR;
+    cr->rule_b       = apy->x.rp;       /* the REDUCE rule */
+    cr->shift_target = apx->sp;         /* terminal we'd shift on */
+    /* Find a config in the source state whose dot is right before
+    ** the lookahead -- that config's rule is the SHIFT-side rule. */
+    {
+      struct config *cfp;
+      for(cfp=stp->cfp; cfp; cfp=cfp->next){
+        if( cfp->dot < cfp->rp->nrhs
+            && cfp->rp->rhs[cfp->dot] == apx->sp ){
+          cr->rule_a = cfp->rp;
+          break;
+        }
+      }
+    }
+  }else if( apy->type==RRCONFLICT ){
+    cr->kind   = LIME_CONFLICT_RR;
+    cr->rule_a = apx->x.rp;
+    cr->rule_b = apy->x.rp;
+  }else if( apy->type==SSCONFLICT || apx->type==SSCONFLICT ){
+    cr->kind = LIME_CONFLICT_SS;
+    /* SS conflicts have no rule identity; both actions are SHIFTs
+    ** on the same lookahead.  Leave rule_a/rule_b NULL. */
+  }else{
+    /* Should be unreachable: resolve_conflict returned >0 only for
+    ** the three CONFLICT branches above. */
+    cr->kind = LIME_CONFLICT_SR;
+  }
+
+  if( lemp->conflict_tail ){
+    lemp->conflict_tail->next = cr;
+  }else{
+    lemp->conflict_list = cr;
+  }
+  lemp->conflict_tail = cr;
+}
+
 /* Compute the reduce actions, and resolve conflicts.
 */
 void FindActions(struct lime *lemp)
@@ -1549,7 +1646,11 @@ void FindActions(struct lime *lemp)
       for(nap=ap->next; nap && nap->sp==ap->sp; nap=nap->next){
          /* The two actions "ap" and "nap" have the same lookahead.
          ** Figure out which one should be used */
-         lemp->nconflict += resolve_conflict(ap,nap);
+         int n = resolve_conflict(ap,nap);
+         lemp->nconflict += n;
+         /* v0.4.3: side channel for --diff-conflicts.  Logic of
+         ** resolve_conflict is unchanged; we observe its result. */
+         if( n > 0 ) record_conflict(lemp, stp, ap, nap);
       }
     }
   }
@@ -2663,6 +2764,729 @@ static int format_grammar(struct lime *lem){
   return 0;
 }
 
+/****************** v0.4.3: --diff-conflicts subsystem **********************/
+/*
+** lime --diff-conflicts base.lime ext.lime
+**
+** Compares the LALR conflict sets of two grammars by symbolic identity
+** (rule LHS/RHS shape + lookahead + kind, NOT raw state IDs).  Reports
+** which conflicts are NEW (introduced by ext over base), RESOLVED
+** (in base but gone in base+ext), and UNCHANGED.  Designed for the PG
+** dialect-overlay workflow:
+**
+**     lime --diff-conflicts gram.lime gram_oracle.lime || abort
+**
+** Implementation strategy: fork() twice.  Each child runs a clean
+** Parse() + FindActions() pipeline against one grammar (base, then
+** base++ext concatenated to a temp file), walks lemp->conflict_list,
+** and writes a serialized record per conflict to a pipe.  The parent
+** parses both streams, hash-keys both sets, and prints the diff.
+** Forking gives each child pristine global state (Strsafe/Symbol/
+** State tables) without the surgery that resetting them in-process
+** would require.
+**
+** See docs/DIFF_CONFLICTS.md for the user-facing contract.
+*/
+
+#ifndef _WIN32
+#include <sys/wait.h>
+/* sys/types.h, unistd.h, sys/stat.h already pulled in via lime.c top */
+
+/* Wire format for child->parent conflict records: one conflict per
+** line, fields separated by 0x1F (US, ASCII unit separator).  Symbol
+** names are identifiers and never contain US, so this is collision-free.
+**
+** Layout (12+ fields):
+**     KIND \x1f LHS_A \x1f NRHS_A \x1f rhs_a_0 ... \x1f LHS_B \x1f
+**     NRHS_B \x1f rhs_b_0 ... \x1f LOOKAHEAD \x1f FILE_A \x1f LINE_A
+**     \x1f FILE_B \x1f LINE_B \n
+**
+** Empty LHS means "NULL rule" (e.g. shift side has no single rule for
+** SR -- happens when the grammar has zero configurations matching the
+** shift dot pattern; rare).  Children also write a trailing line:
+**     END \x1f <nconflict>
+** so the parent can detect truncation. */
+#define DC_US '\x1f'
+#define DC_KIND_SR "SR"
+#define DC_KIND_RR "RR"
+#define DC_KIND_SS "SS"
+
+/* In-parent representation of a conflict record after slurping. */
+typedef struct DCRec DCRec;
+struct DCRec {
+  char *key;          /* symbolic key (malloc) */
+  char *kind_str;     /* "SR" / "RR" / "SS" */
+  char *lhs_a;
+  char **rhs_a;
+  int   nrhs_a;
+  char *lhs_b;
+  char **rhs_b;
+  int   nrhs_b;
+  char *lookahead;
+  char *file_a;
+  int   line_a;
+  char *file_b;
+  int   line_b;
+};
+
+static char *dc_strdup(const char *s){
+  size_t n = strlen(s) + 1;
+  char *p = (char*)malloc(n);
+  if( p ) memcpy(p, s, n);
+  return p;
+}
+
+static void dc_rec_free(DCRec *r){
+  if( !r ) return;
+  free(r->key); free(r->kind_str);
+  free(r->lhs_a); free(r->lhs_b);
+  free(r->lookahead); free(r->file_a); free(r->file_b);
+  if( r->rhs_a ){
+    int i; for(i=0;i<r->nrhs_a;i++) free(r->rhs_a[i]);
+    free(r->rhs_a);
+  }
+  if( r->rhs_b ){
+    int i; for(i=0;i<r->nrhs_b;i++) free(r->rhs_b[i]);
+    free(r->rhs_b);
+  }
+}
+
+/*
+** Build a stable symbolic key for cross-grammar conflict matching.
+**
+** Format (terminator-free, all parts joined by ':'):
+**   SR: "<lhs_b>:<rhs_b_csv>:<lookahead>:SR"
+**       (uses the REDUCE rule + lookahead -- shift side is implied)
+**   RR: "<min_rule>:<max_rule>:<lookahead>:RR"
+**       (rule strings sorted so order doesn't matter)
+**   SS: "<lookahead>:SS" (rare; lookahead alone)
+**
+** State IDs are NOT included.  Adding any rule renumbers all states,
+** which would make raw-state diffing useless across snapshots.
+*/
+static char *dc_build_key(const DCRec *r){
+  char buf[8192];
+  size_t off = 0;
+#define DC_APPEND(s) do { \
+    const char *_s = (s); size_t _n = strlen(_s); \
+    if( off + _n + 1 < sizeof(buf) ){ memcpy(buf+off, _s, _n); off += _n; } \
+  } while(0)
+#define DC_APPEND_SHAPE(lhs, rhs, nrhs) do { \
+    DC_APPEND(lhs); DC_APPEND(":"); \
+    int _i; \
+    for(_i=0;_i<(nrhs);_i++){ \
+      if(_i){ DC_APPEND(","); } \
+      DC_APPEND((rhs)[_i]); \
+    } \
+  } while(0)
+
+  if( strcmp(r->kind_str, DC_KIND_SR)==0 ){
+    DC_APPEND_SHAPE(r->lhs_b, r->rhs_b, r->nrhs_b);
+    DC_APPEND(":"); DC_APPEND(r->lookahead);
+    DC_APPEND(":SR");
+  }else if( strcmp(r->kind_str, DC_KIND_RR)==0 ){
+    /* Build both shapes, sort strcmp-wise, emit min:max */
+    char a[2048], b[2048];
+    size_t ao=0, bo=0; int i;
+    {
+      size_t n = strlen(r->lhs_a);
+      if( ao+n+1 < sizeof(a) ){ memcpy(a+ao, r->lhs_a, n); ao+=n; a[ao++]=':'; }
+      for(i=0;i<r->nrhs_a;i++){
+        if(i) a[ao++]=',';
+        n = strlen(r->rhs_a[i]);
+        if( ao+n+1 < sizeof(a) ){ memcpy(a+ao, r->rhs_a[i], n); ao+=n; }
+      }
+      a[ao]=0;
+    }
+    {
+      size_t n = strlen(r->lhs_b);
+      if( bo+n+1 < sizeof(b) ){ memcpy(b+bo, r->lhs_b, n); bo+=n; b[bo++]=':'; }
+      for(i=0;i<r->nrhs_b;i++){
+        if(i) b[bo++]=',';
+        n = strlen(r->rhs_b[i]);
+        if( bo+n+1 < sizeof(b) ){ memcpy(b+bo, r->rhs_b[i], n); bo+=n; }
+      }
+      b[bo]=0;
+    }
+    const char *first  = strcmp(a,b) <= 0 ? a : b;
+    const char *second = strcmp(a,b) <= 0 ? b : a;
+    DC_APPEND(first); DC_APPEND("|"); DC_APPEND(second);
+    DC_APPEND(":"); DC_APPEND(r->lookahead);
+    DC_APPEND(":RR");
+  }else{ /* SS */
+    DC_APPEND(r->lookahead); DC_APPEND(":SS");
+  }
+  buf[off < sizeof(buf) ? off : sizeof(buf)-1] = 0;
+  return dc_strdup(buf);
+#undef DC_APPEND
+#undef DC_APPEND_SHAPE
+}
+
+/* Run the lime compile pipeline up through FindActions on the file at
+** `path`, write each conflict to `out_fd` in the wire format above,
+** then exit.  Called only inside a forked child. */
+static void dc_child_compile_and_dump(const char *path, int out_fd)
+{
+  struct lime lem;
+  struct rule *rp;
+  int i;
+  FILE *f;
+
+  memset(&lem, 0, sizeof(lem));
+  lem.errorcnt = 0;
+  lem.nexpect = -1;
+  lem.first_token = 0;
+
+  /* The Strsafe/Symbol/State globals are pristine in the child since
+  ** the parent never called the *_init functions before forking. */
+  Strsafe_init();
+  Symbol_init();
+  State_init();
+  lem.argv = NULL;
+  lem.argc = 0;  /* unused on this path; argv too is unused but kept NULL */
+  lem.filename = (char*)path;
+  Symbol_new("$");
+
+  Parse(&lem);
+  if( lem.errorcnt ){
+    f = fdopen(out_fd, "w");
+    if( f ){ fprintf(f, "ERROR\n"); fclose(f); }
+    _exit(2);
+  }
+  if( lem.nrule==0 ){
+    f = fdopen(out_fd, "w");
+    if( f ){ fprintf(f, "ERROR\n"); fclose(f); }
+    _exit(2);
+  }
+  lem.errsym = Symbol_find("error");
+
+  Symbol_new("{default}");
+  lem.nsymbol = Symbol_count();
+  lem.symbols = Symbol_arrayof();
+  for(i=0; i<lem.nsymbol; i++) lem.symbols[i]->index = i;
+  qsort(lem.symbols, lem.nsymbol, sizeof(struct symbol*), Symbolcmpp);
+  for(i=0; i<lem.nsymbol; i++) lem.symbols[i]->index = i;
+  while( lem.symbols[i-1]->type==MULTITERMINAL ){ i--; }
+  lem.nsymbol = i - 1;
+  for(i=1; ISUPPER(lem.symbols[i]->name[0]); i++);
+  lem.nterminal = i;
+
+  for(i=0, rp=lem.rule; rp; rp=rp->next){
+    rp->iRule = rp->code ? i++ : -1;
+  }
+  lem.nruleWithAction = i;
+  for(rp=lem.rule; rp; rp=rp->next){
+    if( rp->iRule<0 ) rp->iRule = i++;
+  }
+  lem.startRule = lem.rule;
+  lem.rule = Rule_sort(lem.rule);
+
+  SetSize(lem.nterminal+1);
+  FindRulePrecedences(&lem);
+  FindFirstSets(&lem);
+  lem.nstate = 0;
+  FindStates(&lem);
+  lem.sorted = State_arrayof();
+  FindLinks(&lem);
+  FindFollowSets(&lem);
+  FindActions(&lem);
+
+  f = fdopen(out_fd, "w");
+  if( !f ) _exit(2);
+  ConflictRecord *cr;
+  int n = 0;
+  for(cr=lem.conflict_list; cr; cr=cr->next){
+    const char *kind = (cr->kind==LIME_CONFLICT_SR) ? DC_KIND_SR
+                     : (cr->kind==LIME_CONFLICT_RR) ? DC_KIND_RR
+                     : DC_KIND_SS;
+    const char *lhs_a = cr->rule_a ? cr->rule_a->lhs->name : "";
+    const char *lhs_b = cr->rule_b ? cr->rule_b->lhs->name : "";
+    int nrhs_a = cr->rule_a ? cr->rule_a->nrhs : 0;
+    int nrhs_b = cr->rule_b ? cr->rule_b->nrhs : 0;
+    const char *file_a = (cr->rule_a && cr->rule_a->origin_file) ? cr->rule_a->origin_file : "";
+    const char *file_b = (cr->rule_b && cr->rule_b->origin_file) ? cr->rule_b->origin_file : "";
+    int line_a = cr->rule_a ? (cr->rule_a->origin_line ? cr->rule_a->origin_line : cr->rule_a->ruleline) : 0;
+    int line_b = cr->rule_b ? (cr->rule_b->origin_line ? cr->rule_b->origin_line : cr->rule_b->ruleline) : 0;
+    fprintf(f, "%s%c%s%c%d", kind, DC_US, lhs_a, DC_US, nrhs_a);
+    int j;
+    for(j=0;j<nrhs_a;j++){
+      struct symbol *sp = cr->rule_a->rhs[j];
+      const char *nm = (sp->type==MULTITERMINAL && sp->nsubsym>0)
+                       ? sp->subsym[0]->name : sp->name;
+      fprintf(f, "%c%s", DC_US, nm);
+    }
+    fprintf(f, "%c%s%c%d", DC_US, lhs_b, DC_US, nrhs_b);
+    for(j=0;j<nrhs_b;j++){
+      struct symbol *sp = cr->rule_b->rhs[j];
+      const char *nm = (sp->type==MULTITERMINAL && sp->nsubsym>0)
+                       ? sp->subsym[0]->name : sp->name;
+      fprintf(f, "%c%s", DC_US, nm);
+    }
+    fprintf(f, "%c%s%c%s%c%d%c%s%c%d\n",
+            DC_US, cr->lookahead ? cr->lookahead->name : "",
+            DC_US, file_a, DC_US, line_a,
+            DC_US, file_b, DC_US, line_b);
+    n++;
+  }
+  fprintf(f, "END%c%d\n", DC_US, n);
+  fclose(f);
+  _exit(0);
+}
+
+/* Tokenize one line into NUL-terminated fields by replacing 0x1F
+** with NUL.  Returns array of pointers (caller frees the array; the
+** strings point INTO `line`, which must outlive the array). */
+static int dc_split_line(char *line, char ***out){
+  int n = 1, i;
+  for(i=0; line[i]; i++) if( line[i]==DC_US ) n++;
+  char **arr = (char**)malloc(sizeof(char*) * n);
+  if( !arr ) return -1;
+  arr[0] = line;
+  int idx = 1;
+  for(i=0; line[i]; i++){
+    if( line[i]==DC_US ){
+      line[i] = 0;
+      arr[idx++] = &line[i+1];
+    }
+  }
+  /* Strip trailing newline on the final field */
+  for(i=0; arr[n-1][i]; i++){
+    if( arr[n-1][i]=='\n' ){ arr[n-1][i] = 0; break; }
+  }
+  *out = arr;
+  return n;
+}
+
+/* Read the child's pipe end fully into a malloc'd buffer.
+** Returns 0 on success, -1 on read error. */
+static int dc_slurp_fd(int fd, char **out_buf, size_t *out_len){
+  size_t cap = 8192, len = 0;
+  char *buf = (char*)malloc(cap);
+  if( !buf ) return -1;
+  for(;;){
+    if( len + 4096 > cap ){
+      cap *= 2;
+      char *nb = (char*)realloc(buf, cap);
+      if( !nb ){ free(buf); return -1; }
+      buf = nb;
+    }
+    ssize_t r = read(fd, buf + len, cap - len);
+    if( r < 0 ){
+      if( errno==EINTR ) continue;
+      free(buf); return -1;
+    }
+    if( r == 0 ) break;
+    len += (size_t)r;
+  }
+  buf[len] = 0;
+  *out_buf = buf;
+  *out_len = len;
+  return 0;
+}
+
+/* Parse the child's wire-format buffer into a DCRec[] array.
+** Returns array (caller frees) and *nrec; -1 on protocol error. */
+static int dc_parse_buffer(char *buf, DCRec **out, int *out_n){
+  DCRec *recs = NULL;
+  int n = 0, cap = 0;
+  char *line = buf;
+  int saw_end = 0;
+  while( *line ){
+    char *eol = strchr(line, '\n');
+    if( eol ) *eol = 0;
+    if( strncmp(line, "ERROR", 5)==0 ){
+      free(recs);
+      return -1;
+    }
+    if( strncmp(line, "END", 3)==0 ){
+      saw_end = 1;
+      if( eol ) line = eol + 1;
+      else break;
+      continue;
+    }
+    char **fields = NULL;
+    int nf = dc_split_line(line, &fields);
+    if( nf < 0 ){ free(recs); return -1; }
+    /* min fields: KIND, LHS_A, NRHS_A=0, LHS_B, NRHS_B=0, LOOKAHEAD,
+    ** FILE_A, LINE_A, FILE_B, LINE_B = 10 */
+    if( nf >= 10 ){
+      if( n == cap ){
+        cap = cap ? cap*2 : 16;
+        recs = (DCRec*)realloc(recs, sizeof(DCRec) * (size_t)cap);
+      }
+      DCRec *r = &recs[n];
+      memset(r, 0, sizeof(*r));
+      int idx = 0;
+      r->kind_str = dc_strdup(fields[idx++]);
+      r->lhs_a = dc_strdup(fields[idx++]);
+      r->nrhs_a = atoi(fields[idx++]);
+      if( idx + r->nrhs_a > nf ){ free(fields); break; }
+      r->rhs_a = r->nrhs_a ? (char**)calloc((size_t)r->nrhs_a, sizeof(char*)) : NULL;
+      int i;
+      for(i=0;i<r->nrhs_a;i++) r->rhs_a[i] = dc_strdup(fields[idx++]);
+      r->lhs_b = dc_strdup(fields[idx++]);
+      r->nrhs_b = atoi(fields[idx++]);
+      if( idx + r->nrhs_b > nf ){ free(fields); break; }
+      r->rhs_b = r->nrhs_b ? (char**)calloc((size_t)r->nrhs_b, sizeof(char*)) : NULL;
+      for(i=0;i<r->nrhs_b;i++) r->rhs_b[i] = dc_strdup(fields[idx++]);
+      r->lookahead = dc_strdup(fields[idx++]);
+      r->file_a = dc_strdup(fields[idx++]);
+      r->line_a = atoi(fields[idx++]);
+      r->file_b = dc_strdup(fields[idx++]);
+      r->line_b = atoi(fields[idx++]);
+      r->key = dc_build_key(r);
+      n++;
+    }
+    free(fields);
+    if( eol ) line = eol + 1;
+    else break;
+  }
+  *out = recs;
+  *out_n = n;
+  if( !saw_end ){
+    /* Truncated stream; still return what we got, mark as error so
+    ** the caller can decide.  We treat truncation as fatal. */
+    return -2;
+  }
+  return 0;
+}
+
+/* Fork+pipe wrapper around dc_child_compile_and_dump. */
+static int dc_run_child(const char *path, DCRec **recs, int *nrec){
+  int pfd[2];
+  if( pipe(pfd) != 0 ){
+    fprintf(stderr, "lime --diff-conflicts: pipe(): %s\n", strerror(errno));
+    return -1;
+  }
+  pid_t pid = fork();
+  if( pid < 0 ){
+    fprintf(stderr, "lime --diff-conflicts: fork(): %s\n", strerror(errno));
+    close(pfd[0]); close(pfd[1]);
+    return -1;
+  }
+  if( pid == 0 ){
+    close(pfd[0]);
+    dc_child_compile_and_dump(path, pfd[1]);
+    /* unreachable: dc_child_compile_and_dump exits */
+    _exit(2);
+  }
+  close(pfd[1]);
+  char *buf = NULL; size_t blen = 0;
+  int srr = dc_slurp_fd(pfd[0], &buf, &blen);
+  close(pfd[0]);
+  int status = 0;
+  waitpid(pid, &status, 0);
+  if( srr != 0 ){
+    fprintf(stderr, "lime --diff-conflicts: failed to read child output for %s\n", path);
+    free(buf);
+    return -1;
+  }
+  /* If child exited non-zero AND we don't have a valid END line, fail. */
+  int rc = dc_parse_buffer(buf, recs, nrec);
+  free(buf);
+  if( rc == -1 ){
+    fprintf(stderr, "lime --diff-conflicts: child reported parse error for %s\n", path);
+    return -1;
+  }
+  if( rc == -2 ){
+    fprintf(stderr, "lime --diff-conflicts: truncated output from child for %s\n", path);
+    return -1;
+  }
+  if( !WIFEXITED(status) || WEXITSTATUS(status) != 0 ){
+    fprintf(stderr, "lime --diff-conflicts: child exited %d for %s\n",
+            WIFEXITED(status) ? WEXITSTATUS(status) : -1, path);
+    return -1;
+  }
+  return 0;
+}
+
+/* Concatenate two files into a freshly-mkstemp'd .lime file.  Inserts
+** a single newline between them.  Returns the malloc'd path on success
+** (caller unlinks + frees) or NULL on failure. */
+static char *dc_make_merged_file(const char *base, const char *ext){
+  FILE *fb = fopen(base, "rb");
+  if( !fb ){
+    fprintf(stderr, "lime --diff-conflicts: cannot open '%s': %s\n",
+            base, strerror(errno));
+    return NULL;
+  }
+  FILE *fe = fopen(ext, "rb");
+  if( !fe ){
+    fclose(fb);
+    fprintf(stderr, "lime --diff-conflicts: cannot open '%s': %s\n",
+            ext, strerror(errno));
+    return NULL;
+  }
+  const char *tmpdir = getenv("TMPDIR");
+  if( !tmpdir || !*tmpdir ) tmpdir = "/tmp";
+  char *tpl = (char*)malloc(strlen(tmpdir) + 32);
+  if( !tpl ){ fclose(fb); fclose(fe); return NULL; }
+  sprintf(tpl, "%s/lime_dc_XXXXXX.lime", tmpdir);
+  int fd = mkstemps(tpl, 5);
+  if( fd < 0 ){
+    fprintf(stderr, "lime --diff-conflicts: mkstemps: %s\n", strerror(errno));
+    free(tpl); fclose(fb); fclose(fe); return NULL;
+  }
+  FILE *fout = fdopen(fd, "wb");
+  if( !fout ){
+    close(fd); unlink(tpl); free(tpl); fclose(fb); fclose(fe); return NULL;
+  }
+  char chunk[8192];
+  size_t n;
+  while( (n = fread(chunk, 1, sizeof(chunk), fb)) > 0 ) fwrite(chunk, 1, n, fout);
+  fputc('\n', fout);
+  while( (n = fread(chunk, 1, sizeof(chunk), fe)) > 0 ) fwrite(chunk, 1, n, fout);
+  fclose(fb); fclose(fe); fclose(fout);
+  return tpl;
+}
+
+/* qsort comparator over DCRec by symbolic key. */
+static int dc_rec_cmp(const void *a, const void *b){
+  const DCRec *ra = (const DCRec*)a;
+  const DCRec *rb = (const DCRec*)b;
+  return strcmp(ra->key, rb->key);
+}
+
+/* Print one DCRec in human-readable form.  `mark` is '+' for NEW or
+** '-' for RESOLVED. */
+static void dc_print_human_rec(FILE *fp, const DCRec *r, char mark){
+  const char *kind_pretty = (strcmp(r->kind_str,"SR")==0) ? "shift/reduce"
+                          : (strcmp(r->kind_str,"RR")==0) ? "reduce/reduce"
+                          : "shift/shift";
+  fprintf(fp, "  %c %s", mark, kind_pretty);
+  if( strcmp(r->kind_str,"SS")!=0 ){
+    fprintf(fp, "  %s ::=", r->lhs_b[0] ? r->lhs_b : r->lhs_a);
+    int i;
+    char **rhs = r->lhs_b[0] ? r->rhs_b : r->rhs_a;
+    int nrhs = r->lhs_b[0] ? r->nrhs_b : r->nrhs_a;
+    for(i=0;i<nrhs;i++) fprintf(fp, " %s", rhs[i]);
+  }
+  fprintf(fp, "  | lookahead %s\n", r->lookahead);
+  if( strcmp(r->kind_str,"SR")==0 ){
+    if( r->lhs_a[0] ){
+      fprintf(fp, "      shift rule:  %s ::=", r->lhs_a);
+      int i; for(i=0;i<r->nrhs_a;i++) fprintf(fp, " %s", r->rhs_a[i]);
+      if( r->file_a[0] ) fprintf(fp, "   (%s:%d)", r->file_a, r->line_a);
+      fprintf(fp, "\n");
+    }
+    if( r->lhs_b[0] ){
+      fprintf(fp, "      reduce rule: %s ::=", r->lhs_b);
+      int i; for(i=0;i<r->nrhs_b;i++) fprintf(fp, " %s", r->rhs_b[i]);
+      if( r->file_b[0] ) fprintf(fp, "   (%s:%d)", r->file_b, r->line_b);
+      fprintf(fp, "\n");
+    }
+    fprintf(fp, "      Recommendation: declare precedence for '%s'"
+                " with %%left/%%right/%%nonassoc, or fork-resolve at runtime.\n",
+            r->lookahead);
+  }else if( strcmp(r->kind_str,"RR")==0 ){
+    fprintf(fp, "      rule a: %s ::=", r->lhs_a);
+    int i; for(i=0;i<r->nrhs_a;i++) fprintf(fp, " %s", r->rhs_a[i]);
+    if( r->file_a[0] ) fprintf(fp, "   (%s:%d)", r->file_a, r->line_a);
+    fprintf(fp, "\n");
+    fprintf(fp, "      rule b: %s ::=", r->lhs_b);
+    for(i=0;i<r->nrhs_b;i++) fprintf(fp, " %s", r->rhs_b[i]);
+    if( r->file_b[0] ) fprintf(fp, "   (%s:%d)", r->file_b, r->line_b);
+    fprintf(fp, "\n");
+    fprintf(fp, "      Recommendation: rules cover overlapping inputs;"
+                " consider %%override or refactoring.\n");
+  }
+}
+
+/* Print one DCRec as a JSON object.  Caller emits surrounding ',' if any. */
+static void dc_json_string(FILE *fp, const char *s){
+  fputc('"', fp);
+  for(; *s; s++){
+    unsigned char c = (unsigned char)*s;
+    if( c=='"' || c=='\\' ){ fputc('\\', fp); fputc(c, fp); }
+    else if( c=='\n' ) fputs("\\n", fp);
+    else if( c=='\r' ) fputs("\\r", fp);
+    else if( c=='\t' ) fputs("\\t", fp);
+    else if( c < 0x20 ) fprintf(fp, "\\u%04x", c);
+    else fputc(c, fp);
+  }
+  fputc('"', fp);
+}
+
+static void dc_print_json_rec(FILE *fp, const DCRec *r){
+  const char *kind_full = (strcmp(r->kind_str,"SR")==0) ? "shift_reduce"
+                        : (strcmp(r->kind_str,"RR")==0) ? "reduce_reduce"
+                        : "shift_shift";
+  fprintf(fp, "    {\n");
+  fprintf(fp, "      \"kind\": "); dc_json_string(fp, kind_full); fprintf(fp, ",\n");
+  /* Top-level lhs/rhs: prefer rule_b's shape (the REDUCE rule for SR;
+  ** the first reduce rule for RR).  Fall back to rule_a if rule_b is empty. */
+  const char *lhs = r->lhs_b[0] ? r->lhs_b : r->lhs_a;
+  char **rhs = r->lhs_b[0] ? r->rhs_b : r->rhs_a;
+  int nrhs = r->lhs_b[0] ? r->nrhs_b : r->nrhs_a;
+  fprintf(fp, "      \"lhs\": "); dc_json_string(fp, lhs); fprintf(fp, ",\n");
+  fprintf(fp, "      \"rhs\": [");
+  int i;
+  for(i=0;i<nrhs;i++){
+    if(i) fprintf(fp, ", ");
+    dc_json_string(fp, rhs[i]);
+  }
+  fprintf(fp, "],\n");
+  fprintf(fp, "      \"lookahead\": "); dc_json_string(fp, r->lookahead); fprintf(fp, ",\n");
+  /* base_rule: rule_a (the shift-side rule for SR, first reduce for RR). */
+  fprintf(fp, "      \"base_rule\": {");
+  if( r->lhs_a[0] ){
+    fprintf(fp, "\"lhs\": "); dc_json_string(fp, r->lhs_a);
+    fprintf(fp, ", \"rhs\": [");
+    for(i=0;i<r->nrhs_a;i++){
+      if(i) fprintf(fp, ", ");
+      dc_json_string(fp, r->rhs_a[i]);
+    }
+    fprintf(fp, "], \"file\": "); dc_json_string(fp, r->file_a);
+    fprintf(fp, ", \"line\": %d", r->line_a);
+  }
+  fprintf(fp, "},\n");
+  /* ext_rule: rule_b (the reduce-side rule for SR, second reduce for RR). */
+  fprintf(fp, "      \"ext_rule\": {");
+  if( r->lhs_b[0] ){
+    fprintf(fp, "\"lhs\": "); dc_json_string(fp, r->lhs_b);
+    fprintf(fp, ", \"rhs\": [");
+    for(i=0;i<r->nrhs_b;i++){
+      if(i) fprintf(fp, ", ");
+      dc_json_string(fp, r->rhs_b[i]);
+    }
+    fprintf(fp, "], \"file\": "); dc_json_string(fp, r->file_b);
+    fprintf(fp, ", \"line\": %d", r->line_b);
+  }
+  fprintf(fp, "}\n");
+  fprintf(fp, "    }");
+}
+
+/* Diff two sorted DCRec arrays by key, computing NEW / RESOLVED /
+** UNCHANGED counts (and emitting NEW/RESOLVED lists via callbacks). */
+static int run_diff_conflicts(const char *base_path,
+                              const char *ext_path,
+                              int json_flag)
+{
+  /* Validate file existence early -- spec exit code 2 for arg/file errors. */
+  struct stat st;
+  if( stat(base_path, &st) != 0 ){
+    fprintf(stderr, "lime --diff-conflicts: cannot stat '%s': %s\n",
+            base_path, strerror(errno));
+    return 2;
+  }
+  if( stat(ext_path, &st) != 0 ){
+    fprintf(stderr, "lime --diff-conflicts: cannot stat '%s': %s\n",
+            ext_path, strerror(errno));
+    return 2;
+  }
+
+  char *merged = dc_make_merged_file(base_path, ext_path);
+  if( !merged ) return 2;
+
+  DCRec *recs_a = NULL, *recs_b = NULL;
+  int n_a = 0, n_b = 0;
+  if( dc_run_child(base_path, &recs_a, &n_a) != 0 ){
+    unlink(merged); free(merged);
+    return 2;
+  }
+  if( dc_run_child(merged, &recs_b, &n_b) != 0 ){
+    unlink(merged); free(merged);
+    free(recs_a);
+    return 2;
+  }
+  unlink(merged); free(merged);
+
+  /* Sort both by key for merge-style diff. */
+  if( n_a ) qsort(recs_a, (size_t)n_a, sizeof(DCRec), dc_rec_cmp);
+  if( n_b ) qsort(recs_b, (size_t)n_b, sizeof(DCRec), dc_rec_cmp);
+
+  /* Allocate index arrays to mark which entries went where. */
+  int *new_idx = (int*)calloc((size_t)(n_b ? n_b : 1), sizeof(int));
+  int *res_idx = (int*)calloc((size_t)(n_a ? n_a : 1), sizeof(int));
+  int n_new = 0, n_resolved = 0, n_unchanged = 0;
+  int ia = 0, ib = 0;
+  while( ia < n_a && ib < n_b ){
+    int c = strcmp(recs_a[ia].key, recs_b[ib].key);
+    if( c == 0 ){
+      n_unchanged++; ia++; ib++;
+    }else if( c < 0 ){
+      res_idx[n_resolved++] = ia++;
+    }else{
+      new_idx[n_new++] = ib++;
+    }
+  }
+  while( ia < n_a ) res_idx[n_resolved++] = ia++;
+  while( ib < n_b ) new_idx[n_new++] = ib++;
+
+  /* ---- Output ---- */
+  if( json_flag ){
+    printf("{\n");
+    printf("  \"schema_version\": 1,\n");
+    printf("  \"base\": "); dc_json_string(stdout, base_path); printf(",\n");
+    printf("  \"ext\": ");  dc_json_string(stdout, ext_path);  printf(",\n");
+    printf("  \"summary\": { \"new\": %d, \"resolved\": %d, \"unchanged\": %d, \"net_change\": %d },\n",
+           n_new, n_resolved, n_unchanged, n_new - n_resolved);
+    printf("  \"new\": [");
+    int i;
+    for(i=0;i<n_new;i++){
+      if( i ) printf(",");
+      printf("\n");
+      dc_print_json_rec(stdout, &recs_b[new_idx[i]]);
+    }
+    printf("%s],\n", n_new ? "\n  " : "");
+    printf("  \"resolved\": [");
+    for(i=0;i<n_resolved;i++){
+      if( i ) printf(",");
+      printf("\n");
+      dc_print_json_rec(stdout, &recs_a[res_idx[i]]);
+    }
+    printf("%s],\n", n_resolved ? "\n  " : "");
+    printf("  \"unchanged_count\": %d\n", n_unchanged);
+    printf("}\n");
+  }else{
+    printf("Adding %s to %s:\n\n", ext_path, base_path);
+    printf("== NEW conflicts (%d) ==\n", n_new);
+    int i;
+    for(i=0;i<n_new;i++){
+      dc_print_human_rec(stdout, &recs_b[new_idx[i]], '+');
+    }
+    if( !n_new ) printf("  (none)\n");
+    printf("\n== RESOLVED conflicts (%d) ==\n", n_resolved);
+    for(i=0;i<n_resolved;i++){
+      dc_print_human_rec(stdout, &recs_a[res_idx[i]], '-');
+    }
+    if( !n_resolved ) printf("  (none)\n");
+    printf("\n== UNCHANGED conflicts: %d ==\n", n_unchanged);
+    if( n_unchanged ){
+      printf("  See `lime -L %s` for the full pre-existing conflict set.\n",
+             base_path);
+    }
+    printf("\nSummary: +%d new  -%d resolved  =%d unchanged   net change: %+d\n",
+           n_new, n_resolved, n_unchanged, n_new - n_resolved);
+  }
+
+  /* Cleanup */
+  int i;
+  for(i=0;i<n_a;i++) dc_rec_free(&recs_a[i]);
+  for(i=0;i<n_b;i++) dc_rec_free(&recs_b[i]);
+  free(recs_a); free(recs_b);
+  free(new_idx); free(res_idx);
+
+  /* Exit-code contract:
+  **   0 = no NEW conflicts (extension is safe to merge)
+  **   1 = NEW conflicts present (CI: fail the build)
+  **   2 = arg / file / pipeline error (handled above) */
+  return n_new > 0 ? 1 : 0;
+}
+#else /* _WIN32 -- diff-conflicts not yet supported on Windows */
+static int run_diff_conflicts(const char *base_path,
+                              const char *ext_path,
+                              int json_flag)
+{
+  (void)base_path; (void)ext_path; (void)json_flag;
+  fprintf(stderr,
+          "lime --diff-conflicts is not supported on Windows builds.\n"
+          "It uses fork()+pipe() to compile each grammar in a clean\n"
+          "child process; the Windows port is tracked in v0.5.\n");
+  return 2;
+}
+#endif
+
 /* The main program.  Parse the command line and do it... */
 int main(int argc, char **argv){
   static int version = 0;
@@ -2682,6 +3506,9 @@ int main(int argc, char **argv){
   static int verboseConflict = 0;
   static int aotFlag = 0;
   static int lexFlag = 0;       /* -X: run as .lex compiler */
+  /* v0.4.3 (--diff-conflicts): see docs/DIFF_CONFLICTS.md */
+  static int diffConflictsFlag = 0;
+  static int jsonFlag = 0;
 
   /* Forward decl: defined in src/lex/lex_main.c.  When lime is built
   ** as the single-file `cc -o lime lime.c` (no library link), the
@@ -2731,6 +3558,10 @@ int main(int argc, char **argv){
     {OPT_FLAG, "X", (char*)&lexFlag,
                     "Run as .lex compiler (lexer subsystem M1 frontend)."},
     {OPT_FSTR, "W", 0, "Ignored.  (Placeholder for '-W' compiler options.)"},
+    {OPT_FLAG, "-diff-conflicts", (char*)&diffConflictsFlag,
+     "Diff LALR conflicts between two grammars (base.lime ext.lime)."},
+    {OPT_FLAG, "-json", (char*)&jsonFlag,
+     "Output diff results as JSON (use with --diff-conflicts)."},
     {OPT_FLAG,0,0,0}
   };
   int i;
@@ -2742,6 +3573,21 @@ int main(int argc, char **argv){
   if( version ){
      printf("lime %s\n", LIME_VERSION_STRING);
      exit(0);
+  }
+  /* v0.4.3: --diff-conflicts dispatches BEFORE the normal one-file
+  ** pipeline.  It runs two compile-passes via fork() (each child
+  ** gets pristine global state) and prints a symbolic diff.  See
+  ** docs/DIFF_CONFLICTS.md.  Exit 0 = no NEW; 1 = NEW present;
+  ** 2 = arg / file / pipeline error. */
+  if( diffConflictsFlag ){
+    if( OptNArgs() != 2 ){
+      fprintf(stderr,
+              "lime --diff-conflicts requires exactly two grammar arguments\n"
+              "  usage: lime --diff-conflicts [--json] base.lime ext.lime\n");
+      exit(2);
+    }
+    int rc = run_diff_conflicts(OptArg(0), OptArg(1), jsonFlag);
+    exit(rc);
   }
   if( OptNArgs()!=1 ){
     fprintf(stderr,"Exactly one filename argument is required.\n");

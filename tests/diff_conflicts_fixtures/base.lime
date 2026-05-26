@@ -1,0 +1,21 @@
+/*
+** tests/diff_conflicts_fixtures/base.lime -- v0.4.3
+** Clean LALR(1) base grammar with zero conflicts.  Exercises a
+** tiny expression language: addition with explicit %left precedence
+** for PLUS, plus a NUMBER terminal.  --diff-conflicts uses this
+** as the "before" snapshot to compare against extension overlays.
+*/
+
+%name BaseExpr
+%token_type {int}
+
+%left PLUS.
+
+%token NUMBER.
+
+%type expr {int}
+
+stmt(R) ::= expr(E).      { R = E; }
+
+expr(R) ::= expr(L) PLUS expr(M).  { R = L + M; }
+expr(R) ::= NUMBER(N).             { R = N; }

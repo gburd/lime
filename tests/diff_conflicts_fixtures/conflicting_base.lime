@@ -1,0 +1,19 @@
+/*
+** tests/diff_conflicts_fixtures/conflicting_base.lime -- v0.4.3
+** Base grammar that intentionally has a shift/reduce conflict on
+** STAR (no precedence declared).  Used to exercise the RESOLVED
+** bucket: paired with resolving_ext.lime, the merged grammar
+** drops the conflict.
+*/
+
+%name BugBase
+%token_type {int}
+
+%token NUMBER STAR.
+
+%type expr {int}
+
+stmt(R) ::= expr(E).               { R = E; }
+
+expr(R) ::= expr(L) STAR expr(M).  { R = L * M; }
+expr(R) ::= NUMBER(N).             { R = N; }

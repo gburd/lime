@@ -1,0 +1,8 @@
+/*
+** tests/diff_conflicts_fixtures/resolving_ext.lime -- v0.4.3
+** Extension that adds a %left precedence for STAR, resolving the
+** shift/reduce conflict in conflicting_base.lime.  Exercises the
+** RESOLVED bucket of --diff-conflicts.
+*/
+
+%left STAR.

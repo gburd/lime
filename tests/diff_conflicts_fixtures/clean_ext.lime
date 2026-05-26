@@ -1,0 +1,12 @@
+/*
+** tests/diff_conflicts_fixtures/clean_ext.lime -- v0.4.3
+** Extension that adds a new operator (MINUS) with a properly
+** declared %left precedence.  Adds zero NEW conflicts when merged
+** with base.lime.
+*/
+
+%left MINUS.
+
+%token MINUS_TOKEN.
+
+expr(R) ::= expr(L) MINUS expr(M).  { R = L - M; }

@@ -1,0 +1,18 @@
+/*
+** tests/diff_conflicts_fixtures/swap_conflicts_ext.lime -- v0.4.3
+** Extension over conflicting_base.lime that BOTH resolves the
+** STAR shift/reduce (via %left STAR) AND introduces a NEW
+** DIV shift/reduce (DIV declared without precedence).
+**
+** Used by reverse-validation: with the symbolic-key code working,
+** the diff reports 1 RESOLVED (STAR) + 1 NEW (DIV).  With a
+** stubbed key (everything collapses to one bucket), the diff
+** would incorrectly bucket the STAR-A and DIV-B as UNCHANGED.
+** The two outcomes have visibly different summary lines.
+*/
+
+%left STAR.
+
+%token DIV.
+
+expr(R) ::= expr(L) DIV expr(M).  { R = L / M; }

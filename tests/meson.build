@@ -223,6 +223,24 @@ test('extends', test_extends,
   ],
 )
 
+# v0.4.3: --diff-conflicts CLI mode.  Drives lime against three
+# fixtures in tests/diff_conflicts_fixtures/ (clean base, clean
+# extension, conflict-introducing extension) and asserts the
+# NEW / RESOLVED / UNCHANGED bucket counts, exit-code contract
+# (0=safe / 1=NEW conflicts / 2=arg-error), JSON well-formedness,
+# and symbolic-key stability across runs.
+# 11 sub-tests; see tests/test_diff_conflicts.c for the matrix.
+test_diff_conflicts = executable('test_diff_conflicts',
+  'test_diff_conflicts.c',
+)
+test('diff_conflicts', test_diff_conflicts,
+  args : [
+    lime_exe.full_path(),
+    meson.project_source_root() / 'limpar.c',
+    meson.current_source_dir() / 'diff_conflicts_fixtures',
+  ],
+)
+
 test_parse_context_coverage = executable('test_parse_context_coverage',
   'test_parse_context_coverage.c',
   dependencies : lime_parser_dep,

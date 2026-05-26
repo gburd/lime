@@ -1,0 +1,13 @@
+/*
+** tests/diff_conflicts_fixtures/conflicting_ext.lime -- v0.4.3
+** Extension that adds STAR-multiplication WITHOUT declaring
+** precedence for it.  The merged grammar then has shift/reduce
+** conflicts on STAR (and reduce/reduce ambiguity around expr).
+**
+** This is the canonical "PG forgot %left" failure mode that
+** v0.4.2 and --diff-conflicts together are designed to catch.
+*/
+
+%token STAR.
+
+expr(R) ::= expr(L) STAR expr(M).  { R = L * M; }

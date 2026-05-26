@@ -1,0 +1,13 @@
+/*
+** tests/diff_conflicts_fixtures/another_conflicting_ext.lime -- v0.4.3
+** Extension over conflicting_base.lime that adds DIV (also without
+** precedence), so the merged grammar carries the original STAR
+** conflict PLUS new DIV conflicts.  Used by reverse-validation to
+** verify that conflict_symbolic_key() actually distinguishes
+** conflicts -- a stubbed key would claim all of these match the
+** base STAR conflict and report 0 NEW.
+*/
+
+%token DIV.
+
+expr(R) ::= expr(L) DIV expr(M).  { R = L / M; }
