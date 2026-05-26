@@ -1368,6 +1368,20 @@ test_runtime_parse = executable('test_runtime_parse',
 
 test('runtime_parse', test_runtime_parse)
 
+# Direct unit-test coverage of the LALR runtime hot path
+# (src/parse_engine.c).  Reuses the same arith-grammar snapshot as
+# test_runtime_parse but adds synthetic snapshots, NULL-safety,
+# stack-growth, fallback-retry, and threaded refcount tests that
+# integration tests miss.
+test_parse_engine = executable('test_parse_engine',
+  'test_parse_engine.c',
+  test_runtime_arith_gen,
+  include_directories : include_directories('../src'),
+  dependencies : lime_parser_dep,
+)
+
+test('parse_engine', test_parse_engine, timeout : 60)
+
 # GLR end-to-end tests.  Reuse test_runtime_arith_gen above (same
 # arith grammar both the bench and the runtime tests use).
 test_glr_no_conflict = executable('test_glr_no_conflict',
