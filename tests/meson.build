@@ -433,6 +433,115 @@ test_shared_token_lifetime = executable('test_shared_token_lifetime',
 
 test('shared_token_lifetime', test_shared_token_lifetime, timeout : 120)
 
+# ====================================================================
+# v0.5.2: end-to-end composition test against runtime-loaded plugins
+# ====================================================================
+#
+# Builds three small .so plugins (sql_lite_plugin, json_plugin,
+# xml_plugin) under tests/composition_e2e_fixtures/.  Each plugin
+# implements lime_plugin_entry() and a create_snapshot() callback
+# that produces an identifiable synthetic ParserSnapshot.  The
+# test driver dlopens them through ParserManager, composes the
+# resulting snapshots via compose_snapshots() with merkle-root
+# computation, and asserts:
+#
+#   1. Composition succeeds with expected summed counts.
+#   2. Re-composing identical inputs yields identical merkle roots
+#      (the determinism property the merkle-cache architecture
+#      relies on -- see docs/COMPOSITION.md).
+#   3. Composing with a different plugin yields a different merkle
+#      root (regression guard against silent cache-key drift).
+#
+# Skipped on Windows: ParserManager's plugin loader is dlopen()-based.
+# Same skip rationale as test_snapshot_create above.
+if host_machine.system() != 'windows'
+  # Plugin .so build args mirror examples/plugin_template/meson.build:
+  # plugins do not link the parser dep -- they resolve at dlopen()
+  # time against the host process (the test driver, built with
+  # export_dynamic : true).  Override -Wl,--no-undefined accordingly.
+  composition_e2e_plugin_link_args = []
+  if host_machine.system() == 'darwin'
+    composition_e2e_plugin_link_args += ['-Wl,-undefined,dynamic_lookup']
+  else
+    composition_e2e_plugin_link_args += ['-Wl,--unresolved-symbols=ignore-in-object-files']
+  endif
+
+  composition_e2e_sql_so = shared_library('composition_e2e_sql_lite',
+    'composition_e2e_fixtures/sql_lite_plugin.c',
+    include_directories : [include_directories('../include'),
+                           include_directories('../src')],
+    link_args : composition_e2e_plugin_link_args,
+    install : false,
+  )
+
+  composition_e2e_json_so = shared_library('composition_e2e_json',
+    'composition_e2e_fixtures/json_plugin.c',
+    include_directories : [include_directories('../include'),
+                           include_directories('../src')],
+    link_args : composition_e2e_plugin_link_args,
+    install : false,
+  )
+
+  composition_e2e_xml_so = shared_library('composition_e2e_xml',
+    'composition_e2e_fixtures/xml_plugin.c',
+    include_directories : [include_directories('../include'),
+                           include_directories('../src')],
+    link_args : composition_e2e_plugin_link_args,
+    install : false,
+  )
+
+  test_composition_e2e = executable('test_composition_e2e',
+    'test_composition_e2e.c',
+    dependencies : lime_parser_dep,
+    include_directories : include_directories('../src'),
+    export_dynamic : true,
+  )
+
+  test('composition_e2e', test_composition_e2e,
+    args : [
+      composition_e2e_sql_so.full_path(),
+      composition_e2e_json_so.full_path(),
+      composition_e2e_xml_so.full_path(),
+    ],
+    depends : [
+      composition_e2e_sql_so,
+      composition_e2e_json_so,
+      composition_e2e_xml_so,
+    ],
+    timeout : 60,
+  )
+
+  # ==================================================================
+  # v0.5.2: parse-manager(1) integration test
+  # ==================================================================
+  #
+  # Spawns the meson-built parse-manager CLI as a subprocess and
+  # asserts each documented command (version, help, list, load,
+  # unknown-command) round-trips through the tool's argv parser
+  # and ParserManager backend cleanly.  Drives it against the
+  # built sql_plugin.so from examples/plugin_template -- if either
+  # the CLI surface or the plugin ABI regresses, this test fails.
+  #
+  # Depends on the parse_manager_exe + sql_plugin_lib targets,
+  # both declared in subdir('tools') and subdir('examples/plugin_template')
+  # respectively, which the root meson.build wires before
+  # subdir('tests').
+  test_parse_manager_bin = executable('test_parse_manager',
+    'test_parse_manager.c',
+    dependencies : lime_parser_dep,
+    include_directories : include_directories('../src'),
+  )
+
+  test('parse_manager_cli', test_parse_manager_bin,
+    args : [
+      parse_manager_exe.full_path(),
+      sql_plugin_lib.full_path(),
+    ],
+    depends : [parse_manager_exe, sql_plugin_lib],
+    timeout : 60,
+  )
+endif
+
 test_coverage_boost = executable('test_coverage_boost',
   'test_coverage_boost.c',
   dependencies : lime_parser_dep,

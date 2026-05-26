@@ -37,6 +37,20 @@ Requirements: `lime` and a C compiler must be reachable (PATH or
 `LIME_BIN` / `LIME_CC`); the runtime probes at `LIME_TEMPLATE` and
 `LIME_SNAPSHOT_BUILD_C` cover source-tree and installed layouts.
 
+**Why this is the next prerequisite.**  This is the prerequisite
+for composition (`compose_snapshots`, [docs/COMPOSITION.md](COMPOSITION.md))
+at production speed.  Today composition has to either fork+exec
+lime+cc to re-derive LALR (~200ms per merge) or settle for
+snapshot-table merging only (which doesn't recompute conflict
+resolutions across composed grammars).  In-process rebuild
+collapses both paths to sub-millisecond work, which is the
+threshold for PG-style daemon-startup extension loading where
+shared_preload_libraries can ship arbitrary mixes of grammar
+plugins (DuckDB-compat, EDB Oracle-compat, pg_infer, pg_mentat,
+... composed at backend startup).
+
+Composition is the primary consumer of this work.
+
 **What is missing.**  Two tracker items remain:
 
 - **Cleanup of dlopen handles.**  The snapshot tables are

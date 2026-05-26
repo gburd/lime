@@ -39,6 +39,13 @@ examples/cobol/cobol_parser
 !examples/pg_bootscanner/test_bootscanner.c
 !examples/pg_bootscanner/*.lex
 
+# Plugin-template example ships hand-written .c sources (not
+# generated from .lime).  v0.5.2 added plugin_smoke.c alongside
+# the existing plugin_host.c / sql_plugin.c.
+!examples/plugin_template/plugin_smoke.c
+!examples/plugin_template/plugin_host.c
+!examples/plugin_template/sql_plugin.c
+
 # Compiled example binaries
 examples/bootstrap/boot_parser
 examples/datalog/datalog_parser

@@ -19,6 +19,7 @@
 | [DIAGNOSTICS.md](DIAGNOSTICS.md) | Producing rich parser error messages and error recovery |
 | [CI.md](CI.md) | Continuous integration setup, jobs, and runner tiers |
 | [EXTENSIONS.md](EXTENSIONS.md) | Writing runtime grammar extensions |
+| [COMPOSITION.md](COMPOSITION.md) | Runtime composition of N independent parser plugins into one merged LALR machine; the foundation for PG-style multi-extension grammar ecosystems |
 | [DIALECT.md](DIALECT.md) | `%dialect NAME { ... }` directive: generator-time conditional rule inclusion |
 | [EXTENDS.md](EXTENDS.md) | `%extends "base.lime"` + `%override` / `%remove` / `%override_type`: file-level grammar inheritance with diamond resolution |
 | [DIFF_CONFLICTS.md](DIFF_CONFLICTS.md) | `lime --diff-conflicts base.lime ext.lime`: symbolic LALR-conflict diff for dialect-overlay review and CI |

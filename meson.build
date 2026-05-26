@@ -190,6 +190,19 @@ pkgconfig_mod.generate(
 # See the directory's README.md for the architecture walk-through.
 subdir('examples/multi_grammar_sql_json')
 
+# Plugin-template example: builds the example sql_plugin.so + host
+# binaries and runs the load/identity/unload smoke test.  Wired BEFORE
+# subdir('tests') so the e2e composition test in tests/ can reference
+# sql_plugin_lib.full_path() if it ever needs a stand-in plugin path.
+# Skipped at configure time on Windows (the directory's meson.build
+# calls subdir_done() before declaring any targets).
+subdir('examples/plugin_template')
+
+# parse-manager CLI tool: meson-built replacement for the old
+# tools/Makefile.  Links lime_parser_dep directly -- no stubs -- and
+# installs to ${prefix}/bin/parse-manager.
+subdir('tools')
+
 # Build tests
 subdir('tests')
 
