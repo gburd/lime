@@ -2507,6 +2507,55 @@ static int format_grammar(struct lime *lem){
   }
   fprintf(out, "\n");
 
+  /* Output precedence directives -- the missing piece that exploded
+  ** PG's canonicalize-the-source pass into 1682 spurious conflicts.
+  ** Group symbols by their (prec, assoc) tuple; each tuple was one
+  ** source `%left/%right/%nonassoc` directive (preccounter increments
+  ** per directive line in parseonetoken).  Symbols without explicit
+  ** precedence have prec == -1 and are skipped.
+  **
+  ** Lemon assigns precedence by ORDER of these directives -- a later
+  ** %left binds tighter than an earlier one -- so the round-trip
+  ** must emit them in ascending prec.  Without this block, every
+  ** binary operator becomes ambiguous on shift/reduce conflicts and
+  ** the formatted grammar bears no semantic resemblance to the
+  ** source.  Latent since v0.3.0; surfaced by Letter-22's full
+  ** PG-grammar canonicalize pass.
+  **
+  ** Two passes: first determine max_prec, then emit each prec level.
+  ** Within a prec level, all symbols share a single (prec, assoc)
+  ** tuple by construction (Lemon won't accept differing assoc on the
+  ** same line).  We use the first-seen symbol's assoc as authoritative. */
+  {
+    int max_prec = -1;
+    int j;
+    for(j = 0; j < lem->nsymbol; j++){
+      if( lem->symbols[j]->prec > max_prec ){
+        max_prec = lem->symbols[j]->prec;
+      }
+    }
+    int p;
+    for(p = 0; p <= max_prec; p++){
+      enum e_assoc assoc = NONE;
+      int found = 0;
+      for(j = 0; j < lem->nsymbol; j++){
+        struct symbol *sp = lem->symbols[j];
+        if( sp->prec != p ) continue;
+        if( !found ){
+          assoc = sp->assoc;
+          found = 1;
+          const char *kw = (assoc == LEFT)  ? "left"
+                         : (assoc == RIGHT) ? "right"
+                                            : "nonassoc";
+          fprintf(out, "%%%s", kw);
+        }
+        fprintf(out, " %s", sp->name);
+      }
+      if( found ) fprintf(out, ".\n");
+    }
+    if( max_prec >= 0 ) fprintf(out, "\n");
+  }
+
   /* Output grammar rules.  Banner dropped: it would otherwise be
   ** captured as the first rule's leading_comment on a reformat pass. */
   for(rp = lem->rule; rp; rp = rp->next){

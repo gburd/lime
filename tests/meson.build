@@ -169,6 +169,25 @@ test('formatter_token_groups', test_formatter_token_groups,
   ],
 )
 
+# v0.3.6 / Letter-22 regression: `lime -F` must preserve %left /
+# %right / %nonassoc precedence directives.  Pre-fix the formatter
+# silently dropped them, exploding PG's gram.lime canonicalize pass
+# from 0 to 1682 parsing conflicts.  Six sub-tests cover keyword
+# survival, group preservation, [SYMBOL] override, conflict-count
+# parity (source vs formatted), and idempotence.
+test_formatter_precedence = executable('test_formatter_precedence',
+  'test_formatter_precedence.c',
+  dependencies : lime_parser_dep,
+)
+
+test('formatter_precedence', test_formatter_precedence,
+  args : [
+    lime_exe.full_path(),
+    meson.project_source_root() / 'limpar.c',
+    meson.current_source_dir() / 'test_formatter_precedence_grammar.lime',
+  ],
+)
+
 # v0.4.0: %dialect NAME { ... } directive (generator-time conditional
 # inclusion).  Drives the lime binary on test_dialect_grammar.lime
 # under several -D combinations and asserts the build fingerprint

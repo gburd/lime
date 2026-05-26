@@ -1,0 +1,39 @@
+/*
+ * test_formatter_precedence_grammar.lime -- regression fixture for
+ * Lime-Letter-22 (PostgreSQL migration team).
+ *
+ * v0.3.0 through v0.3.5 silently dropped %left / %right / %nonassoc
+ * precedence directives during `lime -F`, causing every binary-op
+ * rule to become shift/reduce-ambiguous in the formatted output.
+ * On PG's gram.lime the canonicalize-the-source pass exploded from
+ * 0 conflicts to 1682.
+ *
+ * This fixture has 4 binary operators with three precedence levels
+ * + one unary precedence override.  Source compiles with 0 parsing
+ * conflicts.  The driver test asserts the formatted output also
+ * compiles with 0 conflicts -- if the precedence directives are
+ * dropped, the binary-op rules introduce 8+ new conflicts.
+ */
+
+%name FmtPrec
+%token_type {int}
+%type expr {int}
+%extra_argument {int *out}
+
+%token PLUS MINUS TIMES DIVIDE LPAREN RPAREN INTEGER UMINUS.
+
+%left PLUS MINUS.
+%left TIMES DIVIDE.
+%right UMINUS.
+
+%start_symbol program
+
+program(P) ::= expr(E).             { P = E; *out = E; }
+
+expr(R) ::= expr(L) PLUS expr(M).   { R = L + M; }
+expr(R) ::= expr(L) MINUS expr(M).  { R = L - M; }
+expr(R) ::= expr(L) TIMES expr(M).  { R = L * M; }
+expr(R) ::= expr(L) DIVIDE expr(M). { R = (M != 0) ? L / M : 0; }
+expr(R) ::= MINUS expr(M). [UMINUS] { R = -M; }
+expr(R) ::= LPAREN expr(M) RPAREN.  { R = M; }
+expr(R) ::= INTEGER(N).             { R = N; }
