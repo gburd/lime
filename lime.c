@@ -3229,6 +3229,299 @@ static void fmt_emit_brace_body(FILE *out, const char *directive,
   lime_free(clean);
 }
 
+/* ============================================================
+** Lime-Letter-23 follow-up: table-driven directive-emit registry.
+**
+** Pre-refactor, format_grammar() emitted each directive inline.
+** Adding a new directive required hunting through ~500 LOC for
+** "the place where this directive's twin is emitted" -- a search
+** that produced Letters 7, 9, 12, 22, 23, all reporting variants
+** of the same structural bug: a directive recognized by the parser
+** and stored on `struct lime` but never written by `lime -F`.
+** Letter 23 fixed three of them (%first_token, %locations,
+** %location_type) point-wise; this registry kills the bug class.
+**
+** Each LimeDirectiveDescriptor pairs a directive name with a
+** has_value() predicate ("was this captured from the source?")
+** and an emit() writer.  format_grammar() walks lime_directives[]
+** by category in stream order; forgetting to wire a new directive
+** is now impossible because format_grammar() reads only the table.
+**
+** Categories reflect WHERE in the output stream a directive lands
+** in the byte-identical-to-v0.5.5 emission order:
+**
+**   LIME_DIR_MODULE         module subsystem (first; before name)
+**   LIME_DIR_HEADER_VALUE   simple-value `%foo X` / `%foo {X}`
+**   LIME_DIR_HEADER_BRACE   brace-body `%foo { ... }`
+**   LIME_DIR_BODY           after rules, before lexer (reserved)
+**   LIME_DIR_LEXER          inside the lexer subsection (reserved)
+**
+** BODY and LEXER have no entries today.  They exist so the next
+** directive that lands in those positions does NOT spawn a fresh
+** "format_grammar didn't emit X" letter -- the dispatcher already
+** iterates them.
+**
+** Each emit fn writes its own line terminator (and, for brace
+** bodies, its own trailing blank line via fmt_emit_brace_body).
+** The single inter-section `\n` between HEADER_VALUE and
+** HEADER_BRACE that v0.5.5 emitted unconditionally is preserved
+** as a literal `fprintf(out, "\n")` between the two table loops.
+*/
+typedef enum {
+  LIME_DIR_MODULE,
+  LIME_DIR_HEADER_VALUE,
+  LIME_DIR_HEADER_BRACE,
+  LIME_DIR_BODY,
+  LIME_DIR_LEXER
+} LimeDirectiveCategory;
+
+typedef struct LimeDirectiveDescriptor {
+  const char *name;                        /* directive identifier (no `%`) */
+  LimeDirectiveCategory cat;               /* emit-stream bucket */
+  int  (*has_value)(const struct lime *gp); /* 1 iff captured from source */
+  void (*emit)(FILE *out, const struct lime *gp);
+} LimeDirectiveDescriptor;
+
+/* -- MODULE ----------------------------------------------------- */
+static int  dir_has_module(const struct lime *gp){ return gp->module_name != 0; }
+static void dir_emit_module(FILE *out, const struct lime *gp){
+  if( gp->module_comment ) fprintf(out, "%s\n", gp->module_comment);
+  fprintf(out, "%%module_name %s\n", gp->module_name);
+  if( gp->module_version ){
+    fprintf(out, "%%module_version \"%s\"\n", gp->module_version);
+  }
+  if( gp->module_description ){
+    fprintf(out, "%%module_description \"%s\"\n", gp->module_description);
+  }
+  fprintf(out, "\n");
+}
+
+static int  dir_has_require(const struct lime *gp){ return gp->dependencies != 0; }
+static void dir_emit_require(FILE *out, const struct lime *gp){
+  struct module_dependency *dep;
+  for(dep = gp->dependencies; dep; dep = dep->next){
+    fprintf(out, "%%require %s", dep->name);
+    if( dep->version_constraint ){
+      fprintf(out, " \"%s\"", dep->version_constraint);
+    }
+    fprintf(out, ".\n");
+  }
+  fprintf(out, "\n");
+}
+
+static int  dir_has_export(const struct lime *gp){ return gp->exports != 0; }
+static void dir_emit_export(FILE *out, const struct lime *gp){
+  struct exported_symbol *exp;
+  fprintf(out, "%%export");
+  for(exp = gp->exports; exp; exp = exp->next){
+    fprintf(out, " %s", exp->name);
+  }
+  fprintf(out, ".\n\n");
+}
+
+static int  dir_has_import(const struct lime *gp){ return gp->imports != 0; }
+static void dir_emit_import(FILE *out, const struct lime *gp){
+  struct imported_symbol *imp;
+  char *last_module = 0;
+  for(imp = gp->imports; imp; imp = imp->next){
+    if( !last_module || strcmp(last_module, imp->from_module) != 0 ){
+      if( last_module ){
+        fprintf(out, ".\n");
+      }
+      fprintf(out, "%%import");
+      last_module = imp->from_module;
+    }
+    fprintf(out, " %s", imp->name);
+  }
+  if( last_module ){
+    fprintf(out, " from %s.\n\n", last_module);
+  }
+}
+
+/* -- HEADER_VALUE: simple `%foo X` / `%foo {X}` directives ------ */
+static int  dir_has_name(const struct lime *gp){ return gp->name != 0; }
+static void dir_emit_name(FILE *out, const struct lime *gp){
+  if( gp->name_comment ) fprintf(out, "%s\n", gp->name_comment);
+  fprintf(out, "%%name %s\n", gp->name);
+}
+
+static int  dir_has_token_type(const struct lime *gp){ return gp->tokentype != 0; }
+static void dir_emit_token_type(FILE *out, const struct lime *gp){
+  if( gp->tokentype_comment ) fprintf(out, "%s\n", gp->tokentype_comment);
+  fprintf(out, "%%token_type {%s}\n", gp->tokentype);
+}
+
+static int  dir_has_extra_argument(const struct lime *gp){ return gp->arg != 0; }
+static void dir_emit_extra_argument(FILE *out, const struct lime *gp){
+  if( gp->arg_comment ) fprintf(out, "%s\n", gp->arg_comment);
+  fprintf(out, "%%extra_argument {%s}\n", gp->arg);
+}
+
+static int  dir_has_extra_context(const struct lime *gp){ return gp->ctx != 0; }
+static void dir_emit_extra_context(FILE *out, const struct lime *gp){
+  if( gp->ctx_comment ) fprintf(out, "%s\n", gp->ctx_comment);
+  fprintf(out, "%%extra_context {%s}\n", gp->ctx);
+}
+
+static int  dir_has_default_type(const struct lime *gp){ return gp->vartype != 0; }
+static void dir_emit_default_type(FILE *out, const struct lime *gp){
+  if( gp->vartype_comment ) fprintf(out, "%s\n", gp->vartype_comment);
+  fprintf(out, "%%default_type {%s}\n", gp->vartype);
+}
+
+static int  dir_has_start_symbol(const struct lime *gp){ return gp->start != 0; }
+static void dir_emit_start_symbol(FILE *out, const struct lime *gp){
+  if( gp->start_comment ) fprintf(out, "%s\n", gp->start_comment);
+  fprintf(out, "%%start_symbol %s\n", gp->start);
+}
+
+static int  dir_has_stack_size(const struct lime *gp){ return gp->stacksize != 0; }
+static void dir_emit_stack_size(FILE *out, const struct lime *gp){
+  if( gp->stacksize_comment ) fprintf(out, "%s\n", gp->stacksize_comment);
+  fprintf(out, "%%stack_size %s\n", gp->stacksize);
+}
+
+static int  dir_has_token_prefix(const struct lime *gp){ return gp->tokenprefix != 0; }
+static void dir_emit_token_prefix(FILE *out, const struct lime *gp){
+  if( gp->tokenprefix_comment ) fprintf(out, "%s\n", gp->tokenprefix_comment);
+  fprintf(out, "%%token_prefix %s\n", gp->tokenprefix);
+}
+
+static int  dir_has_symbol_prefix(const struct lime *gp){ return gp->symbolprefix != 0; }
+static void dir_emit_symbol_prefix(FILE *out, const struct lime *gp){
+  if( gp->symbolprefix_comment ) fprintf(out, "%s\n", gp->symbolprefix_comment);
+  fprintf(out, "%%symbol_prefix %s\n", gp->symbolprefix);
+}
+
+static int  dir_has_expect(const struct lime *gp){ return gp->nexpect >= 0; }
+static void dir_emit_expect(FILE *out, const struct lime *gp){
+  if( gp->nexpect_comment ) fprintf(out, "%s\n", gp->nexpect_comment);
+  fprintf(out, "%%expect %d\n", gp->nexpect);
+}
+
+/* %first_token / %locations / %location_type were Letter-23's three
+** directives.  They have no _comment slot in v0.5.5; the registry
+** just emits the bare line. */
+static int  dir_has_first_token(const struct lime *gp){ return gp->first_token != 0; }
+static void dir_emit_first_token(FILE *out, const struct lime *gp){
+  fprintf(out, "%%first_token %d\n", gp->first_token);
+}
+
+static int  dir_has_locations(const struct lime *gp){ return gp->has_locations != 0; }
+static void dir_emit_locations(FILE *out, const struct lime *gp){
+  (void)gp;
+  fprintf(out, "%%locations\n");
+}
+
+static int  dir_has_location_type(const struct lime *gp){ return gp->location_type != 0; }
+static void dir_emit_location_type(FILE *out, const struct lime *gp){
+  fprintf(out, "%%location_type {%s}\n", gp->location_type);
+}
+
+/* -- HEADER_BRACE: `%foo { C-body }` directives ----------------- */
+static int  dir_has_include(const struct lime *gp){ return gp->include != 0; }
+static void dir_emit_include(FILE *out, const struct lime *gp){
+  if( gp->include_comment ) fprintf(out, "%s\n", gp->include_comment);
+  fmt_emit_brace_body(out, "include", gp->include);
+}
+
+static int  dir_has_syntax_error(const struct lime *gp){ return gp->error != 0; }
+static void dir_emit_syntax_error(FILE *out, const struct lime *gp){
+  if( gp->error_comment ) fprintf(out, "%s\n", gp->error_comment);
+  fmt_emit_brace_body(out, "syntax_error", gp->error);
+}
+
+static int  dir_has_parse_failure(const struct lime *gp){ return gp->failure != 0; }
+static void dir_emit_parse_failure(FILE *out, const struct lime *gp){
+  if( gp->failure_comment ) fprintf(out, "%s\n", gp->failure_comment);
+  fmt_emit_brace_body(out, "parse_failure", gp->failure);
+}
+
+static int  dir_has_parse_accept(const struct lime *gp){ return gp->accept != 0; }
+static void dir_emit_parse_accept(FILE *out, const struct lime *gp){
+  if( gp->accept_comment ) fprintf(out, "%s\n", gp->accept_comment);
+  fmt_emit_brace_body(out, "parse_accept", gp->accept);
+}
+
+static int  dir_has_stack_overflow(const struct lime *gp){ return gp->overflow != 0; }
+static void dir_emit_stack_overflow(FILE *out, const struct lime *gp){
+  if( gp->overflow_comment ) fprintf(out, "%s\n", gp->overflow_comment);
+  fmt_emit_brace_body(out, "stack_overflow", gp->overflow);
+}
+
+static int  dir_has_token_destructor(const struct lime *gp){ return gp->tokendest != 0; }
+static void dir_emit_token_destructor(FILE *out, const struct lime *gp){
+  if( gp->tokendest_comment ) fprintf(out, "%s\n", gp->tokendest_comment);
+  fmt_emit_brace_body(out, "token_destructor", gp->tokendest);
+}
+
+static int  dir_has_default_destructor(const struct lime *gp){ return gp->vardest != 0; }
+static void dir_emit_default_destructor(FILE *out, const struct lime *gp){
+  if( gp->vardest_comment ) fprintf(out, "%s\n", gp->vardest_comment);
+  fmt_emit_brace_body(out, "default_destructor", gp->vardest);
+}
+
+/* The registry.  Order WITHIN each category MUST match the v0.5.5
+** stream order exactly -- byte-identity vs v0.5.5 is part of the
+** refactor's contract.  Adding a directive is a single new row;
+** the emit dispatcher in format_grammar() picks it up automatically. */
+static const LimeDirectiveDescriptor lime_directives[] = {
+  /* MODULE block (emitted first) */
+  { "module",             LIME_DIR_MODULE,        dir_has_module,             dir_emit_module             },
+  { "require",            LIME_DIR_MODULE,        dir_has_require,            dir_emit_require            },
+  { "export",             LIME_DIR_MODULE,        dir_has_export,             dir_emit_export             },
+  { "import",             LIME_DIR_MODULE,        dir_has_import,             dir_emit_import             },
+  /* HEADER_VALUE block (after MODULE, before HEADER_BRACE) */
+  { "name",               LIME_DIR_HEADER_VALUE,  dir_has_name,               dir_emit_name               },
+  { "token_type",         LIME_DIR_HEADER_VALUE,  dir_has_token_type,         dir_emit_token_type         },
+  { "extra_argument",     LIME_DIR_HEADER_VALUE,  dir_has_extra_argument,     dir_emit_extra_argument     },
+  { "extra_context",      LIME_DIR_HEADER_VALUE,  dir_has_extra_context,      dir_emit_extra_context      },
+  { "default_type",       LIME_DIR_HEADER_VALUE,  dir_has_default_type,       dir_emit_default_type       },
+  { "start_symbol",       LIME_DIR_HEADER_VALUE,  dir_has_start_symbol,       dir_emit_start_symbol       },
+  { "stack_size",         LIME_DIR_HEADER_VALUE,  dir_has_stack_size,         dir_emit_stack_size         },
+  { "token_prefix",       LIME_DIR_HEADER_VALUE,  dir_has_token_prefix,       dir_emit_token_prefix       },
+  { "symbol_prefix",      LIME_DIR_HEADER_VALUE,  dir_has_symbol_prefix,      dir_emit_symbol_prefix      },
+  { "expect",             LIME_DIR_HEADER_VALUE,  dir_has_expect,             dir_emit_expect             },
+  { "first_token",        LIME_DIR_HEADER_VALUE,  dir_has_first_token,        dir_emit_first_token        },
+  { "locations",          LIME_DIR_HEADER_VALUE,  dir_has_locations,          dir_emit_locations          },
+  { "location_type",      LIME_DIR_HEADER_VALUE,  dir_has_location_type,      dir_emit_location_type      },
+  /* HEADER_BRACE block (after HEADER_VALUE, before token decls) */
+  { "include",            LIME_DIR_HEADER_BRACE,  dir_has_include,            dir_emit_include            },
+  { "syntax_error",       LIME_DIR_HEADER_BRACE,  dir_has_syntax_error,       dir_emit_syntax_error       },
+  { "parse_failure",      LIME_DIR_HEADER_BRACE,  dir_has_parse_failure,      dir_emit_parse_failure      },
+  { "parse_accept",       LIME_DIR_HEADER_BRACE,  dir_has_parse_accept,       dir_emit_parse_accept       },
+  { "stack_overflow",     LIME_DIR_HEADER_BRACE,  dir_has_stack_overflow,     dir_emit_stack_overflow     },
+  { "token_destructor",   LIME_DIR_HEADER_BRACE,  dir_has_token_destructor,   dir_emit_token_destructor   },
+  { "default_destructor", LIME_DIR_HEADER_BRACE,  dir_has_default_destructor, dir_emit_default_destructor },
+  /* BODY and LEXER are reserved -- no entries in v0.5.6.  The
+  ** dispatcher iterates them so the next directive that lands
+  ** in those slots needs only a single row added here. */
+};
+static const size_t n_lime_directives =
+    sizeof(lime_directives) / sizeof(lime_directives[0]);
+
+/* Public-but-internal accessor for tests/test_formatter_directive_registry.c.
+** Returns a pointer to the registry and its length.  Not exposed in any
+** public header -- the test pulls these in via `extern` declarations. */
+const LimeDirectiveDescriptor *lime_directive_registry(size_t *n_out){
+  if( n_out ) *n_out = n_lime_directives;
+  return lime_directives;
+}
+
+/* Walk the registry once, emitting every entry in `cat` whose
+** has_value() predicate fires.  Order within the category is the
+** order in lime_directives[]. */
+static void format_grammar_emit_category(
+    FILE *out, const struct lime *gp, LimeDirectiveCategory cat){
+  size_t i;
+  for(i = 0; i < n_lime_directives; i++){
+    const LimeDirectiveDescriptor *d = &lime_directives[i];
+    if( d->cat == cat && d->has_value(gp) ){
+      d->emit(out, gp);
+    }
+  }
+}
+
 static int format_grammar(struct lime *lem){
   FILE *out;
   struct rule *rp;
@@ -3263,156 +3556,20 @@ static int format_grammar(struct lime *lem){
     fprintf(out, "/* Formatted by Lime */\n\n");
   }
 
-  /* Output module directives */
-  if( lem->module_name ){
-    if( lem->module_comment ) fprintf(out, "%s\n", lem->module_comment);
-    fprintf(out, "%%module_name %s\n", lem->module_name);
-    if( lem->module_version ){
-      fprintf(out, "%%module_version \"%s\"\n", lem->module_version);
-    }
-    if( lem->module_description ){
-      fprintf(out, "%%module_description \"%s\"\n", lem->module_description);
-    }
-    fprintf(out, "\n");
-  }
-
-  /* Output dependencies */
-  if( lem->dependencies ){
-    struct module_dependency *dep;
-    for(dep = lem->dependencies; dep; dep = dep->next){
-      fprintf(out, "%%require %s", dep->name);
-      if( dep->version_constraint ){
-        fprintf(out, " \"%s\"", dep->version_constraint);
-      }
-      fprintf(out, ".\n");
-    }
-    fprintf(out, "\n");
-  }
-
-  /* Output exports */
-  if( lem->exports ){
-    struct exported_symbol *exp;
-    fprintf(out, "%%export");
-    for(exp = lem->exports; exp; exp = exp->next){
-      fprintf(out, " %s", exp->name);
-    }
-    fprintf(out, ".\n\n");
-  }
-
-  /* Output imports */
-  if( lem->imports ){
-    struct imported_symbol *imp;
-    char *last_module = NULL;
-
-    /* Group imports by source module */
-    for(imp = lem->imports; imp; imp = imp->next){
-      if( !last_module || strcmp(last_module, imp->from_module) != 0 ){
-        if( last_module ){
-          fprintf(out, ".\n");
-        }
-        fprintf(out, "%%import");
-        last_module = imp->from_module;
-      }
-      fprintf(out, " %s", imp->name);
-    }
-    if( last_module ){
-      fprintf(out, " from %s.\n\n", last_module);
-    }
-  }
-
-  /* Output standard Lime directives */
-  if( lem->name ){
-    if( lem->name_comment ) fprintf(out, "%s\n", lem->name_comment);
-    fprintf(out, "%%name %s\n", lem->name);
-  }
-  if( lem->tokentype ){
-    if( lem->tokentype_comment ) fprintf(out, "%s\n", lem->tokentype_comment);
-    fprintf(out, "%%token_type {%s}\n", lem->tokentype);
-  }
-  if( lem->arg ){
-    if( lem->arg_comment ) fprintf(out, "%s\n", lem->arg_comment);
-    fprintf(out, "%%extra_argument {%s}\n", lem->arg);
-  }
-  if( lem->ctx ){
-    if( lem->ctx_comment ) fprintf(out, "%s\n", lem->ctx_comment);
-    fprintf(out, "%%extra_context {%s}\n", lem->ctx);
-  }
-  if( lem->vartype ){
-    if( lem->vartype_comment ) fprintf(out, "%s\n", lem->vartype_comment);
-    fprintf(out, "%%default_type {%s}\n", lem->vartype);
-  }
-  if( lem->start ){
-    if( lem->start_comment ) fprintf(out, "%s\n", lem->start_comment);
-    fprintf(out, "%%start_symbol %s\n", lem->start);
-  }
-  if( lem->stacksize ){
-    if( lem->stacksize_comment ) fprintf(out, "%s\n", lem->stacksize_comment);
-    fprintf(out, "%%stack_size %s\n", lem->stacksize);
-  }
-  if( lem->tokenprefix ){
-    if( lem->tokenprefix_comment ) fprintf(out, "%s\n", lem->tokenprefix_comment);
-    fprintf(out, "%%token_prefix %s\n", lem->tokenprefix);
-  }
-  if( lem->symbolprefix ){
-    if( lem->symbolprefix_comment ) fprintf(out, "%s\n", lem->symbolprefix_comment);
-    fprintf(out, "%%symbol_prefix %s\n", lem->symbolprefix);
-  }
-  if( lem->nexpect >= 0 ){
-    if( lem->nexpect_comment ) fprintf(out, "%s\n", lem->nexpect_comment);
-    fprintf(out, "%%expect %d\n", lem->nexpect);
-  }
-  /* Lime-Letter-23: %first_token / %locations / %location_type were
-  ** silently dropped in v0.3.0 .. v0.5.1 because format_grammar()
-  ** never emitted them.  PG's pl_gram.lime + gram.lime carry all
-  ** three; without them the formatted output regenerates a parser
-  ** that fails to compile (no yyloc tracking, wrong token-code
-  ** offset).  Quick fix: emit if non-default.  The architectural
-  ** refactor proposal (table-driven format_grammar) is the proper
-  ** long-term fix and is tracked separately.  See Lime-Reply-23.txt. */
-  if( lem->first_token != 0 ){
-    fprintf(out, "%%first_token %d\n", lem->first_token);
-  }
-  if( lem->has_locations ){
-    fprintf(out, "%%locations\n");
-  }
-  if( lem->location_type ){
-    fprintf(out, "%%location_type {%s}\n", lem->location_type);
-  }
+  /* Lime-Letter-23 follow-up: directive emission is table-driven.
+  ** The three loops below replace ~150 LOC of inline `if (lem->X)
+  ** fprintf(out, "%X ...")` blocks; every directive lives in
+  ** lime_directives[] (above this function) with an explicit
+  ** has_value() / emit() pair.  Order within each category is the
+  ** registry's row order, which matches v0.5.5's stream order
+  ** byte-for-byte.  The unconditional `fprintf(out, "\n")` between
+  ** HEADER_VALUE and HEADER_BRACE preserves v0.5.5's emit shape
+  ** (the blank line separated simple-value directives from brace
+  ** bodies regardless of whether either category was non-empty). */
+  format_grammar_emit_category(out, lem, LIME_DIR_MODULE);
+  format_grammar_emit_category(out, lem, LIME_DIR_HEADER_VALUE);
   fprintf(out, "\n");
-
-  /* Brace-delimited directive bodies (Lime-Letter-18 -- preserve
-  ** verbatim; the formatter has no business reformatting C code
-  ** embedded in a brace block).  Each is emitted only when the
-  ** parser captured it.  Lime-Letter-19 adds the matching
-  ** _comment slot (when present) immediately above the directive. */
-  if( lem->include    ){
-    if( lem->include_comment ) fprintf(out, "%s\n", lem->include_comment);
-    fmt_emit_brace_body(out, "include",            lem->include);
-  }
-  if( lem->error      ){
-    if( lem->error_comment   ) fprintf(out, "%s\n", lem->error_comment);
-    fmt_emit_brace_body(out, "syntax_error",       lem->error);
-  }
-  if( lem->failure    ){
-    if( lem->failure_comment ) fprintf(out, "%s\n", lem->failure_comment);
-    fmt_emit_brace_body(out, "parse_failure",      lem->failure);
-  }
-  if( lem->accept     ){
-    if( lem->accept_comment  ) fprintf(out, "%s\n", lem->accept_comment);
-    fmt_emit_brace_body(out, "parse_accept",       lem->accept);
-  }
-  if( lem->overflow   ){
-    if( lem->overflow_comment ) fprintf(out, "%s\n", lem->overflow_comment);
-    fmt_emit_brace_body(out, "stack_overflow",     lem->overflow);
-  }
-  if( lem->tokendest  ){
-    if( lem->tokendest_comment ) fprintf(out, "%s\n", lem->tokendest_comment);
-    fmt_emit_brace_body(out, "token_destructor",   lem->tokendest);
-  }
-  if( lem->vardest    ){
-    if( lem->vardest_comment ) fprintf(out, "%s\n", lem->vardest_comment);
-    fmt_emit_brace_body(out, "default_destructor", lem->vardest);
-  }
+  format_grammar_emit_category(out, lem, LIME_DIR_HEADER_BRACE);
 
   /* Output token declarations.  Lime-Letter-21: emit %token
   ** sections in declaration order, one group at a time, with
@@ -3668,6 +3825,17 @@ static int format_grammar(struct lime *lem){
   if( lem->trailing_comment ){
     fprintf(out, "\n%s\n", lem->trailing_comment);
   }
+
+  /* Reserved-category dispatch.  No registry entries land in BODY
+  ** or LEXER in v0.5.6 -- both loops are no-ops today.  They are
+  ** present so the next directive that emits after rules (e.g. a
+  ** future %finalize { ... } block) or inside a lexer subsection
+  ** can be wired up by adding a single row to lime_directives[],
+  ** with no edit to format_grammar() required.  Calling them
+  ** unconditionally costs ~30 ns per format pass and prevents the
+  ** Letter-7/9/12/22/23 bug class from recurring in those slots. */
+  format_grammar_emit_category(out, lem, LIME_DIR_BODY);
+  format_grammar_emit_category(out, lem, LIME_DIR_LEXER);
 
   fclose(out);
   printf("OK: Formatted output written to: %s\n", outfile);

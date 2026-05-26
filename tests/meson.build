@@ -367,6 +367,31 @@ test('formatter_loc_directives', test_formatter_loc_directives,
   ],
 )
 
+# Lime-Letter-23 follow-up: table-driven directive-emit registry
+# regression test.  Sub-tests check coverage, idempotence,
+# category placement, and byte-identity vs the v0.5.5 baseline.
+# #includes ../lime.c with LIME_TEST_HARNESS so it can read the
+# static lime_directives[] array directly; takes the lime binary
+# path on argv[1] for subprocess-driven fixture rounds.  See the
+# top-of-file comment in test_formatter_directive_registry.c.
+test_formatter_directive_registry = executable(
+  'test_formatter_directive_registry',
+  'test_formatter_directive_registry.c',
+  link_with : [lime_lex_compiler_lib],
+  include_directories : [inc, include_directories('../src/lex')],
+  c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAS_LEX_COMPILER',
+            '-Wno-unused-function', '-Wno-unused-parameter',
+            '-Wno-format-overflow', '-Wno-format-truncation'],
+)
+
+test('formatter_directive_registry', test_formatter_directive_registry,
+  args : [
+    lime_exe.full_path(),
+    meson.project_source_root(),
+  ],
+  depends : [lime_exe],
+)
+
 # v0.5.0: lint pass expanded from a 4-rule stub to ~16 opinionated
 # rules.  Each fixture in tests/test_lint_fixtures/ is constructed
 # to fire exactly one rule (plus incidental neighbours like W005
