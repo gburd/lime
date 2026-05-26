@@ -590,6 +590,15 @@ static int test_lime_jit_compile(void) {
     ParserSnapshot *snap = make_test_snapshot();
     ASSERT(snap != NULL);
 
+    /* The synthetic test snapshot is far below the x86_64 ir-size
+    ** threshold (nstate * nterminal = 12 vs 500_000); without
+    ** LIME_JIT=1 the architecture gate in lime_jit_compile returns
+    ** 1 (skip) on x86_64 and breaks this test.  Force JIT so we
+    ** exercise the compilation path the test is actually about.
+    ** Restore the env var afterwards so other tests aren't affected. */
+    const char *prior = getenv("LIME_JIT");
+    setenv("LIME_JIT", "1", 1);
+
     int result = lime_jit_compile(snap);
 
     if (jit_is_available()) {
@@ -601,6 +610,12 @@ static int test_lime_jit_compile(void) {
         ASSERT(result == 0);
     } else {
         ASSERT(result != 0);
+    }
+
+    if (prior != NULL) {
+        setenv("LIME_JIT", prior, 1);
+    } else {
+        unsetenv("LIME_JIT");
     }
 
     snapshot_release(snap);
