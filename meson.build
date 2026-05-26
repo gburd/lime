@@ -155,6 +155,59 @@ lime_exe = executable('lime',
   install : true,
 )
 
+# ROADMAP item 1, phase 4 (in-process LALR rebuild library).
+#
+# lime_compiler_lib compiles lime.c with -DLIME_HAVE_SNAPSHOT_BUILD
+# (turning on the in-process snapshot path) and -DLIME_TEST_HARNESS
+# (omitting main() so the object can be linked into other programs).
+# The resulting archive exports the public symbol
+# `lime_compile_grammar_in_process` declared in include/lime_compiler.h.
+#
+# Consumers wire it up by adding `lime_compiler_dep` to their target's
+# dependencies.  We deliberately do NOT add this archive to
+# `lime_parser_dep` so:
+#
+#   1. Existing tests that already #include "../lime.c" with
+#      LIME_HAVE_SNAPSHOT_BUILD (test_lime_compile_in_process) keep
+#      their unique strong definition and link without conflict.
+#
+#   2. lime_parser_lib stays small for downstream consumers that don't
+#      need runtime compilation (the LALR engine is ~200 KB; the lime
+#      compiler is ~1.2 MB).
+#
+# src/snapshot_create.c declares lime_compile_grammar_in_process as a
+# weak external reference so it can dispatch in-process when this
+# library is linked into the consuming executable, and gracefully
+# falls back to the subprocess pipeline when it is not.  The
+# LIME_FORCE_SUBPROCESS=1 environment variable forces the subprocess
+# path even when the symbol is present, for testing and for debugging
+# compiler-bug regressions.
+#
+# We do not pass -DLIME_HAS_LEX_COMPILER here because the in-process
+# compile path never invokes the .lex frontend; the stub in lime.c
+# (returning a clear error if -X is somehow reached) is sufficient.
+lime_compiler_lib = static_library('lime_compiler',
+  'lime.c',
+  include_directories : [inc, include_directories('src'),
+                         include_directories('src/lex')],
+  c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAVE_SNAPSHOT_BUILD',
+            '-Wno-unused-function', '-Wno-unused-parameter',
+            '-Wno-format-overflow'],
+)
+
+lime_compiler_dep = declare_dependency(
+  # link_whole forces the linker to pull in every object from
+  # liblime_compiler.a, even when the references in the consuming
+  # executable are weak (which is exactly the case for the
+  # `lime_compile_grammar_in_process` call site in
+  # src/snapshot_create.c).  Without this, the static-archive lookup
+  # silently leaves the weak reference unresolved at link time and
+  # snapshot_create.c falls through to the subprocess pipeline at
+  # runtime -- precisely the regression phase 4 was meant to avoid.
+  link_whole : [lime_compiler_lib],
+  include_directories : inc,
+)
+
 # v0.5.0: standalone Lime Language Server (lime-lsp).  Lives under
 # src/lsp/ and links nothing from lime_parser_lib so the runtime
 # hot-path stays untouched -- it shells out to the lime binary

@@ -133,16 +133,70 @@ test('lime_compile_in_process', test_lime_compile_in_process,
   # on $PATH.  This is a runtime env, not a build-time link.
   # LIME_INCLUDE / LIME_SRC_INCLUDE are read by snapshot_create.c so
   # the subprocess `cc` invocation finds the runtime headers.
+  #
+  # ROADMAP-1 phase 4: this test predates the in-process dispatch
+  # default in src/snapshot_create.c::lime_compile_grammar_text and
+  # explicitly compares the in-process and subprocess pipelines.
+  # Force subprocess for `lime_compile_grammar_text` so the
+  # comparison still measures the fork+exec pipeline rather than the
+  # transparently-dispatched in-process path.  Direct calls to
+  # `lime_compile_grammar_in_process` (the subject of this test) are
+  # unaffected by LIME_FORCE_SUBPROCESS.
   env : [
     'LIME_BIN=' + lime_exe.full_path(),
     'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
     'LIME_INCLUDE=' + meson.project_source_root() / 'include',
     'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
     'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
+    'LIME_FORCE_SUBPROCESS=1',
   ],
   depends : [lime_exe],
   workdir : meson.project_source_root(),
   timeout : 60)
+
+# ROADMAP item 1, phase 4: in-process dispatch through
+# lime_compile_grammar_text and (transitively) publish_modified_snapshot
+# / parser_composition.  This test executable is the only consumer
+# that links lime_compiler_dep, so the weak
+# `lime_compile_grammar_in_process` reference inside
+# src/snapshot_create.c resolves and the fast path activates.  The
+# rest of the suite continues to dispatch to the subprocess pipeline
+# (weak ref unresolved -> NULL -> fallback), preserving v0.5.4
+# functional behaviour.  See src/snapshot_create.c for the dispatch
+# policy and LIME_FORCE_SUBPROCESS opt-out.
+#
+# Skipped on Windows along with test_snapshot_create / test_extension_rebuild:
+# the subprocess fallback path uses fork/exec/dlopen which is stubbed
+# on Windows, so several sub-tests would unconditionally fail there.
+if host_machine.system() != 'windows'
+  test_in_process_dispatch = executable('test_in_process_dispatch',
+    'test_in_process_dispatch.c',
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, lime_compiler_dep],
+    # Export executable symbols so the .so produced by the
+    # subprocess fallback (sub-tests 2 + 3) at runtime can resolve
+    # snapshot_release / parse_token / etc. via dlopen against the
+    # parent binary.  Same trick test_snapshot_create uses.
+    export_dynamic : true,
+  )
+
+  test('in_process_dispatch', test_in_process_dispatch,
+    # The forced-subprocess and fallback sub-tests need a working
+    # external pipeline; supply the same env wiring test_snapshot_create
+    # uses so the runtime cc + lime invocations find the correct lime
+    # binary, library, and headers from this build tree.
+    env : [
+      'LIME_BIN=' + lime_exe.full_path(),
+      'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
+      'LIME_INCLUDE=' + meson.project_source_root() / 'include',
+      'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
+      'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
+    ],
+    depends : [lime_exe],
+    workdir : meson.project_source_root(),
+    is_parallel : false,
+    timeout : 120)
+endif
 
 test_parse_context = executable('test_parse_context',
   'test_parse_context.c',
