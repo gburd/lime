@@ -248,5 +248,12 @@ table_ref: ID | ID DOT ID | ID DOT ID DOT ID;
 
 %%
 
+/* yyerror / yylex are provided by the bench_runtime harness when this
+** grammar is built into the bench_runtime_bison binary.  When this
+** file is built standalone (e.g. for a bison sanity check), define
+** -DBENCH_GRAMMAR_STANDALONE on the command line to get the no-op
+** versions back. */
+#ifdef BENCH_GRAMMAR_STANDALONE
 void yyerror(const char *s) { (void)s; }
 int yylex(void) { return 0; }
+#endif

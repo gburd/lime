@@ -25,7 +25,10 @@
 #endif
 
 #ifdef USE_BISON
-#  include "bison_out.h"
+#  ifndef BISON_OUT_H
+#    define BISON_OUT_H "bison_out.h"
+#  endif
+#  include BISON_OUT_H
    int  yyparse(void);
    extern int yychar;
    /* We drive bison by overriding yylex to read from our stream. */
@@ -40,7 +43,10 @@
 #endif
 
 #ifdef USE_LIME
-#  include "lime_out.h"
+#  ifndef LIME_OUT_H
+#    define LIME_OUT_H "lime_out.h"
+#  endif
+#  include LIME_OUT_H
    void *BenchParserAlloc(void *(*f)(unsigned long));
    void  BenchParserFree(void *p, void (*f)(void *));
    void  BenchParserInit(void *rawParser);

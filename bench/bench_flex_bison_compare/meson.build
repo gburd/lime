@@ -15,10 +15,8 @@
 
 # Detect tool availability at configure time, including a runtime probe
 # because some sandboxed environments accept `find_program` for a path
-# but block invocation.
-flex_prog  = find_program('flex',  required : false)
-bison_prog = find_program('bison', required : false)
-
+# but block invocation.  flex_prog / bison_prog are now defined in the
+# parent bench/meson.build; re-probe their actual invocability here.
 flex_bison_ok = false
 if flex_prog.found() and bison_prog.found()
   fres = run_command(flex_prog, '--version', check : false)

@@ -74,6 +74,8 @@ bench_jit_real_parser = executable('bench_jit_real_parser',
 
 # Optional Flex/Bison comparison harness (skipped at configure time
 # when flex or bison is unavailable -- see subdir's meson.build).
+flex_prog  = find_program('flex',  required : false)
+bison_prog = find_program('bison', required : false)
 subdir('bench_flex_bison_compare')
 
 # Optional simdjson throughput comparison (skipped when simdjson
@@ -101,4 +103,53 @@ glr_overhead = executable('glr_overhead',
   dependencies : lime_parser_dep,
   include_directories : include_directories('../src'),
 )
+
+# ----------------------------------------------------------------------
+# Larger PG-class grammar comparison: bench_grammar.{y,lime}
+#
+# 250-rule SQL-shaped expression language, the largest in-tree apples-
+# to-apples comparison between Lime and Bison.  bench_runtime.c is
+# compiled twice (-DUSE_LIME / -DUSE_BISON) and runs an identical pre-
+# tokenized SQL-ish stream through each parser.  Skipped when bison or
+# flex is unavailable.  Was previously orphaned (bench_runtime.c +
+# bench_grammar.{y,lime} all existed but never wired) -- v0.4.4 perf-
+# audit pass picked it up.
+# ----------------------------------------------------------------------
+if flex_prog.found() and bison_prog.found()
+  bench_grammar_lime_gen = custom_target('bench_grammar_lime',
+    input   : ['bench_grammar.lime'],
+    output  : ['bench_grammar.c', 'bench_grammar.h'],
+    command : [
+      lime_exe,
+      '-T' + meson.project_source_root() / 'limpar.c',
+      '-d@OUTDIR@',
+      '@INPUT@',
+    ],
+  )
+
+  bench_grammar_bison_gen = custom_target('bench_grammar_bison',
+    input   : ['bench_grammar.y'],
+    output  : ['bench_grammar_bison.c', 'bench_grammar_bison.h'],
+    command : [
+      bison_prog,
+      '-d',
+      '-o', '@OUTPUT0@',
+      '@INPUT@',
+    ],
+  )
+
+  bench_runtime_lime = executable('bench_runtime_lime',
+    'bench_runtime.c',
+    bench_grammar_lime_gen,
+    c_args : ['-DUSE_LIME', '-DLIME_OUT_H="bench_grammar.h"'],
+    include_directories : include_directories('../src', '.'),
+  )
+
+  bench_runtime_bison = executable('bench_runtime_bison',
+    'bench_runtime.c',
+    bench_grammar_bison_gen,
+    c_args : ['-DUSE_BISON', '-DBISON_OUT_H="bench_grammar_bison.h"'],
+    include_directories : include_directories('../src', '.'),
+  )
+endif
 

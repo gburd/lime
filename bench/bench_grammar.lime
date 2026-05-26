@@ -10,6 +10,14 @@
 
 %token_type {int}
 
+/* This bench grammar is intentionally conflict-heavy (250+ rules,
+** ambiguous SQL-shaped expression syntax) -- the conflicts ARE the
+** stress.  bison reports ~245 conflicts; lime's resolver bins them
+** slightly differently (227).  %expect locks in the count so future
+** lime revisions can't silently change conflict resolution without
+** noticing. */
+%expect 227
+
 %left  OR.
 %left  AND.
 %right NOT.
