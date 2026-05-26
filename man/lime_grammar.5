@@ -2,7 +2,7 @@
 .\" Copyright (c) 2024-2026 Lime Parser Generator Project
 .\" Public Domain
 .\"
-.TH LIME_GRAMMAR 5 "May 2026" "Lime 0.2.6" "File Formats"
+.TH LIME_GRAMMAR 5 "May 2026" "Lime 0.5.1" "File Formats"
 .SH NAME
 lime_grammar \- Lime parser generator grammar file format
 .SH DESCRIPTION
@@ -528,6 +528,272 @@ by other modules.
 .TP
 .BI %import " sym1 sym2 " ... " from " module\fB.\fR
 Import symbols (terminal or non-terminal) from another module.
+.SS "Dialect-Conditional Blocks"
+.TP
+.BI %dialect " NAME
+.BI { " body " }
+Generator-time conditional rule block.
+The body is included verbatim when the macro
+.BI dialect_ NAME
+is defined at
+.B lime
+invocation time (typically via the
+.BI \-Ddialect= NAME
+CLI shorthand);
+when it is not defined, the entire region is removed.
+.IP
+.B %dialect
+is sugar over
+.BI "%ifdef dialect_" NAME
+.B { body } %endif
+with brace-scoped (rather than
+.BR %endif -terminated)
+body syntax.
+The brace scan is string- and comment-aware: a
+.B }
+inside
+.BR "\"...\"" ,
+.BR '...' ,
+.BR "/* ... */" ,
+or
+.B "// ..."
+does not close the block.
+Newlines are preserved in either branch so downstream error
+messages carry the correct line number.
+.IP
+Locked design rules:
+.RS
+.IP \(bu 2
+.I NAME
+must match
+.BR [A-Za-z_][A-Za-z0-9_]* .
+.IP \(bu 2
+A missing brace, an unterminated body, or a nested
+.B %dialect
+inside another
+.B %dialect
+is a hard error with file-and-line diagnostics.
+.IP \(bu 2
+.B %dialect
+blocks share the same token namespace as the rest of the
+grammar; two blocks declaring the same
+.B %token
+dedup, but conflicting
+.B %type
+annotations fail LALR construction the same way they would
+outside any
+.B %dialect
+block.
+.IP \(bu 2
+Multiple
+.BI \-Ddialect= X
+.BI \-Ddialect= Y
+compose: both bodies are included.
+There is no umbrella
+.B dialect
+macro.
+.RE
+.IP
+v0.4.0.  Worked example, design constraints, and the
+idempotence guarantee live in
+.B docs/DIALECT.md .
+.SS "File-Level Inheritance"
+.TP
+.BI %extends " \(dqpath\(dq
+Load and merge another grammar file at parser-generation time.
+The base file's rules, tokens, types,
+.B %include
+blocks, and other directives are absorbed into the deriving
+grammar before code generation.
+.B %extends
+may appear multiple times (the
+.I diamond
+pattern); the diamond convergence rules below resolve which
+body, type, or override wins.
+.IP
+Path resolution:
+.RS
+.IP 1. 4
+Absolute path if the string starts with
+.BR / .
+.IP 2. 4
+Relative to the directory of the file containing the
+.B %extends
+directive.
+.IP 3. 4
+Entries of the
+.B LIME_PATH
+environment variable, colon-separated, in order.
+.RE
+.IP
+The current working directory is intentionally
+.I not
+searched (it shifts under build systems).
+Resolution failure and
+.B %extends
+cycles are hard errors.
+.IP
+.B "Diamond / convergence rules"
+(see
+.B docs/EXTENDS.md
+for full worked examples):
+.RS
+.IP \(bu 2
+Rule identity is
+.BR ( LHS_name ,
+.IR RHS_symbol_sequence ).
+Alias names, action body, and precedence mark are not part of
+identity, so
+.B %override
+and
+.B %remove
+match on rule shape regardless of how aliases are spelled.
+.IP \(bu 2
+If two
+.B %extends
+paths overlap (oracle.lime and mysql.lime each
+.B %extends
+ansi_sql.lime), re-loads of identical rules silently dedup.
+.IP \(bu 2
+If two paths
+.B %override
+the same rule with different bodies and the deriving file does
+not itself disambiguate, Lime errors with
+"diamond inheritance conflict"
+and a hint to add an
+.B %override
+in the derived file.
+.IP \(bu 2
+A shallower-depth
+.B %override
+or
+.B %remove
+in the deriving file unconditionally wins over deeper sibling
+decisions.
+.IP \(bu 2
+.B %include
+blocks concatenate in DFS order: base file first, then
+derived files in the order they appear.
+.RE
+.IP
+v0.4.1.
+.TP
+.B %override
+.I rule
+Replace a base file's rule body by identity match.
+The directive precedes a normal rule declaration; only the
+action body changes -- the rule identity
+.RB ( "(LHS, RHS)" )
+must already exist in the inherited grammar.
+A missing target is a hard error
+("%override: no rule of matching identity to override").
+Example:
+.RS
+.PP
+.EX
+%extends "ansi_sql.lime"
+%override
+select_clause(R) ::= SELECT STAR FROM IDENT.   { R = oracle_sel(); }
+.EE
+.RE
+.IP
+v0.4.1.
+.TP
+.BI %remove " rule-shape" .
+Drop a rule from the inherited grammar by identity match.
+No action body; the directive ends at the rule's terminating
+.BR . .
+If the target does not exist, the response depends on the build:
+.B LIME_STRICT
+builds (auto-defined for meson
+.BR buildtype=debug " / " debugoptimized )
+error; release builds warn to stderr and continue.
+Downstream pinned grammars frequently outlive a base file's
+exact rule shape, which is why the soft default exists; CI runs
+built with
+.B LIME_STRICT
+catch the drift early.  v0.4.1.
+.TP
+.BI %override_type " symbol\fR { \fIC-type\fR }
+Widen a base file's
+.B %type
+declaration for
+.IR symbol .
+When this actually changes the inherited type, Lime prints a
+noisy stderr warning of the form
+.RS
+.PP
+.EX
+file.lime:NN: warning: %override_type widens SYM from existing
+  type; user-responsibility ABI compat
+.EE
+.PP
+.RE
+.IP
+The warning is intentional.
+The author is asserting that the new type is ABI-compatible
+with the prior type wherever the generated parser already uses
+it; Lime cannot verify the assertion.
+v0.4.1.  See
+.B docs/EXTENDS.md
+for the ten locked design rules.
+.SS "Embedded Grammar Wiring"
+.TP
+.BI %embed " NAME " \fBTRIGGER\fP \(aq\fIlex\fP\(aq \fBENTRY_TOKEN\fP " TOK" .
+Declare a runtime grammar-mode boundary.
+When the host parser sees the trigger lexeme
+.I lex
+in a position that admits the entry-point terminal
+.IR TOK ,
+the runtime context-switch machinery enters the embedded
+sub-grammar registered under
+.IR NAME .
+The directive is pure sugar over
+.B context_switch_register_trigger()
+(see
+.BR docs/CONTEXT_SWITCH.md ):
+it emits the
+.IB Prefix _embed_table[]
+and the
+.IB Prefix SetEmbedSnapshot()
+/
+.IB Prefix RegisterEmbedTriggers()
+helpers in the generated
+.IB basename _snapshot.c
+(only when
+.B \-n
+is active).
+.IP
+Fields:
+.RS
+.IP \(bu 2
+.I NAME
+-- mode-label identifier; used as the runtime
+.B mode_name
+string.
+.IP \(bu 2
+.RI \(aq lex \(aq
+-- single- or double-quoted trigger lexeme; non-empty
+free-form bytes.  The formatter
+.RB ( \-F )
+normalises to single quotes on emit.
+.IP \(bu 2
+.I TOK
+-- entry-point lookahead terminal; must already be declared
+via
+.BR %token .
+.RE
+.IP
+Multiple
+.B %embed
+directives compose; each registers one trigger, in declaration
+order.  Without
+.BR \-n ,
+.B lime
+warns that the directive's effect is dropped (the snapshot
+file, where the wiring lives, is not emitted).
+v0.4.4.  See
+.B docs/EMBED.md .
 .SH SYMBOL NAMING
 .IP \(bu 2
 Terminal symbols (tokens) must start with an uppercase letter.
@@ -627,6 +893,41 @@ a_expr(A) ::= INTEGER(B). {
 }
 .EE
 .RE
+.SH "GLR MODE"
+Lime ships an opt-in Generalized-LR (GLR) parsing engine
+alongside the default LALR(1) push parser.
+GLR handles grammars that LALR(1) cannot, by forking the parse
+stack on shift/reduce or reduce/reduce conflicts and continuing
+all alternatives in parallel through a Graph-Structured Stack;
+heads that converge to the same state are merged.  When two
+reductions produce the same nonterminal at the same position, a
+user-supplied disambiguation callback picks the winner.  If
+none picks, the parse reports unresolvable ambiguity.
+.PP
+The GLR entry point is
+.PP
+.RS
+.EX
+int lime_parse_glr(ParseContext *ctx,
+                   GLRDisambiguateFn cb, void *user);
+.EE
+.RE
+.PP
+declared in
+.BR <glr.h> .
+Grammars need no syntactic markup to opt in; the same
+Lime-generated snapshot supports both modes.  Callers that
+never call
+.B lime_parse_glr()
+pay zero cost for GLR support being present in the runtime --
+the LALR fast path
+.RB ( src/parse_engine.c ,
+.BR src/snapshot.c ,
+.BR src/jit_codegen.c )
+is byte-identical to the pre-GLR tree.  Measured GLR overhead
+vs LALR on unambiguous input is 5--8\(mu (see
+.BR docs/GLR.md ).
+v0.3.4.
 .SH "DIAGNOSTICS API"
 .PP
 Every Lime-generated parser exports three functions that enable
@@ -724,8 +1025,21 @@ returns
 P0-NEW-8.
 .SH "SEE ALSO"
 .BR lime (1),
+.BR lime_lex (5),
+.BR lime-lsp (1),
 .BR yacc (1),
 .BR bison (1)
+.PP
+Further documentation in the source tree:
+.B docs/DIALECT.md ,
+.B docs/EXTENDS.md ,
+.B docs/EMBED.md ,
+.B docs/DIFF_CONFLICTS.md ,
+.B docs/LINT.md ,
+.B docs/GLR.md ,
+.B docs/LSP.md ,
+.B docs/CONTEXT_SWITCH.md ,
+.B docs/MODULE_FORMAT.md .
 .SH AUTHORS
 The Lemon parser generator was originally written by D. Richard Hipp
 for the SQLite project.

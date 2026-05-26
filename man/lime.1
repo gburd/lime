@@ -2,7 +2,7 @@
 .\" Copyright (c) 2024-2026 Lime Parser Generator Project
 .\" Public Domain
 .\"
-.TH LIME 1 "May 2026" "Lime 0.2.6" "User Commands"
+.TH LIME 1 "May 2026" "Lime 0.5.1" "User Commands"
 .SH NAME
 lime \- LALR(1) parser generator
 .SH SYNOPSIS
@@ -70,6 +70,33 @@ directives in the grammar file.
 Multiple
 .B \-D
 options may be given.
+.IP
+As a v0.4.0 shorthand,
+.BI \-Ddialect= NAME
+is recognized specially: it expands to
+.BI \-Ddialect_ NAME
+before the macro table is updated, so a single argument activates
+any matching
+.BI %dialect " NAME
+blocks (see
+.BR lime_grammar (5)).
+The
+.I NAME
+portion is validated against
+.BR [A-Za-z_][A-Za-z0-9_]* ;
+an empty, leading-digit, or non-identifier name produces a
+diagnostic and a non-zero exit.
+No umbrella
+.B dialect
+macro is defined; only the specific
+.BI dialect_ NAME
+name is added.
+All other
+.B \-D
+uses still take a bare macro name.
+See
+.B docs/DIALECT.md
+for the design rules.
 .TP
 .B \-E
 Print the input file after preprocessing
@@ -107,9 +134,71 @@ file.
 .TP
 .B \-L
 Lint mode.
-Validate grammar and module directives, report errors, and exit
-with the number of errors found.
-No output files are generated.
+Run the opinionated grammar-hygiene linter (E001-E005,
+W001-W009, M001-M003, plus optional S001-S002 with
+.BR \-\-lint-style ).
+Reports errors, warnings, and suggestions, then exits.
+No
+.BR .c ,
+.BR .h ,
+or
+.B .out
+output files are generated.
+Exits 0 on a clean grammar (or warnings only); exits 1 if any
+error fired.
+With
+.B \-\-lint-strict
+warnings also force exit 1.
+The lint pass runs
+.I after
+.BR FindActions() ,
+so conflict-count rules (e.g. W005) have full data.
+See
+.B docs/LINT.md
+for the rule catalog and CI integration recipes.
+.TP
+.B \-\-lint-strict
+Treat lint warnings as errors.
+With
+.B \-L
+this promotes any W- or M- diagnostic to error severity and
+forces a non-zero exit.
+Intended for CI.
+v0.5.0.
+.TP
+.B \-\-lint-style
+Enable the opt-in style suggestions S001 (missing-grammar-doc)
+and S002 (missing-rule-doc).
+These are silent without this flag.
+v0.5.0.
+.TP
+.BI \-\-lint-format= format
+Select the lint output format.
+.I format
+is one of
+.BR human ,
+.BR gcc ,
+or
+.BR json :
+.RS
+.IP \(bu 2
+.B human
+(default) -- pretty stderr lines plus a totals summary.
+.IP \(bu 2
+.B gcc
+--
+.B path:line:col: severity: [code] message
+on stderr; consumable by emacs/vim/IDE compile-error lists.
+.IP \(bu 2
+.B json
+-- a top-level array of diagnostics on stdout, with a stable
+v1 schema (\fIpath\fP, \fIline\fP, \fIcol\fP, \fIseverity\fP,
+\fIcode\fP, \fImessage\fP, \fIfix\fP).
+A clean grammar produces exactly
+.BR []\en .
+.RE
+.IP
+v0.5.0.
 .TP
 .B \-l
 Do not generate
@@ -214,6 +303,52 @@ compiler options through build systems.
 .B \-x
 Print the version number and exit.
 .TP
+.B \-v
+Alias for
+.BR \-x .
+Print the version number and exit.
+.TP
+.BI \-\-diff-conflicts " base.lime ext.lime"
+Diff the LALR(1) conflict surface of two grammars.  Each grammar
+is compiled in a forked child process (each child gets pristine
+global state), conflicts are matched by symbolic identity
+(\fI(reduce_lhs, reduce_rhs, lookahead, kind)\fP for SR;
+sorted rule-shape pair for RR), and the diff is written to
+stdout.  Designed for the dialect-overlay workflow: prove that
+adding
+.I ext.lime
+to
+.I base.lime
+introduces no new shift/reduce or reduce/reduce conflicts.
+.IP
+Exit codes are CI-friendly:
+.RS
+.IP \(bu 2
+.B 0
+-- no NEW conflicts; safe to merge.
+.IP \(bu 2
+.B 1
+-- NEW conflicts present; review or reject.
+.IP \(bu 2
+.B 2
+-- argument or pipeline error (missing file, fork failure, etc.).
+.RE
+.IP
+Not supported on Windows builds (returns exit 2 with a
+diagnostic).  v0.4.3.  See
+.B docs/DIFF_CONFLICTS.md
+for the symbolic-identity rules and limitations.
+.TP
+.B \-\-json
+With
+.BR \-\-diff-conflicts ,
+emit machine-readable output: a single JSON object with
+\fIschema_version\fP, \fIsummary\fP (new / resolved / unchanged /
+net_change counts), per-NEW and per-RESOLVED records, and an
+\fIunchanged_count\fP scalar.  The schema is documented in
+.BR docs/DIFF_CONFLICTS.md .
+v0.4.3.
+.TP
 .B \-X
 Run in lex-compiler mode (lexer subsystem M3 frontend).
 Reads the input as a
@@ -301,6 +436,34 @@ lime -L grammar.lime
 .EE
 .RE
 .PP
+Lint with strict warnings, gcc-format errors:
+.PP
+.RS
+.EX
+lime -L \-\-lint-strict \-\-lint-format=gcc grammar.lime
+.EE
+.RE
+.PP
+Build a dialect variant via the
+.BI \-Ddialect= NAME
+shorthand:
+.PP
+.RS
+.EX
+lime \-Ddialect=oracle pg_sql.lime
+.EE
+.RE
+.PP
+Diff the LALR conflict surface between two grammars
+(CI-friendly, exits 1 on any new conflict):
+.PP
+.RS
+.EX
+lime \-\-diff-conflicts pg_core.lime pg_oracle.lime
+lime \-\-diff-conflicts \-\-json pg_core.lime pg_oracle.lime > diff.json
+.EE
+.RE
+.PP
 Preprocess and display the grammar after macro expansion:
 .PP
 .RS
@@ -318,15 +481,107 @@ If
 is declared, the exit status is 0 when exactly
 .I N
 conflicts are found.
+For
+.BR \-L ,
+zero diagnostics fired (or warnings only without
+.BR \-\-lint-strict ).
+For
+.BR \-\-diff-conflicts ,
+no NEW conflicts.
 .TP
 .B 1
 One or more errors occurred during parsing or code generation,
 or there are unresolved shift/reduce or reduce/reduce conflicts
 (unless suppressed by
 .BR %expect ).
+For
+.BR \-L ,
+at least one E- or M- error (or W- with
+.BR \-\-lint-strict ).
+For
+.BR \-\-diff-conflicts ,
+at least one NEW conflict.
+.TP
+.B 2
+Reserved for
+.BR \-\-diff-conflicts :
+argument validation, file-open, or pipeline error (e.g. fork
+failure, child crash, Windows build where
+.B \-\-diff-conflicts
+is stubbed).
 .SH ENVIRONMENT
+.TP
+.B LIME_PATH
+Colon-separated list of directories searched by
+.B %extends
+(after the absolute / current-file-directory probes) and by
+the template lookup that backs
+.BR \-T .
+v0.4.1.
+.TP
+.B LIME_JIT
+Forces JIT-compilation policy at runtime when read by the
+generated parser binary.  Set to
+.B 1
+to force eager compile, or
+.B 0
+to disable.  Has no effect on
 .B lime
-does not use any environment variables.
+itself; consumed only by parsers compiled with
+.BR \-Dllvm=enabled .
+.TP
+.B LIME_BIN
+Used by the runtime extension framework when rebuilding a
+merged snapshot from a grammar source.  Overrides the binary
+looked up on
+.BR PATH .
+.TP
+.B LIME_CC
+Used by the runtime extension framework as the C compiler when
+rebuilding a merged snapshot from a grammar source.  Defaults to
+.BR cc .
+.TP
+.B LIME_TEMPLATE
+Absolute path to a parser template file.  Used by
+.B lime_snapshot_create()
+and siblings when
+.B limpar.c
+is not found in the standard install layout.
+.TP
+.B LIME_LIBDIR
+Absolute path to the directory holding
+.B limpar.c
+and
+.BR snapshot_build.c .
+Falls back to compiled-in defaults
+(\fI/usr/local/share/lime/\fP, \fI/usr/share/lime/\fP).
+.TP
+.B LIME_SNAPSHOT_BUILD_C
+Absolute path to
+.B snapshot_build.c
+for the runtime grammar-compile pipeline.  Override when the
+default discovery (relative to
+.BR LIME_LIBDIR )
+is wrong.
+.TP
+.B TMPDIR
+Used for scratch files during preprocessing,
+.BR \-\-diff-conflicts ,
+and the runtime grammar-compile pipeline.  Falls back to
+.B /tmp
+when unset.
+.PP
+The build-time macro
+.B LIME_STRICT
+(auto-defined by meson
+.BR buildtype=debug " / " debugoptimized )
+is not an environment variable but affects the binary's
+behaviour: it promotes
+.B %remove
+misses and a handful of other soft warnings to hard errors.
+See
+.B docs/EXTENDS.md
+for the full list.
 .SH FILES
 .TP
 .I limpar.c
@@ -369,8 +624,26 @@ Pass
 to disable tracing.
 .SH "SEE ALSO"
 .BR lime_grammar (5),
+.BR lime_lex (5),
+.BR lime-lsp (1),
 .BR yacc (1),
 .BR bison (1)
+.PP
+Further documentation in the source tree:
+.B docs/DIALECT.md
+(\fB%dialect\fP),
+.B docs/EXTENDS.md
+(\fB%extends\fP / \fB%override\fP / \fB%remove\fP),
+.B docs/EMBED.md
+(\fB%embed\fP),
+.B docs/DIFF_CONFLICTS.md
+(\fB--diff-conflicts\fP),
+.B docs/LINT.md
+(\fB-L\fP rule catalog),
+.B docs/GLR.md
+(\fBlime_parse_glr()\fP),
+.B docs/LSP.md
+(\fBlime-lsp\fP).
 .SH AUTHORS
 The Lemon parser generator was originally written by D. Richard Hipp
 for the SQLite project.
@@ -380,5 +653,5 @@ grammars, runtime extensions, and additional code generation features.
 Public Domain.
 .SH BUGS
 Report bugs at:
-.UR https://github.com/anthropics/lime/issues
+.UR https://codeberg.org/gregburd/lime/issues
 .UE

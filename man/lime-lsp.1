@@ -1,0 +1,284 @@
+.\" lime-lsp.1 - manual page for the Lime Language Server
+.\" Copyright (c) 2024-2026 Lime Parser Generator Project
+.\" Public Domain
+.\"
+.TH LIME-LSP 1 "May 2026" "Lime 0.5.1" "User Commands"
+.SH NAME
+lime-lsp \- Language Server Protocol server for Lime grammar files
+.SH SYNOPSIS
+.B lime-lsp
+.RI [ options ]
+.SH DESCRIPTION
+.B lime-lsp
+is a Language Server Protocol (LSP) server for
+.B .lime
+grammar files.
+It speaks LSP 3.17 (subset) over standard input/output framed with
+HTTP-style
+.B Content-Length
+headers.
+The server is a separate binary from the
+.BR lime (1)
+parser generator: for live diagnostics it
+.BR fork (2)/ exec (3)s
+.B lime -L
+on a temporary copy of the open document; for navigation features
+(go-to-definition, hover, document outline) it runs an
+in-process tokenizer.
+.PP
+.B lime-lsp
+takes no positional arguments and reads / writes JSON-RPC 2.0
+on stdio only.
+There is no daemon mode and no socket transport; editor
+integrations spawn the server as a child process per workspace.
+.PP
+v0.5.0 ships LSP "Phase 1": single-document scope, full-text
+sync, diagnostics, definition, hover, document symbol.  See
+.B docs/LSP.md
+for the implementation guide and
+.B editors/lime-lsp-config.md
+for editor wire-up recipes (eglot, lsp-mode, Neovim
+.BR lspconfig ,
+VS Code).
+.SH OPTIONS
+.TP
+.BI \-\-lime " path"
+Path to the
+.BR lime (1)
+binary used for diagnostics.
+Overrides
+.B $LIME_BIN
+and the
+.B PATH
+search.
+.TP
+.B \-\-version
+Print the LSP server version (matches
+.BR LIME_VERSION_STRING )
+and exit.
+.SH "ADVERTISED CAPABILITIES"
+The
+.B ServerCapabilities
+object returned at
+.B initialize
+time is the authoritative list of supported features:
+.PP
+.RS
+.EX
+{
+  "textDocumentSync": { "openClose": true, "change": 1, "save": true },
+  "definitionProvider":     true,
+  "hoverProvider":          true,
+  "documentSymbolProvider": true
+}
+.EE
+.RE
+.PP
+.B "change: 1"
+is
+.B TextDocumentSyncKind.Full
+-- the client sends the full buffer text on every
+.BR didChange ;
+incremental sync is deferred.
+.PP
+Per-method status:
+.TP
+.B initialize / initialized / shutdown / exit
+Standard lifecycle.  The server returns
+.B serverInfo.version
+populated from
+.BR LIME_VERSION_STRING .
+.TP
+.B textDocument/didOpen, didChange, didSave, didClose
+Maintain the per-document buffer state and push diagnostics on
+each event;
+.B didClose
+publishes an empty diagnostic array to clear stale markers.
+.TP
+.B textDocument/publishDiagnostics
+Server-to-client notification.
+For each open document, parsed
+.B lime -L
+output (lint and parser-stage messages) becomes an LSP
+.BR Diagnostic ;
+severity maps:
+.B error
+\(rA 1,
+.B warning
+\(rA 2,
+.B note / info
+\(rA 3,
+.B hint
+\(rA 4.
+.TP
+.B textDocument/definition
+Jump from a non-terminal RHS reference to its LHS-defining rule,
+or from a terminal use to the
+.B %token
+declaration site.
+.TP
+.B textDocument/hover
+Return either a one-line directive description (covering
+.BR %name ,
+.BR %token ,
+.BR %type ,
+.BR %extra_argument ,
+.BR %extends ,
+.BR %dialect ,
+.BR %embed ,
+.BR %locations ,
+and the rest of the directive surface), or a symbol summary
+(kind, declaring line, usage count).
+.TP
+.B textDocument/documentSymbol
+Flat outline of every directive, terminal, and non-terminal in
+the document, in declaration order with kinds
+.B Key
+(directive),
+.B Constant
+(terminal),
+.B Function
+(non-terminal).
+.PP
+The following methods are advertised as
+.B unsupported
+and are intentionally deferred:
+.B textDocument/completion ,
+.B textDocument/references ,
+.B textDocument/rename ,
+.B textDocument/semanticTokens/full ,
+.B textDocument/codeAction ,
+.B workspace/symbol .
+The first three need a persistent cross-document grammar
+model;
+.B codeAction
+pairs with the linter's auto-fix surface, which has not yet
+been wired.
+.SH "ENVIRONMENT"
+.TP
+.B LIME_BIN
+Path to the
+.B lime
+binary used for diagnostics.
+Searched in this order:
+.B \-\-lime
+argument,
+.BR LIME_BIN ,
+literal
+.B lime
+on
+.BR PATH .
+.TP
+.B TMPDIR
+Used for the temporary file that holds the open document while
+.B lime -L
+runs against it.
+Falls back to
+.B /tmp
+when unset.
+.SH "EXIT STATUS"
+.TP
+.B 0
+Clean shutdown via the LSP
+.B shutdown
+\(rA
+.B exit
+sequence.
+.TP
+.B 1
+LSP protocol violation, malformed JSON-RPC frame, or fatal I/O
+error on stdio.
+.TP
+.B 2
+Argument-parsing failure.
+.SH "PROCESS MODEL"
+.RS
+.EX
+editor  <-- JSON-RPC 2.0 over stdio -->  lime-lsp
+                                            |
+                                            +--> fork+exec  lime -L /tmp/<doc>.lime
+                                            |    (per didOpen / didChange /
+                                            |     didSave; output piped back
+                                            |     and parsed line-by-line)
+                                            |
+                                            +--> in-process tokenizer
+                                                 (definition, hover,
+                                                  documentSymbol; ~250 LOC)
+.EE
+.RE
+.PP
+The LSP target is intentionally decoupled from the Lime parser
+runtime: it does
+.I not
+link
+.B lime_parser_lib
+and does
+.I not
+include any header that would force a recompile when the
+parser internals change.  Every byte the LSP ships lives in
+.BR src/lsp/ .
+.SH "WIRE FORMAT"
+JSON-RPC 2.0 framed with HTTP-style headers:
+.PP
+.RS
+.EX
+Content-Length: <N>\\r\\n
+\\r\\n
+<N bytes of UTF-8 JSON>
+.EE
+.RE
+.PP
+The bundled JSON parser (\fBsrc/lsp/lsp_json.[ch]\fP) is
+hand-rolled in ~600 lines and handles UTF-16 surrogate pairs
+in
+.B \\uXXXX
+escapes; no external JSON dependency is linked.
+.SH "LIMITATIONS"
+.IP \(bu 2
+Single document at a time.  Definition / hover / outline do
+not cross
+.B %extends
+or
+.B %import
+file boundaries.
+.IP \(bu 2
+Full-text sync only (no incremental).
+.IP \(bu 2
+No completion, references, rename, semantic tokens, or code
+actions.
+.IP \(bu 2
+POSIX-only.  The diagnostics path requires
+.BR fork (2),
+.BR execvp (3),
+and
+.BR pipe (2).
+On Windows, run the server inside WSL.  A native Win32
+implementation is future work.
+.SH "SEE ALSO"
+.BR lime (1),
+.BR lime_grammar (5),
+.BR lime_lex (5)
+.PP
+.B docs/LSP.md
+-- implementation guide and capability reference.
+.br
+.B editors/lime-lsp-config.md
+-- editor wire-up recipes.
+.br
+.B docs/LSP_DESIGN.md
+-- original (v0.2.x) design sketch (Phase 1 of which landed
+in v0.5.0).
+.SH AUTHORS
+The Lemon parser generator was originally written by D. Richard
+Hipp for the SQLite project.
+Lime is an extended version of Lemon with support for modular
+grammars, runtime extensions, and additional code generation
+features.
+.B lime-lsp
+is the v0.5.0 Language Server companion.
+.SH LICENSE
+Public Domain.
+.SH BUGS
+Report bugs at:
+.UR https://codeberg.org/gregburd/lime/issues
+.UE

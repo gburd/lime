@@ -20,7 +20,7 @@ involved.
 
 | Feature | Lime | Yacc | Bison | ANTLR | Menhir |
 |---------|------|------|-------|-------|--------|
-| Grammar class | LALR(1) | LALR(1) | LALR(1)/GLR/IELR | LL(*)/ALL(*) | LR(1) |
+| Grammar class | LALR(1) + GLR (opt-in) | LALR(1) | LALR(1)/GLR/IELR | LL(*)/ALL(*) | LR(1) |
 | Left recursion | Yes | Yes | Yes | Indirect only (v4) | Yes |
 | Right recursion | Yes | Yes | Yes | Yes | Yes |
 | Operator precedence | Yes | Yes | Yes | Via alternatives | Yes |
@@ -30,8 +30,8 @@ involved.
 | Multiple start symbols | No | No | Yes (GLR mode) | Yes | Yes |
 | Parameterized rules | No | No | No | Yes | Yes |
 | Unicode support | Via tokenizer | Via lex | Via lex | Full Unicode | Full Unicode |
-| Grammar modularity | Runtime extensions | None | None | `import` grammars | `%` includes |
-| Conditional compilation | `%ifdef`/`%ifndef` | No | No | No | No |
+| Grammar modularity | Runtime extensions, `%extends`, `%dialect`, modules | None | None | `import` grammars | `%` includes |
+| Conditional compilation | `%ifdef`/`%ifndef`, `%dialect`, `-Ddialect=NAME` | No | No | No | No |
 
 ### Code Generation and Integration
 
@@ -122,25 +122,29 @@ design. Key differences:
 Bison is the GNU successor to Yacc, with many additional features. Lime
 takes a different approach:
 
-- **Simplicity**: Lime focuses on LALR(1) parsing done well. Bison offers
-  GLR and IELR(1) modes that handle ambiguous and non-LALR grammars but
-  add complexity.
+- **Simplicity**: Lime focuses on LALR(1) parsing done well, with
+  an opt-in GLR engine (since v0.3.4) for grammars LALR(1) cannot
+  handle.  Bison also offers IELR(1) mode.
 - **Extensibility**: Lime's runtime extension system has no equivalent in
   Bison. With Lime, you can add tokens, rules, and precedence changes to
-  a running parser without recompilation.
+  a running parser without recompilation.  At parser-generation time,
+  `%extends` and `%dialect` give file-level inheritance and conditional
+  rule blocks respectively.
 - **Performance**: Lime's SIMD tokenizer and LLVM JIT compiler provide
   significant speedups for hot parsing paths. Bison relies on the standard
-  table-driven approach.
+  table-driven approach.  See [BENCHMARKS_VS_BISON.md](BENCHMARKS_VS_BISON.md)
+  for measured numbers (Lime is 1.69× faster on a fair lex+parse JSON
+  benchmark; on parser-only arithmetic Bison's tight-loop wins by ~20%).
 - **License**: Lime is Public Domain. Bison's generated parsers were
   historically GPL-licensed, though modern versions include an exception
   permitting use in proprietary software. Lime has no license complications.
 - **Multiple languages**: Bison generates parsers in C, C++, Java, and D.
   Lime targets C only, relying on C's interoperability with other languages
   via FFI.
-- **GLR parsing**: Bison's GLR mode can handle ambiguous grammars by
-  exploring multiple parse trees in parallel. Lime does not support this
-  but achieves similar flexibility through its runtime extension system,
-  which can modify the grammar to resolve ambiguities.
+- **GLR parsing**: Both Bison and Lime support GLR.  Lime's
+  `lime_parse_glr()` is opt-in; the LALR fast path is byte-identical
+  whether GLR is linked in or not.  Lime additionally supports
+  runtime grammar mutation, which Bison does not.
 
 ### Lime vs ANTLR
 
@@ -236,6 +240,22 @@ dedicated migration guides:
 These guides include directive mapping tables, syntax translation rules,
 and worked examples from the `examples/bootstrap/` directory (a real
 PostgreSQL grammar converted from Bison to Lime).
+
+## Tooling
+
+Beyond the parser generator itself, Lime ships:
+
+- **`lime -L` linter** — ~16 opinionated grammar-hygiene rules with
+  `human` / `gcc` / `json` output and CI-friendly `--lint-strict`.
+  See [LINT.md](LINT.md).
+- **`lime --diff-conflicts`** — symbolic LALR conflict diff between
+  base and overlay grammars; CI gate for dialect extensions.
+  See [DIFF_CONFLICTS.md](DIFF_CONFLICTS.md).
+- **`lime -F` formatter** — canonical pretty-printer with the
+  `format(format(F)) == format(F)` invariant.
+- **`lime-lsp`** — Language Server Protocol server for editor
+  integration (Phase 1 in v0.5.0: diagnostics, definition, hover,
+  outline).  See [LSP.md](LSP.md) and `editors/lime-lsp-config.md`.
 
 ## Performance Benchmarks
 

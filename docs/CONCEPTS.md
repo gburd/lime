@@ -185,7 +185,76 @@ multi-grammar machinery being present.
 
 See [CONTEXT_SWITCH.md](CONTEXT_SWITCH.md) for the API and
 `examples/multi_grammar_sql_json/` for a worked example
-(SQL host + JSON embedded).
+(SQL host + JSON embedded).  The v0.4.4 `%embed` directive (see
+[EMBED.md](EMBED.md)) is sugar over the same registry: it generates
+the wire-up boilerplate at codegen time so grammar authors do not
+hand-write `register_trigger` calls.
+
+## Dialect-Conditional Grammars (`%dialect`)
+
+v0.4.0 adds the `%dialect NAME { ... }` directive: a generator-time
+conditional rule block included only when the macro `dialect_NAME`
+is defined (typically via the `-Ddialect=NAME` shorthand).  One
+source file builds one `.c` / `.h` per dialect combination, with
+no runtime switch.  The intended use is the dialect-overlay
+workflow — `pg_oracle`, `pg_mysql`, `pg_duckdb` extensions of a
+shared SQL grammar.  See [DIALECT.md](DIALECT.md).
+
+## File-Level Grammar Inheritance (`%extends`)
+
+v0.4.1 adds `%extends "base.lime"`, which loads and merges another
+grammar at parser-generation time.  Companion directives —
+`%override` (replace a base rule's body), `%remove` (drop a base
+rule), `%override_type` (widen a base type) — give the deriving
+file fine-grained control over what it keeps, replaces, and drops.
+Diamond patterns (`unified.lime` extends both `oracle.lime` and
+`mysql.lime`, both of which extend `ansi.lime`) are explicitly
+supported with ten locked design rules covering identity matching,
+sibling conflicts, and depth-based winner resolution.  See
+[EXTENDS.md](EXTENDS.md).
+
+`%dialect` and `%extends` are complementary: `%dialect` keeps one
+file and builds many flavours via `-D`; `%extends` keeps one
+flavour per file and merges them at codegen.  The runtime
+extension framework (above) covers the third axis: changing the
+grammar after the binary is built.
+
+## Generalized-LR (GLR) Mode
+
+v0.3.4 adds an opt-in GLR engine for grammars LALR(1) cannot
+handle.  GLR forks the parse stack on conflicts, runs all
+alternatives in parallel through a Graph-Structured Stack, and
+asks a user-supplied disambiguation callback to pick a winner
+when two reductions converge on the same nonterminal at the same
+position.  The entry point is `lime_parse_glr()`; the LALR fast
+path is byte-identical to the pre-v0.3.4 tree, so callers that
+never opt in pay zero cost.  Measured GLR overhead on unambiguous
+input is 5–8× the LALR fast path.  See [GLR.md](GLR.md).
+
+## Tooling
+
+Lime ships several developer-facing tools alongside the parser
+generator:
+
+- **`lime -L` linter** (v0.5.0 expansion) — opinionated
+  grammar-hygiene checker with ~16 rules across errors
+  (E001-E005), warnings (W001-W009), opt-in style suggestions
+  (S001-S002), and module-composition errors (M001-M003).
+  Output formats: `human`, `gcc`, `json`.  CI integration via
+  `--lint-strict`.  See [LINT.md](LINT.md).
+- **`lime --diff-conflicts`** (v0.4.3) — symbolic LALR conflict
+  diff between a base grammar and an overlay.  Designed for
+  dialect-extension review and CI gates: exits 0 / 1 / 2 for
+  no-new-conflicts / new-conflicts / pipeline-error.  Has a
+  `--json` mode with a stable v1 schema.  See
+  [DIFF_CONFLICTS.md](DIFF_CONFLICTS.md).
+- **`lime -F` formatter** — canonical pretty-printer.
+  `format(format(F)) == format(F)` is a tested invariant.
+- **`lime-lsp`** (v0.5.0) — Language Server Protocol companion
+  for `.lime` files.  Speaks LSP 3.17 (subset) over stdio:
+  diagnostics (by exec'ing `lime -L`), go-to-definition, hover,
+  document outline.  See [LSP.md](LSP.md) and
+  `editors/lime-lsp-config.md`.
 
 ## Further Reading
 
@@ -193,4 +262,11 @@ See [CONTEXT_SWITCH.md](CONTEXT_SWITCH.md) for the API and
 - [Architecture](ARCHITECTURE.md) — component diagram and data flow
 - [Extensions](EXTENSIONS.md) — writing extensions step by step
 - [Context Switch](CONTEXT_SWITCH.md) — multi-grammar parsing
+- [Dialect](DIALECT.md) — `%dialect` generator-time conditional rules
+- [Extends](EXTENDS.md) — `%extends` file-level grammar inheritance
+- [Embed](EMBED.md) — `%embed` directive sugar over context switch
+- [GLR](GLR.md) — Generalized-LR engine, when to use, performance
+- [Lint](LINT.md) — `lime -L` linter rule catalog and CI integration
+- [Diff Conflicts](DIFF_CONFLICTS.md) — `lime --diff-conflicts` for overlays
+- [LSP](LSP.md) — `lime-lsp` Language Server
 - [Algorithm](ALGORITHM.md) — LALR(1) theory and Lime's implementation

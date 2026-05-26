@@ -6,9 +6,9 @@ authoritative Linux mirror).  Both fire on every `push` and
 `pull_request` against `main`.
 
 * `.github/workflows/ci.yml` -- Linux x86_64 + aarch64, macOS Intel +
-  Apple Silicon, Windows 11 x86_64 + aarch64.  ~22 jobs.
+  Apple Silicon, Windows 11 x86_64 + aarch64.  23 jobs.
 * `.forgejo/workflows/ci.yml` -- Linux x86_64 only (Codeberg's
-  hosted runners are Linux-only on the public free tier).  ~9 jobs.
+  hosted runners are Linux-only on the public free tier).  13 jobs.
 
 A merge requires every job in both pipelines to be green.
 

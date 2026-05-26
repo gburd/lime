@@ -97,7 +97,7 @@ inc = include_directories('include')
 # is in scope.
 
 # Install man pages
-install_man('man/lime.1', 'man/lime_grammar.5', 'man/lime_lex.5')
+install_man('man/lime.1', 'man/lime-lsp.1', 'man/lime_grammar.5', 'man/lime_lex.5')
 
 # Install public headers (P1-NEW-1).  Both include/*.h and src/*.h
 # go to ${prefix}/include/lime/ -- the original public/internal split
