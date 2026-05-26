@@ -17,6 +17,32 @@
 #include <limits.h>
 #include <errno.h>
 
+/* ROADMAP item 1, phase 3 (in-process LALR rebuild library).
+**
+** The CLI binary (the `lime` executable) does not need to call
+** into the runtime library; it generates source code and exits.
+** But the library wants an in-process API that turns a grammar
+** buffer into a ParserSnapshot directly, skipping the lime + cc +
+** dlopen subprocess pipeline used by lime_compile_grammar_text()
+** in src/snapshot_create.c.
+**
+** We gate the implementation on LIME_HAVE_SNAPSHOT_BUILD: the CLI
+** build leaves it off (and the function is absent from the lime
+** binary, which has no use for it); library/test builds turn it on,
+** supply -Iinclude -Isrc so the runtime headers (snapshot.h,
+** snapshot_build.h) resolve, and link the runtime library so
+** snapshot_build_from_tables() is reachable at link time.
+**
+** Phase 4 will integrate this define into the parser library build
+** so src/snapshot_create.c::lime_compile_grammar_text and the
+** composition path can dispatch to the in-process function instead
+** of forking. */
+#ifdef LIME_HAVE_SNAPSHOT_BUILD
+#include "snapshot.h"
+#include "snapshot_build.h"
+#include "lime_compiler.h"
+#endif
+
 /*
 ** Stub for the .lex compiler entry point.  The real implementation
 ** lives in src/lex/lex_main.c (compiled into lime_lex_compiler_lib).
@@ -11542,6 +11568,440 @@ void ResortStates(struct lime *lemp)
     lemp->nxstate--;
   }
 }
+
+#ifdef LIME_HAVE_SNAPSHOT_BUILD
+/* ROADMAP item 1, phase 3: in-process snapshot construction.
+**
+** build_snapshot_from_lime() walks the populated `struct lime`
+** after ResortStates() has run and produces a ParserSnapshot that
+** is parse-equivalent to the one a `lime -n` + cc + dlopen pipeline
+** would emit for the same grammar.  Not byte-identical -- state
+** IDs may renumber based on hash-table iteration order -- but
+** functionally identical: the same token sequence drives the same
+** accept/reject decision and the same rule-reduction sequence.
+**
+** The work this function does is the table-construction half of
+** ReportTable(): allocate the axset[] frame, sort it, run the
+** acttab compaction pass, and extract action / lookahead / shift /
+** reduce / default tables into LimeParserTables.  The other half of
+** ReportTable -- emitting C source -- is skipped entirely.
+**
+** Field mapping struct lime -> ParserSnapshot (via LimeParserTables):
+**
+**   lemp->aAction[]            -> snap->yy_action            (uint16)
+**   lemp->aLookahead[]+padding -> snap->yy_lookahead         (uint16)
+**   stp->iTknOfst per state    -> snap->yy_shift_ofst        (int32)
+**   stp->iNtOfst  per state    -> snap->yy_reduce_ofst       (int32)
+**   stp->iDfltReduce per state -> snap->yy_default           (uint16)
+**   rp->lhs->index per rule    -> snap->yy_rule_info_lhs     (int16)
+**   -rp->nrhs      per rule    -> snap->yy_rule_info_nrhs    (int8)
+**   lemp->nxstate              -> snap->nstate
+**   lemp->nrule / nsymbol /    -> snap->nrule / nsymbol /
+**     nterminal                     nterminal / yy_ntoken
+**   lemp->minShiftReduce       -> snap->yy_min_shiftreduce
+**   lemp->errAction / accAction-> snap->yy_error_action / yy_accept_action
+**   lemp->noAction / minReduce -> snap->yy_no_action / yy_min_reduce
+**
+** grammar_source / grammar_source_len, when non-NULL, are passed
+** through to LimeParserTables so phase 4's composition code can
+** rebuild modified grammars from the merged source.
+*/
+static struct ParserSnapshot *build_snapshot_from_lime(struct lime *lemp,
+                                                      const char *grammar_text,
+                                                      size_t grammar_text_len)
+{
+  /* 1.  Compute action-range constants.  Mirrors the assignments
+  **     at the top of ReportTable(); without these the snapshot's
+  **     dispatch macros would be undefined. */
+  lemp->minShiftReduce = lemp->nstate;
+  lemp->errAction = lemp->minShiftReduce + lemp->nrule;
+  lemp->accAction = lemp->errAction + 1;
+  lemp->noAction = lemp->accAction + 1;
+  lemp->minReduce = lemp->noAction + 1;
+  lemp->maxAction = lemp->minReduce + lemp->nrule;
+
+  uint16_t *yy_action = NULL;
+  uint16_t *yy_lookahead = NULL;
+  int32_t  *yy_shift_ofst = NULL;
+  int32_t  *yy_reduce_ofst = NULL;
+  uint16_t *yy_default = NULL;
+  int16_t  *rule_lhs = NULL;
+  int8_t   *rule_nrhs = NULL;
+  acttab   *pActtab = NULL;
+  struct ParserSnapshot *snap = NULL;
+  int i;
+
+  /* 2.  Build the action table the same way ReportTable() does:
+  **     allocate axset[2*nxstate], sort largest-action-set first,
+  **     and emit one acttab transaction per (state, isTkn) pair. */
+  struct axset *ax = (struct axset *)
+      lime_calloc(lemp->nxstate * 2, sizeof(ax[0]));
+  if( ax==0 ) return NULL;
+  for(i=0; i<lemp->nxstate; i++){
+    struct state *stp = lemp->sorted[i];
+    ax[i*2].stp = stp;   ax[i*2].isTkn   = 1; ax[i*2].nAction   = stp->nTknAct;
+    ax[i*2+1].stp = stp; ax[i*2+1].isTkn = 0; ax[i*2+1].nAction = stp->nNtAct;
+  }
+  for(i=0; i<lemp->nxstate*2; i++) ax[i].iOrder = i;
+  qsort(ax, lemp->nxstate*2, sizeof(ax[0]), axset_compare);
+  pActtab = acttab_alloc(lemp->nsymbol, lemp->nterminal);
+
+  int mnTknOfst = 0, mxTknOfst = 0;
+  int mnNtOfst  = 0, mxNtOfst  = 0;
+  for(i=0; i<lemp->nxstate*2 && ax[i].nAction>0; i++){
+    struct state *stp = ax[i].stp;
+    struct action *ap;
+    if( ax[i].isTkn ){
+      for(ap=stp->ap; ap; ap=ap->next){
+        int action;
+        if( ap->sp->index>=lemp->nterminal ) continue;
+        action = compute_action(lemp, ap);
+        if( action<0 ) continue;
+        acttab_action(pActtab, ap->sp->index, action);
+      }
+      stp->iTknOfst = acttab_insert(pActtab, 1);
+      if( stp->iTknOfst<mnTknOfst ) mnTknOfst = stp->iTknOfst;
+      if( stp->iTknOfst>mxTknOfst ) mxTknOfst = stp->iTknOfst;
+    }else{
+      for(ap=stp->ap; ap; ap=ap->next){
+        int action;
+        if( ap->sp->index<lemp->nterminal ) continue;
+        if( ap->sp->index==lemp->nsymbol ) continue;
+        action = compute_action(lemp, ap);
+        if( action<0 ) continue;
+        acttab_action(pActtab, ap->sp->index, action);
+      }
+      stp->iNtOfst = acttab_insert(pActtab, 0);
+      if( stp->iNtOfst<mnNtOfst ) mnNtOfst = stp->iNtOfst;
+      if( stp->iNtOfst>mxNtOfst ) mxNtOfst = stp->iNtOfst;
+    }
+  }
+  lime_free(ax);
+  (void)mxTknOfst; (void)mxNtOfst;
+
+  /* 3.  Mark every rule that is actually reduced by the final
+  **     compressed table.  doesReduce drives codegen warnings in
+  **     ReportTable; harmless here, but the snapshot path keeps
+  **     it correct so any later inspection of struct lime sees
+  **     consistent state. */
+  {
+    struct rule *rp;
+    for(rp=lemp->rule; rp; rp=rp->next) rp->doesReduce = LEMON_FALSE;
+  }
+  for(i=0; i<lemp->nxstate; i++){
+    struct action *ap;
+    for(ap=lemp->sorted[i]->ap; ap; ap=ap->next){
+      if( ap->type==REDUCE || ap->type==SHIFTREDUCE ){
+        ap->x.rp->doesReduce = 1;
+      }
+    }
+  }
+
+  /* 4.  Extract uint16_t action / lookahead arrays.  The runtime
+  **     ParserSnapshot uses uint16_t even when ReportTable would
+  **     pick a smaller type for the generated C source -- the
+  **     runtime tables are deep-copied into uint16 storage in
+  **     snapshot_build_from_tables, so we feed it uint16 directly. */
+  lemp->nactiontab = acttab_action_size(pActtab);
+  lemp->nlookaheadtab = acttab_lookahead_size(pActtab);
+  int nactiontab = lemp->nactiontab;
+  int nlookaheadtab = lemp->nlookaheadtab;
+  int nLookAhead = lemp->nterminal + nactiontab;
+  if( nLookAhead < nlookaheadtab ) nLookAhead = nlookaheadtab;
+  lemp->nLookahead = nLookAhead;
+
+  if( nactiontab > 0 ){
+    yy_action = (uint16_t*)calloc((size_t)nactiontab, sizeof(uint16_t));
+    if( yy_action==0 ) goto oom;
+    for(i=0; i<nactiontab; i++){
+      int act = acttab_yyaction(pActtab, i);
+      if( act<0 ) act = lemp->noAction;
+      yy_action[i] = (uint16_t)act;
+    }
+  }
+  if( nLookAhead > 0 ){
+    yy_lookahead = (uint16_t*)calloc((size_t)nLookAhead, sizeof(uint16_t));
+    if( yy_lookahead==0 ) goto oom;
+    for(i=0; i<nlookaheadtab; i++){
+      int la = acttab_yylookahead(pActtab, i);
+      if( la<0 ) la = lemp->nsymbol;
+      yy_lookahead[i] = (uint16_t)la;
+    }
+    /* Padding -- ReportTable extends the lookahead array to
+    ** nterminal+nactiontab so yy_shift_ofst[]+iToken can never
+    ** index out of bounds.  Same invariant required for the
+    ** runtime parse_token() loop. */
+    for(; i<nLookAhead; i++){
+      yy_lookahead[i] = (uint16_t)lemp->nterminal;
+    }
+  }
+
+  /* 5.  Per-state arrays: shift offset, reduce offset, default. */
+  if( lemp->nxstate > 0 ){
+    yy_shift_ofst  = (int32_t*) calloc((size_t)lemp->nxstate, sizeof(int32_t));
+    yy_reduce_ofst = (int32_t*) calloc((size_t)lemp->nxstate, sizeof(int32_t));
+    yy_default     = (uint16_t*)calloc((size_t)lemp->nxstate, sizeof(uint16_t));
+    if( yy_shift_ofst==0 || yy_reduce_ofst==0 || yy_default==0 ) goto oom;
+    for(i=0; i<lemp->nxstate; i++){
+      struct state *stp = lemp->sorted[i];
+      int ofst = stp->iTknOfst;
+      yy_shift_ofst[i] = (ofst==NO_OFFSET) ? nactiontab : ofst;
+      ofst = stp->iNtOfst;
+      yy_reduce_ofst[i] = (ofst==NO_OFFSET) ? (mnNtOfst - 1) : ofst;
+      yy_default[i] = (uint16_t)((stp->iDfltReduce<0)
+                                 ? lemp->errAction
+                                 : stp->iDfltReduce + lemp->minReduce);
+    }
+  }
+
+  /* 6.  Rule metadata: LHS code, -nrhs.  Walk the rule list in
+  **     declaration order; ReportTable's emit loop assumes
+  **     rp->iRule == position in lemp->rule, which Rule_sort()
+  **     restores after numbering rules with actions first. */
+  if( lemp->nrule > 0 ){
+    rule_lhs  = (int16_t*)calloc((size_t)lemp->nrule, sizeof(int16_t));
+    rule_nrhs = (int8_t*) calloc((size_t)lemp->nrule, sizeof(int8_t));
+    if( rule_lhs==0 || rule_nrhs==0 ) goto oom;
+    int idx = 0;
+    struct rule *rp;
+    for(rp=lemp->rule; rp && idx<lemp->nrule; rp=rp->next, idx++){
+      rule_lhs[idx]  = (int16_t)(rp->lhs ? rp->lhs->index : 0);
+      rule_nrhs[idx] = (int8_t)(-rp->nrhs);
+    }
+  }
+
+  /* 7.  Hand the LimeParserTables bundle to the runtime, which
+  **     deep-copies into the ParserSnapshot.  Then free the
+  **     local scratch -- the snapshot is fully independent of
+  **     the lime arena that owned struct lime. */
+  {
+    LimeParserTables tables;
+    memset(&tables, 0, sizeof(tables));
+    tables.yy_action            = yy_action;
+    tables.yy_action_count      = (uint32_t)nactiontab;
+    tables.yy_lookahead         = yy_lookahead;
+    tables.yy_lookahead_count   = (uint32_t)nLookAhead;
+    tables.yy_shift_ofst        = yy_shift_ofst;
+    tables.yy_reduce_ofst       = yy_reduce_ofst;
+    tables.yy_default           = yy_default;
+    tables.nstate               = (uint32_t)lemp->nxstate;
+    tables.yy_rule_info_lhs     = rule_lhs;
+    tables.yy_rule_info_nrhs    = rule_nrhs;
+    tables.nrule                = (uint32_t)lemp->nrule;
+    tables.nsymbol              = (uint32_t)lemp->nsymbol;
+    tables.nterminal            = (uint32_t)lemp->nterminal;
+    tables.ntoken               = (uint16_t)lemp->nterminal;
+    tables.yy_max_shift         = (uint16_t)(lemp->nxstate - 1);
+    tables.yy_min_shiftreduce   = (uint16_t)lemp->minShiftReduce;
+    tables.yy_max_shiftreduce   = (uint16_t)(lemp->minShiftReduce + lemp->nrule - 1);
+    tables.yy_error_action      = (uint16_t)lemp->errAction;
+    tables.yy_accept_action     = (uint16_t)lemp->accAction;
+    tables.yy_no_action         = (uint16_t)lemp->noAction;
+    tables.yy_min_reduce        = (uint16_t)lemp->minReduce;
+    tables.yy_fallback          = NULL;
+    tables.nfallback            = 0;
+    tables.grammar_source       = grammar_text;
+    tables.grammar_source_len   = (uint32_t)grammar_text_len;
+    snap = snapshot_build_from_tables(&tables);
+  }
+
+oom:
+  free(yy_action);
+  free(yy_lookahead);
+  free(yy_shift_ofst);
+  free(yy_reduce_ofst);
+  free(yy_default);
+  free(rule_lhs);
+  free(rule_nrhs);
+  if( pActtab ) acttab_free(pActtab);
+  return snap;
+}
+
+int lime_compile_grammar_in_process(const char *grammar_text,
+                                    size_t len,
+                                    struct ParserSnapshot **out_snapshot,
+                                    char **error)
+{
+  if( !grammar_text || len==0 || !out_snapshot ){
+    if( error ) *error = strdup("lime_compile_grammar_in_process: bad arguments");
+    if( out_snapshot ) *out_snapshot = NULL;
+    return -1;
+  }
+  *out_snapshot = NULL;
+  if( error ) *error = NULL;
+
+  /* Capture stderr around the whole pipeline so ErrorMsg() and
+  ** FindActions() conflict diagnostics end up in the returned
+  ** *error string rather than scribbling onto the caller's
+  ** terminal.  Use tmpfile() rather than open_memstream() because
+  ** memstreams have no underlying fd (fileno returns -1) and dup2
+  ** would not redirect the stderr file descriptor; tmpfile gives
+  ** us a real fd backed by an unlinked file in $TMPDIR. */
+  FILE *err_stream  = tmpfile();
+  int   saved_stderr = -1;
+  if( err_stream ){
+    fflush(stderr);
+    saved_stderr = dup(fileno(stderr));
+    if( saved_stderr>=0 ) dup2(fileno(err_stream), fileno(stderr));
+  }
+
+  /* Fresh compiler context.  Save/restore the active pointer so a
+  ** caller that is itself running under a context (e.g. phase 4's
+  ** composition pipeline driving multiple compilations) recovers
+  ** its prior state on return -- success OR failure path. */
+  LimeCompilerContext  cc;
+  LimeCompilerContext *prev_active = lime_active_ctx;
+  lime_compiler_context_init(&cc);
+
+  struct lime lem;
+  memset(&lem, 0, sizeof(lem));
+  lem.errorcnt = 0;
+  lem.nexpect = -1;
+  lem.first_token = 0;
+  lem.filename = (char*)"<grammar text>";
+  lem.argv = NULL;
+  lem.argc = 0;
+
+  Strsafe_init();
+  Symbol_init();
+  State_init();
+  Symbol_new("$");
+
+  ParseText(&lem, grammar_text, len);
+
+  int rc = -1;
+  struct ParserSnapshot *snap = NULL;
+  const char *fail_reason = NULL;
+  int k;
+  struct rule *rp;
+  int idx;
+
+  if( lem.errorcnt > 0 ){
+    fail_reason = "grammar parse failed";
+    goto done;
+  }
+  if( lem.nrule == 0 ){
+    fail_reason = "empty grammar";
+    goto done;
+  }
+  lem.errsym = Symbol_find("error");
+
+  /* Index symbols, mirroring main()'s post-Parse setup. */
+  Symbol_new("{default}");
+  lem.nsymbol = Symbol_count();
+  lem.symbols = Symbol_arrayof();
+  for(k=0; k<lem.nsymbol; k++) lem.symbols[k]->index = k;
+  qsort(lem.symbols, lem.nsymbol, sizeof(struct symbol*), Symbolcmpp);
+  for(k=0; k<lem.nsymbol; k++) lem.symbols[k]->index = k;
+  while( k>0 && lem.symbols[k-1]->type==MULTITERMINAL ){ k--; }
+  if( k<=0 || strcmp(lem.symbols[k-1]->name, "{default}")!=0 ){
+    fail_reason = "symbol table corruption: {default} missing";
+    goto done;
+  }
+  lem.nsymbol = k - 1;
+  for(k=1; k<lem.nsymbol && ISUPPER(lem.symbols[k]->name[0]); k++){}
+  lem.nterminal = k;
+
+  /* Number rules: action-bearing first, then no-code rules. */
+  idx = 0;
+  for(rp=lem.rule; rp; rp=rp->next){
+    rp->iRule = rp->code ? idx++ : -1;
+  }
+  lem.nruleWithAction = idx;
+  for(rp=lem.rule; rp; rp=rp->next){
+    if( rp->iRule<0 ) rp->iRule = idx++;
+  }
+  lem.startRule = lem.rule;
+  lem.rule = Rule_sort(lem.rule);
+
+  /* LALR(1) pipeline. */
+  SetSize(lem.nterminal + 1);
+  FindRulePrecedences(&lem);
+  FindFirstSets(&lem);
+  lem.nstate = 0;
+  FindStates(&lem);
+  lem.sorted = State_arrayof();
+  FindLinks(&lem);
+  FindFollowSets(&lem);
+  FindActions(&lem);
+  if( lem.errorcnt > 0 ){
+    fail_reason = "grammar has unresolved conflicts";
+    goto done;
+  }
+  CompressTables(&lem);
+  ResortStates(&lem);
+
+  /* Build the snapshot.  build_snapshot_from_lime() owns its
+  ** scratch allocations and frees them before returning; the
+  ** ParserSnapshot it returns is independent of the lime arena
+  ** about to be torn down by lime_compiler_context_destroy. */
+  snap = build_snapshot_from_lime(&lem, grammar_text, len);
+  if( !snap ){
+    fail_reason = "snapshot build failed";
+    goto done;
+  }
+  *out_snapshot = snap;
+  rc = 0;
+
+done:
+  lime_compiler_context_destroy(&cc);
+  lime_active_ctx = prev_active;
+
+  /* Restore stderr and pull the captured diagnostics into a
+  ** caller-owned heap buffer for the error path. */
+  char  *err_buf = NULL;
+  size_t err_buf_len = 0;
+  if( err_stream ){
+    fflush(stderr);
+    if( saved_stderr>=0 ){
+      dup2(saved_stderr, fileno(stderr));
+      close(saved_stderr);
+    }
+    /* Drain the tmpfile.  The seek to 0 + read-to-EOF is portable
+    ** across glibc / musl / macOS libc; ftell() gives us the byte
+    ** count cheaply. */
+    if( fseek(err_stream, 0, SEEK_END)==0 ){
+      long sz = ftell(err_stream);
+      if( sz>0 ){
+        err_buf_len = (size_t)sz;
+        err_buf = (char*)malloc(err_buf_len + 1);
+        if( err_buf ){
+          rewind(err_stream);
+          size_t got = fread(err_buf, 1, err_buf_len, err_stream);
+          err_buf[got] = '\0';
+          err_buf_len = got;
+        }else{
+          err_buf_len = 0;
+        }
+      }
+    }
+    fclose(err_stream);
+  }
+
+  if( rc!=0 && error ){
+    if( !fail_reason ) fail_reason = "compile failed";
+    if( err_buf && err_buf_len>0 ){
+      size_t reason_len = strlen(fail_reason);
+      char *combined = (char*)malloc(reason_len + 2 + err_buf_len + 1);
+      if( combined ){
+        size_t off = 0;
+        memcpy(combined+off, fail_reason, reason_len);  off += reason_len;
+        combined[off++] = ':';
+        combined[off++] = '\n';
+        memcpy(combined+off, err_buf, err_buf_len);     off += err_buf_len;
+        combined[off] = '\0';
+        *error = combined;
+      }else{
+        *error = strdup(fail_reason);
+      }
+    }else{
+      *error = strdup(fail_reason);
+    }
+  }
+  free(err_buf);
+  return rc;
+}
+#endif /* LIME_HAVE_SNAPSHOT_BUILD */
 
 
 /***************** From the file "set.c" ************************************/

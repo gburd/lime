@@ -118,6 +118,7 @@ lime_public_headers = [
   'include/jit_llvm_compat.h',
   'include/jit_policy.h',
   'include/lime_ast.h',
+  'include/lime_compiler.h',
   'include/lime_error.h',
   'include/lime_location.h',
   'include/parse_context.h',

@@ -97,6 +97,53 @@ test_compiler_context = executable('test_compiler_context',
 
 test('compiler_context', test_compiler_context)
 
+# ROADMAP item 1, phase 3: in-process LALR rebuild library.
+# test_lime_compile_in_process exercises the new public API
+# lime_compile_grammar_in_process(text, len, &snap, &err).
+# Like test_compiler_context, this test #includes ../lime.c with
+# LIME_TEST_HARNESS so main() is omitted; LIME_HAVE_SNAPSHOT_BUILD
+# additionally turns on the in-process snapshot path inside lime.c
+# and pulls in the runtime headers.  Linking lime_parser_dep gives
+# us snapshot_build_from_tables, parse_begin/parse_token/parse_end,
+# snapshot_release, and (for the equivalence sub-test) the
+# subprocess-driven lime_compile_grammar_text comparison baseline.
+# include_directories includes ../src so snapshot.h / snapshot_build.h
+# resolve when lime.c is compiled with LIME_HAVE_SNAPSHOT_BUILD.
+test_lime_compile_in_process = executable('test_lime_compile_in_process',
+  'test_lime_compile_in_process.c',
+  link_with : [lime_lex_compiler_lib],
+  dependencies : lime_parser_dep,
+  include_directories : [inc, include_directories('../src'),
+                         include_directories('../src/lex')],
+  c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAVE_SNAPSHOT_BUILD',
+            '-DLIME_HAS_LEX_COMPILER',
+            '-Wno-unused-function', '-Wno-unused-parameter',
+            '-Wno-format-overflow'],
+  # Export the executable's runtime symbols so the .so produced
+  # by the subprocess path's dlopen (used in the equivalence sub-
+  # test) can resolve snapshot_release / parse_token / etc.
+  # Same trick test_snapshot_create + test_extension_rebuild use.
+  export_dynamic : true,
+)
+
+test('lime_compile_in_process', test_lime_compile_in_process,
+  # Point the subprocess fallback at the just-built lime + parser lib
+  # so the equivalence and perf-comparison sub-tests run against the
+  # real subprocess pipeline rather than skipping when `lime` is not
+  # on $PATH.  This is a runtime env, not a build-time link.
+  # LIME_INCLUDE / LIME_SRC_INCLUDE are read by snapshot_create.c so
+  # the subprocess `cc` invocation finds the runtime headers.
+  env : [
+    'LIME_BIN=' + lime_exe.full_path(),
+    'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
+    'LIME_INCLUDE=' + meson.project_source_root() / 'include',
+    'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
+    'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
+  ],
+  depends : [lime_exe],
+  workdir : meson.project_source_root(),
+  timeout : 60)
+
 test_parse_context = executable('test_parse_context',
   'test_parse_context.c',
   dependencies : lime_parser_dep,
