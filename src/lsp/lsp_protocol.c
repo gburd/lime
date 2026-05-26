@@ -186,6 +186,41 @@ static json_value *server_capabilities(void) {
     json_object_set(caps, "definitionProvider",     json_make_bool(1));
     json_object_set(caps, "hoverProvider",          json_make_bool(1));
     json_object_set(caps, "documentSymbolProvider", json_make_bool(1));
+    json_object_set(caps, "referencesProvider",     json_make_bool(1));
+
+    /* CompletionOptions { triggerCharacters: ["%", " ", "."] }. */
+    json_value *comp = json_make_object();
+    json_value *trig = json_make_array();
+    json_array_push(trig, json_make_string("%"));
+    json_array_push(trig, json_make_string(" "));
+    json_array_push(trig, json_make_string("."));
+    json_object_set(comp, "triggerCharacters", trig);
+    json_object_set(caps, "completionProvider", comp);
+
+    /* RenameOptions { prepareProvider: true }. */
+    json_value *ren = json_make_object();
+    json_object_set(ren, "prepareProvider", json_make_bool(1));
+    json_object_set(caps, "renameProvider", ren);
+
+    /* SemanticTokensOptions { legend, full: true }.  The legend
+     * mirrors lsp_semantic_tokens.c's emitted token-type /
+     * modifier IDs so the editor can decode the int-array stream. */
+    json_value *sem    = json_make_object();
+    json_value *legend = json_make_object();
+    json_value *types  = json_make_array();
+    for (size_t i = 0; lsp_semantic_token_types[i]; i++)
+        json_array_push(types,
+                        json_make_string(lsp_semantic_token_types[i]));
+    json_value *mods   = json_make_array();
+    for (size_t i = 0; lsp_semantic_token_modifiers[i]; i++)
+        json_array_push(mods,
+                        json_make_string(lsp_semantic_token_modifiers[i]));
+    json_object_set(legend, "tokenTypes",     types);
+    json_object_set(legend, "tokenModifiers", mods);
+    json_object_set(sem,    "legend",         legend);
+    json_object_set(sem,    "full",           json_make_bool(1));
+    json_object_set(caps,   "semanticTokensProvider", sem);
+
     return caps;
 }
 
@@ -311,6 +346,119 @@ static void handle_document_symbol(lsp_server *s, const json_value *id,
     send_response(s->out, id, syms);
 }
 
+static void handle_completion(lsp_server *s, const json_value *id,
+                              const json_value *params) {
+    const json_value *td = json_get(params, "textDocument");
+    const json_value *pos = json_get(params, "position");
+    const char *uri = json_string(json_get(td, "uri"));
+    long long line = json_int(json_get(pos, "line"));
+    long long ch   = json_int(json_get(pos, "character"));
+    char trigger = 0;
+    const json_value *ctx = json_get(params, "context");
+    if (ctx) {
+        const char *trig = json_string(json_get(ctx, "triggerCharacter"));
+        if (trig && trig[0]) trigger = trig[0];
+    }
+    lsp_document *d = uri ? lsp_documents_get(&s->docs, uri) : NULL;
+    if (!d) {
+        send_error(s->out, id, -32602, "Unknown textDocument URI");
+        return;
+    }
+    json_value *r = lsp_navigation_completion(d->text, d->text_len,
+                                              line, ch, trigger);
+    send_response(s->out, id, r);
+}
+
+static void handle_references(lsp_server *s, const json_value *id,
+                              const json_value *params) {
+    const json_value *td  = json_get(params, "textDocument");
+    const json_value *pos = json_get(params, "position");
+    const json_value *ctx = json_get(params, "context");
+    const char *uri = json_string(json_get(td, "uri"));
+    long long line = json_int(json_get(pos, "line"));
+    long long ch   = json_int(json_get(pos, "character"));
+    int include_decl = 1;
+    if (ctx) {
+        const json_value *iv = json_get(ctx, "includeDeclaration");
+        if (iv) include_decl = json_bool(iv);
+    }
+    lsp_document *d = uri ? lsp_documents_get(&s->docs, uri) : NULL;
+    if (!d) {
+        send_error(s->out, id, -32602, "Unknown textDocument URI");
+        return;
+    }
+    json_value *r = lsp_navigation_references(uri, d->text, d->text_len,
+                                              line, ch, include_decl);
+    send_response(s->out, id, r);
+}
+
+static void handle_prepare_rename(lsp_server *s, const json_value *id,
+                                  const json_value *params) {
+    const json_value *td  = json_get(params, "textDocument");
+    const json_value *pos = json_get(params, "position");
+    const char *uri = json_string(json_get(td, "uri"));
+    long long line = json_int(json_get(pos, "line"));
+    long long ch   = json_int(json_get(pos, "character"));
+    lsp_document *d = uri ? lsp_documents_get(&s->docs, uri) : NULL;
+    if (!d) {
+        send_error(s->out, id, -32602, "Unknown textDocument URI");
+        return;
+    }
+    char err[256];
+    json_value *r = lsp_navigation_prepare_rename(d->text, d->text_len,
+                                                  line, ch, err, sizeof(err));
+    if (!r) {
+        /* LSP: prepareRename returning null tells the editor the
+         * position isn't renameable; the editor surfaces this as a
+         * non-modal status message rather than an error popup. */
+        send_response(s->out, id, json_make_null());
+        return;
+    }
+    send_response(s->out, id, r);
+}
+
+static void handle_rename(lsp_server *s, const json_value *id,
+                          const json_value *params) {
+    const json_value *td  = json_get(params, "textDocument");
+    const json_value *pos = json_get(params, "position");
+    const char *uri      = json_string(json_get(td, "uri"));
+    const char *new_name = json_string(json_get(params, "newName"));
+    long long line = json_int(json_get(pos, "line"));
+    long long ch   = json_int(json_get(pos, "character"));
+    lsp_document *d = uri ? lsp_documents_get(&s->docs, uri) : NULL;
+    if (!d) {
+        send_error(s->out, id, -32602, "Unknown textDocument URI");
+        return;
+    }
+    if (!new_name) {
+        send_error(s->out, id, -32602, "Missing newName parameter");
+        return;
+    }
+    char err[256];
+    json_value *r = lsp_navigation_rename(uri, d->text, d->text_len,
+                                          line, ch, new_name,
+                                          err, sizeof(err));
+    if (!r) {
+        send_error(s->out, id, -32602, err[0] ? err : "rename failed");
+        return;
+    }
+    send_response(s->out, id, r);
+}
+
+static void handle_semantic_tokens(lsp_server *s, const json_value *id,
+                                   const json_value *params) {
+    const json_value *td = json_get(params, "textDocument");
+    const char *uri = json_string(json_get(td, "uri"));
+    lsp_document *d = uri ? lsp_documents_get(&s->docs, uri) : NULL;
+    if (!d) {
+        /* Spec: returning null is allowed; editors clear highlights. */
+        send_response(s->out, id, json_make_null());
+        return;
+    }
+    json_value *r = lsp_navigation_semantic_tokens(d->text, d->text_len);
+    send_response(s->out, id, r);
+}
+
 /* ---- main dispatch -------------------------------------------------- */
 
 void lsp_server_init(lsp_server *s) {
@@ -389,6 +537,16 @@ int lsp_server_run(lsp_server *s) {
             handle_hover(s, id, params);
         } else if (strcmp(method, "textDocument/documentSymbol") == 0) {
             handle_document_symbol(s, id, params);
+        } else if (strcmp(method, "textDocument/completion") == 0) {
+            handle_completion(s, id, params);
+        } else if (strcmp(method, "textDocument/references") == 0) {
+            handle_references(s, id, params);
+        } else if (strcmp(method, "textDocument/prepareRename") == 0) {
+            handle_prepare_rename(s, id, params);
+        } else if (strcmp(method, "textDocument/rename") == 0) {
+            handle_rename(s, id, params);
+        } else if (strcmp(method, "textDocument/semanticTokens/full") == 0) {
+            handle_semantic_tokens(s, id, params);
         } else if (is_request) {
             send_error(s->out, id, -32601, "Method not found");
         }

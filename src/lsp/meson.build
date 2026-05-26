@@ -17,6 +17,10 @@ lime_lsp_sources = files(
   'lsp_documents.c',
   'lsp_diagnostics.c',
   'lsp_navigation.c',
+  'lsp_completion.c',
+  'lsp_references.c',
+  'lsp_rename.c',
+  'lsp_semantic_tokens.c',
   'lsp_json.c',
 )
 

@@ -1,0 +1,19 @@
+/*
+ * rich.lime -- larger fixture used by the v0.5.7 LSP feature
+ * tests (completion, references, rename, semanticTokens).
+ *
+ * Has multiple terminals, a non-terminal referenced from many
+ * RHS sites (so the references test can count against a stable
+ * target), and at least one block comment + directive set so
+ * the semantic-tokens test has something to spot-check.
+ */
+%name LspRich
+%token PLUS MINUS STAR SLASH NUMBER LPAREN RPAREN.
+
+start ::= expr.
+expr ::= NUMBER.
+expr ::= expr PLUS expr.
+expr ::= expr MINUS expr.
+expr ::= expr STAR expr.
+expr ::= expr SLASH expr.
+expr ::= LPAREN expr RPAREN.

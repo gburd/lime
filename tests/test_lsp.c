@@ -280,6 +280,13 @@ static void initialize_server(server_t *s) {
     assert(strstr(resp, "hoverProvider"));
     assert(strstr(resp, "documentSymbolProvider"));
     assert(strstr(resp, "textDocumentSync"));
+    /* v0.5.7 additions -- four new capabilities. */
+    assert(strstr(resp, "completionProvider"));
+    assert(strstr(resp, "referencesProvider"));
+    assert(strstr(resp, "renameProvider"));
+    assert(strstr(resp, "semanticTokensProvider"));
+    assert(strstr(resp, "prepareProvider"));
+    assert(strstr(resp, "triggerCharacters"));
     send_message(s, initd);
 }
 
@@ -512,6 +519,372 @@ static void test_document_symbol(const char *bin, const char *lime_bin,
     fprintf(stderr, "  documentSymbol  OK\n");
 }
 
+/* ---- v0.5.7 sub-tests ---------------------------------------------- */
+
+/* Count non-overlapping occurrences of `needle` in `hay`. */
+static int count_occurrences(const char *hay, const char *needle) {
+    int n = 0;
+    size_t nl = strlen(needle);
+    if (!nl) return 0;
+    const char *p = hay;
+    while ((p = strstr(p, needle)) != NULL) { n++; p += nl; }
+    return n;
+}
+
+static void test_completion(const char *bin, const char *lime_bin,
+                            const char *fixtures_dir) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/rich.lime", fixtures_dir);
+    size_t tlen;
+    char *text = slurp(path, &tlen);
+
+    server_t s = spawn_server(bin, lime_bin);
+    initialize_server(&s);
+    open_document(&s, "file:///rich.lime", text, tlen);
+
+    char buf[32768];
+    read_message(&s, buf, sizeof(buf));
+
+    /* (1) Completion at line 0 char 0: file-start, behaves like
+     * a directive position.  Trigger '%' explicitly so we hit the
+     * directive branch unambiguously. */
+    static const char *req1 =
+        "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"textDocument/completion\","
+        "\"params\":{\"textDocument\":{\"uri\":\"file:///rich.lime\"},"
+        "\"position\":{\"line\":0,\"character\":0},"
+        "\"context\":{\"triggerKind\":2,\"triggerCharacter\":\"%\"}}}";
+    send_message(&s, req1);
+    int n = wait_for_response_id(&s, 10, buf, sizeof(buf));
+    assert(n > 0);
+    assert(strstr(buf, "\"items\""));
+    /* Should advertise core directives. */
+    assert(strstr(buf, "\"label\":\"name\""));
+    assert(strstr(buf, "\"label\":\"token\""));
+    assert(strstr(buf, "\"label\":\"left\""));
+    assert(strstr(buf, "\"label\":\"include\""));
+    /* And not symbol identifiers (we're in directive mode). */
+    assert(!strstr(buf, "\"label\":\"PLUS\""));
+
+    /* (2) Completion in the middle of a rule's RHS.  Find the
+     * line `expr ::= NUMBER.` and place the cursor just past the
+     * `::= ` (empty prefix) so we get every RHS suggestion, not
+     * just those starting with the partial word `NUMBER`. */
+    long rhs_line = -1;
+    long rhs_col  = -1;
+    {
+        long ln = 0; size_t i = 0;
+        while (i < tlen) {
+            if (strncmp(text + i, "expr ::= NUMBER.", 16) == 0) {
+                rhs_line = ln;
+                rhs_col  = (long)strlen("expr ::= ");
+                break;
+            }
+            if (text[i] == '\n') ln++;
+            i++;
+        }
+    }
+    assert(rhs_line >= 0);
+
+    char msg[512];
+    snprintf(msg, sizeof(msg),
+        "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"textDocument/completion\","
+        "\"params\":{\"textDocument\":{\"uri\":\"file:///rich.lime\"},"
+        "\"position\":{\"line\":%ld,\"character\":%ld},"
+        "\"context\":{\"triggerKind\":1}}}",
+        rhs_line, rhs_col);
+    send_message(&s, msg);
+    n = wait_for_response_id(&s, 11, buf, sizeof(buf));
+    assert(n > 0);
+    assert(strstr(buf, "\"items\""));
+    assert(strstr(buf, "\"label\":\"PLUS\""));
+    assert(strstr(buf, "\"label\":\"NUMBER\""));
+    assert(strstr(buf, "\"label\":\"expr\""));
+    /* In RHS context, no directives should appear. */
+    assert(!strstr(buf, "\"label\":\"name\""));
+    assert(!strstr(buf, "\"label\":\"token\""));
+
+    shutdown_server(&s);
+    free(text);
+    fprintf(stderr, "  completion      OK\n");
+}
+
+static void test_references(const char *bin, const char *lime_bin,
+                            const char *fixtures_dir) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/rich.lime", fixtures_dir);
+    size_t tlen;
+    char *text = slurp(path, &tlen);
+
+    server_t s = spawn_server(bin, lime_bin);
+    initialize_server(&s);
+    open_document(&s, "file:///rich.lime", text, tlen);
+
+    char buf[32768];
+    read_message(&s, buf, sizeof(buf));
+
+    /* Locate the first `expr ::=` -- the canonical defining site
+     * we'll call references on. */
+    long def_line = -1, def_col = -1;
+    {
+        long ln = 0; size_t i = 0;
+        while (i < tlen) {
+            if (strncmp(text + i, "expr ::=", 8) == 0) {
+                def_line = ln;
+                /* `expr` starts at the line start (no indent). */
+                def_col = 0;
+                break;
+            }
+            if (text[i] == '\n') ln++;
+            i++;
+        }
+    }
+    assert(def_line >= 0);
+
+    /* Independently count `expr` occurrences in the source so the
+     * test is robust to fixture edits. */
+    int expected_total = 0;
+    {
+        size_t i = 0;
+        while (i < tlen) {
+            if (i + 4 <= tlen && strncmp(text + i, "expr", 4) == 0) {
+                int prev_id = (i > 0) &&
+                    (isalnum((unsigned char)text[i-1]) || text[i-1] == '_');
+                int next_id = (i + 4 < tlen) &&
+                    (isalnum((unsigned char)text[i+4]) || text[i+4] == '_');
+                if (!prev_id && !next_id) { expected_total++; i += 4; continue; }
+            }
+            i++;
+        }
+    }
+    assert(expected_total > 5);
+
+    /* (1) include_declaration = true. */
+    char msg[512];
+    snprintf(msg, sizeof(msg),
+        "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"textDocument/references\","
+        "\"params\":{\"textDocument\":{\"uri\":\"file:///rich.lime\"},"
+        "\"position\":{\"line\":%ld,\"character\":%ld},"
+        "\"context\":{\"includeDeclaration\":true}}}",
+        def_line, def_col + 1);
+    send_message(&s, msg);
+    int n = wait_for_response_id(&s, 12, buf, sizeof(buf));
+    assert(n > 0);
+    int total = count_occurrences(buf, "file:///rich.lime");
+    assert(total == expected_total);
+
+    /* (2) include_declaration = false -- drops every is_definition
+     * site (the LHS of each `expr ::= ...`).  rich.lime has six
+     * `expr ::=` LHS sites, so the count must drop by six. */
+    snprintf(msg, sizeof(msg),
+        "{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"textDocument/references\","
+        "\"params\":{\"textDocument\":{\"uri\":\"file:///rich.lime\"},"
+        "\"position\":{\"line\":%ld,\"character\":%ld},"
+        "\"context\":{\"includeDeclaration\":false}}}",
+        def_line, def_col + 1);
+    send_message(&s, msg);
+    n = wait_for_response_id(&s, 13, buf, sizeof(buf));
+    assert(n > 0);
+    int after = count_occurrences(buf, "file:///rich.lime");
+    assert(after >= 1);
+    assert(after < total);
+
+    shutdown_server(&s);
+    free(text);
+    fprintf(stderr, "  references      OK\n");
+}
+
+static void test_rename(const char *bin, const char *lime_bin,
+                        const char *fixtures_dir) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/rich.lime", fixtures_dir);
+    size_t tlen;
+    char *text = slurp(path, &tlen);
+
+    server_t s = spawn_server(bin, lime_bin);
+    initialize_server(&s);
+    open_document(&s, "file:///rich.lime", text, tlen);
+
+    char buf[32768];
+    read_message(&s, buf, sizeof(buf));
+
+    /* (1) prepareRename on a renameable terminal `PLUS`. */
+    long plus_line = -1, plus_col = -1;
+    {
+        long ln = 0; size_t i = 0;
+        while (i < tlen) {
+            if (strncmp(text + i, "PLUS", 4) == 0) {
+                plus_line = ln;
+                size_t ls = i;
+                while (ls > 0 && text[ls - 1] != '\n') ls--;
+                plus_col = (long)(i - ls);
+                break;
+            }
+            if (text[i] == '\n') ln++;
+            i++;
+        }
+    }
+    assert(plus_line >= 0);
+
+    char msg[512];
+    snprintf(msg, sizeof(msg),
+        "{\"jsonrpc\":\"2.0\",\"id\":14,\"method\":\"textDocument/prepareRename\","
+        "\"params\":{\"textDocument\":{\"uri\":\"file:///rich.lime\"},"
+        "\"position\":{\"line\":%ld,\"character\":%ld}}}",
+        plus_line, plus_col + 1);
+    send_message(&s, msg);
+    int n = wait_for_response_id(&s, 14, buf, sizeof(buf));
+    assert(n > 0);
+    assert(strstr(buf, "placeholder"));
+    assert(strstr(buf, "\"PLUS\""));
+
+    /* (2) rename PLUS -> ADDOP.  Workspace edit must list every
+     * occurrence with newText "ADDOP". */
+    snprintf(msg, sizeof(msg),
+        "{\"jsonrpc\":\"2.0\",\"id\":15,\"method\":\"textDocument/rename\","
+        "\"params\":{\"textDocument\":{\"uri\":\"file:///rich.lime\"},"
+        "\"position\":{\"line\":%ld,\"character\":%ld},"
+        "\"newName\":\"ADDOP\"}}",
+        plus_line, plus_col + 1);
+    send_message(&s, msg);
+    n = wait_for_response_id(&s, 15, buf, sizeof(buf));
+    assert(n > 0);
+    assert(strstr(buf, "\"changes\""));
+    assert(strstr(buf, "file:///rich.lime"));
+    int edits = count_occurrences(buf, "\"newText\":\"ADDOP\"");
+    int expected = 0;
+    {
+        size_t i = 0;
+        while (i < tlen) {
+            if (i + 4 <= tlen && strncmp(text + i, "PLUS", 4) == 0) {
+                int prev_id = (i > 0) &&
+                    (isalnum((unsigned char)text[i-1]) || text[i-1] == '_');
+                int next_id = (i + 4 < tlen) &&
+                    (isalnum((unsigned char)text[i+4]) || text[i+4] == '_');
+                if (!prev_id && !next_id) { expected++; i += 4; continue; }
+            }
+            i++;
+        }
+    }
+    assert(expected >= 2);
+    assert(edits == expected);
+
+    /* (3) prepareRename on `%token` (a directive) -- must return
+     * null per LSP convention so the editor falls back. */
+    long tok_line = -1;
+    {
+        long ln = 0; size_t i = 0;
+        while (i < tlen) {
+            if (strncmp(text + i, "%token", 6) == 0 &&
+                (i == 0 || text[i - 1] == '\n')) {
+                tok_line = ln;
+                break;
+            }
+            if (text[i] == '\n') ln++;
+            i++;
+        }
+    }
+    assert(tok_line >= 0);
+    snprintf(msg, sizeof(msg),
+        "{\"jsonrpc\":\"2.0\",\"id\":16,\"method\":\"textDocument/prepareRename\","
+        "\"params\":{\"textDocument\":{\"uri\":\"file:///rich.lime\"},"
+        "\"position\":{\"line\":%ld,\"character\":3}}}", tok_line);
+    send_message(&s, msg);
+    n = wait_for_response_id(&s, 16, buf, sizeof(buf));
+    assert(n > 0);
+    assert(strstr(buf, "\"result\":null"));
+    assert(!strstr(buf, "placeholder"));
+
+    /* (4) rename to invalid identifier `123abc` -- expect a
+     * JSON-RPC error response with code -32602. */
+    snprintf(msg, sizeof(msg),
+        "{\"jsonrpc\":\"2.0\",\"id\":17,\"method\":\"textDocument/rename\","
+        "\"params\":{\"textDocument\":{\"uri\":\"file:///rich.lime\"},"
+        "\"position\":{\"line\":%ld,\"character\":%ld},"
+        "\"newName\":\"123abc\"}}",
+        plus_line, plus_col + 1);
+    send_message(&s, msg);
+    n = wait_for_response_id(&s, 17, buf, sizeof(buf));
+    assert(n > 0);
+    assert(strstr(buf, "\"error\""));
+    assert(strstr(buf, "-32602"));
+
+    shutdown_server(&s);
+    free(text);
+    fprintf(stderr, "  rename          OK\n");
+}
+
+static void test_semantic_tokens(const char *bin, const char *lime_bin,
+                                 const char *fixtures_dir) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/rich.lime", fixtures_dir);
+    size_t tlen;
+    char *text = slurp(path, &tlen);
+
+    server_t s = spawn_server(bin, lime_bin);
+    initialize_server(&s);
+    open_document(&s, "file:///rich.lime", text, tlen);
+
+    char buf[65536];
+    read_message(&s, buf, sizeof(buf));
+
+    static const char *req =
+        "{\"jsonrpc\":\"2.0\",\"id\":18,\"method\":\"textDocument/semanticTokens/full\","
+        "\"params\":{\"textDocument\":{\"uri\":\"file:///rich.lime\"}}}";
+    send_message(&s, req);
+    int n = wait_for_response_id(&s, 18, buf, sizeof(buf));
+    assert(n > 0);
+    assert(strstr(buf, "\"data\""));
+    /* Find the data array and walk it: must be a sequence of
+     * non-negative integers, multiple of 5. */
+    const char *p = strstr(buf, "\"data\":");
+    assert(p);
+    p = strchr(p, '[');
+    assert(p);
+    p++;
+    int ints = 0;
+    long long vals[2048];
+    while (*p && *p != ']') {
+        while (*p == ' ' || *p == ',') p++;
+        if (*p == ']') break;
+        char *end;
+        long long v = strtoll(p, &end, 10);
+        assert(end != p);
+        assert(v >= 0);
+        if (ints < (int)(sizeof(vals)/sizeof(vals[0]))) vals[ints] = v;
+        ints++;
+        p = end;
+    }
+    assert(ints > 0);
+    assert(ints % 5 == 0);
+    int tokens = ints / 5;
+    /* Spot-check: the first token in rich.lime is the leading
+     * block comment.  Its tokenType must be 7 (comment). */
+    assert(vals[3] == 7);
+    int saw_keyword = 0, saw_class = 0, saw_variable = 0, saw_operator = 0;
+    for (int i = 0; i < tokens; i++) {
+        long long len  = vals[i*5 + 2];
+        long long type = vals[i*5 + 3];
+        long long mods = vals[i*5 + 4];
+        assert(len > 0);
+        assert(type >= 0 && type <= 11);
+        assert(mods >= 0);
+        if (type == 0) saw_keyword  = 1;
+        if (type == 2) saw_class    = 1;
+        if (type == 3) saw_variable = 1;
+        if (type == 8) saw_operator = 1;
+    }
+    /* rich.lime contains directives, terminals, non-terminals,
+     * and `::=` operators -- every one of these should fire. */
+    assert(saw_keyword);
+    assert(saw_class);
+    assert(saw_variable);
+    assert(saw_operator);
+
+    shutdown_server(&s);
+    free(text);
+    fprintf(stderr, "  semanticTokens  OK\n");
+}
+
 int main(int argc, char **argv) {
     if (argc < 4) {
         fprintf(stderr,
@@ -535,6 +908,10 @@ int main(int argc, char **argv) {
     test_definition(bin, lime_bin, fixtures_dir);
     test_hover(bin, lime_bin, fixtures_dir);
     test_document_symbol(bin, lime_bin, fixtures_dir);
+    test_completion(bin, lime_bin, fixtures_dir);
+    test_references(bin, lime_bin, fixtures_dir);
+    test_rename(bin, lime_bin, fixtures_dir);
+    test_semantic_tokens(bin, lime_bin, fixtures_dir);
     fprintf(stderr, "  ALL PASSED\n");
     return 0;
 }

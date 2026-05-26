@@ -238,6 +238,27 @@ static lsp_symbol *symtab_get_or_add(lsp_symtab *st, const char *text,
     return ns;
 }
 
+static int sym_push_ref(lsp_symbol *s, const char *text, size_t text_len,
+                        size_t start, size_t end, int is_definition) {
+    if (s->ref_count == s->ref_cap) {
+        size_t nc = s->ref_cap ? s->ref_cap * 2 : 4;
+        lsp_symref *nr = (lsp_symref *)realloc(s->refs, nc * sizeof(*nr));
+        if (!nr) return 0;
+        s->refs = nr; s->ref_cap = nc;
+    }
+    lsp_symref *r = &s->refs[s->ref_count++];
+    r->start = start;
+    r->end   = end;
+    long long ln, col, eln, ecol;
+    lsp_offset_to_position(text, text_len, start, &ln,  &col);
+    lsp_offset_to_position(text, text_len, end,   &eln, &ecol);
+    r->line          = ln;
+    r->col           = col;
+    r->end_col       = ecol;
+    r->is_definition = is_definition;
+    return 1;
+}
+
 static void record_definition(lsp_symbol *s, const char *text, size_t text_len,
                               size_t start, size_t end, lsp_sym_kind kind) {
     if (s->def_offset == (size_t)-1) {
@@ -251,6 +272,13 @@ static void record_definition(lsp_symbol *s, const char *text, size_t text_len,
         s->def_end_col = ec_col;
     }
     s->kind = kind;
+    sym_push_ref(s, text, text_len, start, end, /*is_definition=*/1);
+}
+
+static void record_use(lsp_symbol *s, const char *text, size_t text_len,
+                       size_t start, size_t end) {
+    s->uses++;
+    sym_push_ref(s, text, text_len, start, end, /*is_definition=*/0);
 }
 
 void lsp_symtab_build(lsp_symtab *st, const char *text, size_t text_len) {
@@ -332,7 +360,8 @@ void lsp_symtab_build(lsp_symtab *st, const char *text, size_t text_len) {
                     /* %left FOO BAR ... -- treat names as refs */
                     lsp_symbol *s = symtab_get_or_add(st, text, lhs_start,
                                                       lhs_end);
-                    if (s) s->uses++;
+                    if (s) record_use(s, text, text_len,
+                                      lhs_start, lhs_end);
                     continue;
                 }
                 /* Bare identifier with neither a directive prefix
@@ -342,7 +371,7 @@ void lsp_symtab_build(lsp_symtab *st, const char *text, size_t text_len) {
                  */
                 lsp_symbol *s = symtab_get_or_add(st, text, lhs_start,
                                                   lhs_end);
-                if (s) s->uses++;
+                if (s) record_use(s, text, text_len, lhs_start, lhs_end);
                 continue;
             }
             if (t->kind == TK_DOT) {
@@ -396,7 +425,8 @@ void lsp_symtab_build(lsp_symtab *st, const char *text, size_t text_len) {
                     tk_t *id = &tk.items[i+1];
                     lsp_symbol *s = symtab_get_or_add(st, text,
                                                       id->start, id->end);
-                    if (s) s->uses++;
+                    if (s) record_use(s, text, text_len,
+                                      id->start, id->end);
                     i++;
                 }
                 while (i + 1 < tk.count && tk.items[i+1].kind != TK_RBRACK) i++;
@@ -405,7 +435,7 @@ void lsp_symtab_build(lsp_symtab *st, const char *text, size_t text_len) {
             }
             if (t->kind == TK_IDENT) {
                 lsp_symbol *s = symtab_get_or_add(st, text, t->start, t->end);
-                if (s) s->uses++;
+                if (s) record_use(s, text, text_len, t->start, t->end);
                 continue;
             }
             continue;
@@ -416,7 +446,10 @@ void lsp_symtab_build(lsp_symtab *st, const char *text, size_t text_len) {
 
 void lsp_symtab_free(lsp_symtab *st) {
     if (!st) return;
-    for (size_t i = 0; i < st->count; i++) free(st->items[i].name);
+    for (size_t i = 0; i < st->count; i++) {
+        free(st->items[i].name);
+        free(st->items[i].refs);
+    }
     free(st->items);
     memset(st, 0, sizeof(*st));
 }
@@ -504,10 +537,7 @@ json_value *lsp_navigation_definition(const char *uri,
 /* Brief docs for each %-directive.  Strings live in static
  * storage; they end up serialized verbatim into the hover
  * response. */
-static const struct {
-    const char *name;
-    const char *doc;
-} kDirectiveDocs[] = {
+static const lsp_directive_info kDirectiveDocs[] = {
     {"name",        "`%name <prefix>` -- prefix every generated symbol with <prefix>."},
     {"token",       "`%token <NAME> ...<NAME>.` -- declare terminal tokens."},
     {"token_type",  "`%token_type {C-type}` -- C type carried by every terminal."},
@@ -557,8 +587,22 @@ static const struct {
     {"name_prefix", "`%name_prefix <PFX>.` -- legacy alias for %name."},
     {"realloc",     "`%realloc <fn>.` -- override realloc used inside the runtime."},
     {"free",        "`%free <fn>.` -- override free used inside the runtime."},
+    {"extends",     "`%extends <module>.` -- inherit rules + tokens from another grammar."},
+    {"override",    "`%override <N> ::= ...` -- redefine an inherited rule."},
+    {"remove",      "`%remove <N>.` -- delete an inherited rule."},
+    {"override_type","`%override_type <N> {C-type}` -- replace inherited %type."},
+    {"dialect",     "`%dialect <NAME> { ... }` -- conditional inclusion guarded by -D<NAME>."},
+    {"embed",       "`%embed <lang> <TRIGGER> 'lex' <ENTRY> <TOK>.` -- embedded grammar trigger."},
+    {"literal_buffer","`%literal_buffer <NAME> ...` -- declare a lexer accumulation buffer."},
+    {"lexer_extra_argument","`%lexer_extra_argument {T name}` -- thread a parameter through LexFeedBytes."},
+    {"lexer_include","`%lexer_include <ruleset> ...` -- restrict DFA to listed rulesets."},
+    {"pattern",     "`%pattern <name> = <regex>` -- named regex fragment (.lex)."},
     {NULL, NULL}
 };
+
+const lsp_directive_info *lsp_known_directives(void) {
+    return kDirectiveDocs;
+}
 
 static const char *directive_doc(const char *name, size_t name_len) {
     /* skip leading '%' if present */

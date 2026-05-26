@@ -34,6 +34,21 @@ typedef enum {
     LSP_SYM_DIRECTIVE   = 3    /* %name, %type, %include, ...  */
 } lsp_sym_kind;
 
+/* One occurrence of a symbol in the source.  May be either a
+ * definition site or a reference site; the `is_definition` flag
+ * disambiguates.  The line / column fields are 0-based and pre-
+ * computed at scan time so callers don't pay the offset->position
+ * cost on every emit.
+ */
+typedef struct {
+    size_t    start;
+    size_t    end;
+    long long line;
+    long long col;
+    long long end_col;
+    int       is_definition;
+} lsp_symref;
+
 typedef struct {
     char        *name;       /* heap, NUL-terminated   */
     lsp_sym_kind kind;
@@ -43,6 +58,13 @@ typedef struct {
     long long    def_col;    /* 0-based column               */
     long long    def_end_col;/* 0-based column of end        */
     long          uses;      /* number of references seen    */
+    /* Every occurrence (def + refs) recorded by the scanner, in
+     * source order.  Used by references / rename / semantic
+     * tokens.  Owned by the symbol; freed in lsp_symtab_free.
+     */
+    lsp_symref  *refs;
+    size_t       ref_count;
+    size_t       ref_cap;
 } lsp_symbol;
 
 typedef struct {
@@ -87,5 +109,63 @@ json_value *lsp_navigation_hover(const char *text, size_t text_len,
  * DocumentSymbol[] form).  Returns a JSON array.
  */
 json_value *lsp_navigation_document_symbol(const char *text, size_t text_len);
+
+/* Build a textDocument/completion response.  Returns a CompletionList
+ * `{ isIncomplete: false, items: [...] }`.  `trigger` may be NUL.
+ */
+json_value *lsp_navigation_completion(const char *text, size_t text_len,
+                                      long long line, long long character,
+                                      char trigger);
+
+/* Build a textDocument/references response (Location[]).  Returns a
+ * JSON array, possibly empty.  `include_declaration` toggles inclusion
+ * of the symbol's defining occurrence.
+ */
+json_value *lsp_navigation_references(const char *uri,
+                                      const char *text, size_t text_len,
+                                      long long line, long long character,
+                                      int include_declaration);
+
+/* Build a textDocument/prepareRename response.  On success returns an
+ * object `{ range, placeholder }`.  On a non-renameable position
+ * returns NULL and (when `out_err` is non-NULL) populates a short
+ * human-readable reason there.
+ */
+json_value *lsp_navigation_prepare_rename(const char *text, size_t text_len,
+                                          long long line, long long character,
+                                          char *out_err, size_t err_cap);
+
+/* Build a textDocument/rename response.  Returns a WorkspaceEdit on
+ * success, NULL on failure (with `out_err` populated).
+ */
+json_value *lsp_navigation_rename(const char *uri,
+                                  const char *text, size_t text_len,
+                                  long long line, long long character,
+                                  const char *new_name,
+                                  char *out_err, size_t err_cap);
+
+/* Build a textDocument/semanticTokens/full response
+ * `{ data: [deltaLine, deltaStart, length, tokenType, tokenMods]* }`.
+ */
+json_value *lsp_navigation_semantic_tokens(const char *text, size_t text_len);
+
+/* Static legend used in the initialize response so the editor knows
+ * what the integer token-type / token-modifier ids mean.  The arrays
+ * are NULL-terminated.  Indices match the encoding in
+ * lsp_navigation_semantic_tokens.
+ */
+extern const char *const lsp_semantic_token_types[];
+extern const char *const lsp_semantic_token_modifiers[];
+
+/* One entry in the curated list of known %-directives.  Used by
+ * hover (already) and completion (new in v0.5.7).
+ */
+typedef struct {
+    const char *name;   /* without leading '%' */
+    const char *doc;    /* one-line markdown description */
+} lsp_directive_info;
+
+/* NULL-terminated list of known directives, in spec order. */
+const lsp_directive_info *lsp_known_directives(void);
 
 #endif /* LIME_LSP_NAVIGATION_H */

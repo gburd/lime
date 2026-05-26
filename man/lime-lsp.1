@@ -2,7 +2,7 @@
 .\" Copyright (c) 2024-2026 Lime Parser Generator Project
 .\" Public Domain
 .\"
-.TH LIME-LSP 1 "May 2026" "Lime 0.5.1" "User Commands"
+.TH LIME-LSP 1 "May 2026" "Lime 0.5.7" "User Commands"
 .SH NAME
 lime-lsp \- Language Server Protocol server for Lime grammar files
 .SH SYNOPSIS
@@ -33,7 +33,10 @@ There is no daemon mode and no socket transport; editor
 integrations spawn the server as a child process per workspace.
 .PP
 v0.5.0 ships LSP "Phase 1": single-document scope, full-text
-sync, diagnostics, definition, hover, document symbol.  See
+sync, diagnostics, definition, hover, document symbol.
+v0.5.7 adds completion, references, rename (with prepareRename),
+and semantic tokens \(em the four capabilities the v0.5.0 man
+page explicitly listed as deferred.  See
 .B docs/LSP.md
 for the implementation guide and
 .B editors/lime-lsp-config.md
@@ -69,7 +72,19 @@ time is the authoritative list of supported features:
   "textDocumentSync": { "openClose": true, "change": 1, "save": true },
   "definitionProvider":     true,
   "hoverProvider":          true,
-  "documentSymbolProvider": true
+  "documentSymbolProvider": true,
+  "referencesProvider":     true,
+  "completionProvider":     { "triggerCharacters": ["%", " ", "."] },
+  "renameProvider":         { "prepareProvider": true },
+  "semanticTokensProvider": {
+    "legend": {
+      "tokenTypes":     ["keyword", "namespace", "class", "variable",
+                         "function", "string", "number", "comment",
+                         "operator", "type", "macro", "label"],
+      "tokenModifiers": ["definition", "deprecated"]
+    },
+    "full": true
+  }
 }
 .EE
 .RE
@@ -139,18 +154,163 @@ the document, in declaration order with kinds
 (terminal),
 .B Function
 (non-terminal).
+.TP
+.B textDocument/completion
+Context-aware suggestions.  Three modes:
+directive context (cursor on or just after a leading
+.B %
+at the start of a line) emits the full curated list of
+recognized directives;
+RHS context (cursor inside a rule, after
+.B ::=
+before the terminating
+.BR . )
+emits every terminal + non-terminal known to the open document,
+prefix-filtered;
+token-list context (cursor inside a
+.B %token
+/
+.B %left
+/
+.B %right
+/
+.B %nonassoc
+/
+.B %type
+/
+.B %fallback
+/
+.B %wildcard
+statement) emits terminals.
+Trigger characters
+.RB ( % ,
+space,
+.BR . )
+are advertised in
+.BR completionProvider.triggerCharacters .
+Directive list is hard-coded in
+.B src/lsp/lsp_navigation.c::kDirectiveDocs ,
+shared with the hover handler; v0.5.8+ may parse it from
+.BR lime_grammar (5).
+.TP
+.B textDocument/references
+Resolves the symbol under the cursor and returns one
+.B Location
+per occurrence (definition + every reference site).
+The
+.B context.includeDeclaration
+flag toggles inclusion of definition sites; pass
+.B false
+to get use-only references.  Cross-document propagation across
+.B %extends
+/
+.B %import
+is a v0.5.8+ follow-up; v0.5.7 is single-document.
+.TP
+.B textDocument/prepareRename
+Validates that the cursor sits on a renameable symbol (a
+terminal or non-terminal whose definition is in the open
+document).  Returns
+.B { range, placeholder }
+on success and
+.B null
+on a non-renameable position (directive, comment, whitespace,
+unknown identifier).  The editor surfaces null as a non-modal
+status message, not an error popup, per LSP convention.
+.TP
+.B textDocument/rename
+Returns a
+.B WorkspaceEdit
+.RB ( changes :
+URI \(rA TextEdit[]) replacing every occurrence with
+.BR newName .
+Validation:
+.B newName
+must match
+.BR [A-Za-z_][A-Za-z0-9_]* ;
+must not collide with an existing symbol of a different kind;
+must not match an existing
+.BR % -directive
+name.
+A validation failure returns JSON-RPC error
+.B \-32602
+so the editor surfaces the reason verbatim.
+Multi-file rename across
+.B %extends
+is a v0.5.8+ follow-up.
+.TP
+.B textDocument/semanticTokens/full
+Returns a SemanticTokens object
+.RB ( { data:
+.RI [ deltaLine ,
+.IR deltaStart ,
+.IR length ,
+.IR tokenType ,
+.IR tokenMods ]*
+.BR } )
+encoding every classified lexical token in the document, in
+source order, using the legend advertised at
+.BR initialize .
+Legend (12 token types):
+.B keyword
+(directive),
+.B namespace
+.RB ( %dialect
+/
+.B %extends
+/
+.B %import
+argument),
+.B class
+(terminal),
+.B variable
+(non-terminal),
+.B function
+(reserved),
+.B string
+.RB ( "..."
+/
+.BR '...' ),
+.B number
+(decimal literal),
+.B comment
+(block + line),
+.B operator
+.RB ( ::=
+/
+.B |
+/
+.B .
+/
+.B ,
+/
+.B ;
+/
+.B (
+/
+.B )
+/
+.B [
+/
+.B ]
+/
+.B {
+/
+.BR } ),
+.B type ,
+.B macro ,
+.B label
+(reserved for v0.5.8+).
+Modifiers
+.RB ( definition ,
+.BR deprecated )
+are reserved; v0.5.7 always emits zero.
 .PP
 The following methods are advertised as
 .B unsupported
 and are intentionally deferred:
-.B textDocument/completion ,
-.B textDocument/references ,
-.B textDocument/rename ,
-.B textDocument/semanticTokens/full ,
 .B textDocument/codeAction ,
 .B workspace/symbol .
-The first three need a persistent cross-document grammar
-model;
 .B codeAction
 pairs with the linter's auto-fix surface, which has not yet
 been wired.
@@ -235,17 +395,17 @@ in
 escapes; no external JSON dependency is linked.
 .SH "LIMITATIONS"
 .IP \(bu 2
-Single document at a time.  Definition / hover / outline do
-not cross
+Single document at a time.  Definition / hover / outline /
+references / rename do not cross
 .B %extends
 or
 .B %import
-file boundaries.
+file boundaries; v0.5.8+ wires the cross-document grammar
+model.
 .IP \(bu 2
 Full-text sync only (no incremental).
 .IP \(bu 2
-No completion, references, rename, semantic tokens, or code
-actions.
+No code actions or workspace symbol search.
 .IP \(bu 2
 POSIX-only.  The diagnostics path requires
 .BR fork (2),
