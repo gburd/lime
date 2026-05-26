@@ -541,6 +541,12 @@ void   OptPrint(void);
 
 /******** From the file "parse.h" *****************************************/
 void Parse(struct lime *lemp);
+/* ROADMAP-1 phase 2: parse a grammar from a pre-loaded text buffer.
+** ParseText() is the in-process entry point.  See the long block
+** comment above the function definition for the buffer-ownership
+** contract.  Phase 3 will build the public
+** lime_compile_grammar_in_process() API on top of ParseText. */
+void ParseText(struct lime *lemp, const char *text, size_t len);
 
 /* v0.4.1 forward decls (%extends + diamond machinery).  The full
 ** definitions live near the bottom of the file alongside Parse(),
@@ -7676,51 +7682,37 @@ static const char *resolve_extends_path(const char *current_file,
 ** would otherwise need to thread the saved filename through
 ** parse_lime_file_recursive's locals, which buys nothing.
 */
-static void parse_lime_file_recursive(struct pstate *psp,
-                                      const char *filename,
-                                      int is_top_level)
+/* ROADMAP-1 phase 2: tokenize an in-memory grammar buffer.
+**
+** Caller owns `filebuf`.  This function mutates it in place
+** (desugar_dialect_blocks() rewrites %dialect blocks, preprocess_input()
+** blanks %ifdef regions, the tokenizer NUL-terminates each lexeme
+** before calling parseonetoken()) but does NOT free it.
+**
+** All strings persisted into struct lime / struct rule / struct symbol
+** that originate in the buffer are interned via Strsafe() before being
+** stored (see parseonetoken: `x = Strsafe(psp->tokenstart);`).  Comments
+** are memcpy'd into psp->pending_comments.  Therefore the buffer can be
+** freed by the caller as soon as this returns.
+**
+** Recursive %extends still uses file I/O via parse_lime_file_recursive
+** (which then calls back into this function for the included file's
+** body).  Phase 3 may extend this with a caller-supplied include
+** resolver. */
+static void parse_lime_buffer_recursive(struct pstate *psp,
+                                        char *filebuf,
+                                        unsigned int filesize,
+                                        const char *filename,
+                                        int is_top_level)
 {
   struct lime *gp = psp->gp;
-  FILE *fp;
-  char *filebuf;
-  unsigned int filesize;
   int lineno;
   int c;
   char *cp, *nextcp;
   int startline = 0;
   char *comment_region_start = 0;
   char *body_start;
-
-  fp = fopen(filename,"rb");
-  if( fp==0 ){
-    ErrorMsg(filename,0,"Can't open this file for reading.");
-    gp->errorcnt++;
-    psp->errorcnt++;
-    return;
-  }
-  fseek(fp,0,2);
-  filesize = ftell(fp);
-  rewind(fp);
-  filebuf = (char *)lime_malloc( filesize+1 );
-  if( filesize>100000000 || filebuf==0 ){
-    ErrorMsg(filename,0,"Input file too large.");
-    lime_free(filebuf);
-    gp->errorcnt++;
-    psp->errorcnt++;
-    fclose(fp);
-    return;
-  }
-  if( fread(filebuf,1,filesize,fp)!=filesize ){
-    ErrorMsg(filename,0,"Can't read in all %d bytes of this file.",
-      filesize);
-    lime_free(filebuf);
-    gp->errorcnt++;
-    psp->errorcnt++;
-    fclose(fp);
-    return;
-  }
-  fclose(fp);
-  filebuf[filesize] = 0;
+  (void)filesize; /* informational; the tokenizer is NUL-driven */
 
   /* Set the active filename for diagnostics + provenance.  Caller
   ** restores on return (in the %extends case). */
@@ -7731,7 +7723,6 @@ static void parse_lime_file_recursive(struct pstate *psp,
   preprocess_input(filebuf);
   if( is_top_level && gp->printPreprocessed ){
     printf("%s\n", filebuf);
-    lime_free(filebuf);
     return;
   }
 
@@ -7909,30 +7900,84 @@ static void parse_lime_file_recursive(struct pstate *psp,
     lime_free(psp->pending_rule_comment);
     psp->pending_rule_comment = 0;
   }
+}
+
+/* ROADMAP-1 phase 2: thin file-I/O wrapper around
+** parse_lime_buffer_recursive.  Reads `filename` into a malloc'd
+** buffer, delegates to the buffer-based parser, frees the buffer.
+** Used by both the original top-level Parse() entry point and by
+** the %extends recursion site (which still resolves filesystem
+** paths -- in-memory %extends is a phase 3+ extension). */
+static void parse_lime_file_recursive(struct pstate *psp,
+                                      const char *filename,
+                                      int is_top_level)
+{
+  struct lime *gp = psp->gp;
+  FILE *fp;
+  char *filebuf;
+  unsigned int filesize;
+
+  fp = fopen(filename,"rb");
+  if( fp==0 ){
+    ErrorMsg(filename,0,"Can't open this file for reading.");
+    gp->errorcnt++;
+    psp->errorcnt++;
+    return;
+  }
+  fseek(fp,0,2);
+  filesize = ftell(fp);
+  rewind(fp);
+  filebuf = (char *)lime_malloc( filesize+1 );
+  if( filesize>100000000 || filebuf==0 ){
+    ErrorMsg(filename,0,"Input file too large.");
+    lime_free(filebuf);
+    gp->errorcnt++;
+    psp->errorcnt++;
+    fclose(fp);
+    return;
+  }
+  if( fread(filebuf,1,filesize,fp)!=filesize ){
+    ErrorMsg(filename,0,"Can't read in all %d bytes of this file.",
+      filesize);
+    lime_free(filebuf);
+    gp->errorcnt++;
+    psp->errorcnt++;
+    fclose(fp);
+    return;
+  }
+  fclose(fp);
+  filebuf[filesize] = 0;
+
+  parse_lime_buffer_recursive(psp, filebuf, filesize, filename,
+                              is_top_level);
   lime_free(filebuf);
 }
 
-/* In spite of its name, this function is really a scanner.  It read
-** in the entire input file (all at once) then tokenizes it.  Each
-** token is passed to the function "parseonetoken" which builds all
-** the appropriate data structures in the global state vector "gp".
-*/
-void Parse(struct lime *gp)
+/* Shared top-level driver.  Sets up a pstate, runs the buffer
+** parser, and performs the post-parse finalisation (rule-list
+** publish, diamond-conflict sweep, module-metadata validation).
+** Both Parse() (file-based) and ParseText() (buffer-based) funnel
+** through this helper to keep the post-parse semantics in one
+** place. */
+static void parse_top_level_buffer(struct lime *gp,
+                                   char *filebuf,
+                                   unsigned int filesize,
+                                   const char *filename)
 {
   struct pstate ps;
 
   memset(&ps, '\0', sizeof(ps));
   ps.gp = gp;
-  ps.filename = gp->filename;
+  ps.filename = (char *)filename;
   ps.errorcnt = 0;
   ps.state = INITIALIZE;
   ps.extends_depth = 0;
   ps.pending_override = 0;
   ps.pending_remove = 0;
 
-  parse_lime_file_recursive(&ps, gp->filename, 1);
+  parse_lime_buffer_recursive(&ps, filebuf, filesize, filename, 1);
   if( gp->printPreprocessed ){
-    /* The recursive helper already printed; bail without
+    /* The buffer parser already printed; bail without
     ** finalising the rule list. */
     gp->errorcnt = ps.errorcnt;
     return;
@@ -7972,6 +8017,112 @@ void Parse(struct lime *gp)
       "%%module_name requires %%module_version");
     gp->errorcnt++;
   }
+}
+
+/* In spite of its name, this function is really a scanner.  It reads
+** in the entire input file (all at once) then tokenizes it.  Each
+** token is passed to the function "parseonetoken" which builds all
+** the appropriate data structures in the global state vector "gp".
+**
+** ROADMAP-1 phase 2: now a thin wrapper that loads gp->filename into
+** a buffer and hands off to parse_top_level_buffer.  ParseText() is
+** the buffer-based sibling for in-process callers.
+*/
+void Parse(struct lime *gp)
+{
+  FILE *fp;
+  char *filebuf;
+  unsigned int filesize;
+
+  fp = fopen(gp->filename, "rb");
+  if( fp==0 ){
+    ErrorMsg(gp->filename, 0, "Can't open this file for reading.");
+    gp->errorcnt++;
+    return;
+  }
+  fseek(fp, 0, 2);
+  filesize = (unsigned int)ftell(fp);
+  rewind(fp);
+  if( filesize > 100000000 ){
+    ErrorMsg(gp->filename, 0, "Input file too large.");
+    gp->errorcnt++;
+    fclose(fp);
+    return;
+  }
+  filebuf = (char *)lime_malloc(filesize + 1);
+  if( filebuf==0 ){
+    ErrorMsg(gp->filename, 0, "Out of memory loading grammar file.");
+    gp->errorcnt++;
+    fclose(fp);
+    return;
+  }
+  if( fread(filebuf, 1, filesize, fp) != filesize ){
+    ErrorMsg(gp->filename, 0,
+      "Can't read in all %u bytes of this file.", filesize);
+    lime_free(filebuf);
+    gp->errorcnt++;
+    fclose(fp);
+    return;
+  }
+  fclose(fp);
+  filebuf[filesize] = 0;
+
+  parse_top_level_buffer(gp, filebuf, filesize, gp->filename);
+  lime_free(filebuf);
+}
+
+/* ROADMAP-1 phase 2: parse a grammar from a pre-loaded text buffer.
+**
+** Buffer ownership contract:
+**   - Caller retains ownership of `text` and is responsible for
+**     freeing it after this function returns.
+**   - ParseText() ALWAYS makes an internal mutable copy.  The
+**     buffer parser mutates its working copy in place
+**     (desugar_dialect_blocks(), preprocess_input(), token NUL
+**     scribbles), so taking a copy guarantees the caller's
+**     `text` is left untouched -- a stronger contract than a
+**     conditional copy and one that does not depend on whether
+**     the caller's buffer is NUL-terminated or writable.
+**   - On return, every persisted string in struct lime / rule /
+**     symbol has been Strsafe-interned, so the internal copy is
+**     freed before this function returns.
+**
+** Diagnostic filename: gp->filename if set, else "<grammar text>".
+**
+** Lifetime / call-once policy: like Parse(), ParseText() is intended
+** to be called at most once per `struct lime`.  Calling it twice on
+** the same struct lime leaks the first call's rule list and
+** header_comment / trailing_comment / module_* allocations -- same
+** as repeatedly calling Parse().  In-process callers that need to
+** compile multiple grammars should allocate a fresh
+** LimeCompilerContext + struct lime for each one.
+**
+** Nested %extends: the in-grammar %extends "path" directive still
+** resolves through filesystem I/O via parse_lime_file_recursive.
+** Buffer-based include resolution is a phase 3+ feature.
+*/
+void ParseText(struct lime *gp, const char *text, size_t len)
+{
+  char *buf;
+  const char *fn = gp->filename ? gp->filename : "<grammar text>";
+
+  if( len > 100000000u ){
+    ErrorMsg(fn, 0, "Grammar buffer too large.");
+    gp->errorcnt++;
+    return;
+  }
+
+  buf = (char *)lime_malloc(len + 1);
+  if( buf==0 ){
+    ErrorMsg(fn, 0, "Out of memory copying grammar buffer.");
+    gp->errorcnt++;
+    return;
+  }
+  if( text != NULL && len > 0 ) memcpy(buf, text, len);
+  buf[len] = 0;
+
+  parse_top_level_buffer(gp, buf, (unsigned int)len, fn);
+  lime_free(buf);
 }
 /*************************** From the file "plink.c" *********************/
 /*
