@@ -42,6 +42,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
+#include <limits.h>
 
 static int failures = 0;
 
@@ -72,6 +74,43 @@ static void ensure_dir(const char *path) {
     snprintf(cmd, sizeof(cmd), "mkdir -p '%s'", path);
     int rc = system(cmd);
     (void)rc;
+}
+
+/* Per-test scratch directory infrastructure.  Mirrors the helper
+** in tests/test_dialect.c -- both tests previously polluted CWD
+** with `out_X` scratch dirs.  v0.4.2 cleanup. */
+static char g_scratch[256] = {0};
+
+static void cleanup_scratch(void) {
+    if (g_scratch[0] == 0) return;
+    if (chdir("/") != 0) return;
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", g_scratch);
+    int rc = system(cmd);
+    (void)rc;
+    g_scratch[0] = 0;
+}
+
+static int enter_scratch_dir(void) {
+    const char *candidates[3] = {0};
+    int n_cand = 0;
+    const char *tmp = getenv("TMPDIR");
+    if (tmp != NULL && tmp[0] != 0) candidates[n_cand++] = tmp;
+    candidates[n_cand++] = "/tmp";
+
+    for (int i = 0; i < n_cand; i++) {
+        struct stat st;
+        if (stat(candidates[i], &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+        int n = snprintf(g_scratch, sizeof(g_scratch),
+                         "%s/lime_test_extends.XXXXXX", candidates[i]);
+        if (n < 0 || (size_t)n >= sizeof(g_scratch)) continue;
+        if (mkdtemp(g_scratch) == NULL) { g_scratch[0] = 0; continue; }
+        if (chdir(g_scratch) != 0) { cleanup_scratch(); continue; }
+        atexit(cleanup_scratch);
+        return 0;
+    }
+    g_scratch[0] = 0;
+    return -1;
 }
 
 /* Run lime <args> -d<outdir> <fixture>; capture stdout+stderr if asked. */
@@ -140,6 +179,21 @@ int main(int argc, char **argv) {
     if (stat(lime_bin, &st) != 0) {
         fprintf(stderr, "SKIP: %s not found\n", lime_bin);
         return 77;
+    }
+
+    /* Resolve to absolute paths BEFORE chdir.  PATH_MAX-sized
+    ** buffers required by fortify-source __realpath_chk. */
+    char lime_abs[PATH_MAX], limpar_abs[PATH_MAX], fixdir_abs[PATH_MAX];
+    if (realpath(lime_bin, lime_abs) == NULL) return 77;
+    if (realpath(limpar, limpar_abs) == NULL) return 77;
+    if (realpath(fixdir, fixdir_abs) == NULL) return 77;
+    lime_bin = lime_abs;
+    limpar   = limpar_abs;
+    fixdir   = fixdir_abs;
+
+    if (enter_scratch_dir() != 0) {
+        fprintf(stderr, "FAIL: could not create scratch dir\n");
+        return 1;
     }
 
     char ansi_path[1024], oracle_path[1024],

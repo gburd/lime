@@ -39,6 +39,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
+#include <limits.h>
 
 static int failures = 0;
 
@@ -70,6 +72,58 @@ static void ensure_dir(const char *path) {
     snprintf(cmd, sizeof(cmd), "mkdir -p '%s'", path);
     int rc = system(cmd);
     (void)rc;
+}
+
+/* Per-test scratch directory cleanup.  Created via mkdtemp + chdir
+** in main(); registered through atexit so abnormal-exit paths still
+** clean up.  Without this, the test left ~10 `out_X` dirs and a
+** couple of fixture files in the CWD on every run -- noticed during
+** the v0.4.1 cherry-pick when the tree wouldn't go clean. */
+static char g_scratch[256] = {0};
+
+static void cleanup_scratch(void) {
+    if (g_scratch[0] == 0) return;
+    /* Step out of the dir before removing it so cwd is valid for
+    ** any post-exit hooks. */
+    if (chdir("/") != 0) return;
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", g_scratch);
+    int rc = system(cmd);
+    (void)rc;
+    g_scratch[0] = 0;
+}
+
+static int enter_scratch_dir(void) {
+    /* Two-stage TMPDIR resolution: first try $TMPDIR (honoring meson
+    ** + the user's environment), but fall back to /tmp when $TMPDIR
+    ** is unset, empty, or points at a now-deleted directory (the
+    ** common nix-shell failure mode that bit us during the v0.4.1
+    ** integration). */
+    const char *candidates[3] = {0};
+    int n_cand = 0;
+    const char *tmp = getenv("TMPDIR");
+    if (tmp != NULL && tmp[0] != 0) candidates[n_cand++] = tmp;
+    candidates[n_cand++] = "/tmp";
+
+    for (int i = 0; i < n_cand; i++) {
+        struct stat st;
+        if (stat(candidates[i], &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+        int n = snprintf(g_scratch, sizeof(g_scratch),
+                         "%s/lime_test_dialect.XXXXXX", candidates[i]);
+        if (n < 0 || (size_t)n >= sizeof(g_scratch)) continue;
+        if (mkdtemp(g_scratch) == NULL) {
+            g_scratch[0] = 0;
+            continue;
+        }
+        if (chdir(g_scratch) != 0) {
+            cleanup_scratch();
+            continue;
+        }
+        atexit(cleanup_scratch);
+        return 0;
+    }
+    g_scratch[0] = 0;
+    return -1;
 }
 
 /* Run lime <flags> -d<outdir> <fixture>; return exit status. */
@@ -167,8 +221,35 @@ int main(int argc, char **argv) {
         return 77;
     }
 
-    /* All scratch dirs live under the test's CWD (meson sets one
-    ** per test).  Names mirror the build configuration. */
+    /* Resolve to absolute paths BEFORE chdir into the scratch dir,
+    ** otherwise the relative argv paths break post-chdir.  Buffers
+    ** must be PATH_MAX so the fortify-source __realpath_chk doesn't
+    ** abort us. */
+    char lime_abs[PATH_MAX], limpar_abs[PATH_MAX], fixture_abs[PATH_MAX];
+    if (realpath(lime_bin, lime_abs) == NULL) {
+        fprintf(stderr, "SKIP: realpath(%s) failed\n", lime_bin);
+        return 77;
+    }
+    if (realpath(limpar, limpar_abs) == NULL) {
+        fprintf(stderr, "SKIP: realpath(%s) failed\n", limpar);
+        return 77;
+    }
+    if (realpath(fixture, fixture_abs) == NULL) {
+        fprintf(stderr, "SKIP: realpath(%s) failed\n", fixture);
+        return 77;
+    }
+    lime_bin = lime_abs;
+    limpar   = limpar_abs;
+    fixture  = fixture_abs;
+
+    if (enter_scratch_dir() != 0) {
+        fprintf(stderr, "FAIL: could not create scratch dir\n");
+        return 1;
+    }
+
+    /* All scratch dirs and ad-hoc fixture files now live under the
+    ** mkdtemp'd $TMPDIR/lime_test_dialect.XXXXXX directory.  Cleanup
+    ** via atexit() removes them when the test process exits. */
     const char *d_none      = "out_none";
     const char *d_oracle    = "out_oracle";
     const char *d_mysql     = "out_mysql";
