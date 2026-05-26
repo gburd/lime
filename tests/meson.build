@@ -188,6 +188,24 @@ test('formatter_precedence', test_formatter_precedence,
   ],
 )
 
+# Regression test for the precedence-directive leading-comment
+# preservation gap: comments above %left / %right / %nonassoc were
+# silently dropped on every release through v0.4.4.  Five sub-tests
+# cover banner survival across three precedence levels, idempotence,
+# and that each banner emits adjacent to its directive (not stranded
+# elsewhere in the output).
+test_formatter_prec_comments = executable('test_formatter_prec_comments',
+  'test_formatter_prec_comments.c',
+  dependencies : lime_parser_dep,
+)
+
+test('formatter_prec_comments', test_formatter_prec_comments,
+  args : [
+    lime_exe.full_path(),
+    meson.current_source_dir() / 'test_formatter_prec_comments_grammar.lime',
+  ],
+)
+
 # v0.4.0: %dialect NAME { ... } directive (generator-time conditional
 # inclusion).  Drives the lime binary on test_dialect_grammar.lime
 # under several -D combinations and asserts the build fingerprint

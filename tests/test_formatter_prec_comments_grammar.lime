@@ -1,0 +1,41 @@
+/*
+ * test_formatter_prec_comments_grammar.lime -- regression fixture
+ * for the precedence-directive comment preservation gap discovered
+ * during the v0.4.4 perf-audit follow-up.
+ *
+ * v0.3.0 through v0.4.4 silently dropped comments immediately
+ * preceding %left / %right / %nonassoc directives.  The %left
+ * emit branch in format_grammar() had no leading-comment slot;
+ * the parser side captured nothing for prec_counter increments.
+ *
+ * This fixture has three precedence levels each preceded by a
+ * uniquely-marked comment.  A passing test asserts every banner
+ * survives round-trip through `lime -F`.
+ */
+
+%name PrecCommentsTest
+%token_type {int}
+%type expr {int}
+%extra_argument {int *out}
+
+/* SECTION-A: Lowest precedence operators.
+ * Comment block above the FIRST %left directive.
+ * Multi-line to exercise capture across comment lines. */
+%left PLUS MINUS.
+
+/* SECTION-B: Multiplicative operators between two %left lines. */
+%left STAR SLASH.
+
+/* SECTION-C: Unary precedence override (right-associative). */
+%right UMINUS.
+
+%token PLUS MINUS STAR SLASH UMINUS NUM LPAREN RPAREN.
+
+program(P) ::= expr(E).               { P = E; *out = E; }
+expr(R) ::= expr(L) PLUS expr(M).     { R = L + M; }
+expr(R) ::= expr(L) MINUS expr(M).    { R = L - M; }
+expr(R) ::= expr(L) STAR expr(M).     { R = L * M; }
+expr(R) ::= expr(L) SLASH expr(M).    { R = (M != 0) ? L / M : 0; }
+expr(R) ::= MINUS expr(M). [UMINUS]   { R = -M; }
+expr(R) ::= LPAREN expr(M) RPAREN.    { R = M; }
+expr(R) ::= NUM(N).                   { R = N; }

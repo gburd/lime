@@ -817,6 +817,15 @@ struct lime {
   char *tokendest_comment;    /* `token_destructor`   */
   char *vardest_comment;      /* `default_destructor` */
   char *module_comment;       /* covers the module_name/version/description block */
+  /* Lime-Letter-22 follow-up: per-precedence-directive leading
+  ** comment.  Indexed by preccounter-1 (the precedence level).
+  ** Captured in parseonetoken when %left/%right/%nonassoc is
+  ** recognized; emitted in format_grammar before the corresponding
+  ** %left/%right/%nonassoc line.  Allocated lazily; cap grows
+  ** geometrically with preccounter. */
+  char **prec_comments;
+  int    prec_comments_count;
+  int    prec_comments_cap;
   /* Lime-Letter-19: any comments captured AFTER the last rule but
   ** before EOF (typically a closing `// vim:...` modeline or a
   ** trailing banner comment).  Emitted verbatim by `lime -F`
@@ -2669,6 +2678,13 @@ static int format_grammar(struct lime *lem){
         if( !found ){
           assoc = sp->assoc;
           found = 1;
+          /* Lime-Letter-22 follow-up: emit per-precedence-directive
+          ** leading comment if captured.  prec_comments[] is indexed
+          ** by precedence level (preccounter-1 in the parser); slots
+          ** at unmatched levels are NULL. */
+          if( p < lem->prec_comments_count && lem->prec_comments[p] ){
+            fprintf(out, "%s\n", lem->prec_comments[p]);
+          }
           const char *kw = (assoc == LEFT)  ? "left"
                          : (assoc == RIGHT) ? "right"
                                             : "nonassoc";
@@ -4496,6 +4512,51 @@ static void attach_directive_comment(struct pstate *psp, char **slot)
 }
 
 /*
+** Lime-Letter-22 follow-up: capture the pending leading comment for
+** the precedence directive that just incremented preccounter, and
+** stash it at lim->prec_comments[preccounter-1].  Indexed by
+** precedence level so the formatter can emit each directive's banner
+** in lockstep with the directive itself.
+**
+** Reuses pending_directive_comment from the existing directive-
+** comment machinery -- the parser stashed pending_comments into
+** that slot before deciding which directive it had recognized.
+** Grows the array geometrically as preccounter advances.  Silent on
+** OOM (the comment is dropped; the directive still parses correctly).
+*/
+static void lime_attach_prec_comment(struct pstate *psp)
+{
+  /* preccounter was just incremented in the caller, so its current
+  ** value (1, 2, 3, ...) is the prec value the symbols on this
+  ** directive line will receive (sp->prec = psp->preccounter in the
+  ** WAITING_FOR_PRECEDENCE_SYMBOL state).  Store at idx == prec so
+  ** the format-time emit loop can look up by prec level directly. */
+  struct lime *gp = psp->gp;
+  int idx = psp->preccounter;
+  if( idx <= 0 ) return;
+  if( idx >= gp->prec_comments_cap ){
+    int new_cap = gp->prec_comments_cap ? gp->prec_comments_cap * 2 : 4;
+    while( new_cap <= idx ) new_cap *= 2;
+    char **grown = (char **)lime_realloc(
+      gp->prec_comments, sizeof(char *) * (size_t)new_cap);
+    if( grown==0 ){
+      /* OOM: drop the comment so we don't leak it. */
+      if( psp->pending_directive_comment ){
+        lime_free(psp->pending_directive_comment);
+        psp->pending_directive_comment = 0;
+      }
+      return;
+    }
+    /* Zero the new slots so empty levels don't dereference garbage. */
+    for(int i = gp->prec_comments_cap; i < new_cap; i++) grown[i] = 0;
+    gp->prec_comments = grown;
+    gp->prec_comments_cap = new_cap;
+  }
+  if( idx >= gp->prec_comments_count ) gp->prec_comments_count = idx + 1;
+  attach_directive_comment(psp, &gp->prec_comments[idx]);
+}
+
+/*
 ** Lime-Letter-21: append `sp` to `g->symbols`, growing the array
 ** geometrically.  Silently drops the symbol on OOM (the symbol is
 ** still recorded in the global Symbol table, so codegen still
@@ -5297,14 +5358,17 @@ static void parseonetoken(struct pstate *psp)
         }else if( strcmp(x,"left")==0 ){
           psp->preccounter++;
           psp->declassoc = LEFT;
+          lime_attach_prec_comment(psp);
           psp->state = WAITING_FOR_PRECEDENCE_SYMBOL;
         }else if( strcmp(x,"right")==0 ){
           psp->preccounter++;
           psp->declassoc = RIGHT;
+          lime_attach_prec_comment(psp);
           psp->state = WAITING_FOR_PRECEDENCE_SYMBOL;
         }else if( strcmp(x,"nonassoc")==0 ){
           psp->preccounter++;
           psp->declassoc = NONE;
+          lime_attach_prec_comment(psp);
           psp->state = WAITING_FOR_PRECEDENCE_SYMBOL;
         }else if( strcmp(x,"destructor")==0 ){
           psp->state = WAITING_FOR_DESTRUCTOR_SYMBOL;
