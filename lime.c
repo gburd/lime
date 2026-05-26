@@ -246,6 +246,15 @@ struct LimeCompilerContext {
 ** property required by the two-context smoke test in
 ** tests/test_compiler_context.c.
 **
+** Thread-local since v0.5.5 (ROADMAP-1 phase 5): the active-context
+** pointer is `__thread` (or `_Thread_local` under C11) so concurrent
+** compilations across different threads each get their own context
+** without racing.  Phase 4's subprocess-fallback machinery in
+** src/snapshot_create.c was the previous safety net for the racy
+** case; that fallback still exists but is no longer needed for
+** thread-concurrency reasons (it's still useful for unsupported-
+** directive fallback like recursive %extends with file inclusion).
+**
 ** Phase 1 deliberately stops short of plumbing `cc` through every
 ** leaf helper (would touch ~700 call sites in 11 936 lines for no
 ** observable behavior change beyond what the active-pointer pattern
@@ -254,7 +263,20 @@ struct LimeCompilerContext {
 ** runs the pipeline within a single ctx and the active pointer is
 ** sufficient.  If true thread-concurrency is wanted later, the
 ** active-pointer becomes a TLS slot -- a one-line change. */
-static LimeCompilerContext *lime_active_ctx = 0;
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_THREADS__)
+#  define LIME_THREAD_LOCAL _Thread_local
+#elif defined(__GNUC__) || defined(__clang__)
+#  define LIME_THREAD_LOCAL __thread
+#elif defined(_MSC_VER)
+#  define LIME_THREAD_LOCAL __declspec(thread)
+#else
+#  define LIME_THREAD_LOCAL  /* no TLS available; fall back to file-static.
+                              ** Concurrent in-process compilation across
+                              ** threads will race; subprocess fallback
+                              ** in src/snapshot_create.c handles it. */
+#endif
+
+static LIME_THREAD_LOCAL LimeCompilerContext *lime_active_ctx = 0;
 
 static void lime_compiler_context_init(LimeCompilerContext *cc);
 static void lime_compiler_context_destroy(LimeCompilerContext *cc);
