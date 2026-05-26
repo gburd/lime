@@ -125,15 +125,18 @@ int main(void) {
         fprintf(stderr,
                 "test setup failure: grammar produced no errAction "
                 "entries; the regression isn't being exercised.\n");
+        snapshot_release(snap);
         return 2;
     }
     if (mismatches > 0) {
         fprintf(stderr,
                 "AOT vs table-driven divergence on %d pair(s) -- "
                 "Letter-16 regression\n", mismatches);
+        snapshot_release(snap);
         return 1;
     }
     printf("PASS: %d pairs swept, %d errAction entries, 0 divergence\n",
            sampled, err_pairs);
+    snapshot_release(snap);
     return 0;
 }
