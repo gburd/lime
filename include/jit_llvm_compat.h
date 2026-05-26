@@ -12,11 +12,24 @@
 **     LLVM 17, so these are complementary: legacy for 14-15, modern
 **     for 16+.
 **
-**   * LLVMOrcCreateNewThreadSafeContextFromLLVMContext() was added in
-**     LLVM 15.  On LLVM 14 we have to create the ThreadSafeContext
-**     first and then extract its internal LLVMContextRef.  In both
-**     cases the ThreadSafeContext owns the LLVMContext, so teardown
-**     is just LLVMOrcDisposeThreadSafeContext().
+**   * LLVMOrcCreateNewThreadSafeContextFromLLVMContext() is NOT a
+**     stable API: it is absent from the public llvm-c/Orc.h on LLVM
+**     14 through 20 (Ubuntu 25.04 / LLVM 20 reproduces the breakage
+**     as `call to undeclared function`) and was (re)introduced in
+**     LLVM 21.  Conversely, LLVMOrcThreadSafeContextGetContext()
+**     -- the getter we use to pull the internal LLVMContextRef back
+**     out of a no-arg-created ThreadSafeContext -- exists on LLVM
+**     14 through 20 and was REMOVED from the public header in LLVM
+**     21.  These two APIs are exact mirrors of each other across
+**     the version cutoff.  We pick the working pair per version:
+**       - LLVM 14-20: LLVMOrcCreateNewThreadSafeContext() (no-arg)
+**                   + LLVMOrcThreadSafeContextGetContext() to recover
+**                     the internal LLVMContextRef.
+**       - LLVM 21+ : LLVMContextCreate() externally, then
+**                     LLVMOrcCreateNewThreadSafeContextFromLLVMContext()
+**                     to wrap it.
+**     In both cases the ThreadSafeContext owns the LLVMContext, so
+**     teardown is just LLVMOrcDisposeThreadSafeContext().
 **
 **   * LLVMOrcLLJITLookup() takes an LLVMOrcJITTargetAddress * in
 **     LLVM 14 and an LLVMOrcExecutorAddress * in LLVM 15+.  Both are
@@ -112,7 +125,10 @@ typedef LLVMOrcJITTargetAddress LimeJitAddress;
 */
 static inline bool lime_jit_create_ts_ctx(LLVMOrcThreadSafeContextRef *ts_ctx_out,
                                           LLVMContextRef *llvm_ctx_out) {
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 21
+    /* LLVM 21+: ThreadSafeContextGetContext was removed from the
+    ** public llvm-c/Orc.h, but FromLLVMContext was (re)introduced.
+    ** Create the LLVMContext externally and wrap it. */
     LLVMContextRef llvm_ctx = LLVMContextCreate();
     if (llvm_ctx == NULL) {
         return false;
@@ -123,9 +139,10 @@ static inline bool lime_jit_create_ts_ctx(LLVMOrcThreadSafeContextRef *ts_ctx_ou
         return false;
     }
 #else
-    /* LLVM 14: no way to wrap an externally-created context; the
-    ** ThreadSafeContext creates and owns its own LLVMContext, which
-    ** we then fetch via the getter. */
+    /* LLVM 14-20: FromLLVMContext is not declared in the public
+    ** header; the no-arg ctor is the only entry point.  Recover
+    ** the LLVMContextRef via the GetContext getter (still present
+    ** on these releases). */
     LLVMOrcThreadSafeContextRef ts_ctx = LLVMOrcCreateNewThreadSafeContext();
     if (ts_ctx == NULL) {
         return false;
