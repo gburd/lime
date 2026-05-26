@@ -138,8 +138,10 @@ static ParserSnapshot *create_benchmark_snapshot(uint32_t nstates,
 
     snap->yy_action = calloc(table_size, sizeof(uint16_t));
     snap->yy_lookahead = calloc(table_size, sizeof(uint16_t));
-    snap->yy_shift_ofst = calloc(nstates, sizeof(int16_t));
-    snap->yy_reduce_ofst = calloc(nstates, sizeof(int16_t));
+    /* int16_t -> int32_t to match snapshot.h:161 (widening landed in
+    ** edc0c24; this bench was missed). */
+    snap->yy_shift_ofst = calloc(nstates, sizeof(int32_t));
+    snap->yy_reduce_ofst = calloc(nstates, sizeof(int32_t));
     snap->yy_default = calloc(nstates, sizeof(uint16_t));
 
     if (!snap->yy_action || !snap->yy_lookahead ||
@@ -153,7 +155,7 @@ static ParserSnapshot *create_benchmark_snapshot(uint32_t nstates,
     for (uint32_t s = 0; s < nstates; s++) {
         /* 70% of states have shift actions, 30% default to reduce */
         if (s % 10 < 7) {
-            snap->yy_shift_ofst[s] = (int16_t)(s * nterminals);
+            snap->yy_shift_ofst[s] = (int32_t)(s * nterminals);
 
             /* Populate lookahead/action entries */
             for (uint32_t t = 0; t < nterminals; t++) {

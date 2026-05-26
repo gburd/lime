@@ -432,8 +432,11 @@ static ParserSnapshot *make_bench_snapshot(uint32_t nstates,
 
     snap->yy_action = calloc(table_size, sizeof(uint16_t));
     snap->yy_lookahead = calloc(table_size, sizeof(uint16_t));
-    snap->yy_shift_ofst = calloc(nstates, sizeof(int16_t));
-    snap->yy_reduce_ofst = calloc(nstates, sizeof(int16_t));
+    /* int16_t -> int32_t: snapshot.h:161 widened the field type
+    ** in edc0c24 but this bench was missed, causing a heap-buffer
+    ** overflow on the very first state's shift_ofst write. */
+    snap->yy_shift_ofst = calloc(nstates, sizeof(int32_t));
+    snap->yy_reduce_ofst = calloc(nstates, sizeof(int32_t));
     snap->yy_default = calloc(nstates, sizeof(uint16_t));
 
     if (!snap->yy_action || !snap->yy_lookahead ||
@@ -446,7 +449,7 @@ static ParserSnapshot *make_bench_snapshot(uint32_t nstates,
     /* Fill with a pattern: each state has an offset, and valid
     ** lookahead entries map to distinct actions */
     for (uint32_t s = 0; s < nstates; s++) {
-        snap->yy_shift_ofst[s] = (int16_t)(s * nterminals);
+        snap->yy_shift_ofst[s] = (int32_t)(s * nterminals);
         snap->yy_default[s] = (uint16_t)(1000 + s);
 
         for (uint32_t t = 0; t < nterminals; t++) {
@@ -589,7 +592,7 @@ static void report_memory_usage(void) {
     uint32_t nterminals = 150;
     uint32_t table_size = nstates * nterminals;
     size_t action_mem = table_size * sizeof(uint16_t) * 2  /* action + lookahead */
-                      + nstates * sizeof(int16_t) * 2      /* shift + reduce ofst */
+                      + nstates * sizeof(int32_t) * 2      /* shift + reduce ofst */
                       + nstates * sizeof(uint16_t);        /* defaults */
     fprintf(stderr, "#   Action tables (%u states, %u terminals): %zu bytes (%.1f KB)\n",
             nstates, nterminals, action_mem, (double)action_mem / 1024.0);
