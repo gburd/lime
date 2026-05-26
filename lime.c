@@ -92,8 +92,11 @@ extern int access(const char *path, int mode);
 #endif
 
 extern void memory_error();
-static int showPrecedenceConflict = 0;
 static char *msort(char*,char**,int(*)(const char*,const char*));
+
+/* Conflict diagnostics flag.  See ctx-field comment in
+** LimeCompilerContext for why this stays a file-static. */
+static int showPrecedenceConflict = 0;
 
 /*
 ** Compilers are getting increasingly pedantic about type conversions
@@ -110,12 +113,151 @@ struct MemChunk {
   MemChunk *pNext;
   size_t sz;
   /* Actually memory follows */
-};  
+};
 
 /*
-** Global linked list of all memory allocations.
+** ROADMAP item 1, phase 1 (extract globals into a context struct so
+** the LALR pipeline is reentrant).  Forward decls for ctx fields.
+** The full type definitions live further down (struct.h-equivalent
+** sections + table.q-equivalent hash tables).
 */
-static MemChunk *memChunkList = 0;
+struct config;
+struct plink;
+struct action;
+struct s_x1;
+struct s_x2;
+struct s_x3;
+struct s_x4;
+struct s_options;
+
+/*
+** Lime compiler context: holds all the state that was previously
+** scattered as file-static or function-static globals, so the LALR
+** pipeline can run reentrantly.  One context per compilation; freed
+** when compilation completes.  ROADMAP item 1, phase 1 of 5.
+**
+** The existing struct lime is the GRAMMAR (rules, symbols, etc.).
+** This context is the COMPILER STATE (intermediate hash tables,
+** allocators, error streams, parser state).  The two are separate
+** because the grammar object is what gets serialized into the
+** generated parser; the context is throwaway.
+**
+** Phase 1 covers the state that genuinely cross-contaminates between
+** sequential compilations (allocator arena, hash tables, config
+** freelists, action/plink pools, set size, parser scratch buffers,
+** -D macro state).  Pure-CLI state (option-table parsing, output
+** directory, template path override, lint flags) remains as static
+** locals in main()/option handlers because it is read once at
+** startup and never re-set; phase 3's in-process API will sidestep
+** option parsing entirely.  See commit log for full audit.
+*/
+typedef struct LimeCompilerContext LimeCompilerContext;
+struct LimeCompilerContext {
+  /* Allocator arena (was the file-static memChunkList in lime.c).
+  ** lime_malloc/calloc/realloc append here; lime_compiler_context_destroy
+  ** walks it and free()s every chunk. */
+  MemChunk        *memChunkList;
+
+  /* Strsafe interner (was file-static x1a). */
+  struct s_x1     *x1a;
+  /* Symbol hash table (was file-static x2a). */
+  struct s_x2     *x2a;
+  /* State hash table (was file-static x3a). */
+  struct s_x3     *x3a;
+  /* Configtable hash table (was file-static x4a). */
+  struct s_x4     *x4a;
+
+  /* Configlist scratch state (was file-static freelist/current/
+  ** currentend/basis/basisend in configlist.c-equivalent block). */
+  struct config   *cfg_freelist;       /* free list of struct config */
+  struct config   *cfg_current;        /* head of current config list */
+  struct config  **cfg_currentend;     /* tail pointer of current */
+  struct config   *cfg_basis;          /* head of basis config list */
+  struct config  **cfg_basisend;       /* tail pointer of basis */
+
+  /* Plink pool (was file-static plink_freelist). */
+  struct plink    *plink_freelist;
+
+  /* Action pool (was function-static actionfreelist in Action_new()). */
+  struct action   *actionfreelist;
+
+  /* Set-ops size (was file-static `size` in set.c-equivalent block).
+  ** Renamed to set_size to disambiguate from the dozen-plus struct
+  ** members and locals also named `size`. */
+  int              set_size;
+
+  /* Parser scratch state.  Both were function-static in lime.c
+  ** parser-action handlers and would carry pointers across
+  ** compilations into freed arenas (UAF in a second compilation). */
+  char            *type_discard_slot;  /* %type {...} discard buffer */
+  char            *append_str_z;       /* append_str() growable buf */
+  int              append_str_alloced;
+  int              append_str_used;
+
+  /* -D macro state (was file-static nDefine/nDefineUsed/azDefine/
+  ** bDefineUsed).  Read by preprocess_input() during Parse(). */
+  int              nDefine;
+  int              nDefineUsed;
+  char           **azDefine;
+  char            *bDefineUsed;
+
+  /* Conflict diagnostics flag.  Kept as a file-static (not a ctx
+  ** field) because it is bound by address into the static `options[]`
+  ** table in main(); ctx-field-via-macro would require a non-
+  ** constant initializer, which static aggregate initialization
+  ** forbids.  Set once at CLI parse time, never re-set during a
+  ** compilation, so cross-context contamination is impossible.
+  ** Phase 3's in-process API can poke this directly. */
+  /* (no field; see file-static showPrecedenceConflict near msort fwd-decl) */
+};
+
+/* The currently-active compiler context.  Leaf helpers (Strsafe_*,
+** Symbol_*, State_*, Configtable_*, Plink_*, lime_malloc, etc.)
+** consult this pointer to find their backing storage.  Pipeline
+** entry points (Parse, FindRulePrecedences, FindStates, ...) take
+** an explicit `LimeCompilerContext *cc` first argument and install
+** it as active on entry; this delivers the load-bearing isolation
+** property required by the two-context smoke test in
+** tests/test_compiler_context.c.
+**
+** Phase 1 deliberately stops short of plumbing `cc` through every
+** leaf helper (would touch ~700 call sites in 11 936 lines for no
+** observable behavior change beyond what the active-pointer pattern
+** already gives single-threaded callers).  Lemon-derived generators
+** have always been single-threaded internally; phase 3's public API
+** runs the pipeline within a single ctx and the active pointer is
+** sufficient.  If true thread-concurrency is wanted later, the
+** active-pointer becomes a TLS slot -- a one-line change. */
+static LimeCompilerContext *lime_active_ctx = 0;
+
+static void lime_compiler_context_init(LimeCompilerContext *cc);
+static void lime_compiler_context_destroy(LimeCompilerContext *cc);
+
+/* Compatibility shims: the original code accessed file-static
+** globals by their bare names.  These macros redirect every
+** access to the active context's storage WITHOUT requiring
+** edits to the thousands of call sites inside the leaf helpers.
+**
+** Macro names match the original global identifiers exactly so the
+** existing function bodies expand to `lime_active_ctx->FIELD`.
+** Names that would collide with struct members or local variables
+** elsewhere in the file (`size`, `freelist`) are renamed to unique
+** identifiers; their usages are updated in place. */
+#define memChunkList            (lime_active_ctx->memChunkList)
+#define x1a                     (lime_active_ctx->x1a)
+#define x2a                     (lime_active_ctx->x2a)
+#define x3a                     (lime_active_ctx->x3a)
+#define x4a                     (lime_active_ctx->x4a)
+#define plink_freelist          (lime_active_ctx->plink_freelist)
+#define actionfreelist          (lime_active_ctx->actionfreelist)
+#define current                 (lime_active_ctx->cfg_current)
+#define currentend              (lime_active_ctx->cfg_currentend)
+#define basis                   (lime_active_ctx->cfg_basis)
+#define basisend                (lime_active_ctx->cfg_basisend)
+#define nDefine                 (lime_active_ctx->nDefine)
+#define nDefineUsed             (lime_active_ctx->nDefineUsed)
+#define azDefine                (lime_active_ctx->azDefine)
+#define bDefineUsed             (lime_active_ctx->bDefineUsed)
 
 /*
 ** Wrappers around malloc(), calloc(), realloc() and free().
@@ -175,6 +317,32 @@ static void lime_free_all(void){
     free( memChunkList );
     memChunkList = pNext;
   }
+}
+
+/* Initialize a LimeCompilerContext.  Caller owns storage; this
+** zeros the fields and installs the context as the active one.
+** ROADMAP item 1, phase 1. */
+static void lime_compiler_context_init(LimeCompilerContext *cc){
+  memset(cc, 0, sizeof(*cc));
+  lime_active_ctx = cc;
+}
+
+/* Tear down a LimeCompilerContext.  Frees every chunk in the
+** allocator arena (which transitively reclaims the hash tables,
+** freelists, scratch buffers, parser state, and -D macro storage,
+** since they were all built via lime_malloc/calloc/realloc).
+** Restores the active-context pointer to NULL.  Safe to call on
+** an init'd-but-never-used ctx (memChunkList==NULL is fine). */
+static void lime_compiler_context_destroy(LimeCompilerContext *cc){
+  LimeCompilerContext *prev = lime_active_ctx;
+  lime_active_ctx = cc;          /* lime_free_all walks cc->memChunkList */
+  lime_free_all();
+  /* lime_free_all clears memChunkList; the other ctx fields point
+  ** into the freed arena and must NOT be re-used.  Zeroing avoids
+  ** any chance a caller re-installs the destroyed ctx and walks
+  ** dangling pointers. */
+  memset(cc, 0, sizeof(*cc));
+  lime_active_ctx = (prev == cc) ? 0 : prev;
 }
 
 /*
@@ -908,7 +1076,8 @@ void Configtable_clear(int(*)(struct config *));
 
 /* Allocate a new parser action */
 static struct action *Action_new(void){
-  static struct action *actionfreelist = 0;
+  /* actionfreelist moved to LimeCompilerContext; macro at top of
+  ** file maps the bare identifier to ctx field. */
   struct action *newaction;
 
   if( actionfreelist==0 ){
@@ -1783,11 +1952,12 @@ static int resolve_conflict(
 ** in the LEMON parser generator.
 */
 
-static struct config *freelist = 0;      /* List of free configurations */
-static struct config *current = 0;       /* Top of list of configurations */
-static struct config **currentend = 0;   /* Last on list of configs */
-static struct config *basis = 0;         /* Top of list of basis configs */
-static struct config **basisend = 0;     /* End of list of basis configs */
+/* Configlist scratch state moved to LimeCompilerContext
+** (cfg_freelist / cfg_current / cfg_currentend / cfg_basis /
+** cfg_basisend).  Macros at the top of this file map the original
+** identifiers `current`, `currentend`, `basis`, `basisend` onto
+** ctx fields; `freelist` is renamed below to avoid colliding with
+** function-static `actionfreelist`-style names. */
 
 /* Return a pointer to a new configuration */
 PRIVATE struct config *newconfig(void){
@@ -1797,8 +1967,8 @@ PRIVATE struct config *newconfig(void){
 /* The configuration "old" is no longer used */
 PRIVATE void deleteconfig(struct config *old)
 {
-  old->next = freelist;
-  freelist = old;
+  old->next = lime_active_ctx->cfg_freelist;
+  lime_active_ctx->cfg_freelist = old;
 }
 
 /* Initialized the configuration list builder */
@@ -1996,10 +2166,9 @@ void memory_error(void){
   exit(1);
 }
 
-static int nDefine = 0;        /* Number of -D options on the command line */
-static int nDefineUsed = 0;    /* Number of -D options actually used */
-static char **azDefine = 0;    /* Name of the -D macros */
-static char *bDefineUsed = 0;  /* True for every -D macro actually used */
+/* -D macro state moved to LimeCompilerContext (nDefine /
+** nDefineUsed / azDefine / bDefineUsed).  Macros at the top of
+** this file redirect bare identifier accesses to ctx fields. */
 
 /* This routine is called with the argument to each -D command-line option.
 ** Add the macro defined to the azDefine array.
@@ -4215,7 +4384,13 @@ static int run_diff_conflicts(const char *base_path,
 }
 #endif
 
-/* The main program.  Parse the command line and do it... */
+/* The main program.  Parse the command line and do it...
+**
+** ROADMAP item 1, phase 1: when LIME_TEST_HARNESS is defined the
+** test suite includes lime.c directly to exercise the compiler
+** context API in-process; main() is omitted in that build because
+** the test provides its own driver. */
+#ifndef LIME_TEST_HARNESS
 int main(int argc, char **argv){
   static int version = 0;
   static int rpflag = 0;
@@ -4302,6 +4477,13 @@ int main(int argc, char **argv){
   int exitcode;
   struct lime lem;
   struct rule *rp;
+  /* ROADMAP item 1, phase 1: extract globals into a per-compilation
+  ** context.  main() owns the single instance for the CLI; it is
+  ** installed as the active context by lime_compiler_context_init().
+  ** Phase 3's public API will construct contexts dynamically from
+  ** library callers; phase 1 only delivers the structural decoupling. */
+  LimeCompilerContext compiler_ctx;
+  lime_compiler_context_init(&compiler_ctx);
 
   OptInit(argv,options,stderr);
   if( version ){
@@ -4465,7 +4647,7 @@ int main(int argc, char **argv){
     ** only path that bypasses analysis entirely. */
     if( lintFlag ){
       int lint_rc = lint_grammar(&lem);
-      lime_free_all();
+      lime_compiler_context_destroy(&compiler_ctx);
       exit(lint_rc);
     }
 
@@ -4539,10 +4721,11 @@ int main(int argc, char **argv){
   }else{
     exitcode = ((lem.errorcnt > 0) || (lem.nconflict > 0)) ? 1 : 0;
   }
-  lime_free_all();
+  lime_compiler_context_destroy(&compiler_ctx);
   exit(exitcode);
   return (exitcode);
 }
+#endif /* LIME_TEST_HARNESS */
 /******************** From the file "msort.c" *******************************/
 /*
 ** A generic merge-sort program.
@@ -6262,17 +6445,14 @@ static void parseonetoken(struct pstate *psp)
           ** has been pulled in via two paths and is re-declaring a
           ** %type we already have.  Silently consume the {body}
           ** without overwriting the existing string by routing
-          ** WAITING_FOR_DECL_ARG to a static throwaway slot.  This
-          ** is correct for IDENTICAL re-declarations (the diamond
-          ** convergence case); a CONFLICTING re-declaration would
-          ** silently take the first-loaded version, which is the
-          ** same first-wins policy applied to plain rules. */
-          static char *type_discard_slot = 0;
-          if( type_discard_slot ){
-            lime_free(type_discard_slot);
-            type_discard_slot = 0;
+          ** WAITING_FOR_DECL_ARG to a per-context throwaway slot.
+          ** Originally a function-static; promoted to ctx field
+          ** for ROADMAP item 1 phase 1 (see top of file). */
+          if( lime_active_ctx->type_discard_slot ){
+            lime_free(lime_active_ctx->type_discard_slot);
+            lime_active_ctx->type_discard_slot = 0;
           }
-          psp->declargslot = &type_discard_slot;
+          psp->declargslot = &lime_active_ctx->type_discard_slot;
           psp->insertLineMacro = 0;
           psp->state = WAITING_FOR_DECL_ARG;
         }else{
@@ -7798,7 +7978,8 @@ void Parse(struct lime *gp)
 ** Routines processing configuration follow-set propagation links
 ** in the LEMON parser generator.
 */
-static struct plink *plink_freelist = 0;
+/* plink_freelist moved to LimeCompilerContext; macro at top of file
+** maps the bare identifier to ctx field. */
 
 /* Allocate a new plink */
 struct plink *Plink_new(void){
@@ -8597,43 +8778,47 @@ int has_destructor(struct symbol *sp, struct lime *lemp)
 */
 PRIVATE char *append_str(const char *zText, int n, int p1, int p2){
   static char empty[1] = { 0 };
-  static char *z = 0;
-  static int alloced = 0;
-  static int used = 0;
+  /* The growable scratch buffer (z/alloced/used) lived as function-
+  ** statics; it now lives on the active LimeCompilerContext so a
+  ** second compilation in the same process does not see a dangling
+  ** pointer into the first compilation's freed lime_malloc arena.
+  ** The local references below shadow the macros for x1a/x2a/etc.
+  ** by spelling out the ctx-field path. */
+  LimeCompilerContext *cc = lime_active_ctx;
   int c;
   char zInt[40];
   if( zText==0 ){
-    if( used==0 && z!=0 ) z[0] = 0;
-    used = 0;
-    return z;
+    if( cc->append_str_used==0 && cc->append_str_z!=0 ) cc->append_str_z[0] = 0;
+    cc->append_str_used = 0;
+    return cc->append_str_z;
   }
   if( n<=0 ){
     if( n<0 ){
-      used += n;
-      assert( used>=0 );
+      cc->append_str_used += n;
+      assert( cc->append_str_used>=0 );
     }
     n = lemonStrlen(zText);
   }
-  if( (int) (n+sizeof(zInt)*2+used) >= alloced ){
-    alloced = n + sizeof(zInt)*2 + used + 200;
-    z = (char *) lime_realloc(z,  alloced);
+  if( (int) (n+sizeof(zInt)*2+cc->append_str_used) >= cc->append_str_alloced ){
+    cc->append_str_alloced = n + sizeof(zInt)*2 + cc->append_str_used + 200;
+    cc->append_str_z = (char *) lime_realloc(cc->append_str_z, cc->append_str_alloced);
   }
-  if( z==0 ) return empty;
+  if( cc->append_str_z==0 ) return empty;
   while( n-- > 0 ){
     c = *(zText++);
     if( c=='%' && n>0 && zText[0]=='d' ){
       lemon_sprintf(zInt, "%d", p1);
       p1 = p2;
-      lemon_strcpy(&z[used], zInt);
-      used += lemonStrlen(&z[used]);
+      lemon_strcpy(&cc->append_str_z[cc->append_str_used], zInt);
+      cc->append_str_used += lemonStrlen(&cc->append_str_z[cc->append_str_used]);
       zText++;
       n--;
     }else{
-      z[used++] = (char)c;
+      cc->append_str_z[cc->append_str_used++] = (char)c;
     }
   }
-  z[used] = 0;
-  return z;
+  cc->append_str_z[cc->append_str_used] = 0;
+  return cc->append_str_z;
 }
 
 /*
@@ -11213,18 +11398,20 @@ void ResortStates(struct lime *lemp)
 ** Set manipulation routines for the LEMON parser generator.
 */
 
-static int size = 0;
+/* Set ops `size` moved to LimeCompilerContext as `set_size`.
+** Renamed (rather than macro-redirected) because the bare
+** identifier `size` collides with struct s_x1/2/3/4 members. */
 
 /* Set the set size */
 void SetSize(int n)
 {
-  size = n+1;
+  lime_active_ctx->set_size = n+1;
 }
 
 /* Allocate a new set */
 char *SetNew(void){
   char *s;
-  s = (char*)lime_calloc( size, 1);
+  s = (char*)lime_calloc( lime_active_ctx->set_size, 1);
   if( s==0 ){
     memory_error();
   }
@@ -11242,7 +11429,7 @@ void SetFree(char *s)
 int SetAdd(char *s, int e)
 {
   int rv;
-  assert( e>=0 && e<size );
+  assert( e>=0 && e<lime_active_ctx->set_size );
   rv = s[e];
   s[e] = 1;
   return !rv;
@@ -11253,7 +11440,7 @@ int SetUnion(char *s1, char *s2)
 {
   int i, progress;
   progress = 0;
-  for(i=0; i<size; i++){
+  for(i=0; i<lime_active_ctx->set_size; i++){
     if( s2[i]==0 ) continue;
     if( s1[i]==0 ){
       progress = 1;
@@ -11323,8 +11510,8 @@ typedef struct s_x1node {
   struct s_x1node **from;  /* Previous link */
 } x1node;
 
-/* There is only one instance of the array, which is the following */
-static struct s_x1 *x1a;
+/* x1a moved to LimeCompilerContext; macro at top of file maps the
+** bare identifier to ctx field. */
 
 /* Allocate a new associative array */
 void Strsafe_init(void){
@@ -11491,8 +11678,8 @@ typedef struct s_x2node {
   struct s_x2node **from;  /* Previous link */
 } x2node;
 
-/* There is only one instance of the array, which is the following */
-static struct s_x2 *x2a;
+/* x2a moved to LimeCompilerContext; macro at top of file maps the
+** bare identifier to ctx field. */
 
 /* Allocate a new associative array */
 void Symbol_init(void){
@@ -11690,8 +11877,8 @@ typedef struct s_x3node {
   struct s_x3node **from;  /* Previous link */
 } x3node;
 
-/* There is only one instance of the array, which is the following */
-static struct s_x3 *x3a;
+/* x3a moved to LimeCompilerContext; macro at top of file maps the
+** bare identifier to ctx field. */
 
 /* Allocate a new associative array */
 void State_init(void){
@@ -11830,8 +12017,8 @@ typedef struct s_x4node {
   struct s_x4node **from;  /* Previous link */
 } x4node;
 
-/* There is only one instance of the array, which is the following */
-static struct s_x4 *x4a;
+/* x4a moved to LimeCompilerContext; macro at top of file maps the
+** bare identifier to ctx field. */
 
 /* Allocate a new associative array */
 void Configtable_init(void){

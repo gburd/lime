@@ -79,6 +79,24 @@ test_concurrent = executable('test_concurrent',
 
 test('concurrent', test_concurrent, timeout : 120)
 
+# ROADMAP item 1, phase 1: in-process LimeCompilerContext smoke test.
+# Compiles tests/test_compiler_context.c, which #includes ../lime.c
+# with -DLIME_TEST_HARNESS so the generator's main() is omitted and
+# the test acts as the driver.  Links the lex compiler library so
+# the lime.c references to lime_lex_run_compiler resolve (the
+# reference itself is inside the gated main() and is not exercised,
+# but link-resolution still requires the symbol).
+test_compiler_context = executable('test_compiler_context',
+  'test_compiler_context.c',
+  link_with : [lime_lex_compiler_lib],
+  include_directories : [inc, include_directories('../src/lex')],
+  c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAS_LEX_COMPILER',
+            '-Wno-unused-function', '-Wno-unused-parameter',
+            '-Wno-format-overflow'],
+)
+
+test('compiler_context', test_compiler_context)
+
 test_parse_context = executable('test_parse_context',
   'test_parse_context.c',
   dependencies : lime_parser_dep,
