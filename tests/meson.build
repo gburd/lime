@@ -35,6 +35,7 @@ test('lsp', test_lsp,
     lime_exe.full_path(),
     meson.current_source_dir() / 'test_lsp_fixtures',
   ],
+  depends : [lime_lsp_exe, lime_exe],
   timeout : 60,
 )
 
