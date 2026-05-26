@@ -3138,6 +3138,23 @@ static int format_grammar(struct lime *lem){
     if( lem->nexpect_comment ) fprintf(out, "%s\n", lem->nexpect_comment);
     fprintf(out, "%%expect %d\n", lem->nexpect);
   }
+  /* Lime-Letter-23: %first_token / %locations / %location_type were
+  ** silently dropped in v0.3.0 .. v0.5.1 because format_grammar()
+  ** never emitted them.  PG's pl_gram.lime + gram.lime carry all
+  ** three; without them the formatted output regenerates a parser
+  ** that fails to compile (no yyloc tracking, wrong token-code
+  ** offset).  Quick fix: emit if non-default.  The architectural
+  ** refactor proposal (table-driven format_grammar) is the proper
+  ** long-term fix and is tracked separately.  See Lime-Reply-23.txt. */
+  if( lem->first_token != 0 ){
+    fprintf(out, "%%first_token %d\n", lem->first_token);
+  }
+  if( lem->has_locations ){
+    fprintf(out, "%%locations\n");
+  }
+  if( lem->location_type ){
+    fprintf(out, "%%location_type {%s}\n", lem->location_type);
+  }
   fprintf(out, "\n");
 
   /* Brace-delimited directive bodies (Lime-Letter-18 -- preserve

@@ -1,0 +1,32 @@
+/*
+ * test_formatter_loc_directives_grammar.lime -- regression fixture
+ * for Lime-Letter-23 (PG migration team).
+ *
+ * v0.3.0 through v0.5.1 silently dropped these three directives:
+ *   %first_token N        -- token-code offset for ecpg-style grammar
+ *                           sharing
+ *   %locations             -- enable yyloc tracking
+ *   %location_type {TYPE}  -- override YYLOCATIONTYPE
+ *
+ * Concrete consequence on PG's gram.lime / pl_gram.lime: the
+ * formatted output regenerated a parser whose action bodies
+ * referenced &yyloc but the parser had no yyLookaheadLoc field
+ * because %locations was missing -> gcc reported `yyloc undeclared`
+ * on every action body.
+ *
+ * This fixture has all three directives at non-default values.
+ * The test driver asserts every directive survives lime -F.
+ */
+
+%name LocTest
+%token_type {int}
+%first_token 257
+%locations
+%location_type {YYLTYPE}
+
+%token A B C.
+
+%type result {int}
+
+result(R) ::= A B C.            { R = 1; }
+result(R) ::= A.                { R = 2; }

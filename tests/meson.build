@@ -230,6 +230,24 @@ test('formatter_prec_comments', test_formatter_prec_comments,
   ],
 )
 
+# Lime-Letter-23: regression test for %first_token / %locations /
+# %location_type formatter preservation.  Pre-fix all three were
+# silently dropped on every release v0.3.0 .. v0.5.1; PG's gram.lime
+# and pl_gram.lime hit gcc errors on every action body that
+# referenced &yyloc.  Four sub-tests cover each directive's survival
+# plus idempotence.
+test_formatter_loc_directives = executable('test_formatter_loc_directives',
+  'test_formatter_loc_directives.c',
+  dependencies : lime_parser_dep,
+)
+
+test('formatter_loc_directives', test_formatter_loc_directives,
+  args : [
+    lime_exe.full_path(),
+    meson.current_source_dir() / 'test_formatter_loc_directives_grammar.lime',
+  ],
+)
+
 # v0.5.0: lint pass expanded from a 4-rule stub to ~16 opinionated
 # rules.  Each fixture in tests/test_lint_fixtures/ is constructed
 # to fire exactly one rule (plus incidental neighbours like W005
