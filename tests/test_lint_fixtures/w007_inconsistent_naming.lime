@@ -1,0 +1,8 @@
+/* w007_inconsistent_naming.lime -- 'MyMixedTok' is a terminal with
+ * mixed-case name (convention is ALL_UPPER for terminals).
+ * Expected: W007 fires. */
+
+%token MyMixedTok PLUS NUM.
+
+start ::= expr.
+expr ::= NUM PLUS MyMixedTok.

@@ -1,0 +1,11 @@
+/* w002_unused_precedence.lime -- 'UNUSED_OP' has %left declaration
+ * but never appears in any rule.  Expected: W002 fires. */
+
+%token PLUS NUM UNUSED_OP.
+%left PLUS.
+%left UNUSED_OP.
+%expect 0
+
+start ::= expr.
+expr ::= expr PLUS expr.
+expr ::= NUM.

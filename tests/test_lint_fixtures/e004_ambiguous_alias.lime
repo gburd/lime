@@ -1,0 +1,8 @@
+/* e004_ambiguous_alias.lime -- alias 'A' used for two RHS slots in
+ * the same rule.  Expected: E004 fires once for 'A'. */
+
+%token PLUS NUM.
+
+start ::= expr.
+expr(A) ::= expr(A) PLUS expr(A).
+expr ::= NUM.

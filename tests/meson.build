@@ -206,6 +206,23 @@ test('formatter_prec_comments', test_formatter_prec_comments,
   ],
 )
 
+# v0.5.0: lint pass expanded from a 4-rule stub to ~16 opinionated
+# rules.  Each fixture in tests/test_lint_fixtures/ is constructed
+# to fire exactly one rule (plus incidental neighbours like W005
+# in conflict-bearing fixtures); the harness runs lime -L on each
+# and asserts the structured JSON diagnostic for the targeted rule
+# appears.  See docs/LINT.md for the rule catalog.
+test_lint = executable('test_lint',
+  'test_lint.c',
+)
+
+test('lint', test_lint,
+  args : [
+    lime_exe.full_path(),
+    meson.current_source_dir() / 'test_lint_fixtures',
+  ],
+)
+
 # v0.4.0: %dialect NAME { ... } directive (generator-time conditional
 # inclusion).  Drives the lime binary on test_dialect_grammar.lime
 # under several -D combinations and asserts the build fingerprint

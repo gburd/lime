@@ -1,0 +1,7 @@
+/* w008_long_rhs.lime -- 'longrule' has 12 RHS symbols, exceeding
+ * the 8-symbol threshold.  Expected: W008 fires. */
+
+%token A B C D E F G H I J K L.
+
+start ::= longrule.
+longrule ::= A B C D E F G H I J K L.

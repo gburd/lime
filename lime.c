@@ -2185,97 +2185,737 @@ static int defineCmp(const void *pA, const void *pB){
   return strcmp(zA,zB);
 }
 
-/*
-** Lint a grammar file - validate directives and check for common errors.
-** Returns the number of errors found (0 if no errors).
-*/
+/* ==========================================================================
+** v0.5.0: Linter (`lime -L`) -- opinionated grammar-hygiene checker.
+**
+** Pre-v0.5.0 this was a 4-rule stub.  v0.5.0 expands it to ~16 rules
+** across three classes:
+**
+**   Errors (E001-E005)    block the lint pass and exit non-zero.
+**   Warnings (W001-W009)  informational; failing only with --lint-strict.
+**   Suggestions (S001-S002) opt-in via --lint-style; never fail.
+**
+** Module-metadata checks from the v0.4.4 stub are preserved as
+** M001-M003 (errors) and W101 (warning) for backward compatibility.
+**
+** Rule catalog and integration recipes live in docs/LINT.md.
+** Output formats: human (default, stderr), gcc (stderr; editor-jumpable),
+** and json (stdout; CI-friendly array of diagnostics).
+** ========================================================================== */
+
+/* Tunables (W008 / W009 thresholds).  Picked to match PG's house style:
+** action bodies of 30+ lines reach for a helper function in %include;
+** rule bodies of 9+ symbols are nearly always factored into a sub-rule
+** in the existing PG grammar. */
+#define LIME_MAX_RHS_WARN          8
+#define LIME_MAX_ACTION_LINES_WARN 30
+
+enum lint_format_kind { LINT_FMT_HUMAN = 0, LINT_FMT_GCC, LINT_FMT_JSON };
+enum lint_severity    { LINT_E = 0, LINT_W, LINT_N };
+
+/* CLI-driven globals.  Set by the option-parser callbacks below before
+** lint_grammar() runs.  No threading concerns -- lime is single-threaded
+** during option parsing and the lint pass. */
+static int lint_format = LINT_FMT_HUMAN;
+static int lint_strict = 0;
+static int lint_style  = 0;
+
+static void handle_lint_format_option(char *z){
+  /* The option-parser passes the verbatim argv[i] tail.  For
+  ** long-form `--lint-format=value` the leading `-` is stripped
+  ** by handleflags but the rest -- `lint-format=value` -- is
+  ** delivered as-is.  Skip past the option name + `=`. */
+  if( z ){
+    const char *eq = strchr(z, '=');
+    if( eq ) z = (char*)eq + 1;
+  }
+  if( z==0 || z[0]==0 ){
+    fprintf(stderr,
+      "lime: --lint-format requires a value (human|gcc|json)\n");
+    exit(1);
+  }
+  if( strcmp(z, "human")==0 ) lint_format = LINT_FMT_HUMAN;
+  else if( strcmp(z, "gcc")==0 ) lint_format = LINT_FMT_GCC;
+  else if( strcmp(z, "json")==0 ) lint_format = LINT_FMT_JSON;
+  else{
+    fprintf(stderr,
+      "lime: --lint-format value must be 'human', 'gcc', or 'json' (got '%s')\n",
+      z);
+    exit(1);
+  }
+}
+
+struct lint_state {
+  struct lime *lem;
+  int errors;
+  int warnings;
+  int notes;
+  int json_first;   /* 1 = no JSON record emitted yet (still need '[') */
+};
+
+/* Quote a string into a JSON-encoded form, written to f. */
+static void lint_emit_json_string(FILE *f, const char *s){
+  fputc('"', f);
+  if( s ){
+    for(const char *p = s; *p; p++){
+      unsigned char c = (unsigned char)*p;
+      switch( c ){
+        case '"':  fputs("\\\"", f); break;
+        case '\\': fputs("\\\\", f); break;
+        case '\n': fputs("\\n", f);  break;
+        case '\r': fputs("\\r", f);  break;
+        case '\t': fputs("\\t", f);  break;
+        case '\b': fputs("\\b", f);  break;
+        case '\f': fputs("\\f", f);  break;
+        default:
+          if( c < 0x20 ) fprintf(f, "\\u%04x", (unsigned)c);
+          else            fputc((int)c, f);
+      }
+    }
+  }
+  fputc('"', f);
+}
+
+static void lint_emit(struct lint_state *st, enum lint_severity sev,
+                      const char *code, int line, int col,
+                      const char *fmt, ...){
+  va_list ap;
+  char msg[1024];
+  va_start(ap, fmt);
+  vsnprintf(msg, sizeof(msg), fmt, ap);
+  va_end(ap);
+  switch( sev ){
+    case LINT_E: st->errors++;   break;
+    case LINT_W: st->warnings++; break;
+    case LINT_N: st->notes++;    break;
+  }
+  const char *sev_str = sev==LINT_E ? "error"   :
+                        sev==LINT_W ? "warning" : "note";
+  if( line < 1 ) line = 1;
+  if( col  < 1 ) col  = 1;
+  const char *path = (st->lem && st->lem->filename) ? st->lem->filename
+                                                    : "<input>";
+  if( lint_format == LINT_FMT_JSON ){
+    if( st->json_first ){ fputc('[', stdout); st->json_first = 0; }
+    else                  fputc(',', stdout);
+    fputc('{', stdout);
+    fputs("\"path\":", stdout);     lint_emit_json_string(stdout, path);
+    fprintf(stdout, ",\"line\":%d,\"col\":%d", line, col);
+    fputs(",\"severity\":", stdout); lint_emit_json_string(stdout, sev_str);
+    fputs(",\"code\":", stdout);     lint_emit_json_string(stdout, code);
+    fputs(",\"message\":", stdout);  lint_emit_json_string(stdout, msg);
+    fputs(",\"fix\":null}", stdout);
+  }else{
+    /* gcc + human formats share the same line shape -- editor jump
+    ** lists are happy as long as the leading 'path:line:col:' tuple
+    ** is present.  Goes to stderr (matches gcc's convention; allows
+    ** scripts to redirect 2>&1 to capture lint output). */
+    fprintf(stderr, "%s:%d:%d: %s: [%s] %s\n",
+            path, line, col, sev_str, code, msg);
+  }
+}
+
+/* ----- helpers ---------------------------------------------------------- */
+
+static int lint_is_builtin_symbol(const char *n){
+  if( n==0 ) return 1;
+  if( strcmp(n, "$")==0 ) return 1;
+  if( strcmp(n, "{default}")==0 ) return 1;
+  if( strcmp(n, "error")==0 ) return 1;
+  return 0;
+}
+
+/* Build a per-symbol-index `declared` flag set.  A symbol is considered
+** declared if it is one of:
+**   - a NONTERMINAL with at least one production rule
+**   - a TERMINAL named in any %token / %left / %right / %nonassoc
+**   - a TERMINAL named as the wildcard
+**   - a TERMINAL referenced by a %fallback (source or target)
+**   - a TERMINAL named in any %type entry (rare but legal)
+**   - a constituent of a %token_class (MULTITERMINAL.subsym)
+**   - a built-in synthetic ($, error, {default}).
+** Caller frees with lime_free().  Returns NULL on OOM. */
+static char *lint_build_declared_set(struct lime *lem){
+  if( lem->nsymbol <= 0 ) return 0;
+  char *decl = (char*)lime_calloc((size_t)lem->nsymbol + 1, 1);
+  if( decl==0 ) return 0;
+  for(int i=0; i<lem->nsymbol; i++){
+    struct symbol *sp = lem->symbols[i];
+    if( sp==0 ) continue;
+    if( lint_is_builtin_symbol(sp->name) ){ decl[i] = 1; continue; }
+    if( sp->prec >= 0 ){ decl[i] = 1; }
+    if( sp == lem->wildcard ){ decl[i] = 1; }
+    if( sp->fallback ){ decl[i] = 1; }
+    if( sp->type == MULTITERMINAL ){ decl[i] = 1; }
+    if( sp->type == NONTERMINAL && sp->rule!=0 ){ decl[i] = 1; }
+  }
+  /* Pass 2: any symbol that appears as the *target* of another sp's
+  ** fallback link is also declared. */
+  for(int i=0; i<lem->nsymbol; i++){
+    struct symbol *sp = lem->symbols[i];
+    if( sp && sp->fallback ){
+      int t = sp->fallback->index;
+      if( t>=0 && t<lem->nsymbol ) decl[t] = 1;
+    }
+  }
+  /* Pass 3: %token_class constituents are declared (the class itself
+  ** is declared above; mark its constituents too). */
+  for(int i=0; i<lem->nsymbol; i++){
+    struct symbol *sp = lem->symbols[i];
+    if( sp && sp->type==MULTITERMINAL && sp->subsym ){
+      for(int j=0; j<sp->nsubsym; j++){
+        struct symbol *s = sp->subsym[j];
+        if( s && s->index>=0 && s->index<lem->nsymbol ) decl[s->index] = 1;
+      }
+    }
+  }
+  /* Pass 4: %token / %type group memberships explicitly mark the
+  ** symbol as declared even if no other axis caught it. */
+  for(LimeTokenGroup *g = lem->first_token_group; g; g = g->next){
+    for(int j=0; j<g->n_symbols; j++){
+      struct symbol *sp = g->symbols[j];
+      if( sp && sp->index>=0 && sp->index<lem->nsymbol ) decl[sp->index] = 1;
+    }
+  }
+  for(LimeTypeGroup *g = lem->first_type_group; g; g = g->next){
+    for(int j=0; j<g->n_symbols; j++){
+      struct symbol *sp = g->symbols[j];
+      if( sp && sp->index>=0 && sp->index<lem->nsymbol ) decl[sp->index] = 1;
+    }
+  }
+  return decl;
+}
+
+static int lint_symbol_is_fallback_target(struct lime *lem,
+                                          struct symbol *target){
+  for(int i=0; i<lem->nsymbol; i++){
+    struct symbol *sp = lem->symbols[i];
+    if( sp && sp->fallback == target ) return 1;
+  }
+  return 0;
+}
+
+/* Walk an action body starting just AFTER the opening `{` and return
+** the byte length up to (but not including) the matching `}`.  Handles
+** nested braces, slash-star comments, slash-slash comments, and
+** string/char literals.  Used
+** by W004 / W006 / W009 / lint_alias_used.
+**
+** This is necessary because the parser stores rp->code as a pointer
+** into the source-file buffer; the matching `}` is overwritten with a
+** NUL only transiently during parseonetoken().  After Parse() returns,
+** rp->code is no longer NUL-terminated at the body's end (translate_code
+** later substitutes and Strsafe()s a fresh copy, but the lint pass runs
+** before translate_code).  Walking with brace tracking is the safe way
+** to bound the body. */
+static int lint_action_body_len(const char *body){
+  if( body==0 ) return 0;
+  int level = 1;
+  int i = 0;
+  while( body[i] && level > 0 ){
+    char c = body[i];
+    if( c=='/' && body[i+1]=='*' ){
+      i += 2;
+      while( body[i] && !(body[i-1]=='*' && body[i]=='/') ) i++;
+      if( body[i] ) i++;
+      continue;
+    }
+    if( c=='/' && body[i+1]=='/' ){
+      i += 2;
+      while( body[i] && body[i]!='\n' ) i++;
+      continue;
+    }
+    if( c=='\'' || c=='"' ){
+      char q = c;
+      i++;
+      while( body[i] && body[i]!=q ){
+        if( body[i]=='\\' && body[i+1] ){ i += 2; continue; }
+        i++;
+      }
+      if( body[i] ) i++;
+      continue;
+    }
+    if( c=='{' ) level++;
+    else if( c=='}' ){
+      level--;
+      if( level==0 ) break;
+    }
+    i++;
+  }
+  return i;
+}
+
+static int lint_count_lines(const char *s, int n){
+  int lines = 1;
+  for(int i=0; i<n; i++) if( s[i]=='\n' ) lines++;
+  return lines;
+}
+
+static int lint_is_word_char(unsigned char c){
+  return ISALNUM(c) || c=='_';
+}
+
+/* True if `alias` appears as a standalone identifier in body[0..bound).
+** Skips strings, char literals, and comments. */
+static int lint_alias_used(const char *body, int bound, const char *alias){
+  if( body==0 || alias==0 || alias[0]==0 || bound<=0 ) return 0;
+  int alen = (int)strlen(alias);
+  int i = 0;
+  while( i < bound ){
+    char c = body[i];
+    if( c=='/' && i+1 < bound && body[i+1]=='*' ){
+      i += 2;
+      while( i+1 < bound && !(body[i]=='*' && body[i+1]=='/') ) i++;
+      if( i+1 < bound ) i += 2;
+      continue;
+    }
+    if( c=='/' && i+1 < bound && body[i+1]=='/' ){
+      while( i < bound && body[i]!='\n' ) i++;
+      continue;
+    }
+    if( c=='\'' || c=='"' ){
+      char q = c; i++;
+      while( i < bound && body[i]!=q ){
+        if( body[i]=='\\' && i+1 < bound ){ i += 2; continue; }
+        i++;
+      }
+      if( i < bound ) i++;
+      continue;
+    }
+    if( i + alen <= bound
+        && strncmp(&body[i], alias, (size_t)alen)==0
+        && (i==0 || !lint_is_word_char((unsigned char)body[i-1]))
+        && (i + alen == bound
+            || !lint_is_word_char((unsigned char)body[i+alen])) ){
+      return 1;
+    }
+    i++;
+  }
+  return 0;
+}
+
+/* True if the action body matches `$$ = $1;` modulo whitespace and an
+** optional leading #line directive (translate_code injects one but
+** lint runs before that; defensive anyway). */
+static int lint_is_trivial_action(const char *body, int bound){
+  if( body==0 || bound<=0 ) return 0;
+  int i = 0;
+#define LINT_SKIP_WS() \
+  while( i<bound && (body[i]==' '||body[i]=='\t'||body[i]=='\n'||body[i]=='\r') ) i++
+  LINT_SKIP_WS();
+  if( i<bound && body[i]=='#' ){
+    while( i<bound && body[i]!='\n' ) i++;
+    LINT_SKIP_WS();
+  }
+  if( i+1 >= bound || body[i]!='$' || body[i+1]!='$' ) return 0;
+  i += 2;
+  while( i<bound && (body[i]==' '||body[i]=='\t') ) i++;
+  if( i >= bound || body[i] != '=' ) return 0;
+  i++;
+  while( i<bound && (body[i]==' '||body[i]=='\t') ) i++;
+  if( i+1 >= bound || body[i]!='$' || body[i+1]!='1' ) return 0;
+  i += 2;
+  while( i<bound && (body[i]==' '||body[i]=='\t') ) i++;
+  if( i < bound && body[i]==';' ) i++;
+  LINT_SKIP_WS();
+#undef LINT_SKIP_WS
+  return i >= bound;
+}
+
+static int lint_name_inconsistent(struct symbol *sp){
+  if( sp==0 || sp->name==0 ) return 0;
+  if( lint_is_builtin_symbol(sp->name) ) return 0;
+  if( sp->type == MULTITERMINAL ) return 0;  /* %token_class synthetic */
+  if( sp->type == TERMINAL ){
+    /* Convention: ALL_UPPER + digits + underscore.  Flag any lowercase. */
+    for(const char *p = sp->name; *p; p++){
+      if( ISLOWER((unsigned char)*p) ) return 1;
+    }
+  }else if( sp->type == NONTERMINAL ){
+    /* Convention: all_lower + digits + underscore.  Flag any uppercase. */
+    for(const char *p = sp->name; *p; p++){
+      if( ISUPPER((unsigned char)*p) ) return 1;
+    }
+  }
+  return 0;
+}
+
+/* ----- main pass -------------------------------------------------------- */
+
 static int lint_grammar(struct lime *lem){
-  int errors = 0;
-  int warnings = 0;
-  struct symbol *sp;
+  struct lint_state st;
   struct rule *rp;
   int i;
 
-  printf("Linting %s...\n", lem->filename);
+  memset(&st, 0, sizeof(st));
+  st.lem = lem;
+  st.json_first = 1;
 
-  /* Check module metadata consistency */
-  if( lem->module_name && !lem->module_version ){
-    fprintf(stderr, "%s:1:1: error: %%module_name requires %%module_version\n",
-            lem->filename);
-    errors++;
+  if( lint_format == LINT_FMT_HUMAN ){
+    fprintf(stderr, "Linting %s...\n",
+            lem->filename ? lem->filename : "<input>");
   }
 
-  /* Validate semantic version format */
+  /* M001 module-name-without-version (preserved from v0.4.4 stub). */
+  if( lem->module_name && !lem->module_version ){
+    lint_emit(&st, LINT_E, "M001", 1, 1,
+              "%%module_name requires %%module_version");
+  }
+  /* M002 invalid-semver. */
   if( lem->module_version ){
     int major, minor, patch;
     if( sscanf(lem->module_version, "%d.%d.%d", &major, &minor, &patch) != 3 ){
-      fprintf(stderr, "%s:1:1: error: invalid semantic version format: %s\n",
-              lem->filename, lem->module_version);
-      errors++;
+      lint_emit(&st, LINT_E, "M002", 1, 1,
+                "invalid semantic version format: '%s'",
+                lem->module_version);
     }
   }
-
-  /* Check that exported symbols are defined */
+  /* M003 undefined-export, W101 terminal-export. */
   if( lem->exports ){
-    struct exported_symbol *exp;
-    for(exp = lem->exports; exp; exp = exp->next){
-      sp = Symbol_find(exp->name);
+    for(struct exported_symbol *exp = lem->exports; exp; exp = exp->next){
+      struct symbol *sp = Symbol_find(exp->name);
       if( !sp ){
-        fprintf(stderr, "%s:1:1: error: exported symbol '%s' is not defined\n",
-                lem->filename, exp->name);
-        errors++;
+        lint_emit(&st, LINT_E, "M003", 1, 1,
+                  "exported symbol '%s' is not defined", exp->name);
       }else if( sp->type != NONTERMINAL ){
-        fprintf(stderr, "%s:1:1: warning: exported symbol '%s' is a terminal (exports are usually non-terminals)\n",
-                lem->filename, exp->name);
-        warnings++;
+        lint_emit(&st, LINT_W, "W101", 1, 1,
+                  "exported symbol '%s' is a terminal "
+                  "(exports are usually non-terminals)", exp->name);
       }
     }
   }
 
-  /* Check for undefined symbols in rules - could be expanded in future */
-  for(rp = lem->rule; rp; rp = rp->next){
-    for(i = 0; i < rp->nrhs; i++){
-      sp = rp->rhs[i];
-      /* Additional validation could be added here */
-      (void)sp; /* Suppress unused warning */
+  char *declared = lint_build_declared_set(lem);
+
+  /* E001 undeclared-rhs-symbol. */
+  if( declared ){
+    for(rp = lem->rule; rp; rp = rp->next){
+      for(i = 0; i < rp->nrhs; i++){
+        struct symbol *sp = rp->rhs[i];
+        if( sp==0 ) continue;
+        if( sp->index < 0 || sp->index >= lem->nsymbol ) continue;
+        if( declared[sp->index] ) continue;
+        if( lint_is_builtin_symbol(sp->name) ) continue;
+        const char *kind = (sp->type == NONTERMINAL) ? "non-terminal"
+                                                     : "terminal";
+        const char *hint = (sp->type == NONTERMINAL)
+          ? "no rule produces it"
+          : "no %token / %left / %right / %nonassoc declares it";
+        lint_emit(&st, LINT_E, "E001", rp->ruleline, 1,
+                  "rule '%s' references undeclared %s '%s' (%s)",
+                  rp->lhs ? rp->lhs->name : "?", kind, sp->name, hint);
+      }
     }
   }
 
-  /* Check for unused non-terminals (have type declaration but no rules) */
-  for(i = lem->nterminal; i < lem->nsymbol; i++){
-    sp = lem->symbols[i];
-    if( sp->type == NONTERMINAL ){
-      /* Skip special symbols */
-      if( strcmp(sp->name, "error") == 0 ) continue;
-      if( strcmp(sp->name, "{default}") == 0 ) continue;
+  /* E002 undeclared-prec-symbol. */
+  for(rp = lem->rule; rp; rp = rp->next){
+    if( rp->precsym && rp->precsym->prec < 0 ){
+      lint_emit(&st, LINT_E, "E002", rp->ruleline, 1,
+                "rule '%s' has [%s] precedence override, but '%s' has no "
+                "%%left / %%right / %%nonassoc declaration",
+                rp->lhs ? rp->lhs->name : "?",
+                rp->precsym->name, rp->precsym->name);
+    }
+  }
 
-      /* Check if this symbol has any rules that produce it */
-      int has_rules = 0;
-      for(rp = lem->rule; rp; rp = rp->next){
-        if( rp->lhs == sp ){
-          has_rules = 1;
-          break;
+  /* E003 duplicate-token -- same %token NAME. declared more than once. */
+  if( lem->first_token_group && lem->nsymbol > 0 ){
+    char *seen = (char*)lime_calloc((size_t)lem->nsymbol + 1, 1);
+    if( seen ){
+      for(LimeTokenGroup *g = lem->first_token_group; g; g = g->next){
+        for(int j = 0; j < g->n_symbols; j++){
+          struct symbol *sp = g->symbols[j];
+          if( !sp || sp->index < 0 || sp->index >= lem->nsymbol ) continue;
+          if( seen[sp->index] ){
+            lint_emit(&st, LINT_E, "E003", 1, 1,
+                      "token '%s' is declared by %%token more than once",
+                      sp->name);
+          }else{
+            seen[sp->index] = 1;
+          }
         }
       }
+      lime_free(seen);
+    }
+  }
 
-      if( !has_rules && sp->datatype ){
-        /* Symbol has a type declaration but no production rules */
-        fprintf(stderr, "%s:1:1: warning: non-terminal '%s' has type but no rules\n",
-                lem->filename, sp->name);
-        warnings++;
+  /* E004 ambiguous-alias -- same alias on two RHS slots in one rule. */
+  for(rp = lem->rule; rp; rp = rp->next){
+    if( rp->rhsalias == 0 ) continue;
+    for(int j = 0; j < rp->nrhs; j++){
+      const char *aj = rp->rhsalias[j];
+      if( !aj ) continue;
+      int reported = 0;
+      for(int k = j+1; k < rp->nrhs && !reported; k++){
+        const char *ak = rp->rhsalias[k];
+        if( ak && strcmp(aj, ak)==0 ){
+          lint_emit(&st, LINT_E, "E004", rp->ruleline, 1,
+                    "rule '%s' uses alias '%s' for two different RHS slots "
+                    "(positions %d and %d) -- aliases must be unique "
+                    "within a rule",
+                    rp->lhs ? rp->lhs->name : "?", aj, j+1, k+1);
+          reported = 1;
+        }
       }
     }
   }
 
-  /* Summary */
-  printf("\n");
-  if( errors == 0 && warnings == 0 ){
-    printf("OK: No errors or warnings\n");
-  }else{
-    fprintf(stderr, "%d errors, %d warnings\n", errors, warnings);
+  /* E005 unreachable-rule -- LHS never referenced and not start symbol. */
+  if( lem->nsymbol > 0 ){
+    char *referenced = (char*)lime_calloc((size_t)lem->nsymbol + 1, 1);
+    char *flagged    = (char*)lime_calloc((size_t)lem->nsymbol + 1, 1);
+    if( referenced && flagged ){
+      struct symbol *start = 0;
+      if( lem->start ) start = Symbol_find(lem->start);
+      if( !start && lem->startRule && lem->startRule->lhs )
+        start = lem->startRule->lhs;
+      if( start && start->index >= 0 && start->index < lem->nsymbol )
+        referenced[start->index] = 1;
+      for(rp = lem->rule; rp; rp = rp->next){
+        for(int j = 0; j < rp->nrhs; j++){
+          struct symbol *sp = rp->rhs[j];
+          if( !sp ) continue;
+          if( sp->index >= 0 && sp->index < lem->nsymbol )
+            referenced[sp->index] = 1;
+          if( sp->type == MULTITERMINAL && sp->subsym ){
+            for(int t = 0; t < sp->nsubsym; t++){
+              struct symbol *s = sp->subsym[t];
+              if( s && s->index >= 0 && s->index < lem->nsymbol )
+                referenced[s->index] = 1;
+            }
+          }
+        }
+      }
+      for(rp = lem->rule; rp; rp = rp->next){
+        if( !rp->lhs ) continue;
+        int idx = rp->lhs->index;
+        if( idx < 0 || idx >= lem->nsymbol ) continue;
+        if( referenced[idx] ) continue;
+        if( lint_is_builtin_symbol(rp->lhs->name) ) continue;
+        if( flagged[idx] ) continue;
+        flagged[idx] = 1;
+        lint_emit(&st, LINT_E, "E005", rp->ruleline, 1,
+                  "non-terminal '%s' is defined by one or more rules but "
+                  "never referenced from any RHS, and is not the start "
+                  "symbol -- likely typo or dead code",
+                  rp->lhs->name);
+      }
+    }
+    if( referenced ) lime_free(referenced);
+    if( flagged )    lime_free(flagged);
   }
 
-  return errors;
+  /* W102 type-without-rules (preserved from v0.4.4 stub).  Distinct from
+  ** E001's NONTERMINAL-no-rule case: this fires when the user wrote a
+  ** %type declaration but no production rule, even though no rule
+  ** *references* the symbol either (so E001 would not catch it). */
+  for(i = lem->nterminal; i < lem->nsymbol; i++){
+    struct symbol *sp = lem->symbols[i];
+    if( !sp || sp->type != NONTERMINAL ) continue;
+    if( lint_is_builtin_symbol(sp->name) ) continue;
+    if( sp->rule ) continue;
+    if( !sp->datatype ) continue;
+    lint_emit(&st, LINT_W, "W102", 1, 1,
+              "non-terminal '%s' has %%type declaration but no "
+              "production rule", sp->name);
+  }
+
+  /* W001 unused-token -- declared via %token but never used in any rule. */
+  if( lem->first_token_group && lem->nsymbol > 0 ){
+    char *used    = (char*)lime_calloc((size_t)lem->nsymbol + 1, 1);
+    char *flagged = (char*)lime_calloc((size_t)lem->nsymbol + 1, 1);
+    if( used && flagged ){
+      for(rp = lem->rule; rp; rp = rp->next){
+        for(int j = 0; j < rp->nrhs; j++){
+          struct symbol *sp = rp->rhs[j];
+          if( !sp ) continue;
+          if( sp->index >= 0 && sp->index < lem->nsymbol )
+            used[sp->index] = 1;
+          if( sp->type == MULTITERMINAL && sp->subsym ){
+            for(int t = 0; t < sp->nsubsym; t++){
+              struct symbol *s = sp->subsym[t];
+              if( s && s->index >= 0 && s->index < lem->nsymbol )
+                used[s->index] = 1;
+            }
+          }
+        }
+        if( rp->precsym && rp->precsym->index >= 0
+                       && rp->precsym->index < lem->nsymbol )
+          used[rp->precsym->index] = 1;
+      }
+      for(LimeTokenGroup *g = lem->first_token_group; g; g = g->next){
+        for(int j = 0; j < g->n_symbols; j++){
+          struct symbol *sp = g->symbols[j];
+          if( !sp || sp->index < 0 || sp->index >= lem->nsymbol ) continue;
+          if( used[sp->index] ) continue;
+          if( sp == lem->wildcard ) continue;
+          if( sp->fallback ) continue;
+          if( lint_symbol_is_fallback_target(lem, sp) ) continue;
+          if( flagged[sp->index] ) continue;
+          flagged[sp->index] = 1;
+          lint_emit(&st, LINT_W, "W001", 1, 1,
+                    "token '%s' is declared by %%token but never "
+                    "referenced in any rule", sp->name);
+        }
+      }
+    }
+    if( used )    lime_free(used);
+    if( flagged ) lime_free(flagged);
+  }
+
+  /* W002 unused-precedence -- %left/%right/%nonassoc symbol never used. */
+  if( lem->nsymbol > 0 ){
+    char *used = (char*)lime_calloc((size_t)lem->nsymbol + 1, 1);
+    if( used ){
+      for(rp = lem->rule; rp; rp = rp->next){
+        for(int j = 0; j < rp->nrhs; j++){
+          struct symbol *sp = rp->rhs[j];
+          if( sp && sp->index >= 0 && sp->index < lem->nsymbol )
+            used[sp->index] = 1;
+        }
+        if( rp->precsym && rp->precsym->index >= 0
+                       && rp->precsym->index < lem->nsymbol )
+          used[rp->precsym->index] = 1;
+      }
+      for(i = 0; i < lem->nsymbol; i++){
+        struct symbol *sp = lem->symbols[i];
+        if( !sp || sp->prec < 0 ) continue;
+        if( lint_is_builtin_symbol(sp->name) ) continue;
+        if( used[i] ) continue;
+        const char *which = sp->assoc == LEFT  ? "%left"     :
+                            sp->assoc == RIGHT ? "%right"    :
+                            sp->assoc == NONE  ? "%nonassoc" : "%prec";
+        lint_emit(&st, LINT_W, "W002", 1, 1,
+                  "precedence symbol '%s' (%s) declared but never used "
+                  "by any rule", sp->name, which);
+      }
+      lime_free(used);
+    }
+  }
+
+  /* W004 trivial-action-body. */
+  for(rp = lem->rule; rp; rp = rp->next){
+    if( !rp->code || rp->noCode ) continue;
+    int blen = lint_action_body_len(rp->code);
+    if( blen <= 0 ) continue;
+    if( lint_is_trivial_action(rp->code, blen) ){
+      lint_emit(&st, LINT_W, "W004",
+                rp->line ? rp->line : rp->ruleline, 1,
+                "rule '%s' action body is `{ $$ = $1; }`, which is the "
+                "default; deleting the action body has no semantic effect",
+                rp->lhs ? rp->lhs->name : "?");
+    }
+  }
+
+  /* W005 missing-expect -- conflicts present, no %expect directive. */
+  if( lem->nconflict > 0 && lem->nexpect < 0 ){
+    lint_emit(&st, LINT_W, "W005", 1, 1,
+              "grammar has %d shift/reduce or reduce/reduce conflict(s) "
+              "but no %%expect N. directive; CI cannot detect new "
+              "conflicts introduced by future changes",
+              lem->nconflict);
+  }
+
+  /* W006 alias-without-action. */
+  for(rp = lem->rule; rp; rp = rp->next){
+    if( !rp->code || rp->noCode ) continue;
+    int blen = lint_action_body_len(rp->code);
+    if( blen <= 0 ) continue;
+    if( rp->lhsalias && !lint_alias_used(rp->code, blen, rp->lhsalias) ){
+      lint_emit(&st, LINT_W, "W006", rp->ruleline, 1,
+                "rule '%s' declares LHS alias '(%s)' but the action body "
+                "never references it",
+                rp->lhs ? rp->lhs->name : "?", rp->lhsalias);
+    }
+    if( rp->rhsalias ){
+      for(int j = 0; j < rp->nrhs; j++){
+        const char *a = rp->rhsalias[j];
+        if( !a ) continue;
+        if( lint_alias_used(rp->code, blen, a) ) continue;
+        lint_emit(&st, LINT_W, "W006", rp->ruleline, 1,
+                  "rule '%s' declares RHS alias '%s(%s)' (position %d) but "
+                  "the action body never references it",
+                  rp->lhs ? rp->lhs->name : "?",
+                  rp->rhs[j] ? rp->rhs[j]->name : "?", a, j+1);
+      }
+    }
+  }
+
+  /* W007 inconsistent-naming -- mixed-case symbol names. */
+  for(i = 0; i < lem->nsymbol; i++){
+    struct symbol *sp = lem->symbols[i];
+    if( !sp ) continue;
+    if( !lint_name_inconsistent(sp) ) continue;
+    const char *cls  = sp->type == TERMINAL ? "terminal" : "non-terminal";
+    const char *want = sp->type == TERMINAL ? "ALL_UPPER" : "all_lower";
+    lint_emit(&st, LINT_W, "W007", 1, 1,
+              "%s '%s' has mixed-case name; convention is %s "
+              "(uppercase for terminals, lowercase for non-terminals)",
+              cls, sp->name, want);
+  }
+
+  /* W008 long-rhs. */
+  for(rp = lem->rule; rp; rp = rp->next){
+    if( rp->nrhs > LIME_MAX_RHS_WARN ){
+      lint_emit(&st, LINT_W, "W008", rp->ruleline, 1,
+                "rule '%s' has %d RHS symbols (threshold %d); consider "
+                "extracting a named sub-rule for readability",
+                rp->lhs ? rp->lhs->name : "?", rp->nrhs, LIME_MAX_RHS_WARN);
+    }
+  }
+
+  /* W009 long-action-body. */
+  for(rp = lem->rule; rp; rp = rp->next){
+    if( !rp->code || rp->noCode ) continue;
+    int blen = lint_action_body_len(rp->code);
+    if( blen <= 0 ) continue;
+    int lines = lint_count_lines(rp->code, blen);
+    if( lines > LIME_MAX_ACTION_LINES_WARN ){
+      lint_emit(&st, LINT_W, "W009",
+                rp->line ? rp->line : rp->ruleline, 1,
+                "rule '%s' action body is %d lines (threshold %d); "
+                "consider factoring out a helper in the %%include block",
+                rp->lhs ? rp->lhs->name : "?", lines,
+                LIME_MAX_ACTION_LINES_WARN);
+    }
+  }
+
+  /* S001 / S002 -- style-only suggestions, opt-in. */
+  if( lint_style ){
+    if( !lem->header_comment || !lem->header_comment[0] ){
+      lint_emit(&st, LINT_N, "S001", 1, 1,
+                "grammar has no header comment block; document copyright, "
+                "purpose, and grammar dialect at the top of the file");
+    }
+    for(rp = lem->rule; rp; rp = rp->next){
+      if( rp->nrhs <= 1 ) continue;
+      if( rp->leading_comment && rp->leading_comment[0] ) continue;
+      lint_emit(&st, LINT_N, "S002", rp->ruleline, 1,
+                "rule '%s' (nrhs=%d) has no leading comment; non-trivial "
+                "rules are typically documented",
+                rp->lhs ? rp->lhs->name : "?", rp->nrhs);
+    }
+  }
+
+  if( declared ) lime_free(declared);
+
+  if( lint_format == LINT_FMT_JSON ){
+    if( st.json_first ) fputc('[', stdout);
+    fputs("]\n", stdout);
+  }else if( lint_format == LINT_FMT_HUMAN ){
+    fprintf(stderr, "\n");
+    if( st.errors == 0 && st.warnings == 0 && st.notes == 0 ){
+      fprintf(stderr, "OK: no diagnostics\n");
+    }else{
+      fprintf(stderr, "%d error(s), %d warning(s), %d note(s)\n",
+              st.errors, st.warnings, st.notes);
+    }
+  }
+
+  int rc = (st.errors > 0) ? 1 : 0;
+  if( lint_strict && st.warnings > 0 ) rc = 1;
+  return rc;
 }
 
 /*
@@ -3605,6 +4245,12 @@ int main(int argc, char **argv){
                     "Generate AOT-compiled action table (*_aot.c)."},
     {OPT_FSTR, "I", 0, "Ignored.  (Placeholder for '-I' compiler options.)"},
     {OPT_FLAG, "L", (char*)&lintFlag, "Validate grammar and module directives."},
+    {OPT_FLAG, "-lint-strict", (char*)&lint_strict,
+     "Treat lint warnings as errors (use with -L)."},
+    {OPT_FLAG, "-lint-style", (char*)&lint_style,
+     "Enable opt-in style suggestions S001-S002 (use with -L)."},
+    {OPT_FSTR, "-lint-format", (char*)handle_lint_format_option,
+     "Lint output format: human (default) | gcc | json."},
     {OPT_FLAG, "m", (char*)&mhflag, "Output a makeheaders compatible file."},
     {OPT_FLAG, "l", (char*)&nolinenosflag, "Do not print #line statements."},
     {OPT_FLAG, "n", (char*)&snapshotFlag,
@@ -3738,10 +4384,12 @@ int main(int argc, char **argv){
   for(i=1; ISUPPER(lem.symbols[i]->name[0]); i++);
   lem.nterminal = i;
 
-  /* Handle --lint flag (needs symbols to be counted) */
+  /* v0.5.0: the lint pass moved to AFTER FindActions so W005
+  ** (missing-expect) can read lem.nconflict.  See the post-FindActions
+  ** hook below.  At this point we only need symbols to be counted,
+  ** which already happened above; nothing else to do here. */
   if( lintFlag ){
-    int lint_errors = lint_grammar(&lem);
-    exit(lint_errors);
+    /* fall through to the analysis pipeline */
   }
 
   /* Handle -F flag (needs symbols to be counted) */
@@ -3792,6 +4440,17 @@ int main(int argc, char **argv){
 
     /* Compute the action tables */
     FindActions(&lem);
+
+    /* v0.5.0 lint hook: now that nconflict is known, run the linter
+    ** with full data and exit before codegen.  Placed inside the
+    ** else-branch (i.e. only when !rpflag) because lint shares the
+    ** analysis pipeline with codegen; -g (rpflag) is the reprint-
+    ** only path that bypasses analysis entirely. */
+    if( lintFlag ){
+      int lint_rc = lint_grammar(&lem);
+      lime_free_all();
+      exit(lint_rc);
+    }
 
     /* Compress the action tables */
     if( compress==0 ) CompressTables(&lem);

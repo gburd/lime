@@ -22,6 +22,7 @@
 | [DIALECT.md](DIALECT.md) | `%dialect NAME { ... }` directive: generator-time conditional rule inclusion |
 | [EXTENDS.md](EXTENDS.md) | `%extends "base.lime"` + `%override` / `%remove` / `%override_type`: file-level grammar inheritance with diamond resolution |
 | [DIFF_CONFLICTS.md](DIFF_CONFLICTS.md) | `lime --diff-conflicts base.lime ext.lime`: symbolic LALR-conflict diff for dialect-overlay review and CI |
+| [LINT.md](LINT.md) | `lime -L`: opinionated grammar-hygiene linter (E001-E005, W001-W009, S001-S002) with `gcc` / `json` output formats and CI integration recipes |
 | [CONTEXT_SWITCH.md](CONTEXT_SWITCH.md) | Multi-grammar parsing: register triggers that switch between sub-grammars at runtime |
 | [EMBED.md](EMBED.md) | `%embed lang TRIGGER 'lex' ENTRY_TOKEN TOKEN.` directive: sugar over the context-switch trigger registry |
 | [PERFORMANCE.md](PERFORMANCE.md) | Performance characteristics and tuning |

@@ -1,0 +1,6 @@
+/* w001_unused_token.lime -- 'NEVER_USED' is %token-declared but
+ * never appears in any rule's RHS.  Expected: W001 fires. */
+
+%token A B NEVER_USED.
+
+start ::= A B.

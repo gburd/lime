@@ -1,0 +1,24 @@
+/*
+ * tests/test_lint_fixtures/clean.lime -- negative regression: this
+ * grammar must produce ZERO lint diagnostics under default flags.
+ * Used to prove the linter's checks don't fire on well-formed input.
+ */
+
+%name CleanLint
+%expect 0
+
+%token NUM PLUS MINUS STAR SLASH LPAREN RPAREN.
+%left PLUS MINUS.
+%left STAR SLASH.
+
+%token_type {int}
+%type expr {int}
+
+start ::= expr.
+
+expr(R) ::= expr(A) PLUS  expr(B). { R = A + B; }
+expr(R) ::= expr(A) MINUS expr(B). { R = A - B; }
+expr(R) ::= expr(A) STAR  expr(B). { R = A * B; }
+expr(R) ::= expr(A) SLASH expr(B). { R = A / B; }
+expr(R) ::= LPAREN expr(A) RPAREN. { R = A; }
+expr(R) ::= NUM(N).                { R = N; }

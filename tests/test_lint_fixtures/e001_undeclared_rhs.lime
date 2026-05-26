@@ -1,0 +1,7 @@
+/* e001_undeclared_rhs.lime -- rule references a non-terminal that
+ * has no production rule.  Expected: E001 fires for 'unknown'. */
+
+%token PLUS NUM.
+
+start ::= expr.
+expr ::= NUM PLUS unknown_thing.

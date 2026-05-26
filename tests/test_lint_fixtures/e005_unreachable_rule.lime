@@ -1,0 +1,8 @@
+/* e005_unreachable_rule.lime -- 'orphan' has rules but is never
+ * referenced from any other rule's RHS, and is not the start
+ * symbol.  Expected: E005 fires for 'orphan'. */
+
+%token A B C.
+
+start ::= A.
+orphan ::= B C.

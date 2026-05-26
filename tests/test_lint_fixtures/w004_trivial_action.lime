@@ -1,0 +1,9 @@
+/* w004_trivial_action.lime -- explicit `{ $$ = $1; }` action body,
+ * which is the default; flagging suggests deletion. */
+
+%token NUM.
+%token_type {int}
+%type expr {int}
+
+start ::= expr.
+expr ::= NUM. { $$ = $1; }

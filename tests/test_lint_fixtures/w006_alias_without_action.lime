@@ -1,0 +1,9 @@
+/* w006_alias_without_action.lime -- rule has '(N)' alias on RHS but
+ * the action body never references it.  Expected: W006 fires. */
+
+%token NUM.
+%token_type {int}
+%type expr {int}
+
+start ::= expr.
+expr(R) ::= NUM(N). { R = 0; /* deliberately ignores N */ }

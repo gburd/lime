@@ -1,0 +1,11 @@
+/* e002_undeclared_prec.lime -- [UMINUS] precedence override but
+ * UMINUS has no %left/%right/%nonassoc declaration.
+ * Expected: E002 fires for 'UMINUS'. */
+
+%token PLUS NUM MINUS.
+%left PLUS MINUS.
+
+start ::= expr.
+expr ::= MINUS expr. [UMINUS]
+expr ::= expr PLUS expr.
+expr ::= NUM.

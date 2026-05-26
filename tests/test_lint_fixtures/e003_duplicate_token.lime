@@ -1,0 +1,7 @@
+/* e003_duplicate_token.lime -- same token declared twice via %token.
+ * Expected: E003 fires for 'A'. */
+
+%token A B.
+%token A.
+
+start ::= A B.

@@ -1,0 +1,9 @@
+/* w005_missing_expect.lime -- grammar has shift/reduce conflicts
+ * (classic dangling-else-style) and no %expect directive. */
+
+%token IF THEN ELSE PRINT.
+
+start ::= stmt.
+stmt ::= IF stmt.
+stmt ::= IF stmt ELSE stmt.
+stmt ::= PRINT.
