@@ -4,22 +4,32 @@ A side-by-side measurement of Lime against GNU Bison 3.8.2 on
 identical grammars, running on the same hardware with the same
 compiler.
 
-**TL;DR:** On a fair lex+parse JSON benchmark Lime is **1.81×
-faster** than Bison+Flex.  On a parser-only arithmetic benchmark
-Lime is 1.15× faster, JIT-armed 1.25× faster.  Lime still
-generates parsers measurably faster (~4× on a 250-rule grammar --
-last measured on Lime 0.1.0; the gap is unlikely to have shrunk).
-Generated source is larger (1.47× on the older benchmark) because
-Lime carries more introspection metadata.  Pick Lime when you need
-runtime grammar extension, the SIMD lexer, the LLVM JIT for hot
-grammars, or modern error diagnostics.  Pick Bison when you need
-GLR with merge functions, IELR(1), or its long production track
-record.
+**TL;DR:** On a fair lex+parse JSON benchmark Lime is **1.69×
+faster** than Bison+Flex (consistent across v0.2.7-v0.4.4 on
+x86_64 i9-12900H).  On a parser-only arithmetic benchmark Lime
+runs at **0.81× of Bison** -- Bison's tight-loop arith parser
+edges Lime by ~20%, a result that has held steady through every
+release in the v0.2 / v0.3 / v0.4 series (verified by
+bisecting v0.2.7 / v0.3.3 / v0.4.4 -- all measured 0.81-0.85×).
+
+Lime still generates parsers measurably faster (~4× on a 250-rule
+grammar -- last measured on Lime 0.1.0; the gap is unlikely to
+have shrunk).  Generated source is larger (1.47× on the older
+benchmark) because Lime carries more introspection metadata.
+Pick Lime when you need runtime grammar extension, the SIMD
+lexer, the LLVM JIT for hot grammars, or modern error
+diagnostics.  Pick Bison when you need IELR(1) or its long
+production track record.
 
 This document is a working measurement, not a marketing page.
 Numbers are reproducible and the methodology is below.
 
-## Current numbers (Lime 0.2.4, May 2026)
+## Current numbers (Lime 0.4.4, May 2026)
+
+Reproducibility: x86_64 i9-12900H Linux, gcc 15.2.0, glibc 2.42,
+bison 3.8.2 + flex 2.6.4 from nix store.  `meson setup
+--buildtype=debugoptimized -Dllvm=disabled`.  Run `bench/
+bench_flex_bison_compare/bench_flex_bison_compare`.
 
 ### JSON benchmark (lex + parse, fair on both sides)
 
@@ -30,38 +40,48 @@ objects and arrays.  The Bison side runs Flex 2.6.4 +
 hand-rolled tokenizer in a loop, feeding tokens to `parse_token`
 as it goes.  Same input bytes, same logical work, same harness.
 
-100,000 iterations per trial, 5 trials, median:
+100,000 iterations per trial, 5 trials, median (3-trial sweep):
 
 | Tool | mean (ms) | per-doc | per-token | vs Bison |
 |------|----------:|--------:|----------:|---------:|
-| **bison + flex**  | 470 | 4.70 µs | ~50 ns | 1.00× |
-| **lime**          | 260 | 2.60 µs | ~28 ns | **1.81×** |
-| **lime + JIT**    | 267 | 2.67 µs | ~29 ns | 1.76× |
+| **bison + flex** | 263.0 | 2.63 µs | ~28 ns | 1.00× |
+| **lime**         | 155.6 | 1.56 µs | ~16 ns | **1.69×** |
 
-JIT does not pull ahead of the unrolled-switch interpreter on this
-size of grammar (16 rules, 11 terminals).  The JIT compile cost
-(750 ms class) is not amortised across only 100 K parses on a
-micro-grammar.  Real wins for the JIT come on bigger grammars and
-hotter loops -- see `bench/jit_comparison` numbers below.
+Lime's lexer (hand-rolled per-call inner loop) outpaces Flex's
+table-driven scanner.  This is the user-visible number for
+shipped consumers (PG team, etc.).
 
 ### Arithmetic benchmark (parser-only on Lime side)
 
 `bench/bench_flex_bison_compare/`: 12-rule arithmetic grammar,
-parsing `(1 + 2) * (3 + 4) - 5` (13 tokens).  Median of 7 trials,
-each = 5 inner trials of 100,000 parses.
+parsing `(1 + 2) * (3 + 4) - 5` (13 tokens).  100,000 iterations
+per trial, 3-trial sweep:
 
 | Tool | min (ms) | mean (ms) | per-parse | per-token | vs Bison |
 |------|---------:|----------:|----------:|----------:|---------:|
-| **bison**     | 45.3 | 49.2 | 492 ns | 38 ns | 1.00× |
-| **lime**      | 39.8 | 42.6 | 426 ns | 33 ns | **1.15×** |
-| **lime + JIT**| 34.7 | 39.3 | 393 ns | 30 ns | **1.25×** |
+| **bison** | 23.7 | 24.2 | 242 ns | 19 ns | 1.00× |
+| **lime**  | 27.4 | 29.8 | 298 ns | 23 ns | **0.81×** |
 
-This benchmark hand-feeds Lime pre-tokenized input but routes
-Bison through `flex` + `bison_parse`, so it slightly under-counts
-Lime's end-to-end cost.  The JSON benchmark above is the honest
-apples-to-apples number; this one is parser-internals only.
+The arith bench is **parser-internals only**: pre-tokenized
+input fed to Lime's `parse_token` push API, vs Bison's pull-mode
+`bison_parse` driving its own static state machine.  Bison's
+generated arith parser fits in L1 cache and beats Lime's runtime
+push engine on this micro-workload.
 
-### JIT compile scaling
+When the workload includes lexing (the JSON benchmark above), the
+order reverses by ~2×.  Real applications combine lex+parse, so
+the JSON number is the practical comparison.
+
+This number has been stable across the v0.2 / v0.3 / v0.4 series
+(measured at v0.2.7: 0.85×, v0.3.3 pre-GLR: 0.81×, v0.4.4 current:
+0.81×).  The GLR engine merged in v0.3.4 has zero impact on this
+result -- LALR fast-path files are byte-identical pre/post merge.
+
+The earlier doc claim of 1.15× faster on this bench was from
+m3pro hardware with different bison + glibc; corrected to the
+stable x86_64 measurement during the v0.4.4 perf-audit pass.
+
+### JIT scaling on PG grammar (informational)
 
 `tests/test_pg_grammar`: full PostgreSQL SQL grammar (3,842 LR
 states, 3,584 rules, 557 terminals, 145,227 action-table entries).
