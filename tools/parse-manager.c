@@ -438,7 +438,7 @@ static int cmd_test(ParserManager *mgr, int argc, char **argv) {
     }
 
     /* Feed end-of-input */
-    int rc = parse_token(ctx, 0, NULL);
+    int rc = parse_token(ctx, 0, NULL, -1);
 
     uint64_t t1 = now_ns();
     double elapsed_ms = (double)(t1 - t0) / 1e6;
@@ -509,7 +509,7 @@ static int cmd_compare(ParserManager *mgr, int argc, char **argv) {
         ParseContext *ctx = parse_begin(snap1);
         if (ctx) {
             uint64_t t0 = now_ns();
-            rc1 = parse_token(ctx, 0, NULL);
+            rc1 = parse_token(ctx, 0, NULL, -1);
             uint64_t t1 = now_ns();
             ms1 = (double)(t1 - t0) / 1e6;
             parse_end(ctx);
@@ -533,7 +533,7 @@ static int cmd_compare(ParserManager *mgr, int argc, char **argv) {
         ParseContext *ctx = parse_begin(snap2);
         if (ctx) {
             uint64_t t0 = now_ns();
-            rc2 = parse_token(ctx, 0, NULL);
+            rc2 = parse_token(ctx, 0, NULL, -1);
             uint64_t t1 = now_ns();
             ms2 = (double)(t1 - t0) / 1e6;
             parse_end(ctx);
@@ -635,7 +635,7 @@ static int cmd_benchmark(ParserManager *mgr, int argc, char **argv) {
         for (int i = 0; i < iters; i++) {
             ParseContext *ctx = parse_begin(snap);
             if (!ctx) { last_rc = -1; break; }
-            last_rc = parse_token(ctx, 0, NULL);
+            last_rc = parse_token(ctx, 0, NULL, -1);
             parse_end(ctx);
             if (last_rc != 0) break;
         }
