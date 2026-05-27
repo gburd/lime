@@ -12,6 +12,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Weak hook called by destroy_snapshot to release a snapshot's
+** dlopen handle (if any).  The strong definition lives in
+** src/snapshot_create.c, alongside the registry that pairs each
+** subprocess-built snapshot with its .so handle.  Builds that
+** don't include snapshot_create.c (the dynamically-built .so
+** consumer side, or static-parser-only consumers) get NULL via
+** the weak reference and destroy_snapshot skips the dlclose.
+** Added v0.6.x to fix the documented dlopen-handle leak.
+*/
+__attribute__((weak))
+void snapshot_dlopen_release(ParserSnapshot *snap);
+
 /* ------------------------------------------------------------------ */
 /*  Internal helpers                                                    */
 /* ------------------------------------------------------------------ */
@@ -59,6 +71,19 @@ static void destroy_snapshot(ParserSnapshot *snap) {
     ** we skip the call. */
     if (jit_detach_from_snapshot != NULL) {
         jit_detach_from_snapshot(snap);
+    }
+
+    /* dlopen handle (if any).  When this snapshot was constructed by
+    ** lime_snapshot_create()'s subprocess pipeline, it owns a dlopen
+    ** handle to the .so the action tables were memcpy'd out of.
+    ** snapshot_dlopen_release is defined as a strong symbol in
+    ** src/snapshot_create.c; in builds that don't include that file
+    ** (notably the .so produced by the subprocess pipeline itself)
+    ** the weak reference resolves to NULL and we skip the call.
+    ** Added v0.6.x; prior to that the handle was deliberately leaked
+    ** at process scope. */
+    if (snapshot_dlopen_release != NULL) {
+        snapshot_dlopen_release(snap);
     }
 
     free(snap);

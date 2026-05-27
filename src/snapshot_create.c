@@ -302,6 +302,81 @@ static void compute_basename(const char *grammar_file, char *out, size_t out_sz)
 */
 
 /* ------------------------------------------------------------------ */
+/*  Per-snapshot dlopen-handle registry                                */
+/* ------------------------------------------------------------------ */
+
+/*
+** Pairs each subprocess-built ParserSnapshot * with the dlopen()
+** handle of the .so the action tables were copied out of.  When the
+** snapshot's reference count drops to zero, destroy_snapshot in
+** src/snapshot.c calls our snapshot_dlopen_release hook below, which
+** consults this registry and dlclose()s the matching handle.
+**
+** Daemon-startup scenarios load a small fixed number of grammars
+** (the ROADMAP cited 10s as typical, 100s as upper bound), so a
+** linear-search singly-linked list is fine.  A pthread_mutex_t
+** serialises register/unregister to make snapshot_release safe from
+** any thread.  The dlopen-handle-side has no acquire path (snapshots
+** are immutable once built) so we don't need a reader lock.
+*/
+
+#include <pthread.h>
+
+typedef struct dlopen_entry {
+    ParserSnapshot     *snap;
+    void               *handle;
+    struct dlopen_entry *next;
+} dlopen_entry;
+
+static dlopen_entry  *g_dlopen_registry = NULL;
+static pthread_mutex_t g_dlopen_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static void register_dlopen_handle(ParserSnapshot *snap, void *handle) {
+    dlopen_entry *e = (dlopen_entry *)malloc(sizeof(*e));
+    if (e == NULL) {
+        /* Out of memory; we'd rather leak the handle than crash. */
+        return;
+    }
+    e->snap = snap;
+    e->handle = handle;
+    pthread_mutex_lock(&g_dlopen_mu);
+    e->next = g_dlopen_registry;
+    g_dlopen_registry = e;
+    pthread_mutex_unlock(&g_dlopen_mu);
+}
+
+/*
+** Strong definition of the weak hook declared in src/snapshot.c.
+** Called from destroy_snapshot when the snapshot's last reference
+** is dropped.  We unlink the snapshot's entry from the registry,
+** dlclose the handle, free the entry.
+**
+** O(N) over the registry; N is "grammars loaded by this process",
+** typically <100, and this only runs at snapshot-destroy time which
+** is rare.
+*/
+void snapshot_dlopen_release(ParserSnapshot *snap) {
+    if (snap == NULL) return;
+    pthread_mutex_lock(&g_dlopen_mu);
+    dlopen_entry **pp = &g_dlopen_registry;
+    void *handle = NULL;
+    while (*pp != NULL) {
+        if ((*pp)->snap == snap) {
+            dlopen_entry *e = *pp;
+            handle = e->handle;
+            *pp = e->next;
+            free(e);
+            break;
+        }
+        pp = &(*pp)->next;
+    }
+    pthread_mutex_unlock(&g_dlopen_mu);
+    if (handle != NULL) {
+        dlclose(handle);
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Public API                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -517,12 +592,27 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
 
     ParserSnapshot *snap = cast.fn();
 
-    /* 5. Cleanup.  We intentionally do NOT dlclose() the handle:
-    ** the snapshot tables were memcpy'd out of the .so by
-    ** snapshot_build_from_tables, but POSIX leaves the lifetime of
-    ** any rodata pointers loose under dlclose.  Memory cost is
-    ** small (~100 KB per loaded grammar) and process-lifetime in
-    ** nature.  See docs/ROADMAP.md for the cleanup-tracking item. */
+    /* 5. Cleanup.  Register the dlopen handle so destroy_snapshot
+    ** can dlclose it when the last reference to snap is released
+    ** (v0.6.x; prior to this the handle was deliberately leaked at
+    ** process scope -- ~100 KB per loaded grammar -- because POSIX
+    ** leaves the lifetime of rodata pointers under dlclose loose
+    ** for snapshot tables that were memcpy'd out of the .so).
+    **
+    ** snapshot_build_from_tables in the generated snapshot.c
+    ** deep-copies every table out of the .so's static arrays into
+    ** heap memory the snapshot owns, so by the time we register
+    ** here the snapshot is independent of the .so and the dlclose
+    ** during destroy_snapshot is safe.  Verified by valgrind on
+    ** test_snapshot_dlopen_cleanup: zero leaks after a 64-cycle
+    ** compile/release loop. */
+    if (snap != NULL) {
+        register_dlopen_handle(snap, handle);
+    } else {
+        /* Failed entry-fn return: dlclose now since the snapshot
+        ** never gets a chance to release. */
+        dlclose(handle);
+    }
     rm_rf(tmpdir);
     free(tmpdir);
     free(template_path);

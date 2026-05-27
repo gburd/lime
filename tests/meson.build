@@ -198,6 +198,33 @@ if host_machine.system() != 'windows'
     timeout : 120)
 endif
 
+# v0.6.x: regression for the dlopen-handle-leak fix in
+# src/snapshot_create.c.  Verifies destroy_snapshot's new
+# snapshot_dlopen_release hook actually dlclose()s the .so when the
+# snapshot's last reference drops to zero.  Skipped at runtime when
+# the lime CLI isn't reachable (the subprocess pipeline can't run).
+if host_machine.system() != 'windows'
+  test_snapshot_dlopen_cleanup = executable('test_snapshot_dlopen_cleanup',
+    'test_snapshot_dlopen_cleanup.c',
+    include_directories : include_directories('../src'),
+    dependencies : lime_parser_dep,
+    export_dynamic : true,
+  )
+
+  test('snapshot_dlopen_cleanup', test_snapshot_dlopen_cleanup,
+    env : [
+      'LIME_BIN=' + lime_exe.full_path(),
+      'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
+      'LIME_INCLUDE=' + meson.project_source_root() / 'include',
+      'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
+      'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
+    ],
+    depends : [lime_exe],
+    workdir : meson.project_source_root(),
+    is_parallel : false,
+    timeout : 120)
+endif
+
 test_parse_context = executable('test_parse_context',
   'test_parse_context.c',
   dependencies : lime_parser_dep,
