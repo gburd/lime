@@ -409,6 +409,22 @@ test('formatter_idempotence', test_formatter_idempotence,
   depends : [lime_exe],
 )
 
+# Lime-Letter-23: mid-RHS comment preservation in `lime -F`.  Formatter
+# now captures and re-emits comments appearing between ::= and . at their
+# original positions.  Two sub-tests: (1) format preserves all mid-RHS
+# comments, (2) idempotence -- format(format(F)) == format(F).
+test_formatter_mid_rhs_comments = executable('test_formatter_mid_rhs_comments',
+  'test_formatter_mid_rhs_comments.c',
+  dependencies : lime_parser_dep,
+)
+
+test('formatter_mid_rhs_comments', test_formatter_mid_rhs_comments,
+  args : [
+    lime_exe.full_path(),
+    meson.current_source_dir() / 'test_formatter_mid_rhs_comments_grammar.lime',
+  ],
+)
+
 # v0.5.0: lint pass expanded from a 4-rule stub to ~16 opinionated
 # rules.  Each fixture in tests/test_lint_fixtures/ is constructed
 # to fire exactly one rule (plus incidental neighbours like W005

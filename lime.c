@@ -682,6 +682,18 @@ struct symbol {
   struct symbol **subsym;  /* Array of constituent symbols */
 };
 
+/* Lime-Letter-23: mid-RHS comment preservation for `lime -F`.  Each
+** comment appearing between ::= and . is captured with its position:
+** after_index == -1 means before the first symbol; 0..nrhs-1 means
+** after symbol N (in the order they appear on the RHS).  The formatter
+** emits them inline when rendering the rule. */
+struct rhs_comment {
+  int after_index;     /* -1 = before first symbol; 0..nrhs-1 = after symbol N */
+  char *text;          /* heap-allocated comment text */
+  int line;            /* line number where comment appeared */
+  struct rhs_comment *next;
+};
+
 /* Each production rule in the grammar is stored in the following
 ** structure.  */
 struct rule {
@@ -712,6 +724,10 @@ struct rule {
   ** in a `|`-alternation group, the comment was attached to the
   ** first rule of the group). */
   char *leading_comment;
+  /* Lime-Letter-23: linked list of mid-RHS comments captured between
+  ** ::= and . during Parse().  Emitted inline by `lime -F` at the
+  ** position they originally appeared.  NULL when no mid-RHS comments. */
+  struct rhs_comment *rhs_comments;
   /* v0.4.1 (%extends): provenance for diamond-inheritance and
   ** %override / %remove identity matching.  origin_file is the
   ** Strsafe-interned absolute (or as-resolved) path of the
@@ -3773,10 +3789,24 @@ static int format_grammar(struct lime *lem){
     ** bodies' undeclared identifiers. */
     if( rp->lhsalias ) fprintf(out, "(%s)", rp->lhsalias);
     fprintf(out, " ::=");
-    for(i = 0; i < rp->nrhs; i++){
-      fprintf(out, " %s", rp->rhs[i]->name);
-      if( rp->rhsalias && rp->rhsalias[i] ){
-        fprintf(out, "(%s)", rp->rhsalias[i]);
+    /* Lime-Letter-23: emit mid-RHS comments at their original positions. */
+    {
+      struct rhs_comment *rhsc = rp->rhs_comments;
+      /* Emit any comments that appear before the first symbol (after_index == -1) */
+      while( rhsc && rhsc->after_index == -1 ){
+        fprintf(out, " %s", rhsc->text);
+        rhsc = rhsc->next;
+      }
+      for(i = 0; i < rp->nrhs; i++){
+        fprintf(out, " %s", rp->rhs[i]->name);
+        if( rp->rhsalias && rp->rhsalias[i] ){
+          fprintf(out, "(%s)", rp->rhsalias[i]);
+        }
+        /* Emit any comments after symbol i */
+        while( rhsc && rhsc->after_index == i ){
+          fprintf(out, " %s", rhsc->text);
+          rhsc = rhsc->next;
+        }
       }
     }
     fprintf(out, ".");
@@ -5508,6 +5538,11 @@ struct pstate {
   ** state at `.` is the natural terminator. */
   int pending_remove;
   int pending_remove_line;
+  /* Lime-Letter-23: mid-RHS comment accumulator.  During IN_RHS state,
+  ** comments are captured here with their position (nrhs at capture time).
+  ** commit_current_rule() transfers them to rp->rhs_comments. */
+  struct rhs_comment *pending_rhs_comments;
+  struct rhs_comment *pending_rhs_comments_tail;
 };
 
 /*
@@ -5751,6 +5786,16 @@ static void unlink_and_free_rule(struct pstate *psp, struct rule *target)
   if( target->leading_comment ){
     lime_free(target->leading_comment);
   }
+  /* Lime-Letter-23: free mid-RHS comments if any. */
+  {
+    struct rhs_comment *rhsc = target->rhs_comments;
+    while( rhsc ){
+      struct rhs_comment *next = rhsc->next;
+      if( rhsc->text ) lime_free(rhsc->text);
+      lime_free(rhsc);
+      rhsc = next;
+    }
+  }
   lime_free(target);
 }
 
@@ -5976,6 +6021,10 @@ static void commit_current_rule(struct pstate *psp)
   ** comment in the previous block for ownership semantics. */
   rp->leading_comment = psp->pending_rule_comment;
   psp->pending_rule_comment = 0;
+  /* Lime-Letter-23: attach accumulated mid-RHS comments. */
+  rp->rhs_comments = psp->pending_rhs_comments;
+  psp->pending_rhs_comments = 0;
+  psp->pending_rhs_comments_tail = 0;
   rp->index = psp->gp->nrule++;
   rp->nextlhs = rp->lhs->rule;
   rp->lhs->rule = rp;
@@ -6043,9 +6092,32 @@ static void parseonetoken(struct pstate *psp)
   ** we're in the middle of parsing an argument list, a precedence
   ** symbol list, or a rule's RHS, drop the buffer -- there's no slot
   ** to attach it to.  The boundary cases (WAITING_FOR_DECL_OR_RULE
-  ** and INITIALIZE) handle the buffer themselves below. */
-  if( psp->state != WAITING_FOR_DECL_OR_RULE
-   && psp->state != INITIALIZE ){
+  ** and INITIALIZE) handle the buffer themselves below.
+  **
+  ** Lime-Letter-23 exception: IN_RHS state now captures mid-RHS comments
+  ** with their position for formatter preservation. */
+  if( psp->state == IN_RHS ){
+    /* Capture mid-RHS comment with current nrhs position */
+    char *comment = pstate_take_pending(psp);
+    if( comment ){
+      struct rhs_comment *rhsc = (struct rhs_comment*)lime_malloc(sizeof(*rhsc));
+      if( rhsc ){
+        rhsc->after_index = psp->nrhs - 1;  /* -1 if nrhs==0 (before first symbol) */
+        rhsc->text = comment;
+        rhsc->line = psp->tokenlineno;
+        rhsc->next = 0;
+        if( psp->pending_rhs_comments_tail ){
+          psp->pending_rhs_comments_tail->next = rhsc;
+        }else{
+          psp->pending_rhs_comments = rhsc;
+        }
+        psp->pending_rhs_comments_tail = rhsc;
+      }else{
+        lime_free(comment);
+      }
+    }
+  }else if( psp->state != WAITING_FOR_DECL_OR_RULE
+         && psp->state != INITIALIZE ){
     char *drop = pstate_take_pending(psp);
     if( drop ) lime_free(drop);
   }

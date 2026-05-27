@@ -1,0 +1,8 @@
+// Test grammar for mid-RHS comment preservation
+%name TestMidRHS
+%token_type {int}
+
+expr ::= NUM.
+expr ::= /* prelude */ expr PLUS /* mid */ expr.
+expr ::= expr /* before MINUS */ MINUS expr.
+expr ::= LPAREN expr RPAREN /* trailing */.
