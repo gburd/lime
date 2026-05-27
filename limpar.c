@@ -547,6 +547,52 @@ void ParseFree(
 }
 #endif /* Parse_ENGINEALWAYSONSTACK */
 
+/**
+ * Reset a parser to its initial state without freeing the parser
+ * struct or stack memory.  Pops everything off the stack
+ * (running %destructor), resets state-0 markers + error count
+ * + high-water mark.  user-arg is preserved.  Available v0.6.1.
+ */
+void ParseReset(void *yyp){
+  yyParser *pParser = (yyParser*)yyp;
+#ifndef YYPARSEFREENEVERNULL
+  if( pParser==0 ) return;
+#endif
+  /* Pop everything off the stack, running destructors */
+  while( pParser->yytos > pParser->yystack ){
+#ifndef NDEBUG
+    if( yyTraceFILE ){
+      fprintf(yyTraceFILE,"%sPopping %s\n",
+        yyTracePrompt,
+        yyTokenName[pParser->yytos->major]);
+    }
+#endif
+    if( pParser->yytos->major >= YY_MIN_DSTRCTR ){
+      yy_destructor(pParser, pParser->yytos->major, &pParser->yytos->minor);
+    }
+    pParser->yytos--;
+  }
+  /* Reset to initial state (preserve yystack, yystackEnd, and ARG/CTX) */
+  pParser->yytos = pParser->yystack;
+  pParser->yystack[0].stateno = 0;
+  pParser->yystack[0].major = 0;
+#ifdef YYTRACKMAXSTACKDEPTH
+  pParser->yyhwm = 0;
+#endif
+#ifndef YYNOERRORRECOVERY
+  pParser->yyerrcnt = -1;
+#endif
+#ifdef YYLOCATIONTYPE
+  /* Zero-init lookahead and sentinel location */
+  memset(&pParser->yyLookaheadLoc, 0, sizeof(pParser->yyLookaheadLoc));
+  memset(&pParser->yystack[0].yyloc, 0, sizeof(pParser->yystack[0].yyloc));
+#endif
+  /* Reset action-time lookahead state */
+  pParser->yyLookaheadMajor = -2;
+  memset(&pParser->yyLookaheadMinor, 0, sizeof(pParser->yyLookaheadMinor));
+  pParser->yyLookaheadCleared = 0;
+}
+
 /*
 ** Return the peak depth of the stack for a parser.
 */

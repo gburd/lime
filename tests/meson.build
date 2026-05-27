@@ -1922,6 +1922,31 @@ test_destructor = executable('test_destructor',
 
 test('destructor', test_destructor)
 
+# ParseReset() smoke test: exercises parser context reuse without
+# free+alloc churn, covering: smoke (alloc→parse→reset→parse→free),
+# pointer stability, destructor firing on reset, user-arg preservation,
+# error-state clear, and stack depth tracking.  Added v0.6.1 for PG's
+# pgbench tight-loop use case.
+test_parse_reset_gen = custom_target('test_parse_reset_parser',
+  input   : ['test_parse_reset_grammar.y'],
+  output  : ['test_parse_reset_grammar.c', 'test_parse_reset_grammar.h'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_parse_reset = executable('test_parse_reset',
+  'test_parse_reset.c',
+  test_parse_reset_gen,
+  include_directories : include_directories('../src'),
+  dependencies : lime_parser_dep,
+)
+
+test('parse_reset', test_parse_reset)
+
 # ====================================================================
 # PostgreSQL grammar regression test (gated by -Dpg_grammar=true)
 # ====================================================================
