@@ -108,10 +108,28 @@ ninja -C build-bench
 LIME_JIT=1 ./build-bench/bench/bench_flex_bison_compare/bench_flex_bison_compare
 ```
 
-## Known issues observed during this run
+## Known issues observed during this run -- both fixed in commit 112a5c1
 
-1. **`tests/test_tokenize`** fails under release-mode GCC 15.2.0 with the SIMD tokenizer: token types come back as 0.  Passes under GCC 14.3.0 release and under GCC 15.2.0 debugoptimized.  Likely an aggressive-optimizer interaction with the SIMD intrinsics; not in any production hot path; tracked as a follow-up.
+1. **`tests/test_tokenize`** failed under release-mode gcc 15.2.0
+   with token types coming back as 0.  Originally diagnosed as
+   "SIMD optimiser interaction"; turned out to be a real test bug:
+   the file used `assert(tokenizer_next(tok, &t));` which expands
+   to `((void)0)` under NDEBUG (release).  The compiler then saw
+   `t` as uninitialised on the next line and folded subsequent
+   comparisons against undefined memory.  Fixed by introducing a
+   `REQUIRE()` macro that survives NDEBUG and replacing 42
+   instances of NDEBUG-stripped asserts.  26/26 sub-tests now
+   PASS under release.
 
-2. **`bench_jit_real_parser`** intermittently double-frees on teardown.  Doesn't affect bench numbers (the timing is taken before the crash).  Tracked as a follow-up.
+2. **`bench_jit_real_parser`** intermittently double-freed on
+   teardown.  Originally diagnosed as "doesn't affect bench
+   numbers"; turned out to be a heap corruption in the bench
+   harness's `make_synthetic_snapshot`: `yy_shift_ofst` and
+   `yy_reduce_ofst` are `int32_t *` (per `include/snapshot.h`)
+   but were calloc'd with `sizeof(int16_t)` -- half size --
+   causing the populating loop's 4-byte writes to spill past
+   the end of the 2-byte slots.  glibc's heap-consistency check
+   eventually noticed and aborted.  Fixed by correcting the
+   sizeof to `sizeof(int32_t)`.
 
-Neither blocks the v0.6.3 release.
+Both fixes are pure test/bench-side; no library code changed.
