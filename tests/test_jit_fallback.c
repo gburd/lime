@@ -156,6 +156,12 @@ static void test_aot_fallback_parse_equivalence(void) {
 int main(void) {
     printf("=== test_jit_fallback ===\n");
 
+    /* x86_64 lime_jit_compile early-returns "skip" for small grammars
+    ** (the table-driven path beats the JIT for trivial grammars on
+    ** x86_64; see src/jit_context.c).  Force the JIT on so we actually
+    ** exercise the AOT-fallback codegen path under test. */
+    setenv("LIME_JIT", "1", 1);
+
     test_aot_fallback_jit_present();
     test_aot_fallback_parse_equivalence();
 

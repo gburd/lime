@@ -55,7 +55,14 @@ static int tests_passed = 0;
 /* ------------------------------------------------------------------ */
 
 static bool test_null_rule(void) {
-    return !can_inline(NULL);  /* Should return false */
+    /* NULL rule semantics: a NULL rule_view (or one with NULL code
+    ** and noCode==0) classifies as "no action body" -- inlinable
+    ** as a no-op.  This matches the empty_action case below.
+    ** The pre-v0.6.2 jit_can_inline_rule(struct rule*) wrapper
+    ** rejected NULL outright but the v0.6.2 plain-data refactor
+    ** treats the no-op rule as inlinable, which is the correct
+    ** semantics: an empty reduce IS trivially inlinable. */
+    return can_inline(NULL);
 }
 
 static bool test_empty_action(void) {
