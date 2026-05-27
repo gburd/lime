@@ -392,6 +392,23 @@ test('formatter_directive_registry', test_formatter_directive_registry,
   depends : [lime_exe],
 )
 
+# v0.6.x: explicit byte-equality regression locking single-pass
+# formatter idempotence -- format(format(F)) == format(F) -- across
+# every formatter fixture.  Catches any future drift in directive-
+# emit ordering, prec-symbol attribution, body-trim semantics, or
+# token-group categorisation.
+test_formatter_idempotence = executable('test_formatter_idempotence',
+  'test_formatter_idempotence.c',
+)
+
+test('formatter_idempotence', test_formatter_idempotence,
+  args : [
+    lime_exe.full_path(),
+    meson.project_source_root(),
+  ],
+  depends : [lime_exe],
+)
+
 # v0.5.0: lint pass expanded from a 4-rule stub to ~16 opinionated
 # rules.  Each fixture in tests/test_lint_fixtures/ is constructed
 # to fire exactly one rule (plus incidental neighbours like W005
