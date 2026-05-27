@@ -469,7 +469,7 @@ static LLVMValueRef generate_find_shift_action_compact(LLVMContextRef llvm_ctx,
     LLVMTypeRef i16 = LLVMInt16TypeInContext(llvm_ctx);
     LLVMTypeRef i32 = LLVMInt32TypeInContext(llvm_ctx);
 
-    /* Bake the four arrays into the module as internal globals. */
+    /* Bake the four core arrays into the module as internal globals. */
     LLVMValueRef g_action =
         add_const_array_global(llvm_ctx, module, "lime_yy_action", i16, snap->yy_action,
                                snap->action_count, 2);
@@ -487,6 +487,23 @@ static LLVMValueRef generate_find_shift_action_compact(LLVMContextRef llvm_ctx,
     LLVMTypeRef arr_default_ty = LLVMArrayType(i16, snap->nstate);
     LLVMTypeRef arr_shift_ofst_ty = LLVMArrayType(i32, snap->nstate);
 
+    /* v0.6.x: AOT-bake yy_fallback when the grammar has one.  The
+    ** runtime parser (src/parse_engine.c::find_shift_action) consults
+    ** it on the no-shift path: if yy_fallback[la] != 0 substitute the
+    ** target token and retry the lookup once.  Embedding the table
+    ** in the module lets LLVM constant-fold the substitution and
+    ** keeps the JIT trace self-contained -- no indirect chase to
+    ** snap->yy_fallback at runtime. */
+    LLVMValueRef g_fallback = NULL;
+    LLVMTypeRef arr_fallback_ty = NULL;
+    int has_fallback = (snap->yy_fallback != NULL && snap->nfallback > 0);
+    if (has_fallback) {
+        g_fallback =
+            add_const_array_global(llvm_ctx, module, "lime_yy_fallback", i16,
+                                   snap->yy_fallback, snap->nfallback, 2);
+        arr_fallback_ty = LLVMArrayType(i16, snap->nfallback);
+    }
+
     /* Function: uint32_t jit_find_shift_action(uint32_t, uint32_t) */
     LLVMTypeRef param_types[] = {i32, i32};
     LLVMTypeRef fn_type = LLVMFunctionType(i32, param_types, 2, 0);
@@ -495,17 +512,33 @@ static LLVMValueRef generate_find_shift_action_compact(LLVMContextRef llvm_ctx,
     LLVMSetLinkage(fn, LLVMExternalLinkage);
 
     LLVMValueRef state_i32 = LLVMGetParam(fn, 0);
-    LLVMValueRef la_i32 = LLVMGetParam(fn, 1);
+    LLVMValueRef la_param = LLVMGetParam(fn, 1);
 
     LLVMBuilderRef b = LLVMCreateBuilderInContext(llvm_ctx);
-    LLVMBasicBlockRef bb_entry = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "entry");
-    LLVMBasicBlockRef bb_passthru = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "passthru");
-    LLVMBasicBlockRef bb_lookup = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "lookup");
-    LLVMBasicBlockRef bb_check_match = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "check_match");
-    LLVMBasicBlockRef bb_hit = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "hit");
-    LLVMBasicBlockRef bb_default = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "default");
+    LLVMBasicBlockRef bb_entry      = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "entry");
+    LLVMBasicBlockRef bb_passthru   = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "passthru");
+    LLVMBasicBlockRef bb_lookup     = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "lookup");
+    LLVMBasicBlockRef bb_check_match= LLVMAppendBasicBlockInContext(llvm_ctx, fn, "check_match");
+    LLVMBasicBlockRef bb_hit        = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "hit");
+    LLVMBasicBlockRef bb_try_fb     = NULL;  /* set when has_fallback */
+    LLVMBasicBlockRef bb_default    = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "default");
+    if (has_fallback) {
+        bb_try_fb = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "try_fallback");
+    }
 
     LLVMPositionBuilderAtEnd(b, bb_entry);
+    /* la_var holds the current lookahead; the fallback retry branch
+    ** rewrites it once and re-enters the lookup. */
+    LLVMValueRef la_var = LLVMBuildAlloca(b, i32, "la_var");
+    LLVMBuildStore(b, la_param, la_var);
+    /* fb_done: 0 means we have not yet tried the fallback; 1 means
+    ** we already tried and now must fall through to default.
+    ** Mirrors retried_with_fallback in src/parse_engine.c. */
+    LLVMValueRef fb_done = NULL;
+    if (has_fallback) {
+        fb_done = LLVMBuildAlloca(b, i32, "fb_done");
+        LLVMBuildStore(b, LLVMConstInt(i32, 0, 0), fb_done);
+    }
     /* if (state > yy_max_shift) return state; */
     LLVMValueRef max_shift = LLVMConstInt(i32, snap->yy_max_shift, 0);
     LLVMValueRef cmp_passthru = LLVMBuildICmp(b, LLVMIntUGT, state_i32, max_shift, "above_max");
@@ -517,6 +550,7 @@ static LLVMValueRef generate_find_shift_action_compact(LLVMContextRef llvm_ctx,
     /* lookup: ofst = yy_shift_ofst[state] */
     LLVMPositionBuilderAtEnd(b, bb_lookup);
     LLVMValueRef zero_i32 = LLVMConstInt(i32, 0, 0);
+    LLVMValueRef la_i32 = LLVMBuildLoad2(b, i32, la_var, "la_cur");
     LLVMValueRef so_idx[] = {zero_i32, state_i32};
     LLVMValueRef so_ptr =
         LLVMBuildInBoundsGEP2(b, arr_shift_ofst_ty, g_shift_ofst, so_idx, 2, "so_ptr");
@@ -530,7 +564,9 @@ static LLVMValueRef generate_find_shift_action_compact(LLVMContextRef llvm_ctx,
     LLVMValueRef lac = LLVMConstInt(i32, snap->lookahead_count, 0);
     LLVMValueRef lt_lac = LLVMBuildICmp(b, LLVMIntULT, idx, lac, "lt_lac");
     LLVMValueRef bounds = LLVMBuildAnd(b, geq_zero, lt_lac, "bounds");
-    LLVMBuildCondBr(b, bounds, bb_check_match, bb_default);
+    LLVMBuildCondBr(b, bounds,
+                    bb_check_match,
+                    has_fallback ? bb_try_fb : bb_default);
 
     /* check_match: yy_lookahead[idx] == la ? */
     LLVMPositionBuilderAtEnd(b, bb_check_match);
@@ -540,7 +576,9 @@ static LLVMValueRef generate_find_shift_action_compact(LLVMContextRef llvm_ctx,
     LLVMValueRef expected = LLVMBuildLoad2(b, i16, la_ptr, "expected");
     LLVMValueRef la_trunc = LLVMBuildTrunc(b, la_i32, i16, "la_i16");
     LLVMValueRef matches = LLVMBuildICmp(b, LLVMIntEQ, expected, la_trunc, "matches");
-    LLVMBuildCondBr(b, matches, bb_hit, bb_default);
+    LLVMBuildCondBr(b, matches,
+                    bb_hit,
+                    has_fallback ? bb_try_fb : bb_default);
 
     /* hit: return yy_action[idx] */
     LLVMPositionBuilderAtEnd(b, bb_hit);
@@ -549,6 +587,37 @@ static LLVMValueRef generate_find_shift_action_compact(LLVMContextRef llvm_ctx,
         LLVMBuildInBoundsGEP2(b, arr_action_ty, g_action, act_idx, 2, "act_ptr");
     LLVMValueRef action = LLVMBuildLoad2(b, i16, act_ptr, "action");
     LLVMBuildRet(b, LLVMBuildZExt(b, action, i32, "ret_action"));
+
+    /* try_fallback (when has_fallback only): if !fb_done and la is
+    ** in range and yy_fallback[la] != 0, mark fb_done, replace la,
+    ** branch back to lookup.  Else fall through to default. */
+    if (has_fallback) {
+        LLVMPositionBuilderAtEnd(b, bb_try_fb);
+        LLVMValueRef done = LLVMBuildLoad2(b, i32, fb_done, "fb_done_v");
+        LLVMValueRef done_zero = LLVMBuildICmp(b, LLVMIntEQ, done,
+                                                LLVMConstInt(i32, 0, 0), "fb_undone");
+        LLVMValueRef la_now = LLVMBuildLoad2(b, i32, la_var, "la_for_fb");
+        LLVMValueRef nfallback = LLVMConstInt(i32, snap->nfallback, 0);
+        LLVMValueRef la_in_range = LLVMBuildICmp(b, LLVMIntULT, la_now, nfallback, "la_in_fb");
+        LLVMValueRef can_try = LLVMBuildAnd(b, done_zero, la_in_range, "can_try");
+        LLVMBasicBlockRef bb_load_fb = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "load_fb");
+        LLVMBuildCondBr(b, can_try, bb_load_fb, bb_default);
+
+        LLVMPositionBuilderAtEnd(b, bb_load_fb);
+        LLVMValueRef fb_idx[] = {zero_i32, la_now};
+        LLVMValueRef fb_ptr =
+            LLVMBuildInBoundsGEP2(b, arr_fallback_ty, g_fallback, fb_idx, 2, "fb_ptr");
+        LLVMValueRef fb_v = LLVMBuildLoad2(b, i16, fb_ptr, "fb_v");
+        LLVMValueRef fb_nz = LLVMBuildICmp(b, LLVMIntNE, fb_v,
+                                            LLVMConstInt(i16, 0, 0), "fb_nz");
+        LLVMBasicBlockRef bb_do_retry = LLVMAppendBasicBlockInContext(llvm_ctx, fn, "do_retry");
+        LLVMBuildCondBr(b, fb_nz, bb_do_retry, bb_default);
+
+        LLVMPositionBuilderAtEnd(b, bb_do_retry);
+        LLVMBuildStore(b, LLVMBuildZExt(b, fb_v, i32, "fb_zext"), la_var);
+        LLVMBuildStore(b, LLVMConstInt(i32, 1, 0), fb_done);
+        LLVMBuildBr(b, bb_lookup);
+    }
 
     /* default: return yy_default[state] */
     LLVMPositionBuilderAtEnd(b, bb_default);

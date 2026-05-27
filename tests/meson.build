@@ -258,6 +258,19 @@ test_snapshot_diff = executable('test_snapshot_diff',
 
 test('snapshot_diff', test_snapshot_diff)
 
+# v0.6.x: YYFALLBACK AOT codegen regression.  Verifies the JIT
+# trace bakes yy_fallback into the find_shift_action emit path so
+# the runtime path that consults snap->yy_fallback is bypassed.
+# Skips at runtime when JIT isn't available (LIME_NO_JIT).
+test_jit_fallback = executable('test_jit_fallback',
+  'test_jit_fallback.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+  c_args : ['-DLIME_HAVE_SNAPSHOT_BUILD'],
+)
+
+test('jit_fallback', test_jit_fallback)
+
 test_parse_context = executable('test_parse_context',
   'test_parse_context.c',
   dependencies : lime_parser_dep,

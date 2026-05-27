@@ -11966,6 +11966,7 @@ static struct ParserSnapshot *build_snapshot_from_lime(struct lime *lemp,
   uint16_t *yy_default = NULL;
   int16_t  *rule_lhs = NULL;
   int8_t   *rule_nrhs = NULL;
+  uint16_t *yy_fallback = NULL;
   acttab   *pActtab = NULL;
   struct ParserSnapshot *snap = NULL;
   int i;
@@ -12137,8 +12138,26 @@ static struct ParserSnapshot *build_snapshot_from_lime(struct lime *lemp,
     tables.yy_accept_action     = (uint16_t)lemp->accAction;
     tables.yy_no_action         = (uint16_t)lemp->noAction;
     tables.yy_min_reduce        = (uint16_t)lemp->minReduce;
-    tables.yy_fallback          = NULL;
-    tables.nfallback            = 0;
+    /* v0.6.x: populate yy_fallback when the grammar uses %fallback.
+    ** Mirrors the table emit in lime.c at line ~10943 inside the
+    ** has_fallback branch.  Without this, the in-process pipeline
+    ** silently drops the fallback machinery and JIT YYFALLBACK AOT
+    ** has nothing to bake in.  yy_fallback is declared at the
+    ** function scope above so the oom: label can free it. */
+    uint32_t  nfallback   = 0;
+    if (lemp->has_fallback && lemp->nterminal > 0) {
+        nfallback = (uint32_t)lemp->nterminal;
+        yy_fallback = (uint16_t *)calloc(nfallback, sizeof(uint16_t));
+        if (yy_fallback == NULL) goto oom;
+        for (uint32_t fi = 0; fi < nfallback; fi++) {
+            struct symbol *p = lemp->symbols[fi];
+            yy_fallback[fi] = (p && p->fallback)
+                ? (uint16_t)p->fallback->index
+                : 0;
+        }
+    }
+    tables.yy_fallback          = yy_fallback;
+    tables.nfallback            = nfallback;
     tables.grammar_source       = grammar_text;
     tables.grammar_source_len   = (uint32_t)grammar_text_len;
     snap = snapshot_build_from_tables(&tables);
@@ -12152,6 +12171,7 @@ oom:
   free(yy_default);
   free(rule_lhs);
   free(rule_nrhs);
+  free(yy_fallback);
   if( pActtab ) acttab_free(pActtab);
   return snap;
 }
