@@ -1781,6 +1781,25 @@ if host_machine.system() != 'windows'
   )
 endif
 
+# v0.6.x: cross-platform regression for lime_snapshot_create routed
+# through the in-process API.  On Windows this exercises the path that
+# was previously stubbed (no fork/dlopen); on Unix it confirms the
+# in-process fast path and the LIME_FORCE_SUBPROCESS=1 fallback both
+# work.  Links lime_compiler_dep so the weak
+# lime_compile_grammar_in_process reference in src/snapshot_create.c
+# resolves; without it the fast path is silently skipped.
+test_windows_snapshot_create = executable('test_windows_snapshot_create',
+  'test_windows_snapshot_create.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+  export_dynamic : true,
+)
+
+test('windows_snapshot_create', test_windows_snapshot_create,
+  workdir : meson.project_source_root(),
+  is_parallel : false,
+)
+
 # End-to-end exercise of runtime LALR(1) automaton rebuild via the
 # subprocess pipeline.  Adds a postfix-factorial extension to the
 # arithmetic grammar, calls publish_modified_snapshot which

@@ -48,63 +48,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/*
-** Snapshot-create on Windows is a follow-up project (Letter 14
-** open item).  The fork/exec/dlopen primitives this file is
-** built on do not exist on Windows; the equivalent path needs
-** CreateProcess + LoadLibrary + GetProcAddress and a different
-** error-handling shape.  For the v0.2.x MSVC milestone we stub
-** only the internal helpers that other translation units may
-** reference (create_base_snapshot, lime_compile_grammar_text)
-** so the rest of the build links cleanly.  The public
-** lime_snapshot_create / lime_snapshot_extend already live in
-** src/snapshot.c as thin wrappers around create_base_snapshot,
-** so the Windows stub of create_base_snapshot returning NULL
-** with an explanatory error is enough to make the public API
-** behave correctly: it returns a documented "not yet supported
-** on Windows" error string.  Downstream users (notably PG'\''s
-** PG-on-Windows hybrid path) can use the static-parser shape
-** (Shape A in docs/INTEGRATING_LIME.md) which doesn'\''t need
-** this code path.
-*/
-#if defined(_WIN32)
-
-#include "snapshot.h"
-
-static char *win_stub_err(void) {
-    const char *msg = "lime_snapshot_create / lime_compile_grammar_text / "
-                      "create_base_snapshot are not yet supported on Windows. "
-                      "Use the static-parser shape (Shape A in "
-                      "docs/INTEGRATING_LIME.md) on this platform.";
-    char *out = (char *)malloc(strlen(msg) + 1);
-    if (out != NULL) memcpy(out, msg, strlen(msg) + 1);
-    return out;
-}
-
-ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
-    (void)grammar_file;
-    if (error) *error = win_stub_err();
-    return NULL;
-}
-
-ParserSnapshot *lime_compile_grammar_text(const char *grammar_text,
-                                          size_t len,
-                                          char **error) {
-    (void)grammar_text;
-    (void)len;
-    if (error) *error = win_stub_err();
-    return NULL;
-}
-
-#else /* !_WIN32 -- POSIX implementation follows */
-
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <dlfcn.h>
-
 /* ------------------------------------------------------------------ */
 /*  String helpers                                                     */
 /* ------------------------------------------------------------------ */
@@ -130,6 +73,19 @@ static const char *getenv_or(const char *name, const char *fallback) {
     const char *v = getenv(name);
     return (v != NULL && v[0] != '\0') ? v : fallback;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Subprocess fallback helpers (POSIX-only)                          */
+/* ------------------------------------------------------------------ */
+
+#ifndef _WIN32
+
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <dlfcn.h>
 
 /* ------------------------------------------------------------------ */
 /*  Temporary directory                                                */
@@ -580,6 +536,8 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
     return snap;
 }
 
+#endif /* !_WIN32 */
+
 /* ------------------------------------------------------------------ */
 /*  Compile from in-memory grammar text                                */
 /*                                                                      */
@@ -617,6 +575,13 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
 /*       to NULL and dispatch goes straight to the subprocess.  The    */
 /*       v0.5.4 behaviour is preserved for callers that have not       */
 /*       opted into the new dependency.                                 */
+/*                                                                      */
+/*  v0.5.6+ Windows support: dispatch now works cross-platform.  The    */
+/*  in-process path (step 2) has no Windows-specific code -- it's      */
+/*  pure C11 with no fork/exec/dlopen.  On Windows with                */
+/*  LIME_FORCE_SUBPROCESS=1 set, lime_compile_grammar_text returns     */
+/*  NULL with an explanatory error rather than attempting the          */
+/*  subprocess fallback (which is Unix-only).                          */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -670,6 +635,35 @@ ParserSnapshot *lime_compile_grammar_text(const char *grammar_text, size_t len, 
         }
     }
 
+#ifdef _WIN32
+    /* Windows: no subprocess fallback.  The fork/exec/dlopen machinery
+    ** below is POSIX-only.  When LIME_FORCE_SUBPROCESS=1 is set on
+    ** Windows, return a clear error rather than silently skipping. */
+    if (force_subprocess) {
+        if (error) {
+            *error = xstrdup(
+                "lime_compile_grammar_text: LIME_FORCE_SUBPROCESS=1 set, but subprocess "
+                "fallback (fork+exec+dlopen) is not available on Windows. "
+                "Unset the variable to use the in-process compiler, or link lime_compiler_dep "
+                "to enable lime_compile_grammar_in_process().");
+        }
+        return NULL;
+    }
+    /* In-process also failed (or wasn't linked).  Surface the reason. */
+    if (error) {
+        if (lime_compile_grammar_in_process == NULL) {
+            *error = xstrdup(
+                "lime_compile_grammar_text: in-process compiler unavailable (lime_compiler_dep "
+                "not linked). On Windows, the subprocess fallback (fork+exec+dlopen) is not "
+                "available. Link lime_compiler_dep to enable lime_compile_grammar_in_process().");
+        } else {
+            *error = xstrdup(
+                "lime_compile_grammar_text: in-process compilation failed, and subprocess "
+                "fallback (fork+exec+dlopen) is not available on Windows.");
+        }
+    }
+    return NULL;
+#else
     /* Subprocess fallback (the v0.5.3 path).  Write to a temp .y file,
     ** then call the file-based pipeline.  We could in principle hand
     ** a pipe to lime, but lime today is organised around stat()-able
@@ -702,6 +696,7 @@ ParserSnapshot *lime_compile_grammar_text(const char *grammar_text, size_t len, 
     rm_rf(tmpdir);
     free(tmpdir);
     return snap;
+#endif /* !_WIN32 */
 }
 
 /* ------------------------------------------------------------------ */
@@ -709,7 +704,22 @@ ParserSnapshot *lime_compile_grammar_text(const char *grammar_text, size_t len, 
 /* ------------------------------------------------------------------ */
 
 ParserSnapshot *create_base_snapshot(const char *grammar_file, char **error) {
+#ifdef _WIN32
+    /* Windows: create_base_snapshot is file-based, so it requires the
+    ** subprocess pipeline (lime + cc + dlopen).  Direct the caller to
+    ** use lime_compile_grammar_text with in-process compilation
+    ** instead, or fall back to the static-parser shape (Shape A in
+    ** docs/INTEGRATING_LIME.md). */
+    (void)grammar_file;
+    if (error) {
+        *error = xstrdup(
+            "create_base_snapshot: not available on Windows (requires fork+exec+dlopen). "
+            "Use lime_compile_grammar_text() with the in-process compiler (link "
+            "lime_compiler_dep), or use the static-parser shape (Shape A in "
+            "docs/INTEGRATING_LIME.md).");
+    }
+    return NULL;
+#else
     return compile_grammar_file_to_snapshot(grammar_file, error);
+#endif
 }
-
-#endif /* !_WIN32 */
