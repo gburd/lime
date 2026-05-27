@@ -17,14 +17,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Forward declaration - actual struct definition in lime.c */
-struct rule;
-
 /*
-** Determine whether a rule's action can be safely inlined into a JIT trace.
+** Classify a rule action body for inlining.
 **
 ** Returns true if the rule body:
-**   - Is empty (no action code)
+**   - Is empty (no_code != 0 or code == NULL or code[0] == '\0')
 **   - Is a simple passthrough: $$ = $1 (single RHS reference)
 **   - Is a single arithmetic/assignment expression with only $N references
 **
@@ -35,8 +32,13 @@ struct rule;
 **   - References context beyond simple RHS symbol values
 **
 ** Conservative: when in doubt, returns false to maintain correctness.
+**
+** Plain-data signature so callers without a `struct rule` declaration
+** in scope (jit_codegen.c, the standalone test harness, future out-
+** of-tree consumers) can use it directly.  The lime generator (which
+** has `struct rule` available) calls this with rp->code and rp->noCode.
 */
-bool jit_can_inline_rule(const struct rule *rp);
+bool jit_can_inline_rule_text(const char *code, int no_code);
 
 /*
 ** Instrumentation counters for JIT reduce inlining statistics.

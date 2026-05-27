@@ -66,15 +66,11 @@ static uint64_t now_ns(void) {
 ** Conservative: when in doubt, returns false to maintain correctness.
 ** Null or empty code strings are considered inlinable (no-op reduces).
 */
-bool jit_can_inline_rule(const struct rule *rp) {
-    if (rp == NULL) return false;
-    
+bool jit_can_inline_rule_text(const char *code, int no_code) {
     /* Empty actions or explicitly marked noCode are inlinable (no-ops) */
-    if (rp->noCode || rp->code == NULL || rp->code[0] == '\0') {
+    if (no_code || code == NULL || code[0] == '\0') {
         return true;
     }
-    
-    const char *code = rp->code;
     size_t len = strlen(code);
     
     /* Simple passthrough: $$ = $N; (where N is a single RHS index)
@@ -786,8 +782,9 @@ JITStatus jit_codegen_generate_into(LLVMContextRef llvm_ctx, LLVMModuleRef modul
 
 #else /* LIME_NO_JIT -- stub implementations */
 
-bool jit_can_inline_rule(const struct rule *rp) {
-    (void)rp;
+bool jit_can_inline_rule_text(const char *code, int no_code) {
+    (void)code;
+    (void)no_code;
     return false;  /* No JIT = no inlining */
 }
 
