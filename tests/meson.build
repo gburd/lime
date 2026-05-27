@@ -225,6 +225,26 @@ if host_machine.system() != 'windows'
     timeout : 120)
 endif
 
+# v0.6.x: %extends multi-file graph stress test.  Builds 100+ file
+# graphs at runtime in tmpdir and runs lime on the leaf to verify
+# the traversal + override-merge logic scales.  Skipped at runtime
+# when the lime CLI is unreachable.
+if host_machine.system() != 'windows'
+  test_extends_stress = executable('test_extends_stress',
+    'test_extends_stress.c',
+  )
+
+  test('extends_stress', test_extends_stress,
+    env : [
+      'LIME_BIN=' + lime_exe.full_path(),
+      'LIME_PROJECT_ROOT=' + meson.project_source_root(),
+    ],
+    depends : [lime_exe],
+    workdir : meson.project_source_root(),
+    is_parallel : false,
+    timeout : 180)
+endif
+
 test_parse_context = executable('test_parse_context',
   'test_parse_context.c',
   dependencies : lime_parser_dep,

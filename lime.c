@@ -6796,6 +6796,19 @@ static void parseonetoken(struct pstate *psp)
         nNew = lemonStrlen(zNew);
         if( *psp->declargslot ){
           zOld = *psp->declargslot;
+          /* v0.6.x: %extends diamond-inheritance dedup.  When the
+          ** same single-value directive (e.g. %start_symbol,
+          ** %name, %token_type) is reached via two %extends paths
+          ** that converge on a shared base, the second visit would
+          ** otherwise concatenate the value with itself
+          ** (`s` + `s` = `ss`).  If the existing slot already
+          ** equals the new value byte-for-byte, leave it alone.
+          ** Multi-value slots like %include have distinct values
+          ** per call so this guard never fires for them. */
+          if( psp->extends_depth > 0 && strcmp(zOld, zNew) == 0 ){
+            psp->state = WAITING_FOR_DECL_OR_RULE;
+            break;
+          }
         }else{
           zOld = "";
         }
