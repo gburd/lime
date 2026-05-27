@@ -1835,6 +1835,20 @@ test_jit_parse_equivalence = executable('test_jit_parse_equivalence',
 
 test('jit_parse_equivalence', test_jit_parse_equivalence)
 
+# v0.6.x: per-rule reducer inlining policy classification test.
+# Exercises jit_can_inline_rule against a corpus of representative rule
+# bodies (empty, passthrough, simple expression, function call,
+# control flow) to lock the conservative-when-in-doubt policy.
+# Skipped at runtime when LLVM is disabled (LIME_NO_JIT) -- the
+# inlining policy doesn't matter when there's no JIT to inline into.
+test_jit_inline = executable('test_jit_inline',
+  'test_jit_inline.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
+
+test('jit_inline', test_jit_inline)
+
 # Letter-15 regression: AOT path must agree with the
 # table-driven path for every (state, lookahead) pair.
 test_aot_equivalence = executable('test_aot_equivalence',
