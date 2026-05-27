@@ -720,3 +720,201 @@ json_value *lsp_navigation_document_symbol(const char *text, size_t text_len) {
     lsp_symtab_free(&st);
     return arr;
 }
+
+
+/* ------------------------------------------------------------------ */
+/*  textDocument/codeLens                                              */
+/* ------------------------------------------------------------------ */
+
+/* Build a CodeLens[] response surfacing "N references" above each
+** non-terminal definition.  Editors render these as inline links;
+** clicking executes the resolve command (or, when the title is
+** preset as we do here, jumps to the references list).
+**
+** We emit lenses only for non-terminals (rule LHS) -- terminals are
+** typically referenced everywhere they appear in RHS positions, so
+** the count adds no information.  Directives are skipped entirely
+** for the same reason.
+*/
+json_value *lsp_navigation_code_lens(const char *text, size_t text_len) {
+    json_value *arr = json_make_array();
+    if (!text || !text_len) return arr;
+
+    lsp_symtab st = {0};
+    lsp_symtab_build(&st, text, text_len);
+
+    for (size_t i = 0; i < st.count; i++) {
+        const lsp_symbol *s = &st.items[i];
+        if (s->kind != LSP_SYM_NONTERMINAL) continue;
+        if (s->def_offset == (size_t)-1)    continue;
+
+        /* Subtract 1 from ref_count if we recorded the definition
+         * itself as a ref entry (see record_definition in this file).
+         * Use ->uses as canonical use-count; "N references" is
+         * conventionally use-count regardless of declaration. */
+        long uses = s->uses;
+        char title[64];
+        snprintf(title, sizeof(title),
+                 uses == 1 ? "%ld reference" : "%ld references", uses);
+
+        json_value *lens  = json_make_object();
+        json_value *range = json_make_object();
+        json_value *start = json_make_object();
+        json_object_set(start, "line",      json_make_int(s->def_line));
+        json_object_set(start, "character", json_make_int(s->def_col));
+        json_value *end = json_make_object();
+        json_object_set(end,   "line",      json_make_int(s->def_line));
+        json_object_set(end,   "character", json_make_int(s->def_end_col));
+        json_object_set(range, "start", start);
+        json_object_set(range, "end",   end);
+        json_object_set(lens, "range", range);
+
+        /* Inline command -- the editor renders the title as the
+         * lens text.  No actionable command is set, matching the
+         * "informational lens" pattern used by most LSP servers. */
+        json_value *command = json_make_object();
+        json_object_set(command, "title",   json_make_string(title));
+        json_object_set(command, "command", json_make_string(""));
+        json_object_set(lens, "command", command);
+
+        json_array_push(arr, lens);
+    }
+    lsp_symtab_free(&st);
+    return arr;
+}
+
+/* ------------------------------------------------------------------ */
+/*  textDocument/signatureHelp                                         */
+/* ------------------------------------------------------------------ */
+
+/* Compute the byte offset of (line, character) inside text.  Caller
+ * must guarantee the position is within text bounds (or be okay with
+ * the function clamping to the closest reachable offset).
+ */
+static size_t pos_to_offset(const char *text, size_t text_len,
+                            long long line, long long character) {
+    size_t off = 0;
+    long long cur_line = 0;
+    while (off < text_len && cur_line < line) {
+        if (text[off] == '\n') cur_line++;
+        off++;
+    }
+    long long col = 0;
+    while (off < text_len && col < character && text[off] != '\n') {
+        off++;
+        col++;
+    }
+    return off;
+}
+
+/* Look back from cursor offset to find the nearest preceding `%`
+ * that starts a directive.  Returns the offset of the `%`, or
+ * (size_t)-1 if none found on the same line. */
+static size_t find_preceding_percent(const char *text, size_t text_len,
+                                     size_t cursor) {
+    if (cursor > text_len) cursor = text_len;
+    for (size_t i = cursor; i > 0; i--) {
+        char c = text[i - 1];
+        if (c == '\n') return (size_t)-1;
+        if (c == '%')   return i - 1;
+    }
+    return (size_t)-1;
+}
+
+/* Build a SignatureHelp response: when the cursor sits inside a
+** directive (e.g., `%token <here>`), look up the directive's name
+** in lsp_known_directives() and return the registered doc as the
+** signature label + documentation.  On no-match returns null.
+*/
+json_value *lsp_navigation_signature_help(const char *text, size_t text_len,
+                                          long long line, long long character) {
+    if (!text || !text_len) return json_make_null();
+
+    size_t cursor = pos_to_offset(text, text_len, line, character);
+    size_t pct    = find_preceding_percent(text, text_len, cursor);
+    if (pct == (size_t)-1) return json_make_null();
+
+    /* Extract the directive name: characters after `%` up to first
+     * non-identifier char. */
+    size_t name_start = pct + 1;
+    size_t name_end   = name_start;
+    while (name_end < text_len) {
+        char c = text[name_end];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '_')) break;
+        name_end++;
+    }
+    if (name_end == name_start) return json_make_null();
+
+    /* Cursor must be AFTER the directive name (i.e. in argument
+     * position).  If still inside the name we've nothing to help
+     * with -- completion handles that case. */
+    if (cursor <= name_end) return json_make_null();
+
+    /* Look up in registry. */
+    const lsp_directive_info *dirs = lsp_known_directives();
+    char namebuf[64];
+    size_t nlen = name_end - name_start;
+    if (nlen >= sizeof(namebuf)) return json_make_null();
+    memcpy(namebuf, text + name_start, nlen);
+    namebuf[nlen] = 0;
+
+    const lsp_directive_info *match = NULL;
+    for (size_t i = 0; dirs[i].name != NULL; i++) {
+        if (strcmp(dirs[i].name, namebuf) == 0) {
+            match = &dirs[i];
+            break;
+        }
+    }
+    if (!match) return json_make_null();
+
+    /* Build SignatureHelp { signatures: [{label, documentation}] }. */
+    json_value *result = json_make_object();
+    json_value *sigs   = json_make_array();
+    json_value *sig    = json_make_object();
+    char        label[128];
+    snprintf(label, sizeof(label), "%%%s", match->name);
+    json_object_set(sig, "label", json_make_string(label));
+    json_object_set(sig, "documentation", json_make_string(match->doc));
+    json_object_set(sig, "parameters", json_make_array());
+    json_array_push(sigs, sig);
+    json_object_set(result, "signatures",      sigs);
+    json_object_set(result, "activeSignature", json_make_int(0));
+    json_object_set(result, "activeParameter", json_make_int(0));
+    return result;
+}
+
+/* ------------------------------------------------------------------ */
+/*  textDocument/codeAction                                            */
+/* ------------------------------------------------------------------ */
+
+/* For a v0.6.x baseline we ship one code action: "Format document".
+** It surfaces the formatting capability through the codeAction
+** lightbulb / quick-fix UI so editors that don't bind a formatting
+** keystroke still expose `lime -F` to the user.  The action's edit
+** field is intentionally null -- editors invoke the formatting
+** capability when the user selects the action.
+**
+** Future work: extract-token, inline-rule, fold-alternation
+** refactorings.  These all need an AST view that's expensive to
+** build for every codeAction request; deferring until a v0.6.x
+** consumer asks for them.
+*/
+json_value *lsp_navigation_code_actions(const char *text, size_t text_len,
+                                        long long line, long long character) {
+    (void)text; (void)text_len;
+    (void)line; (void)character;
+
+    json_value *arr = json_make_array();
+    json_value *act = json_make_object();
+    json_object_set(act, "title", json_make_string("Format document"));
+    /* CodeActionKind = "source.format" -- the LSP-canonical kind
+     * for whole-document formatting actions. */
+    json_object_set(act, "kind",  json_make_string("source.format"));
+    json_value *cmd = json_make_object();
+    json_object_set(cmd, "title",   json_make_string("Format document"));
+    json_object_set(cmd, "command", json_make_string("editor.action.formatDocument"));
+    json_object_set(act, "command", cmd);
+    json_array_push(arr, act);
+    return arr;
+}

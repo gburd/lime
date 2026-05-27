@@ -168,4 +168,25 @@ typedef struct {
 /* NULL-terminated list of known directives, in spec order. */
 const lsp_directive_info *lsp_known_directives(void);
 
+/* Build a textDocument/codeLens response (CodeLens[]).  Returns a
+ * JSON array, one entry per non-terminal definition with title
+ * "N references".  Always returns a non-NULL array (possibly empty).
+ */
+json_value *lsp_navigation_code_lens(const char *text, size_t text_len);
+
+/* Build a textDocument/signatureHelp response.  When cursor sits in
+ * an argument position of a known %-directive, returns a SignatureHelp
+ * object with the directive's documented synopsis.  Otherwise returns
+ * JSON null.
+ */
+json_value *lsp_navigation_signature_help(const char *text, size_t text_len,
+                                          long long line, long long character);
+
+/* Build a textDocument/codeAction response (CodeAction[]).  v0.6.x
+ * ships with a single "Format document" action that delegates to the
+ * formatting capability.  Always returns a non-NULL array.
+ */
+json_value *lsp_navigation_code_actions(const char *text, size_t text_len,
+                                        long long line, long long character);
+
 #endif /* LIME_LSP_NAVIGATION_H */

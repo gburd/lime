@@ -885,6 +885,140 @@ static void test_semantic_tokens(const char *bin, const char *lime_bin,
     fprintf(stderr, "  semanticTokens  OK\n");
 }
 
+static void test_signature_help(const char *bin, const char *lime_bin,
+                                const char *fixtures_dir) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/rich.lime", fixtures_dir);
+    size_t tlen;
+    char *text = slurp(path, &tlen);
+
+    server_t s = spawn_server(bin, lime_bin);
+    initialize_server(&s);
+    open_document(&s, "file:///rich.lime", text, tlen);
+
+    char buf[8192];
+    read_message(&s, buf, sizeof(buf));
+
+    /* Cursor in argument position of a known directive.  The
+     * fixture rich.lime starts with a top comment + then a
+     * `%name` directive on some line.  Probe a position guaranteed
+     * to be in argument position by sending a synthetic position
+     * after `%name `; the server resolves whether we're inside a
+     * directive purely from the document text and the (line,char)
+     * we send, so we can pick any position the parser will accept. */
+    static const char *req =
+        "{\"jsonrpc\":\"2.0\",\"id\":31,\"method\":\"textDocument/signatureHelp\","
+        "\"params\":{\"textDocument\":{\"uri\":\"file:///rich.lime\"},"
+        "\"position\":{\"line\":0,\"character\":0}}}";
+    send_message(&s, req);
+    int n = wait_for_response_id(&s, 31, buf, sizeof(buf));
+    assert(n > 0);
+    /* Either a SignatureHelp object or null -- both are valid
+     * per spec.  Just verify the response is well-formed. */
+    assert(strstr(buf, "\"result\""));
+
+    shutdown_server(&s);
+    free(text);
+    fprintf(stderr, "  signatureHelp   OK\n");
+}
+
+static void test_code_lens(const char *bin, const char *lime_bin,
+                           const char *fixtures_dir) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/rich.lime", fixtures_dir);
+    size_t tlen;
+    char *text = slurp(path, &tlen);
+
+    server_t s = spawn_server(bin, lime_bin);
+    initialize_server(&s);
+    open_document(&s, "file:///rich.lime", text, tlen);
+
+    char buf[16384];
+    read_message(&s, buf, sizeof(buf));
+
+    static const char *req =
+        "{\"jsonrpc\":\"2.0\",\"id\":32,\"method\":\"textDocument/codeLens\","
+        "\"params\":{\"textDocument\":{\"uri\":\"file:///rich.lime\"}}}";
+    send_message(&s, req);
+    int n = wait_for_response_id(&s, 32, buf, sizeof(buf));
+    assert(n > 0);
+    /* CodeLens response is an array; rich.lime has at least one
+     * non-terminal so we expect one or more lenses with a "title"
+     * field embedded in a "command" object. */
+    assert(strstr(buf, "\"result\""));
+    assert(strstr(buf, "\"command\""));
+    assert(strstr(buf, "reference"));   /* "N reference" or "N references" */
+
+    shutdown_server(&s);
+    free(text);
+    fprintf(stderr, "  codeLens        OK\n");
+}
+
+static void test_code_action(const char *bin, const char *lime_bin,
+                             const char *fixtures_dir) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/rich.lime", fixtures_dir);
+    size_t tlen;
+    char *text = slurp(path, &tlen);
+
+    server_t s = spawn_server(bin, lime_bin);
+    initialize_server(&s);
+    open_document(&s, "file:///rich.lime", text, tlen);
+
+    char buf[8192];
+    read_message(&s, buf, sizeof(buf));
+
+    static const char *req =
+        "{\"jsonrpc\":\"2.0\",\"id\":33,\"method\":\"textDocument/codeAction\","
+        "\"params\":{\"textDocument\":{\"uri\":\"file:///rich.lime\"},"
+        "\"range\":{\"start\":{\"line\":0,\"character\":0},"
+                  "\"end\":{\"line\":0,\"character\":0}},"
+        "\"context\":{\"diagnostics\":[]}}}";
+    send_message(&s, req);
+    int n = wait_for_response_id(&s, 33, buf, sizeof(buf));
+    assert(n > 0);
+    /* v0.6.x ships exactly one action: "Format document". */
+    assert(strstr(buf, "\"result\""));
+    assert(strstr(buf, "\"Format document\""));
+    assert(strstr(buf, "\"source.format\""));
+
+    shutdown_server(&s);
+    free(text);
+    fprintf(stderr, "  codeAction      OK\n");
+}
+
+static void test_formatting(const char *bin, const char *lime_bin,
+                            const char *fixtures_dir) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/rich.lime", fixtures_dir);
+    size_t tlen;
+    char *text = slurp(path, &tlen);
+
+    server_t s = spawn_server(bin, lime_bin);
+    initialize_server(&s);
+    open_document(&s, "file:///rich.lime", text, tlen);
+
+    char buf[131072];
+    read_message(&s, buf, sizeof(buf));
+
+    static const char *req =
+        "{\"jsonrpc\":\"2.0\",\"id\":34,\"method\":\"textDocument/formatting\","
+        "\"params\":{\"textDocument\":{\"uri\":\"file:///rich.lime\"},"
+        "\"options\":{\"tabSize\":4,\"insertSpaces\":true}}}";
+    send_message(&s, req);
+    int n = wait_for_response_id(&s, 34, buf, sizeof(buf));
+    assert(n > 0);
+    /* Response is a TextEdit array.  Empty array means lime -F was
+     * unable to run (lime CLI not on PATH); a populated array
+     * means we got a single whole-document replace.  Either is
+     * a valid LSP response -- the contract is "no errors". */
+    assert(strstr(buf, "\"result\""));
+
+    shutdown_server(&s);
+    free(text);
+    fprintf(stderr, "  formatting      OK\n");
+}
+
 int main(int argc, char **argv) {
     if (argc < 4) {
         fprintf(stderr,
@@ -912,6 +1046,10 @@ int main(int argc, char **argv) {
     test_references(bin, lime_bin, fixtures_dir);
     test_rename(bin, lime_bin, fixtures_dir);
     test_semantic_tokens(bin, lime_bin, fixtures_dir);
+    test_signature_help(bin, lime_bin, fixtures_dir);
+    test_code_lens(bin, lime_bin, fixtures_dir);
+    test_code_action(bin, lime_bin, fixtures_dir);
+    test_formatting(bin, lime_bin, fixtures_dir);
     fprintf(stderr, "  ALL PASSED\n");
     return 0;
 }

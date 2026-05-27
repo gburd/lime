@@ -22,6 +22,7 @@
 
 #include "lsp_diagnostics.h"
 #include "lsp_documents.h"
+#include "lsp_format.h"
 #include "lsp_json.h"
 #include "lsp_navigation.h"
 
@@ -220,6 +221,31 @@ static json_value *server_capabilities(void) {
     json_object_set(sem,    "legend",         legend);
     json_object_set(sem,    "full",           json_make_bool(1));
     json_object_set(caps,   "semanticTokensProvider", sem);
+
+    /* SignatureHelpOptions { triggerCharacters: ["%", " "] }. */
+    json_value *sig = json_make_object();
+    json_value *sig_trig = json_make_array();
+    json_array_push(sig_trig, json_make_string("%"));
+    json_array_push(sig_trig, json_make_string(" "));
+    json_object_set(sig, "triggerCharacters", sig_trig);
+    json_object_set(caps, "signatureHelpProvider", sig);
+
+    /* CodeLensOptions { resolveProvider: false }. */
+    json_value *lens = json_make_object();
+    json_object_set(lens, "resolveProvider", json_make_bool(0));
+    json_object_set(caps, "codeLensProvider", lens);
+
+    /* CodeActionOptions { codeActionKinds: ["source.format"] }. */
+    json_value *act = json_make_object();
+    json_value *kinds = json_make_array();
+    json_array_push(kinds, json_make_string("source.format"));
+    json_object_set(act, "codeActionKinds", kinds);
+    json_object_set(caps, "codeActionProvider", act);
+
+    /* DocumentFormattingOptions { } -- bool true is also accepted
+     * but the object form is more explicit and matches our pattern
+     * for other capabilities. */
+    json_object_set(caps, "documentFormattingProvider", json_make_bool(1));
 
     return caps;
 }
@@ -459,6 +485,67 @@ static void handle_semantic_tokens(lsp_server *s, const json_value *id,
     send_response(s->out, id, r);
 }
 
+static void handle_signature_help(lsp_server *s, const json_value *id,
+                                  const json_value *params) {
+    const json_value *td  = json_get(params, "textDocument");
+    const json_value *pos = json_get(params, "position");
+    const char *uri = json_string(json_get(td, "uri"));
+    long long line = json_int(json_get(pos, "line"));
+    long long ch   = json_int(json_get(pos, "character"));
+    lsp_document *d = uri ? lsp_documents_get(&s->docs, uri) : NULL;
+    if (!d) {
+        send_response(s->out, id, json_make_null());
+        return;
+    }
+    json_value *r = lsp_navigation_signature_help(d->text, d->text_len,
+                                                  line, ch);
+    send_response(s->out, id, r);
+}
+
+static void handle_code_lens(lsp_server *s, const json_value *id,
+                             const json_value *params) {
+    const json_value *td = json_get(params, "textDocument");
+    const char *uri = json_string(json_get(td, "uri"));
+    lsp_document *d = uri ? lsp_documents_get(&s->docs, uri) : NULL;
+    if (!d) {
+        send_response(s->out, id, json_make_array());
+        return;
+    }
+    json_value *r = lsp_navigation_code_lens(d->text, d->text_len);
+    send_response(s->out, id, r);
+}
+
+static void handle_code_action(lsp_server *s, const json_value *id,
+                               const json_value *params) {
+    const json_value *td = json_get(params, "textDocument");
+    const json_value *range = json_get(params, "range");
+    const json_value *start = range ? json_get(range, "start") : NULL;
+    long long line = start ? json_int(json_get(start, "line"))      : 0;
+    long long ch   = start ? json_int(json_get(start, "character")) : 0;
+    const char *uri = json_string(json_get(td, "uri"));
+    lsp_document *d = uri ? lsp_documents_get(&s->docs, uri) : NULL;
+    if (!d) {
+        send_response(s->out, id, json_make_array());
+        return;
+    }
+    json_value *r = lsp_navigation_code_actions(d->text, d->text_len,
+                                                line, ch);
+    send_response(s->out, id, r);
+}
+
+static void handle_formatting(lsp_server *s, const json_value *id,
+                              const json_value *params) {
+    const json_value *td = json_get(params, "textDocument");
+    const char *uri = json_string(json_get(td, "uri"));
+    lsp_document *d = uri ? lsp_documents_get(&s->docs, uri) : NULL;
+    if (!d) {
+        send_response(s->out, id, json_make_array());
+        return;
+    }
+    json_value *r = lsp_format_run(s->lime_bin, d->text, d->text_len);
+    send_response(s->out, id, r);
+}
+
 /* ---- main dispatch -------------------------------------------------- */
 
 void lsp_server_init(lsp_server *s) {
@@ -547,6 +634,14 @@ int lsp_server_run(lsp_server *s) {
             handle_rename(s, id, params);
         } else if (strcmp(method, "textDocument/semanticTokens/full") == 0) {
             handle_semantic_tokens(s, id, params);
+        } else if (strcmp(method, "textDocument/signatureHelp") == 0) {
+            handle_signature_help(s, id, params);
+        } else if (strcmp(method, "textDocument/codeLens") == 0) {
+            handle_code_lens(s, id, params);
+        } else if (strcmp(method, "textDocument/codeAction") == 0) {
+            handle_code_action(s, id, params);
+        } else if (strcmp(method, "textDocument/formatting") == 0) {
+            handle_formatting(s, id, params);
         } else if (is_request) {
             send_error(s->out, id, -32601, "Method not found");
         }

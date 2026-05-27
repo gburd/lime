@@ -22,6 +22,7 @@ lime_lsp_sources = files(
   'lsp_rename.c',
   'lsp_semantic_tokens.c',
   'lsp_json.c',
+  'lsp_format.c',
 )
 
 lime_lsp_exe = executable('lime-lsp',
