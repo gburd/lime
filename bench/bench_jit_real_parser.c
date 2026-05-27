@@ -164,8 +164,15 @@ static ParserSnapshot *make_synthetic_snapshot(void) {
 
     snap->yy_action = calloc(snap->action_count, sizeof(uint16_t));
     snap->yy_lookahead = calloc(snap->lookahead_count, sizeof(uint16_t));
-    snap->yy_shift_ofst = calloc(snap->nstate, sizeof(int16_t));
-    snap->yy_reduce_ofst = calloc(snap->nstate, sizeof(int16_t));
+    /* yy_shift_ofst / yy_reduce_ofst are int32_t * (per
+    ** include/snapshot.h: int32 to keep PostgreSQL-scale grammars
+    ** with >32k action entries representable).  Allocating with
+    ** sizeof(int16_t) here was an undersized calloc that produced
+    ** heap corruption when the loop below wrote 4-byte values into
+    ** the half-sized 2-byte slots, abort-trapping in glibc on
+    ** snapshot_release at end-of-bench. */
+    snap->yy_shift_ofst = calloc(snap->nstate, sizeof(int32_t));
+    snap->yy_reduce_ofst = calloc(snap->nstate, sizeof(int32_t));
     snap->yy_default = calloc(snap->nstate, sizeof(uint16_t));
 
     if (!snap->yy_action || !snap->yy_lookahead || !snap->yy_shift_ofst || !snap->yy_reduce_ofst ||

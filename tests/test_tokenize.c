@@ -38,6 +38,26 @@ static int tests_failed = 0;
         fflush(stdout); \
     } while (0)
 
+/* When NDEBUG is set (release builds, -DNDEBUG which meson's release
+** buildtype enables), assert() expands to ((void)0).  This used to
+** silently strip every `REQUIRE(tokenizer_next(...));` call in this
+** file, leaving t uninitialized and (at -O1+) folding the post-call
+** comparisons against undefined memory -- which gcc 15 chooses to
+** treat as zero, producing spurious FAILs in release builds.
+**
+** REQUIRE() is the assert-replacement that survives NDEBUG: it
+** evaluates the expression unconditionally, prints a diagnostic on
+** false, and longjmps out of the test via the same FAIL pathway.
+*/
+#define REQUIRE(expr) do { \
+    if (!(expr)) { \
+        fprintf(stderr, "REQUIRE failed at %s:%d: %s\n", \
+                __FILE__, __LINE__, #expr); \
+        tests_failed++; \
+        return; \
+    } \
+} while (0)
+
 #define PASS() \
     do { \
         tests_passed++; \
@@ -102,7 +122,7 @@ static void test_simple_select(void) {
     int n = 5;
 
     for (int i = 0; i < n; i++) {
-        assert(tokenizer_next(tok, &t));
+        REQUIRE(tokenizer_next(tok, &t));
         if (t.type != expected_types[i] || t.length != expected_lens[i]) {
             char msg[128];
             snprintf(msg, sizeof(msg), "token %d: type=%d len=%zu", i, t.type, t.length);
@@ -112,8 +132,8 @@ static void test_simple_select(void) {
             return;
         }
     }
-    assert(!tokenizer_next(tok, &t));
-    assert(t.type == TK_EOF);
+    REQUIRE(!tokenizer_next(tok, &t));
+    REQUIRE(t.type == TK_EOF);
 
     tokenizer_destroy(tok);
     free(input);
@@ -129,7 +149,7 @@ static void test_integer_literals(void) {
     Token t;
     int expected_lens[] = { 1, 1, 2, 4, 4, 4 };
     for (int i = 0; i < 6; i++) {
-        assert(tokenizer_next(tok, &t));
+        REQUIRE(tokenizer_next(tok, &t));
         ASSERT_EQ(t.type, TK_INTEGER, "type should be TK_INTEGER");
         ASSERT_EQ((int)t.length, expected_lens[i], "integer length");
     }
@@ -165,15 +185,15 @@ static void test_string_literals(void) {
     Tokenizer *tok = tokenizer_create(NULL, input, len);
 
     Token t;
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_STRING, "first string type");
     ASSERT_EQ((int)t.length, 7, "first string length");
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_STRING, "escaped string type");
     ASSERT_EQ((int)t.length, 7, "escaped string length");
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_STRING, "empty string type");
     ASSERT_EQ((int)t.length, 2, "empty string length");
 
@@ -189,11 +209,11 @@ static void test_blob_literals(void) {
     Tokenizer *tok = tokenizer_create(NULL, input, len);
 
     Token t;
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_BLOB, "X blob type");
     ASSERT_EQ((int)t.length, 13, "X blob length");
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_BLOB, "x blob type");
     ASSERT_EQ((int)t.length, 5, "x blob length");
 
@@ -219,7 +239,7 @@ static void test_all_operators(void) {
 
     Token t;
     for (int i = 0; i < n; i++) {
-        assert(tokenizer_next(tok, &t));
+        REQUIRE(tokenizer_next(tok, &t));
         if (t.type != expected[i]) {
             char msg[128];
             snprintf(msg, sizeof(msg), "operator %d: expected %d, got %d", i, expected[i], t.type);
@@ -242,15 +262,15 @@ static void test_quoted_identifiers(void) {
     Tokenizer *tok = tokenizer_create(NULL, input, len);
 
     Token t;
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_DQUOTE_ID, "double-quote id type");
     ASSERT_EQ((int)t.length, 10, "double-quote id length");
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_BACKTICK_ID, "backtick id type");
     ASSERT_EQ((int)t.length, 5, "backtick id length");
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_BRACKET_ID, "bracket id type");
     ASSERT_EQ((int)t.length, 5, "bracket id length");
 
@@ -270,11 +290,11 @@ static void test_line_comment(void) {
     Tokenizer *tok = tokenizer_create(NULL, input, len);
 
     Token t;
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_IDENTIFIER, "before comment");
     assert(*t.start == 'a');
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_IDENTIFIER, "after comment");
     assert(*t.start == 'b');
     ASSERT_EQ(t.line, 2, "line after comment");
@@ -291,10 +311,10 @@ static void test_block_comment(void) {
     Tokenizer *tok = tokenizer_create(NULL, input, len);
 
     Token t;
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     assert(*t.start == 'a');
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     assert(*t.start == 'b');
     ASSERT_EQ(t.line, 3, "line after block comment");
 
@@ -314,19 +334,19 @@ static void test_line_column_tracking(void) {
     Tokenizer *tok = tokenizer_create(NULL, input, len);
 
     Token t;
-    assert(tokenizer_next(tok, &t)); /* a */
+    REQUIRE(tokenizer_next(tok, &t)); /* a */
     ASSERT_EQ(t.line, 1, "a line");
     ASSERT_EQ(t.column, 1, "a column");
 
-    assert(tokenizer_next(tok, &t)); /* b */
+    REQUIRE(tokenizer_next(tok, &t)); /* b */
     ASSERT_EQ(t.line, 1, "b line");
     ASSERT_EQ(t.column, 3, "b column");
 
-    assert(tokenizer_next(tok, &t)); /* c */
+    REQUIRE(tokenizer_next(tok, &t)); /* c */
     ASSERT_EQ(t.line, 2, "c line");
     ASSERT_EQ(t.column, 3, "c column");
 
-    assert(tokenizer_next(tok, &t)); /* d */
+    REQUIRE(tokenizer_next(tok, &t)); /* d */
     ASSERT_EQ(t.line, 4, "d line");
     ASSERT_EQ(t.column, 1, "d column");
 
@@ -347,31 +367,31 @@ static void test_peek(void) {
 
     Token t1, t2;
     /* Peek returns 'a' */
-    assert(tokenizer_peek(tok, &t1));
+    REQUIRE(tokenizer_peek(tok, &t1));
     assert(*t1.start == 'a');
 
     /* Peek again returns same token */
-    assert(tokenizer_peek(tok, &t2));
+    REQUIRE(tokenizer_peek(tok, &t2));
     assert(t2.start == t1.start);
 
     /* Next consumes 'a' */
-    assert(tokenizer_next(tok, &t1));
+    REQUIRE(tokenizer_next(tok, &t1));
     assert(*t1.start == 'a');
 
     /* Next gives 'b' */
-    assert(tokenizer_next(tok, &t1));
+    REQUIRE(tokenizer_next(tok, &t1));
     assert(*t1.start == 'b');
 
     /* Peek gives 'c' */
-    assert(tokenizer_peek(tok, &t1));
+    REQUIRE(tokenizer_peek(tok, &t1));
     assert(*t1.start == 'c');
 
     /* Next consumes 'c' */
-    assert(tokenizer_next(tok, &t1));
+    REQUIRE(tokenizer_next(tok, &t1));
     assert(*t1.start == 'c');
 
     /* EOF */
-    assert(!tokenizer_next(tok, &t1));
+    REQUIRE(!tokenizer_next(tok, &t1));
 
     tokenizer_destroy(tok);
     free(input);
@@ -400,7 +420,7 @@ static void test_identifier_at_chunk_boundary(void) {
     Tokenizer *tok = tokenizer_create(NULL, input, len);
 
     Token t;
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_IDENTIFIER, "type at boundary");
     ASSERT_EQ((int)t.length, 5, "length at boundary");
     ASSERT_STREQN(t.start, "hello", 5, "text at boundary");
@@ -425,7 +445,7 @@ static void test_long_identifier(void) {
     Tokenizer *tok = tokenizer_create(NULL, input, len);
 
     Token t;
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_IDENTIFIER, "long id type");
     ASSERT_EQ((int)t.length, 70, "long id length");
 
@@ -447,7 +467,7 @@ static void test_whitespace_exactly_32(void) {
     Tokenizer *tok = tokenizer_create(NULL, input, len);
 
     Token t;
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_IDENTIFIER, "token after 32 spaces");
     assert(*t.start == 'x');
 
@@ -469,7 +489,7 @@ static void test_whitespace_exactly_64(void) {
     Tokenizer *tok = tokenizer_create(NULL, input, len);
 
     Token t;
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_IDENTIFIER, "token after 64 spaces");
     assert(*t.start == 'y');
 
@@ -554,19 +574,19 @@ static void test_keyword_lookup(void) {
     Tokenizer *tok = tokenizer_create(table, input, len);
 
     Token t;
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, 100, "SELECT keyword code");
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_IDENTIFIER, "col is identifier");
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, 101, "FROM keyword code");
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_IDENTIFIER, "tbl is identifier");
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, 102, "WHERE keyword code");
 
     tokenizer_destroy(tok);
@@ -737,7 +757,7 @@ static void test_empty_input(void) {
     Tokenizer *tok = tokenizer_create(NULL, input, len);
 
     Token t;
-    assert(!tokenizer_next(tok, &t));
+    REQUIRE(!tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_EOF, "empty input is EOF");
 
     tokenizer_destroy(tok);
@@ -752,7 +772,7 @@ static void test_whitespace_only(void) {
     Tokenizer *tok = tokenizer_create(NULL, input, len);
 
     Token t;
-    assert(!tokenizer_next(tok, &t));
+    REQUIRE(!tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_EOF, "whitespace-only is EOF");
 
     tokenizer_destroy(tok);
@@ -767,14 +787,14 @@ static void test_single_char_tokens(void) {
     Tokenizer *tok = tokenizer_create(NULL, input, len);
 
     Token t;
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_IDENTIFIER, "single char id");
     ASSERT_EQ((int)t.length, 1, "single char id len");
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_INTEGER, "single digit");
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_PLUS, "single op");
 
     tokenizer_destroy(tok);
@@ -789,13 +809,13 @@ static void test_illegal_character(void) {
     Tokenizer *tok = tokenizer_create(NULL, input, len);
 
     Token t;
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_IDENTIFIER, "before illegal");
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_ILLEGAL, "illegal char");
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_IDENTIFIER, "after illegal");
 
     tokenizer_destroy(tok);
@@ -837,11 +857,11 @@ static void test_x_as_identifier(void) {
     Tokenizer *tok = tokenizer_create(NULL, input, len);
 
     Token t;
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_IDENTIFIER, "x is identifier");
     ASSERT_EQ((int)t.length, 1, "x length");
 
-    assert(tokenizer_next(tok, &t));
+    REQUIRE(tokenizer_next(tok, &t));
     ASSERT_EQ(t.type, TK_IDENTIFIER, "X123 is identifier");
     ASSERT_EQ((int)t.length, 4, "X123 length");
 
