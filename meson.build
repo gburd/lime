@@ -127,6 +127,7 @@ lime_public_headers = [
   'include/parser_manager.h',
   'include/parser_operations.h',
   'include/snapshot_build.h',
+  'include/snapshot_diff.h',
   'include/tokenize.h',
   'include/tokenize_simd.h',
   'include/token_table.h',

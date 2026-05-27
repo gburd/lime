@@ -245,6 +245,19 @@ if host_machine.system() != 'windows'
     timeout : 180)
 endif
 
+# v0.6.x: snapshot_diff API regression.  Builds two snapshots via
+# the in-process compiler, computes a per-table delta, applies it,
+# and asserts the resulting snapshot is functionally equivalent.
+# Round-trip + identity + null-base + bad-args cases.
+test_snapshot_diff = executable('test_snapshot_diff',
+  'test_snapshot_diff.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+  c_args : ['-DLIME_HAVE_SNAPSHOT_BUILD'],
+)
+
+test('snapshot_diff', test_snapshot_diff)
+
 test_parse_context = executable('test_parse_context',
   'test_parse_context.c',
   dependencies : lime_parser_dep,
