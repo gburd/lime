@@ -259,11 +259,8 @@ impl CalcParser {
             // Plain shift: push (action, major) and consume.
             if action <= YY_MAX_SHIFT {
                 if token_code == 0 {
-                    // End-of-input shift = accept.  Matches
-                    // src/parse_engine.c behaviour for the case
-                    // where a final shift completes the parse
-                    // without an explicit ACCEPT_ACTION entry.
                     self.accepted = true;
+                    self.on_parse_accept();
                     return Ok(true);
                 }
                 self.stack.push(Frame {
@@ -289,6 +286,7 @@ impl CalcParser {
 
             if action == YY_ACCEPT_ACTION {
                 self.accepted = true;
+                self.on_parse_accept();
                 return Ok(true);
             }
 
@@ -331,6 +329,31 @@ impl CalcParser {
     /// Feed end-of-input.  Equivalent to push(0, 0).
     pub fn finalize(&mut self) -> Result<bool, ParseError> {
         self.push(0, Value::default())
+    }
+
+    /// Hook fired on syntax error.  Override the body via
+    /// %rust_syntax_error in the grammar; default is no-op.
+    pub fn on_syntax_error(&mut self, _token: u16, _state: u16) {
+        /* no-op */
+    }
+
+    /// Hook fired on parse accept.  Override via
+    /// %rust_parse_accept; default is no-op.
+    pub fn on_parse_accept(&mut self) {
+        /* no-op */
+    }
+
+    /// Hook fired on parse failure (post-error, no recovery).
+    /// Override via %rust_parse_failure; default is no-op.
+    pub fn on_parse_failure(&mut self) {
+        /* no-op */
+    }
+
+    /// Hook fired on stack overflow.  In Rust the Vec stack
+    /// grows automatically; this is mostly informational.
+    /// Override via %rust_stack_overflow; default is no-op.
+    pub fn on_stack_overflow(&mut self) {
+        /* no-op */
     }
 
     fn top_state(&self) -> u16 {
@@ -393,10 +416,12 @@ impl CalcParser {
         let goto = Self::find_goto(parent_state, lhs_sym as u16);
         if goto == YY_ACCEPT_ACTION {
             self.final_value = lhs_value;
+            self.on_parse_accept();
             return Ok(ReduceOutcome::Accept);
         }
         if goto == YY_ERROR_ACTION || goto == YY_NO_ACTION {
             self.errored = true;
+            self.on_syntax_error(lhs_sym as u16, parent_state);
             return Err(ParseError::SyntaxError {
                 token: lhs_sym as u16,
                 state: parent_state,

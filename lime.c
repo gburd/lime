@@ -957,6 +957,13 @@ struct lime {
   char *overflow;          /* Code to execute on a stack overflow */
   char *failure;           /* Code to execute on parser failure */
   char *accept;            /* Code to execute when the parser excepts */
+  /* feat/rust-output: parallel Rust hooks.  Each NULL when grammar
+  ** doesn't supply the directive; emit_rust uses default no-op
+  ** closures.  Bodies are emitted verbatim. */
+  char *rust_error;        /* %rust_syntax_error { ... } */
+  char *rust_accept;       /* %rust_parse_accept { ... } */
+  char *rust_failure;      /* %rust_parse_failure { ... } */
+  char *rust_overflow;     /* %rust_stack_overflow { ... } */
   char *extracode;         /* Code appended to the generated file */
   char *tokendest;         /* Code to execute to destroy token data */
   char *vardest;           /* Code for the default non-terminal destructor */
@@ -6581,6 +6588,22 @@ static void parseonetoken(struct pstate *psp)
           psp->declargslot = &(psp->gp->stacksize);
           psp->insertLineMacro = 0;
           attach_directive_comment(psp, &psp->gp->stacksize_comment);
+        }else if( strcmp(x,"rust_syntax_error")==0 ){
+          psp->declargslot = &(psp->gp->rust_error);
+          psp->insertLineMacro = 0;
+          break;
+        }else if( strcmp(x,"rust_parse_accept")==0 ){
+          psp->declargslot = &(psp->gp->rust_accept);
+          psp->insertLineMacro = 0;
+          break;
+        }else if( strcmp(x,"rust_parse_failure")==0 ){
+          psp->declargslot = &(psp->gp->rust_failure);
+          psp->insertLineMacro = 0;
+          break;
+        }else if( strcmp(x,"rust_stack_overflow")==0 ){
+          psp->declargslot = &(psp->gp->rust_overflow);
+          psp->insertLineMacro = 0;
+          break;
         }else if( strcmp(x,"rust_extra_argument")==0 ){
           /* feat/rust-output: Rust-side %extra_argument equivalent.
           ** Type inside braces becomes the parser's user-arg type. */
@@ -13537,4 +13560,16 @@ const char *lime_emit_rust_rule_rust_code(const struct lime *lemp, int iRule) {
 
 const char *lime_emit_rust_get_rust_arg(const struct lime *lemp) {
     return lemp ? lemp->rust_arg : 0;
+}
+const char *lime_emit_rust_get_rust_error(const struct lime *lemp) {
+    return lemp ? lemp->rust_error : 0;
+}
+const char *lime_emit_rust_get_rust_accept(const struct lime *lemp) {
+    return lemp ? lemp->rust_accept : 0;
+}
+const char *lime_emit_rust_get_rust_failure(const struct lime *lemp) {
+    return lemp ? lemp->rust_failure : 0;
+}
+const char *lime_emit_rust_get_rust_overflow(const struct lime *lemp) {
+    return lemp ? lemp->rust_overflow : 0;
 }

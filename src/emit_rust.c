@@ -97,6 +97,10 @@ extern int  lime_emit_rust_rule_rhs(const struct lime *lemp, int iRule, int i,
                                     const char **out_rhs_name);
 extern const char *lime_emit_rust_rule_rust_code(const struct lime *lemp, int iRule);
 extern const char *lime_emit_rust_get_rust_arg(const struct lime *lemp);
+extern const char *lime_emit_rust_get_rust_error(const struct lime *lemp);
+extern const char *lime_emit_rust_get_rust_accept(const struct lime *lemp);
+extern const char *lime_emit_rust_get_rust_failure(const struct lime *lemp);
+extern const char *lime_emit_rust_get_rust_overflow(const struct lime *lemp);
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -568,11 +572,8 @@ static void emit_parser_runtime(FILE *out, const struct lime *lemp) {
             "            // Plain shift: push (action, major) and consume.\n"
             "            if action <= YY_MAX_SHIFT {\n"
             "                if token_code == 0 {\n"
-            "                    // End-of-input shift = accept.  Matches\n"
-            "                    // src/parse_engine.c behaviour for the case\n"
-            "                    // where a final shift completes the parse\n"
-            "                    // without an explicit ACCEPT_ACTION entry.\n"
             "                    self.accepted = true;\n"
+            "                    self.on_parse_accept();\n"
             "                    return Ok(true);\n"
             "                }\n"
             "                self.stack.push(Frame {\n"
@@ -596,6 +597,7 @@ static void emit_parser_runtime(FILE *out, const struct lime *lemp) {
             "            }\n\n"
             "            if action == YY_ACCEPT_ACTION {\n"
             "                self.accepted = true;\n"
+            "                self.on_parse_accept();\n"
             "                return Ok(true);\n"
             "            }\n\n"
             "            // Reduce.\n"
@@ -638,6 +640,46 @@ static void emit_parser_runtime(FILE *out, const struct lime *lemp) {
             "    pub fn finalize(&mut self) -> Result<bool, ParseError> {\n"
             "        self.push(0, Value::default())\n"
             "    }\n\n");
+
+    /* feat/rust-output: emit hook methods.  When grammar declares
+    ** %rust_syntax_error / %rust_parse_accept / %rust_parse_failure
+    ** / %rust_stack_overflow with a brace body, emit the body verbatim
+    ** in a method on the parser; otherwise emit a no-op default. */
+    const char *h_err = lime_emit_rust_get_rust_error(lemp);
+    const char *h_acc = lime_emit_rust_get_rust_accept(lemp);
+    const char *h_fail= lime_emit_rust_get_rust_failure(lemp);
+    const char *h_ovf = lime_emit_rust_get_rust_overflow(lemp);
+
+    fprintf(out,
+        "    /// Hook fired on syntax error.  Override the body via\n"
+        "    /// %%rust_syntax_error in the grammar; default is no-op.\n"
+        "    pub fn on_syntax_error(&mut self, _token: u16, _state: u16) {\n"
+        "        %s\n"
+        "    }\n\n",
+        (h_err && h_err[0]) ? h_err : "/* no-op */");
+    fprintf(out,
+        "    /// Hook fired on parse accept.  Override via\n"
+        "    /// %%rust_parse_accept; default is no-op.\n"
+        "    pub fn on_parse_accept(&mut self) {\n"
+        "        %s\n"
+        "    }\n\n",
+        (h_acc && h_acc[0]) ? h_acc : "/* no-op */");
+    fprintf(out,
+        "    /// Hook fired on parse failure (post-error, no recovery).\n"
+        "    /// Override via %%rust_parse_failure; default is no-op.\n"
+        "    pub fn on_parse_failure(&mut self) {\n"
+        "        %s\n"
+        "    }\n\n",
+        (h_fail && h_fail[0]) ? h_fail : "/* no-op */");
+    fprintf(out,
+        "    /// Hook fired on stack overflow.  In Rust the Vec stack\n"
+        "    /// grows automatically; this is mostly informational.\n"
+        "    /// Override via %%rust_stack_overflow; default is no-op.\n"
+        "    pub fn on_stack_overflow(&mut self) {\n"
+        "        %s\n"
+        "    }\n\n",
+        (h_ovf && h_ovf[0]) ? h_ovf : "/* no-op */");
+
 
     /* Helpers. */
     fprintf(out,
@@ -702,10 +744,12 @@ static void emit_parser_runtime(FILE *out, const struct lime *lemp) {
             "        let goto = Self::find_goto(parent_state, lhs_sym as u16);\n"
             "        if goto == YY_ACCEPT_ACTION {\n"
             "            self.final_value = lhs_value;\n"
+            "            self.on_parse_accept();\n"
             "            return Ok(ReduceOutcome::Accept);\n"
             "        }\n"
             "        if goto == YY_ERROR_ACTION || goto == YY_NO_ACTION {\n"
             "            self.errored = true;\n"
+            "            self.on_syntax_error(lhs_sym as u16, parent_state);\n"
             "            return Err(ParseError::SyntaxError {\n"
             "                token: lhs_sym as u16,\n"
             "                state: parent_state,\n"
