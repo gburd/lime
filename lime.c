@@ -4688,6 +4688,7 @@ int main(int argc, char **argv){
   static int rustFlag = 0;      /* --rust: emit Rust output instead of C
                                 ** (additive; no replacement of C output) */
   static int rustNoStdFlag = 0; /* --rust-nostd: parser.rs gets #![no_std] */
+  static int rustLexFlag   = 0; /* --rustlex: emit Rust lexer (deferred) */
   extern int g_lime_rust_no_std;
   static int rustCrateFlag = 0; /* --rust-crate: emit a complete Cargo
                                 ** crate alongside the .rs file
@@ -4760,6 +4761,10 @@ int main(int argc, char **argv){
     {OPT_FLAG, "-rustnostd", (char*)&rustNoStdFlag,
                     "Emit #![no_std] on the parser.rs.  Replaces Vec<Frame> "
                     "with alloc::vec::Vec (parser still requires alloc)."},
+    {OPT_FLAG, "-rustlex", (char*)&rustLexFlag,
+                    "Emit a Rust mirror of the lex (.lex) tokenizer alongside "
+                    "the C output.  DEFERRED in v0.8.0 -- prints a notice and "
+                    "exits 0.  See docs/RUST_OUTPUT.md for status."},
     {OPT_FLAG, "-rustcrate", (char*)&rustCrateFlag,
                     "With --rust, also emit Cargo.toml + src/lib.rs around "
                     "the parser.rs so the output is a ready-to-build crate."},
@@ -4974,6 +4979,14 @@ int main(int argc, char **argv){
     **
     ** Additive -- ReportTable still runs below to produce the C
     ** output.  Both .c and .rs are written in one lime invocation. */
+    if( rustLexFlag ){
+        fprintf(stderr,
+            "lime --rustlex: Rust lexer output is DEFERRED in v0.8.0.  The\n"
+            "  parser-side --rust path is fully functional; the lex subsystem\n"
+            "  (M0-M5) hasn't been mirrored to Rust yet.  Tracking item in\n"
+            "  docs/RUST_OUTPUT.md.  Exiting without emitting a .lex.rs.\n");
+        /* Continue with C output for the .lex / .y file as normal. */
+    }
     if( rustFlag ){
         g_lime_rust_no_std = rustNoStdFlag;
         char rust_path[512];
