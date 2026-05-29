@@ -168,7 +168,9 @@ static void test_rust_emit_skeleton(void) {
     int has_push       = strstr(content, "fn push") != NULL;
     int has_finalize   = strstr(content, "fn finalize") != NULL;
     int has_error_enum = strstr(content, "enum ParseError") != NULL;
-    int has_skel_marker= strstr(content, "SKELETON") != NULL;
+    int has_yy_action  = strstr(content, "YY_ACTION: &[u16]") != NULL;
+    int has_dispatch   = strstr(content, "YY_RULE_REDUCE_FN") != NULL;
+    int has_reduce_fn  = strstr(content, "fn yy_rule_0") != NULL;
 
     free(content);
     rm_dir(tmpdir);
@@ -182,7 +184,9 @@ static void test_rust_emit_skeleton(void) {
     ASSERT(has_push,       "missing fn push");
     ASSERT(has_finalize,   "missing fn finalize");
     ASSERT(has_error_enum, "missing ParseError enum");
-    ASSERT(has_skel_marker,"missing SKELETON marker comment");
+    ASSERT(has_yy_action,  "missing YY_ACTION static slice");
+    ASSERT(has_dispatch,   "missing YY_RULE_REDUCE_FN dispatch table");
+    ASSERT(has_reduce_fn,  "missing fn yy_rule_0 callback");
     PASS();
 }
 

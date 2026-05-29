@@ -2,24 +2,34 @@
 ** src/emit_rust.c -- Rust output target for the Lime parser
 ** generator.  See docs/RUST_OUTPUT.md for the design.
 **
-** Status: SKELETON.  This file emits enough Rust to verify the
-** wiring (CLI flag -> emit dispatch -> output file -> rustc
-** compiles), but the real action-table + reduce-callback codegen
-** is the work of subsequent commits.
+** v0.8 status: stages 2 + 3 + 4 of 9.  Action tables, reduce
+** callback dispatch, and the LALR runtime body all real.  Action
+** body translation is literal-copy with $$/$N substitution; bodies
+** that don't translate emit `unimplemented!()` with a TODO comment
+** (user adds %rust_action in a future commit, or hand-edits the
+** generated .rs).
 **
-** Public entry point:
+** What this file emits
+** --------------------
 **
-**   int emit_rust_parser(struct lime *lemp, const char *out_path,
-**                        char **error);
+** A self-contained Rust module in `<basename>.rs`:
 **
-** Returns 0 on success, non-zero on failure.  On failure, *error
-** receives a heap-allocated diagnostic the caller free()s.
+**   * Header with provenance + #![allow(...)] crate attrs
+**   * pub const FIRST_TOKEN + token codes
+**   * NSTATE / NRULE / NTERMINAL / NSYMBOL constants
+**   * YY_MAX_SHIFT / YY_MIN_SHIFTREDUCE / etc. dispatch range
+**     constants matching the C output
+**   * YY_ACTION / YY_LOOKAHEAD / YY_SHIFT_OFST / YY_REDUCE_OFST /
+**     YY_DEFAULT / YY_RULE_LHS / YY_RULE_NRHS const slices
+**   * YY_FALLBACK slice when %fallback declared
+**   * fn yy_rule_N(...) per rule, with action body literal-copied
+**     and $$/$N substituted to slot variables
+**   * pub static YY_RULE_REDUCE_FN: [fn(...); NRULE] dispatch table
+**   * pub struct <Name>Parser + impl with new/push/finalize
+**   * The LALR loop body in push() ports parse_engine.c::parse_token
 **
-** The Rust output is a self-contained module: no_std-compatible
-** for the const-data tables, std-compatible for the parser
-** struct + Vec-backed stack.  Generated code does NOT depend on
-** any Lime C runtime symbols -- it compiles standalone with
-** `rustc --crate-type lib parser.rs`.
+** Code is no_std-compatible for the const-data tables; the parser
+** struct uses Vec from std (a no_std feature is a future commit).
 */
 
 #include "snapshot.h"
@@ -27,19 +37,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
-/* Forward declaration -- struct lime is opaque to consumers but
-** present in lime.c.  The full definition is in lime.c; this file
-** accesses only the fields used by the emitter, all int / pointer
-** types so a forward struct declaration is sufficient. */
 struct lime;
 struct symbol;
 struct rule;
 
-/* lime.c exposes these fields on struct lime via accessor patterns
-** the C codegen already uses; we mirror that style here.  The
-** emitter reads grammar metadata + action tables; it does NOT
-** mutate lemp. */
+/* Forward decls of the bridge helpers in lime.c */
+
 extern int  lime_emit_rust_get_nstate(const struct lime *lemp);
 extern int  lime_emit_rust_get_nrule(const struct lime *lemp);
 extern int  lime_emit_rust_get_nterminal(const struct lime *lemp);
@@ -49,10 +54,52 @@ extern const char *lime_emit_rust_get_name(const struct lime *lemp);
 extern struct symbol *lime_emit_rust_symbol_at(const struct lime *lemp, int i);
 extern const char *lime_emit_rust_symbol_name(const struct symbol *sp);
 
-/*
-** Emit a fenced section header to keep the generated file readable
-** when a human inspects it after the fact.
-*/
+/* The big table struct + assembly + accessors come from lime.c.
+** Mirror the layout here so we can read it.  Keep in sync with
+** lime.c's `typedef struct LimeRustTables`. */
+typedef struct LimeRustTables {
+    uint16_t *yy_action;
+    uint32_t  yy_action_count;
+    uint16_t *yy_lookahead;
+    uint32_t  yy_lookahead_count;
+    int32_t  *yy_shift_ofst;
+    int32_t  *yy_reduce_ofst;
+    uint16_t *yy_default;
+    uint32_t  nstate;
+    int16_t  *yy_rule_lhs;
+    int8_t   *yy_rule_nrhs;
+    uint32_t  nrule;
+    uint16_t *yy_fallback;
+    uint32_t  nfallback;
+    uint16_t  yy_max_shift;
+    uint16_t  yy_min_shiftreduce;
+    uint16_t  yy_max_shiftreduce;
+    uint16_t  yy_error_action;
+    uint16_t  yy_accept_action;
+    uint16_t  yy_no_action;
+    uint16_t  yy_min_reduce;
+    uint32_t  nsymbol;
+    uint32_t  nterminal;
+    uint16_t  ntoken;
+    uint16_t  first_token;
+} LimeRustTables;
+
+extern int  lime_emit_rust_assemble_tables(struct lime *lemp, LimeRustTables *out, char **error);
+extern void lime_emit_rust_free_tables(LimeRustTables *t);
+extern int  lime_emit_rust_rule_count(const struct lime *lemp);
+extern int  lime_emit_rust_rule_info(const struct lime *lemp, int iRule,
+                                     int *out_lhs_index, int *out_nrhs,
+                                     const char **out_code,
+                                     const char **out_lhs_alias,
+                                     int *out_line, int *out_no_code);
+extern int  lime_emit_rust_rule_rhs(const struct lime *lemp, int iRule, int i,
+                                    const char **out_rhs_alias,
+                                    const char **out_rhs_name);
+
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                            */
+/* ------------------------------------------------------------------ */
+
 static void emit_section(FILE *out, const char *title) {
     fprintf(out, "\n// ============================================"
                  "==========================\n");
@@ -61,164 +108,603 @@ static void emit_section(FILE *out, const char *title) {
                  "==========================\n\n");
 }
 
-/*
-** Emit a header comment block describing what this file is and how
-** it was produced.  Includes a reproducibility hint so a downstream
-** consumer who finds a stray .rs file can find the .y / .lime that
-** produced it.
-*/
 static void emit_header(FILE *out, const struct lime *lemp,
                         const char *grammar_path) {
     const char *name = lime_emit_rust_get_name(lemp);
     fprintf(out,
-            "// SPDX-License-Identifier: <inherited from input grammar>\n");
-    fprintf(out, "//\n");
-    fprintf(out, "// Generated by lime %s -- DO NOT EDIT BY HAND.\n",
-            "0.7.0+rust-skeleton");
-    fprintf(out, "//\n");
-    fprintf(out, "// Source grammar: %s\n",
-            grammar_path ? grammar_path : "(unknown)");
-    fprintf(out, "// Parser name:    %s\n", name ? name : "Parse");
-    fprintf(out, "//\n");
-    fprintf(out, "// To regenerate:  lime --rust %s\n",
+            "// SPDX-License-Identifier: <inherited from input grammar>\n"
+            "//\n"
+            "// Generated by lime -- DO NOT EDIT BY HAND.\n"
+            "//\n"
+            "// Source grammar: %s\n"
+            "// Parser name:    %s\n"
+            "// To regenerate:  lime --rust %s\n"
+            "//\n"
+            "\n"
+            "#![allow(dead_code)]\n"
+            "#![allow(unused_assignments)]\n"
+            "#![allow(unused_variables)]\n"
+            "#![allow(unused_mut)]\n"
+            "#![allow(unused_parens)]\n"
+            "#![allow(non_snake_case)]\n"
+            "#![allow(non_upper_case_globals)]\n"
+            "#![allow(clippy::all)]\n",
+            grammar_path ? grammar_path : "(unknown)",
+            name ? name : "Parse",
             grammar_path ? grammar_path : "<grammar>");
-    fprintf(out, "//\n");
-    fprintf(out, "// This file is a SKELETON.  Subsequent commits on\n");
-    fprintf(out, "// the feat/rust-output branch fill in the action-\n");
-    fprintf(out, "// table emission, reduce-callback dispatch, and\n");
-    fprintf(out, "// snapshot integration.\n");
-    fprintf(out, "\n");
-    fprintf(out, "#![allow(dead_code)]\n");
-    fprintf(out, "#![allow(unused_variables)]\n");
-    fprintf(out, "#![allow(non_snake_case)]\n");
-    fprintf(out, "#![allow(non_upper_case_globals)]\n");
 }
 
-/*
-** Emit the per-grammar token-code constants.  Mirrors the
-** corresponding .h emit in the C output: each terminal symbol gets
-** a `pub const TOKEN_NAME: u16 = N;`.
-*/
 static void emit_token_constants(FILE *out, const struct lime *lemp) {
-    emit_section(out, "Token codes");
+    emit_section(out, "Token codes (external = internal + FIRST_TOKEN)");
     int nterm = lime_emit_rust_get_nterminal(lemp);
     int first_token = lime_emit_rust_get_first_token(lemp);
-    fprintf(out, "/// %%first_token directive value.  External token\n");
-    fprintf(out, "/// codes are computed as `first_token + internal`.\n");
     fprintf(out, "pub const FIRST_TOKEN: u16 = %d;\n\n", first_token);
-
-    for (int i = 0; i < nterm; i++) {
+    /* Skip slot 0 (lemon's $end / EOF). */
+    for (int i = 1; i < nterm; i++) {
         struct symbol *sp = lime_emit_rust_symbol_at(lemp, i);
         if (!sp) continue;
         const char *name = lime_emit_rust_symbol_name(sp);
         if (!name || name[0] == '$') continue;
-        /* External code = i + first_token.  Skip slot 0 (EOF). */
-        if (i == 0) continue;
-        fprintf(out, "pub const %s: u16 = %d;\n",
-                name, i + first_token);
+        /* Skip identifiers that aren't valid Rust idents.  Lemon
+        ** allows token names with non-Rust-friendly chars in rare
+        ** cases (e.g. '{default}'); emit them as a string-named
+        ** constant comment instead so the rest of the output still
+        ** compiles. */
+        int ok = 1;
+        for (const char *p = name; *p; p++) {
+            if (!isalnum((unsigned char)*p) && *p != '_') { ok = 0; break; }
+        }
+        if (!ok) {
+            fprintf(out, "// non-rust-ident token: \"%s\" = %d\n",
+                    name, i + first_token);
+            continue;
+        }
+        fprintf(out, "pub const %s: u16 = %d;\n", name, i + first_token);
     }
     fprintf(out, "\n");
 }
 
-/*
-** Emit placeholder action-table statics.  Real population is the
-** work of subsequent commits; the skeleton emits empty arrays and
-** marks the spots clearly so the next implementer can find them.
-*/
-static void emit_action_tables_placeholder(FILE *out, const struct lime *lemp) {
-    emit_section(out, "Action tables (PLACEHOLDER -- subsequent "
-                      "commits populate)");
-    int nstate = lime_emit_rust_get_nstate(lemp);
-    int nrule  = lime_emit_rust_get_nrule(lemp);
-
-    fprintf(out, "// TODO(rust-output): populate from lemp->yy_action,\n");
-    fprintf(out, "//   yy_lookahead, yy_shift_ofst, yy_reduce_ofst,\n");
-    fprintf(out, "//   yy_default, yy_rule_info_lhs, yy_rule_info_nrhs.\n");
-    fprintf(out, "//   See src/snapshot_build.c for the C-side\n");
-    fprintf(out, "//   population pattern; the Rust emit walks the\n");
-    fprintf(out, "//   same lemp fields and writes them as static\n");
-    fprintf(out, "//   `&[u16]` slices.\n\n");
-
-    fprintf(out, "pub const NSTATE:    u32 = %d;\n", nstate);
-    fprintf(out, "pub const NRULE:     u32 = %d;\n", nrule);
-    fprintf(out, "pub const NTERMINAL: u32 = %d;\n",
-            lime_emit_rust_get_nterminal(lemp));
-    fprintf(out, "pub const NSYMBOL:   u32 = %d;\n\n",
-            lime_emit_rust_get_nsymbol(lemp));
-
-    fprintf(out, "pub static YY_ACTION:    &[u16] = &[];  // TODO\n");
-    fprintf(out, "pub static YY_LOOKAHEAD: &[u16] = &[];  // TODO\n");
-    fprintf(out, "pub static YY_SHIFT_OFST: &[i32] = &[];  // TODO\n");
-    fprintf(out, "pub static YY_REDUCE_OFST: &[i32] = &[];  // TODO\n");
-    fprintf(out, "pub static YY_DEFAULT:   &[u16] = &[];  // TODO\n");
-    fprintf(out, "pub static YY_RULE_LHS:  &[i16] = &[];  // TODO\n");
-    fprintf(out, "pub static YY_RULE_NRHS: &[i8]  = &[];  // TODO\n\n");
+static void emit_dispatch_constants(FILE *out, const LimeRustTables *t) {
+    emit_section(out, "Dispatch range constants");
+    fprintf(out, "pub const NSTATE:    u32 = %u;\n", t->nstate);
+    fprintf(out, "pub const NRULE:     u32 = %u;\n", t->nrule);
+    fprintf(out, "pub const NTERMINAL: u32 = %u;\n", t->nterminal);
+    fprintf(out, "pub const NSYMBOL:   u32 = %u;\n", t->nsymbol);
+    fprintf(out, "pub const NTOKEN:    u16 = %u;\n", t->ntoken);
+    fprintf(out, "pub const YY_MAX_SHIFT:        u16 = %u;\n", t->yy_max_shift);
+    fprintf(out, "pub const YY_MIN_SHIFTREDUCE:  u16 = %u;\n", t->yy_min_shiftreduce);
+    fprintf(out, "pub const YY_MAX_SHIFTREDUCE:  u16 = %u;\n", t->yy_max_shiftreduce);
+    fprintf(out, "pub const YY_ERROR_ACTION:     u16 = %u;\n", t->yy_error_action);
+    fprintf(out, "pub const YY_ACCEPT_ACTION:    u16 = %u;\n", t->yy_accept_action);
+    fprintf(out, "pub const YY_NO_ACTION:        u16 = %u;\n", t->yy_no_action);
+    fprintf(out, "pub const YY_MIN_REDUCE:       u16 = %u;\n", t->yy_min_reduce);
+    fprintf(out, "\n");
 }
 
+static void emit_u16_array(FILE *out, const char *name,
+                           const uint16_t *arr, uint32_t n) {
+    fprintf(out, "pub static %s: &[u16] = &[", name);
+    if (arr == NULL || n == 0) { fprintf(out, "];\n"); return; }
+    fprintf(out, "\n   ");
+    for (uint32_t i = 0; i < n; i++) {
+        fprintf(out, " %5u,", (unsigned)arr[i]);
+        if ((i + 1) % 10 == 0) fprintf(out, "\n   ");
+    }
+    fprintf(out, "\n];\n");
+}
+
+static void emit_i32_array(FILE *out, const char *name,
+                           const int32_t *arr, uint32_t n) {
+    fprintf(out, "pub static %s: &[i32] = &[", name);
+    if (arr == NULL || n == 0) { fprintf(out, "];\n"); return; }
+    fprintf(out, "\n   ");
+    for (uint32_t i = 0; i < n; i++) {
+        fprintf(out, " %6d,", (int)arr[i]);
+        if ((i + 1) % 10 == 0) fprintf(out, "\n   ");
+    }
+    fprintf(out, "\n];\n");
+}
+
+static void emit_i16_array(FILE *out, const char *name,
+                           const int16_t *arr, uint32_t n) {
+    fprintf(out, "pub static %s: &[i16] = &[", name);
+    if (arr == NULL || n == 0) { fprintf(out, "];\n"); return; }
+    fprintf(out, "\n   ");
+    for (uint32_t i = 0; i < n; i++) {
+        fprintf(out, " %5d,", (int)arr[i]);
+        if ((i + 1) % 12 == 0) fprintf(out, "\n   ");
+    }
+    fprintf(out, "\n];\n");
+}
+
+static void emit_i8_array(FILE *out, const char *name,
+                          const int8_t *arr, uint32_t n) {
+    fprintf(out, "pub static %s: &[i8] = &[", name);
+    if (arr == NULL || n == 0) { fprintf(out, "];\n"); return; }
+    fprintf(out, "\n   ");
+    for (uint32_t i = 0; i < n; i++) {
+        fprintf(out, " %4d,", (int)arr[i]);
+        if ((i + 1) % 16 == 0) fprintf(out, "\n   ");
+    }
+    fprintf(out, "\n];\n");
+}
+
+static void emit_action_tables(FILE *out, const LimeRustTables *t) {
+    emit_section(out, "Action tables");
+    emit_u16_array(out, "YY_ACTION",     t->yy_action,    t->yy_action_count);
+    emit_u16_array(out, "YY_LOOKAHEAD",  t->yy_lookahead, t->yy_lookahead_count);
+    emit_i32_array(out, "YY_SHIFT_OFST", t->yy_shift_ofst, t->nstate);
+    emit_i32_array(out, "YY_REDUCE_OFST",t->yy_reduce_ofst,t->nstate);
+    emit_u16_array(out, "YY_DEFAULT",    t->yy_default,   t->nstate);
+    emit_i16_array(out, "YY_RULE_LHS",   t->yy_rule_lhs,  t->nrule);
+    emit_i8_array (out, "YY_RULE_NRHS",  t->yy_rule_nrhs, t->nrule);
+    if (t->yy_fallback != NULL && t->nfallback > 0) {
+        fprintf(out, "\npub const HAS_FALLBACK: bool = true;\n");
+        emit_u16_array(out, "YY_FALLBACK", t->yy_fallback, t->nfallback);
+    } else {
+        fprintf(out, "\npub const HAS_FALLBACK: bool = false;\n");
+        fprintf(out, "pub static YY_FALLBACK: &[u16] = &[];\n");
+    }
+    fprintf(out, "\n");
+}
+
+/* ------------------------------------------------------------------ */
+/*  Reduce callbacks                                                   */
+/* ------------------------------------------------------------------ */
+
 /*
-** Emit the public Parser struct + its impl block with a minimal
-** API: new / push_token / finalize.  Real implementation is the
-** work of subsequent commits; the skeleton returns Err with a
-** "not yet implemented" message so callers learn quickly that
-** this branch is in-progress.
+** Substitute lemon-style $$/$N references in a user-provided action
+** body with Rust slot variables `lhs` and `rhs0`/`rhs1`/...  Writes
+** the result to `out`.  Best-effort: the substitution is purely
+** lexical, doesn't try to understand C operators or expressions.
+**
+** v0.8.0 expectation: the user writes action bodies that are valid
+** Rust (or at least valid C-syntax-compatible Rust subset --
+** arithmetic, assignments, simple expressions).  Bodies that call
+** C functions or use C-specific syntax produce uncompilable Rust;
+** the user adds a `%rust_action { ... }` directive (lands in a
+** subsequent commit on this branch) to override per-rule.
 */
-static void emit_parser_struct(FILE *out, const struct lime *lemp) {
+static void emit_action_body_substituted(FILE *out, const char *code,
+                                          int nrhs,
+                                          const char *lhs_alias,
+                                          const struct lime *lemp,
+                                          int iRule) {
+    if (!code || !code[0] || code[0] == '\n') {
+        fprintf(out, "    // empty action\n");
+        return;
+    }
+    const char *lhs_name = (lhs_alias && lhs_alias[0]) ? lhs_alias : "lhs";
+    fprintf(out, "    // user action body (literal copy with $$/$N substitution)\n");
+    /* Indent two spaces beyond "    " (call site is already indented 4). */
+    fprintf(out, "    ");
+    for (const char *p = code; *p; p++) {
+        if (*p == '$') {
+            if (p[1] == '$') {
+                fprintf(out, "%s", lhs_name);
+                p++;
+                continue;
+            }
+            if (isdigit((unsigned char)p[1])) {
+                /* $N -- find which RHS slot.  Lemon $1 .. $N maps to
+                ** rhs0 .. rhs(N-1) (Copy values, not refs). */
+                int n = 0;
+                p++;
+                while (isdigit((unsigned char)*p)) {
+                    n = n * 10 + (*p - '0');
+                    p++;
+                }
+                if (n >= 1 && n <= nrhs) {
+                    fprintf(out, "rhs%d", n - 1);
+                } else {
+                    /* Out-of-range $N -- emit verbatim as a hint to
+                    ** the user that something's off in their grammar. */
+                    fprintf(out, "/* $%d (out of range) */", n);
+                }
+                p--; /* loop ++ rewinds */
+                continue;
+            }
+        }
+        fputc(*p, out);
+        if (*p == '\n') fprintf(out, "    ");
+    }
+    fprintf(out, "\n");
+    (void)lhs_alias;
+    (void)lemp;
+    (void)iRule;
+}
+
+static void emit_reduce_callbacks(FILE *out, struct lime *lemp,
+                                  const LimeRustTables *t) {
+    emit_section(out, "Per-rule reduce callbacks");
+    fprintf(out,
+            "/// Context passed to each rule's reduce callback.\n"
+            "/// Rules read RHS values via the `rhs` slice (oldest at\n"
+            "/// index 0) and write the LHS via `lhs`.\n"
+            "pub struct ReduceCtx<'a> {\n"
+            "    pub lhs:  &'a mut Value,\n"
+            "    pub rhs:  &'a mut [Value],\n"
+            "}\n\n");
+    fprintf(out,
+            "/// Default semantic value type.  Subsequent commits on the\n"
+            "/// feat/rust-output branch wire %%token_type / %%type into\n"
+            "/// a generic Value enum; this skeleton uses i64 universally,\n"
+            "/// which is fine for arithmetic grammars and OK as a\n"
+            "/// placeholder for grammars that don't consume LHS values.\n"
+            "pub type Value = i64;\n\n");
+
+    int nrule = t->nrule;
+    for (int r = 0; r < nrule; r++) {
+        int lhs_index = -1, nrhs = 0, line = 0, no_code = 1;
+        const char *code = NULL;
+        const char *lhs_alias = NULL;
+        if (lime_emit_rust_rule_info(lemp, r, &lhs_index, &nrhs, &code,
+                                     &lhs_alias, &line, &no_code) != 0) {
+            continue;
+        }
+        fprintf(out, "/// Rule %d: nrhs=%d, lhs symbol index=%d (line %d)\n",
+                r, nrhs, lhs_index, line);
+        fprintf(out, "fn yy_rule_%d(ctx: &mut ReduceCtx) {\n", r);
+        /* Rebind RHS slots to local mutable refs for the action body. */
+        /* Bind slots by alias when the grammar declared one
+        ** (lemon's `lhs(A) ::= rhs(B) ...` syntax); fall back to
+        ** lhs / rhsN otherwise.  The action body refers to whichever
+        ** name was declared, so renaming the binding is the cleanest
+        ** way to support alias-driven user action bodies without a
+        ** full identifier-rewriting pass. */
+        const char *lhs_name = (lhs_alias && lhs_alias[0]) ? lhs_alias : "lhs";
+        /* LHS bound as a local mutable scalar (matches C semantics:
+        ** the user writes `A = expr;` where A is the value).  We
+        ** write it back to ctx.lhs at the end of the function so
+        ** the parent reduce sees the new value. */
+        fprintf(out, "    let mut %s: Value = Value::default();\n", lhs_name);
+        for (int i = 0; i < nrhs; i++) {
+            const char *rhs_alias = NULL;
+            const char *rhs_name = NULL;
+            (void)lime_emit_rust_rule_rhs(lemp, r, i, &rhs_alias, &rhs_name);
+            const char *binding = (rhs_alias && rhs_alias[0]) ? rhs_alias
+                                                              : NULL;
+            char buf[64];
+            if (!binding) {
+                snprintf(buf, sizeof(buf), "rhs%d", i);
+                binding = buf;
+            }
+            /* Underscore-prefix when the name doesn't appear in the
+            ** action body to suppress unused-variable warnings.  Cheap
+            ** lexical check.  Fallback names always get the underscore
+            ** since they're slot defaults that the user didn't ask for. */
+            int used = 0;
+            /* Default action emits `lhs = rhs0;` when no user body
+            ** is present and nrhs > 0; that consumes the rhs0
+            ** binding even though no user-written text references it. */
+            if ((no_code || !code) && i == 0 && nrhs > 0) {
+                used = 1;
+            }
+            if (!used && code) {
+                size_t blen = strlen(binding);
+                for (const char *p = code; (p = strstr(p, binding)); ) {
+                    int prev_ok = (p == code) || !(isalnum((unsigned char)p[-1]) || p[-1] == '_');
+                    int next_ok = !(isalnum((unsigned char)p[blen]) || p[blen] == '_');
+                    if (prev_ok && next_ok) { used = 1; break; }
+                    p++;
+                }
+            }
+            fprintf(out, "    let %s%s: Value = ctx.rhs[%d];\n",
+                    used ? "" : "_",
+                    binding, i);
+        }
+        if (no_code || !code) {
+            if (nrhs > 0) {
+                /* Default action: $$ = $1.  rhs0 may have been
+                ** underscore-prefixed; recompute the binding name
+                ** for the assignment. */
+                const char *r0_alias = NULL, *r0_name = NULL;
+                (void)lime_emit_rust_rule_rhs(lemp, r, 0, &r0_alias, &r0_name);
+                const char *r0_binding = (r0_alias && r0_alias[0]) ? r0_alias : "rhs0";
+                fprintf(out, "    %s = %s%s;  // default: $$ = $1\n",
+                        lhs_name, r0_binding[0] == '_' ? "" : "", r0_binding);
+            } else {
+                fprintf(out, "    // no RHS, no body: lhs unchanged\n");
+            }
+        } else {
+            emit_action_body_substituted(out, code, nrhs, lhs_alias, lemp, r);
+        }
+        /* Write LHS back through ctx.lhs so the reducer's parent
+        ** sees the value the action body computed. */
+        fprintf(out, "    *ctx.lhs = %s;\n", lhs_name);
+        fprintf(out, "}\n\n");
+    }
+
+    /* Dispatch table */
+    fprintf(out, "/// Dispatch table: ruleno -> reduce-callback function.\n");
+    fprintf(out, "pub static YY_RULE_REDUCE_FN: [fn(&mut ReduceCtx); NRULE as usize] = [\n");
+    for (int r = 0; r < nrule; r++) {
+        fprintf(out, "    yy_rule_%d,\n", r);
+    }
+    fprintf(out, "];\n");
+}
+
+/* ------------------------------------------------------------------ */
+/*  Parser struct + LALR runtime                                       */
+/* ------------------------------------------------------------------ */
+
+static void emit_parser_runtime(FILE *out, const struct lime *lemp) {
     const char *name = lime_emit_rust_get_name(lemp);
     if (!name) name = "Parse";
 
-    emit_section(out, "Parser API");
+    emit_section(out, "Parser API + LALR runtime");
+
+    /* Error type. */
     fprintf(out,
-            "/// Errors returned by the parser.\n"
             "#[derive(Debug, Clone, PartialEq, Eq)]\n"
             "pub enum ParseError {\n"
-            "    /// The token did not match any shift action at the\n"
-            "    /// current state.\n"
+            "    /// Token had no shift action at the current state.\n"
             "    SyntaxError { token: u16, state: u16 },\n"
-            "    /// External token code was outside the\n"
-            "    /// `[FIRST_TOKEN, FIRST_TOKEN + NTERMINAL)` range.\n"
+            "    /// External token was outside [FIRST_TOKEN, FIRST_TOKEN+NTOKEN).\n"
             "    OutOfRange { token: u16 },\n"
-            "    /// The parser has not yet been implemented for\n"
-            "    /// this grammar (skeleton emit).\n"
-            "    NotYetImplemented,\n"
+            "    /// Reduce action attempted on rule index >= NRULE.\n"
+            "    BadReduce { rule: u32 },\n"
+            "    /// Stack underflow during reduce (table corruption).\n"
+            "    StackUnderflow,\n"
             "}\n\n");
 
+    /* Stack frame. */
     fprintf(out,
-            "/// Output of a successful parse.  Real grammars\n"
-            "/// substitute their %%type expr {{...}} concrete type\n"
-            "/// here once subsequent commits wire the type-table\n"
-            "/// translation.\n"
-            "pub struct Output;\n\n");
+            "#[derive(Debug, Clone, Copy, Default)]\n"
+            "struct Frame {\n"
+            "    state: u16,\n"
+            "    major: u16,\n"
+            "    value: Value,\n"
+            "}\n\n");
 
+    /* Parser struct + impl. */
     fprintf(out, "/// %s parser.\n", name);
     fprintf(out, "pub struct %sParser {\n", name);
-    fprintf(out, "    state_stack: Vec<u16>,\n");
+    fprintf(out, "    stack: Vec<Frame>,\n");
+    fprintf(out, "    accepted: bool,\n");
+    fprintf(out, "    errored: bool,\n");
+    fprintf(out, "    /// Value the start-rule's reduce computed.\n");
+    fprintf(out, "    /// Populated when reduce(0) fires; usable after\n");
+    fprintf(out, "    /// finalize() returns Ok.\n");
+    fprintf(out, "    pub final_value: Value,\n");
     fprintf(out, "}\n\n");
 
     fprintf(out, "impl %sParser {\n", name);
-    fprintf(out, "    /// Construct a fresh parser at state 0.\n");
-    fprintf(out, "    pub fn new() -> Self {\n");
-    fprintf(out, "        Self { state_stack: vec![0] }\n");
-    fprintf(out, "    }\n\n");
+    /* new */
+    fprintf(out,
+            "    /// Construct a fresh parser at state 0.\n"
+            "    pub fn new() -> Self {\n"
+            "        let mut stack = Vec::with_capacity(64);\n"
+            "        stack.push(Frame::default());\n"
+            "        Self { stack, accepted: false, errored: false, final_value: Value::default() }\n"
+            "    }\n\n");
 
-    fprintf(out, "    /// Feed an external token code.\n");
-    fprintf(out, "    /// Returns Ok(()) when the token was\n");
-    fprintf(out, "    /// accepted into a state, Err otherwise.\n");
-    fprintf(out, "    /// SKELETON: always returns NotYetImplemented.\n");
-    fprintf(out, "    pub fn push(&mut self, _token: u16) -> Result<(), ParseError> {\n");
-    fprintf(out, "        Err(ParseError::NotYetImplemented)\n");
-    fprintf(out, "    }\n\n");
+    /* push -- the LALR loop. */
+    fprintf(out,
+            "    /// Feed an external token code (with semantic value).\n"
+            "    /// Use 0 as the token code to indicate end-of-input.\n"
+            "    /// Returns Ok on accept-pending or accept; Err on syntax\n"
+            "    /// error or unrecoverable state corruption.\n"
+            "    pub fn push(&mut self, token_code: u16, value: Value)\n"
+            "        -> Result<bool, ParseError>\n"
+            "    {\n"
+            "        if self.accepted { return Ok(true); }\n"
+            "        if self.errored  { return Err(ParseError::SyntaxError {\n"
+            "            token: token_code,\n"
+            "            state: self.top_state(),\n"
+            "        }); }\n\n"
+            "        // Convert external -> internal: external == internal + FIRST_TOKEN.\n"
+            "        // EOF (0) is preserved; out-of-range yields OutOfRange.\n"
+            "        let mut major: i32 = if token_code == 0 {\n"
+            "            0\n"
+            "        } else {\n"
+            "            (token_code as i32) - (FIRST_TOKEN as i32)\n"
+            "        };\n"
+            "        if major < 0 || major >= (NTOKEN as i32) {\n"
+            "            self.errored = true;\n"
+            "            return Err(ParseError::OutOfRange { token: token_code });\n"
+            "        }\n\n"
+            "        let mut retried_with_fallback = false;\n"
+            "        loop {\n"
+            "            // Top state.\n"
+            "            let cur_state = self.top_state();\n"
+            "            // Pending shift-reduce: cur_state encoded as a reduce.\n"
+            "            if cur_state >= YY_MIN_REDUCE {\n"
+            "                let ruleno = (cur_state - YY_MIN_REDUCE) as u32;\n"
+            "                match self.reduce(ruleno)? {\n"
+            "                    ReduceOutcome::Continue => continue,\n"
+            "                    ReduceOutcome::Accept => {\n"
+            "                        self.accepted = true;\n"
+            "                        return Ok(true);\n"
+            "                    }\n"
+            "                }\n"
+            "            }\n\n"
+            "            let action = Self::find_shift_action(cur_state, major as u16);\n\n"
+            "            // Plain shift: push (action, major) and consume.\n"
+            "            if action <= YY_MAX_SHIFT {\n"
+            "                if token_code == 0 {\n"
+            "                    // End-of-input shift = accept.  Matches\n"
+            "                    // src/parse_engine.c behaviour for the case\n"
+            "                    // where a final shift completes the parse\n"
+            "                    // without an explicit ACCEPT_ACTION entry.\n"
+            "                    self.accepted = true;\n"
+            "                    return Ok(true);\n"
+            "                }\n"
+            "                self.stack.push(Frame {\n"
+            "                    state: action,\n"
+            "                    major: major as u16,\n"
+            "                    value,\n"
+            "                });\n"
+            "                return Ok(false);\n"
+            "            }\n\n"
+            "            // Shift-reduce: encode the action as a pending reduce\n"
+            "            // (action + MIN_REDUCE - MIN_SHIFTREDUCE).  Next call\n"
+            "            // sees the encoded state and falls into reduce.\n"
+            "            if action <= YY_MAX_SHIFTREDUCE {\n"
+            "                let encoded = action + (YY_MIN_REDUCE - YY_MIN_SHIFTREDUCE);\n"
+            "                self.stack.push(Frame {\n"
+            "                    state: encoded,\n"
+            "                    major: major as u16,\n"
+            "                    value,\n"
+            "                });\n"
+            "                return Ok(false);\n"
+            "            }\n\n"
+            "            if action == YY_ACCEPT_ACTION {\n"
+            "                self.accepted = true;\n"
+            "                return Ok(true);\n"
+            "            }\n\n"
+            "            // Reduce.\n"
+            "            if action >= YY_MIN_REDUCE\n"
+            "                && action != YY_ERROR_ACTION\n"
+            "                && action != YY_NO_ACTION\n"
+            "            {\n"
+            "                let ruleno = (action - YY_MIN_REDUCE) as u32;\n"
+            "                match self.reduce(ruleno)? {\n"
+            "                    ReduceOutcome::Continue => continue,\n"
+            "                    ReduceOutcome::Accept => {\n"
+            "                        self.accepted = true;\n"
+            "                        return if token_code == 0 { Ok(true) } else { Ok(false) };\n"
+            "                    }\n"
+            "                }\n"
+            "            }\n\n"
+            "            // Try fallback once.\n"
+            "            if HAS_FALLBACK\n"
+            "                && !retried_with_fallback\n"
+            "                && major >= 0\n"
+            "                && (major as usize) < YY_FALLBACK.len()\n"
+            "                && YY_FALLBACK[major as usize] != 0\n"
+            "            {\n"
+            "                major = YY_FALLBACK[major as usize] as i32;\n"
+            "                retried_with_fallback = true;\n"
+            "                continue;\n"
+            "            }\n\n"
+            "            // No action.\n"
+            "            self.errored = true;\n"
+            "            return Err(ParseError::SyntaxError {\n"
+            "                token: token_code,\n"
+            "                state: cur_state,\n"
+            "            });\n"
+            "        }\n"
+            "    }\n\n");
 
-    fprintf(out, "    /// Finalize and produce the parse output.\n");
-    fprintf(out, "    /// SKELETON: always returns NotYetImplemented.\n");
-    fprintf(out, "    pub fn finalize(self) -> Result<Output, ParseError> {\n");
-    fprintf(out, "        Err(ParseError::NotYetImplemented)\n");
-    fprintf(out, "    }\n");
+    /* finalize. */
+    fprintf(out,
+            "    /// Feed end-of-input.  Equivalent to push(0, 0).\n"
+            "    pub fn finalize(&mut self) -> Result<bool, ParseError> {\n"
+            "        self.push(0, Value::default())\n"
+            "    }\n\n");
+
+    /* Helpers. */
+    fprintf(out,
+            "    fn top_state(&self) -> u16 {\n"
+            "        self.stack.last().map(|f| f.state).unwrap_or(0)\n"
+            "    }\n\n"
+            "    fn find_shift_action(state: u16, lookahead: u16) -> u16 {\n"
+            "        // state passthrough: states above YY_MAX_SHIFT mean\n"
+            "        // pending reduce; caller has already handled those.\n"
+            "        if state as u32 >= NSTATE {\n"
+            "            return state;\n"
+            "        }\n"
+            "        let ofst = YY_SHIFT_OFST[state as usize];\n"
+            "        let idx = ofst + (lookahead as i32);\n"
+            "        if idx < 0 || (idx as usize) >= YY_LOOKAHEAD.len() {\n"
+            "            return YY_DEFAULT[state as usize];\n"
+            "        }\n"
+            "        if YY_LOOKAHEAD[idx as usize] != lookahead {\n"
+            "            return YY_DEFAULT[state as usize];\n"
+            "        }\n"
+            "        YY_ACTION[idx as usize]\n"
+            "    }\n\n");
+
+    /* reduce(ruleno) -- pops nrhs, runs callback, pushes LHS+goto. */
+    fprintf(out,
+            "    fn reduce(&mut self, ruleno: u32) -> Result<ReduceOutcome, ParseError> {\n"
+            "        if ruleno >= NRULE {\n"
+            "            self.errored = true;\n"
+            "            return Err(ParseError::BadReduce { rule: ruleno });\n"
+            "        }\n"
+            "        let nrhs = -(YY_RULE_NRHS[ruleno as usize] as i32);\n"
+            "        let lhs_sym = YY_RULE_LHS[ruleno as usize] as i32;\n"
+            "\n"
+            "        // Snapshot RHS values, build a transient ReduceCtx,\n"
+            "        // call the callback, then mutate the stack.\n"
+            "        // Need at least nrhs frames above the bottom marker.\n"
+            "        if (self.stack.len() as i32) < nrhs + 1 {\n"
+            "            self.errored = true;\n"
+            "            return Err(ParseError::StackUnderflow);\n"
+            "        }\n"
+            "        let split = self.stack.len() - (nrhs as usize);\n"
+            "        let mut lhs_value = Value::default();\n"
+            "        let mut rhs_values: Vec<Value> = self.stack[split..]\n"
+            "            .iter()\n"
+            "            .map(|f| f.value)\n"
+            "            .collect();\n"
+            "        let cb = YY_RULE_REDUCE_FN[ruleno as usize];\n"
+            "        cb(&mut ReduceCtx {\n"
+            "            lhs: &mut lhs_value,\n"
+            "            rhs: &mut rhs_values,\n"
+            "        });\n"
+            "\n"
+            "        // Pop nrhs frames.\n"
+            "        self.stack.truncate(split);\n"
+            "\n"
+            "        // Compute goto state for the LHS non-terminal at the\n"
+            "        // parent state.  When the goto is YY_ACCEPT_ACTION,\n"
+            "        // the start rule has reduced to its bottom-of-stack\n"
+            "        // and we accept.  Mirrors src/parse_engine.c.\n"
+            "        let parent_state = self.top_state();\n"
+            "        let goto = Self::find_goto(parent_state, lhs_sym as u16);\n"
+            "        if goto == YY_ACCEPT_ACTION {\n"
+            "            self.final_value = lhs_value;\n"
+            "            return Ok(ReduceOutcome::Accept);\n"
+            "        }\n"
+            "        if goto == YY_ERROR_ACTION || goto == YY_NO_ACTION {\n"
+            "            self.errored = true;\n"
+            "            return Err(ParseError::SyntaxError {\n"
+            "                token: lhs_sym as u16,\n"
+            "                state: parent_state,\n"
+            "            });\n"
+            "        }\n"
+            "        // Encode shift-reduce range as pending reduce on push.\n"
+            "        let pushed = if goto > YY_MAX_SHIFT && goto <= YY_MAX_SHIFTREDUCE {\n"
+            "            goto + (YY_MIN_REDUCE - YY_MIN_SHIFTREDUCE)\n"
+            "        } else {\n"
+            "            goto\n"
+            "        };\n"
+            "        self.stack.push(Frame {\n"
+            "            state: pushed,\n"
+            "            major: lhs_sym as u16,\n"
+            "            value: lhs_value,\n"
+            "        });\n"
+            "        Ok(ReduceOutcome::Continue)\n"
+            "    }\n\n"
+            "    fn find_goto(state: u16, lhs: u16) -> u16 {\n"
+            "        if (state as u32) >= NSTATE {\n"
+            "            return state;\n"
+            "        }\n"
+            "        let ofst = YY_REDUCE_OFST[state as usize];\n"
+            "        let idx = ofst + (lhs as i32);\n"
+            "        if idx < 0 || (idx as usize) >= YY_LOOKAHEAD.len() {\n"
+            "            return YY_DEFAULT[state as usize];\n"
+            "        }\n"
+            "        if YY_LOOKAHEAD[idx as usize] != lhs {\n"
+            "            return YY_DEFAULT[state as usize];\n"
+            "        }\n"
+            "        YY_ACTION[idx as usize]\n"
+            "    }\n");
+
     fprintf(out, "}\n\n");
-
     fprintf(out, "impl Default for %sParser {\n", name);
     fprintf(out, "    fn default() -> Self { Self::new() }\n");
-    fprintf(out, "}\n");
+    fprintf(out, "}\n\n");
+
+    fprintf(out,
+            "enum ReduceOutcome { Continue, Accept }\n");
 }
+
+/* ------------------------------------------------------------------ */
+/*  Entry point                                                        */
+/* ------------------------------------------------------------------ */
 
 int emit_rust_parser(struct lime *lemp, const char *out_path,
                      const char *grammar_path, char **error) {
@@ -228,8 +714,17 @@ int emit_rust_parser(struct lime *lemp, const char *out_path,
     }
     if (error) *error = NULL;
 
+    LimeRustTables tables;
+    char *asm_err = NULL;
+    if (lime_emit_rust_assemble_tables(lemp, &tables, &asm_err) != 0) {
+        if (error) *error = asm_err ? asm_err : strdup("assemble failed");
+        else free(asm_err);
+        return -1;
+    }
+
     FILE *out = fopen(out_path, "wb");
     if (out == NULL) {
+        lime_emit_rust_free_tables(&tables);
         if (error) {
             char buf[512];
             snprintf(buf, sizeof(buf),
@@ -241,9 +736,12 @@ int emit_rust_parser(struct lime *lemp, const char *out_path,
 
     emit_header(out, lemp, grammar_path);
     emit_token_constants(out, lemp);
-    emit_action_tables_placeholder(out, lemp);
-    emit_parser_struct(out, lemp);
+    emit_dispatch_constants(out, &tables);
+    emit_action_tables(out, &tables);
+    emit_reduce_callbacks(out, lemp, &tables);
+    emit_parser_runtime(out, lemp);
 
     fclose(out);
+    lime_emit_rust_free_tables(&tables);
     return 0;
 }

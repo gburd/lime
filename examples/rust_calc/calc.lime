@@ -1,0 +1,15 @@
+/* SPDX-License-Identifier: MIT */
+%name Calc
+%token PLUS.
+%token MINUS.
+%token TIMES.
+%token INTEGER.
+%first_token 257
+%left PLUS MINUS.
+%left TIMES.
+%start_symbol program
+program ::= expr.
+expr(A) ::= expr(B) PLUS  expr(C). { A = B + C; }
+expr(A) ::= expr(B) MINUS expr(C). { A = B - C; }
+expr(A) ::= expr(B) TIMES expr(C). { A = B * C; }
+expr(A) ::= INTEGER(B). { A = B; }

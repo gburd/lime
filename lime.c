@@ -4927,12 +4927,15 @@ int main(int argc, char **argv){
     /* Generate automatic AST reduction actions if %ast_auto is enabled */
     GenerateASTActions(&lem);
 
-    /* Generate the source code for the parser */
-    ReportTable(&lem, mhflag, sqlFlag);
-
-    /* v0.8 feat/rust-output: emit a Rust mirror of the parser when
-    ** --rust is set.  Additive -- C output already happened above.
-    ** Skeleton: real action-table population pending. */
+    /* v0.8 feat/rust-output: emit a Rust mirror of the parser
+    ** BEFORE ReportTable runs.  ReportTable's translate_code pass
+    ** mutates each rule's code text (substitutes $$/$N with
+    ** yymsp[N].minor.yyM stack-relative addressing for the C
+    ** output); the Rust emitter wants the pristine original text
+    ** so it can do its own $-substitution to Rust slot variables.
+    **
+    ** Additive -- ReportTable still runs below to produce the C
+    ** output.  Both .c and .rs are written in one lime invocation. */
     if( rustFlag ){
         char rust_path[512];
         const char *cp = strrchr(lem.filename, '.');
@@ -4948,6 +4951,9 @@ int main(int argc, char **argv){
             fprintf(stderr, "Wrote Rust parser to %s\n", rust_path);
         }
     }
+
+    /* Generate the source code for the parser */
+    ReportTable(&lem, mhflag, sqlFlag);
 
     /* Generate snapshot initialization code if -n flag is set */
     if( snapshotFlag ) ReportSnapshotInit(&lem);
@@ -13126,6 +13132,287 @@ void Configtable_clear(int(*f)(struct config *))
   for(i=0; i<x4a->size; i++) x4a->ht[i] = 0;
   x4a->count = 0;
   return;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Rust-emit table assembly                                          */
+/* ------------------------------------------------------------------ */
+/*
+** Data the Rust emitter needs.  The contents mirror what the C
+** generator emits via ReportTable's table loops; capturing them
+** as plain arrays lets src/emit_rust.c walk them without needing
+** access to acttab / axset / state internals.
+**
+** Lifetime: the caller owns the returned arrays.  Free with
+** lime_emit_rust_free_tables().  Allocated as a single struct so
+** errno/oom handling is one path.
+*/
+typedef struct LimeRustTables {
+    uint16_t *yy_action;
+    uint32_t  yy_action_count;
+    uint16_t *yy_lookahead;
+    uint32_t  yy_lookahead_count;
+    int32_t  *yy_shift_ofst;
+    int32_t  *yy_reduce_ofst;
+    uint16_t *yy_default;
+    uint32_t  nstate;     /* nxstate */
+
+    int16_t  *yy_rule_lhs;
+    int8_t   *yy_rule_nrhs;
+    uint32_t  nrule;
+
+    uint16_t *yy_fallback;
+    uint32_t  nfallback;
+
+    /* Action-range dispatch constants */
+    uint16_t  yy_max_shift;
+    uint16_t  yy_min_shiftreduce;
+    uint16_t  yy_max_shiftreduce;
+    uint16_t  yy_error_action;
+    uint16_t  yy_accept_action;
+    uint16_t  yy_no_action;
+    uint16_t  yy_min_reduce;
+
+    uint32_t  nsymbol;
+    uint32_t  nterminal;
+    uint16_t  ntoken;
+    uint16_t  first_token;
+} LimeRustTables;
+
+/*
+** Compute the assembled action / lookahead / state-offset / rule
+** tables.  Mirrors the assembly block at the top of
+** build_snapshot_from_lime, factored out so emit_rust.c (which is
+** a separate translation unit and can't see acttab etc.) can
+** consume the result.
+**
+** Returns 0 on success.  On failure returns non-zero with *error
+** set to a heap-allocated diagnostic the caller free()s.
+*/
+int lime_emit_rust_assemble_tables(struct lime *lemp, LimeRustTables *out, char **error) {
+    if (lemp == NULL || out == NULL) {
+        if (error) *error = strdup("assemble: bad arguments");
+        return -1;
+    }
+    if (error) *error = NULL;
+    memset(out, 0, sizeof(*out));
+
+    /* 1. Action-range constants -- mirrors build_snapshot_from_lime
+    ** and the top of ReportTable.  Idempotent: setting again to
+    ** the same values when ReportTable has already run. */
+    lemp->minShiftReduce = lemp->nstate;
+    lemp->errAction      = lemp->minShiftReduce + lemp->nrule;
+    lemp->accAction      = lemp->errAction + 1;
+    lemp->noAction       = lemp->accAction + 1;
+    lemp->minReduce      = lemp->noAction + 1;
+    lemp->maxAction      = lemp->minReduce + lemp->nrule;
+
+    out->nstate     = (uint32_t)lemp->nxstate;
+    out->nrule      = (uint32_t)lemp->nrule;
+    out->nsymbol    = (uint32_t)lemp->nsymbol;
+    out->nterminal  = (uint32_t)lemp->nterminal;
+    out->ntoken     = (uint16_t)lemp->nterminal;
+    out->first_token= (uint16_t)lemp->first_token;
+    out->yy_max_shift       = (uint16_t)(lemp->nxstate - 1);
+    out->yy_min_shiftreduce = (uint16_t)lemp->minShiftReduce;
+    out->yy_max_shiftreduce = (uint16_t)(lemp->minShiftReduce + lemp->nrule - 1);
+    out->yy_error_action    = (uint16_t)lemp->errAction;
+    out->yy_accept_action   = (uint16_t)lemp->accAction;
+    out->yy_no_action       = (uint16_t)lemp->noAction;
+    out->yy_min_reduce      = (uint16_t)lemp->minReduce;
+
+    /* 2. Action table assembly via acttab.  Same logic as
+    ** build_snapshot_from_lime.  We rerun rather than capture in
+    ** ReportTable to keep the emitter additive. */
+    struct axset *ax = (struct axset *)lime_calloc(lemp->nxstate * 2, sizeof(ax[0]));
+    if (ax == 0) {
+        if (error) *error = strdup("assemble: oom on axset");
+        return -1;
+    }
+    int i;
+    for (i = 0; i < lemp->nxstate; i++) {
+        struct state *stp = lemp->sorted[i];
+        ax[i*2].stp = stp;   ax[i*2].isTkn   = 1; ax[i*2].nAction   = stp->nTknAct;
+        ax[i*2+1].stp = stp; ax[i*2+1].isTkn = 0; ax[i*2+1].nAction = stp->nNtAct;
+    }
+    for (i = 0; i < lemp->nxstate * 2; i++) ax[i].iOrder = i;
+    qsort(ax, lemp->nxstate * 2, sizeof(ax[0]), axset_compare);
+
+    acttab *pActtab = acttab_alloc(lemp->nsymbol, lemp->nterminal);
+    if (pActtab == 0) {
+        lime_free(ax);
+        if (error) *error = strdup("assemble: oom on acttab");
+        return -1;
+    }
+    for (i = 0; i < lemp->nxstate * 2 && ax[i].nAction > 0; i++) {
+        struct state *stp = ax[i].stp;
+        struct action *ap;
+        if (ax[i].isTkn) {
+            for (ap = stp->ap; ap; ap = ap->next) {
+                if (ap->sp->index >= lemp->nterminal) continue;
+                int action = compute_action(lemp, ap);
+                if (action < 0) continue;
+                acttab_action(pActtab, ap->sp->index, action);
+            }
+            stp->iTknOfst = acttab_insert(pActtab, 1);
+        } else {
+            for (ap = stp->ap; ap; ap = ap->next) {
+                if (ap->sp->index < lemp->nterminal) continue;
+                if (ap->sp->index == lemp->nsymbol) continue;
+                int action = compute_action(lemp, ap);
+                if (action < 0) continue;
+                acttab_action(pActtab, ap->sp->index, action);
+            }
+            stp->iNtOfst = acttab_insert(pActtab, 0);
+        }
+    }
+    lime_free(ax);
+
+    int nactiontab    = acttab_action_size(pActtab);
+    int nlookaheadtab = acttab_lookahead_size(pActtab);
+    int nLookAhead    = lemp->nterminal + nactiontab;
+    if (nLookAhead < nlookaheadtab) nLookAhead = nlookaheadtab;
+
+    out->yy_action_count    = (uint32_t)nactiontab;
+    out->yy_lookahead_count = (uint32_t)nLookAhead;
+
+    /* 3. Allocate + populate the typed arrays. */
+    if (nactiontab > 0) {
+        out->yy_action = (uint16_t *)calloc((size_t)nactiontab, sizeof(uint16_t));
+        if (!out->yy_action) goto oom;
+        for (i = 0; i < nactiontab; i++) {
+            int act = acttab_yyaction(pActtab, i);
+            if (act < 0) act = lemp->noAction;
+            out->yy_action[i] = (uint16_t)act;
+        }
+    }
+    if (nLookAhead > 0) {
+        out->yy_lookahead = (uint16_t *)calloc((size_t)nLookAhead, sizeof(uint16_t));
+        if (!out->yy_lookahead) goto oom;
+        for (i = 0; i < nlookaheadtab; i++) {
+            int la = acttab_yylookahead(pActtab, i);
+            if (la < 0) la = lemp->nsymbol;
+            out->yy_lookahead[i] = (uint16_t)la;
+        }
+        /* Tail padding: lookahead entries beyond the acttab need to
+        ** point at nsymbol so out-of-range token tests fail. */
+        for (; i < nLookAhead; i++) out->yy_lookahead[i] = (uint16_t)lemp->nsymbol;
+    }
+    if (lemp->nxstate > 0) {
+        out->yy_shift_ofst  = (int32_t *)calloc((size_t)lemp->nxstate, sizeof(int32_t));
+        out->yy_reduce_ofst = (int32_t *)calloc((size_t)lemp->nxstate, sizeof(int32_t));
+        out->yy_default     = (uint16_t *)calloc((size_t)lemp->nxstate, sizeof(uint16_t));
+        if (!out->yy_shift_ofst || !out->yy_reduce_ofst || !out->yy_default) goto oom;
+        for (i = 0; i < lemp->nxstate; i++) {
+            struct state *stp = lemp->sorted[i];
+            out->yy_shift_ofst[i]  = stp->iTknOfst;
+            out->yy_reduce_ofst[i] = stp->iNtOfst;
+            out->yy_default[i]     = (uint16_t)(stp->iDfltReduce >= 0
+                                                ? stp->iDfltReduce + lemp->minReduce
+                                                : lemp->errAction);
+        }
+    }
+    if (lemp->nrule > 0) {
+        out->yy_rule_lhs  = (int16_t *)calloc((size_t)lemp->nrule, sizeof(int16_t));
+        out->yy_rule_nrhs = (int8_t  *)calloc((size_t)lemp->nrule, sizeof(int8_t));
+        if (!out->yy_rule_lhs || !out->yy_rule_nrhs) goto oom;
+        struct rule *rp;
+        for (rp = lemp->rule; rp; rp = rp->next) {
+            if (rp->iRule < 0 || rp->iRule >= lemp->nrule) continue;
+            out->yy_rule_lhs[rp->iRule]  = (int16_t)rp->lhs->index;
+            out->yy_rule_nrhs[rp->iRule] = (int8_t)(-rp->nrhs);  /* lemon convention */
+        }
+    }
+    /* yy_fallback when has_fallback */
+    if (lemp->has_fallback && lemp->nterminal > 0) {
+        out->nfallback   = (uint32_t)lemp->nterminal;
+        out->yy_fallback = (uint16_t *)calloc(out->nfallback, sizeof(uint16_t));
+        if (!out->yy_fallback) goto oom;
+        for (uint32_t fi = 0; fi < out->nfallback; fi++) {
+            struct symbol *p = lemp->symbols[fi];
+            out->yy_fallback[fi] = (p && p->fallback) ? (uint16_t)p->fallback->index : 0;
+        }
+    }
+
+    acttab_free(pActtab);
+    return 0;
+
+oom:
+    acttab_free(pActtab);
+    if (error) *error = strdup("assemble: oom while populating typed arrays");
+    free(out->yy_action);     out->yy_action = NULL;
+    free(out->yy_lookahead);  out->yy_lookahead = NULL;
+    free(out->yy_shift_ofst); out->yy_shift_ofst = NULL;
+    free(out->yy_reduce_ofst);out->yy_reduce_ofst = NULL;
+    free(out->yy_default);    out->yy_default = NULL;
+    free(out->yy_rule_lhs);   out->yy_rule_lhs = NULL;
+    free(out->yy_rule_nrhs);  out->yy_rule_nrhs = NULL;
+    free(out->yy_fallback);   out->yy_fallback = NULL;
+    return -1;
+}
+
+void lime_emit_rust_free_tables(LimeRustTables *t) {
+    if (!t) return;
+    free(t->yy_action);
+    free(t->yy_lookahead);
+    free(t->yy_shift_ofst);
+    free(t->yy_reduce_ofst);
+    free(t->yy_default);
+    free(t->yy_rule_lhs);
+    free(t->yy_rule_nrhs);
+    free(t->yy_fallback);
+    memset(t, 0, sizeof(*t));
+}
+
+/* Iterate user rules for the Rust emitter.  We expose this as a
+** count + accessor because struct rule's full layout isn't visible
+** to emit_rust.c. */
+int lime_emit_rust_rule_count(const struct lime *lemp) {
+    return lemp ? lemp->nrule : 0;
+}
+
+/* For rule iRule, return the LHS index, nrhs, code text (raw, with
+** $$/$N still present), and the line number for diagnostics.  Out
+** parameters may be NULL if the caller doesn't need that field. */
+int lime_emit_rust_rule_info(const struct lime *lemp, int iRule,
+                             int *out_lhs_index,
+                             int *out_nrhs,
+                             const char **out_code,
+                             const char **out_lhs_alias,
+                             int *out_line,
+                             int *out_no_code) {
+    if (!lemp) return -1;
+    struct rule *rp;
+    for (rp = lemp->rule; rp; rp = rp->next) {
+        if (rp->iRule == iRule) {
+            if (out_lhs_index) *out_lhs_index = rp->lhs->index;
+            if (out_nrhs)      *out_nrhs      = rp->nrhs;
+            if (out_code)      *out_code      = rp->code;
+            if (out_lhs_alias) *out_lhs_alias = rp->lhsalias;
+            if (out_line)      *out_line      = rp->line;
+            if (out_no_code)   *out_no_code   = rp->noCode;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* For rule iRule, RHS slot i, return the alias (may be NULL) and
+** symbol name. */
+int lime_emit_rust_rule_rhs(const struct lime *lemp, int iRule, int i,
+                            const char **out_rhs_alias,
+                            const char **out_rhs_name) {
+    if (!lemp) return -1;
+    struct rule *rp;
+    for (rp = lemp->rule; rp; rp = rp->next) {
+        if (rp->iRule == iRule) {
+            if (i < 0 || i >= rp->nrhs) return -1;
+            if (out_rhs_alias) *out_rhs_alias = rp->rhsalias ? rp->rhsalias[i] : NULL;
+            if (out_rhs_name)  *out_rhs_name  = rp->rhs[i]->name;
+            return 0;
+        }
+    }
+    return -1;
 }
 
 /* ------------------------------------------------------------------ */

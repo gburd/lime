@@ -292,6 +292,22 @@ if host_machine.system() != 'windows'
     timeout : 30)
 endif
 
+# v0.8 feat/rust-output stage-6: end-to-end Cargo-driven test.
+if host_machine.system() != 'windows'
+  test_emit_rust_cargo = executable('test_emit_rust_cargo',
+    'test_emit_rust_cargo.c',
+  )
+  test('emit_rust_cargo', test_emit_rust_cargo,
+    env : [
+      'LIME_BIN=' + lime_exe.full_path(),
+      'LIME_PROJECT_ROOT=' + meson.project_source_root(),
+    ],
+    depends : [lime_exe],
+    workdir : meson.project_source_root(),
+    is_parallel : false,
+    timeout : 120)
+endif
+
 # v0.6.x: YYFALLBACK AOT codegen regression.  Verifies the JIT
 # trace bakes yy_fallback into the find_shift_action emit path so
 # the runtime path that consults snap->yy_fallback is bypassed.
