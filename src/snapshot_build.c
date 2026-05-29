@@ -7,6 +7,7 @@
 ** generator output, simply by registering its tables with a snapshot.
 */
 #include "snapshot_build.h"
+#include <stdio.h>
 #include "snapshot.h"
 
 #include <stdatomic.h>
@@ -78,6 +79,38 @@ static uint64_t now_ns(void) {
 ParserSnapshot *snapshot_build_from_tables(const LimeParserTables *t) {
     if (t == NULL) return NULL;
 
+    /* v0.7.0: validate the bundle's magic + ABI-version stamp.
+    ** A v0.6.x or earlier *_snapshot.c whose LimeParserTables view
+    ** doesn't include the magic field will leave both magic and
+    ** abi_version zero (partial initialiser).  Reject loudly --
+    ** silent miscompile (which is what happened with Lime-Letter-25)
+    ** is the failure mode this magic is designed to prevent.
+    **
+    ** When the LIME_TABLES_ABI_VERSION constant later bumps,
+    ** mismatch produces the same loud refusal: the caller knows
+    ** to rebuild against the matching lime version. */
+    if (t->magic != LIME_TABLES_MAGIC) {
+        fprintf(stderr,
+                "snapshot_build_from_tables: LimeParserTables magic "
+                "0x%08x doesn't match expected 0x%08x.  This bundle "
+                "was built by a pre-v0.7.0 lime; rebuild against "
+                "lime >= v0.7.0.\n",
+                (unsigned)t->magic, (unsigned)LIME_TABLES_MAGIC);
+        return NULL;
+    }
+    if (t->abi_version != LIME_TABLES_ABI_VERSION) {
+        fprintf(stderr,
+                "snapshot_build_from_tables: LimeParserTables ABI "
+                "version %u doesn't match expected %u.  This bundle "
+                "was built by an incompatible lime; rebuild against "
+                "the matching version.\n",
+                (unsigned)t->abi_version,
+                (unsigned)LIME_TABLES_ABI_VERSION);
+        return NULL;
+    }
+
+    if (t == NULL) return NULL;
+
     ParserSnapshot *snap = calloc(1, sizeof(ParserSnapshot));
     if (snap == NULL) return NULL;
 
@@ -122,6 +155,12 @@ ParserSnapshot *snapshot_build_from_tables(const LimeParserTables *t) {
 
     snap->yy_ntoken = t->ntoken;
     snap->yy_first_token = t->first_token;
+
+    /* v0.7.0: stamp magic + ABI version for downstream sanity
+    ** checks.  Cheap; one assignment.  Useful when a void*
+    ** crosses an extension boundary or a debugger session. */
+    snap->magic = LIME_SNAPSHOT_MAGIC;
+    snap->abi_version = LIME_SNAPSHOT_ABI_VERSION;
     snap->yy_max_shift = t->yy_max_shift;
     snap->yy_min_shiftreduce = t->yy_min_shiftreduce;
     snap->yy_max_shiftreduce = t->yy_max_shiftreduce;

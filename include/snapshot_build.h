@@ -66,6 +66,12 @@ typedef struct LimeParserTables {
     uint32_t nsymbol;
     uint32_t nterminal;
     uint16_t ntoken; /* YYNTOKEN = highest terminal + 1 */
+    /* YYFIRSTTOKEN: the %first_token directive value (0 when not
+    ** declared).  Subtracted from external token codes by parse_token
+    ** to compute the internal action-table index.  Paired with
+    ** ntoken: the valid external code range is
+    ** [first_token, first_token + ntoken). */
+    uint16_t first_token;
 
     /* Action-range constants */
     uint16_t yy_max_shift;
@@ -97,23 +103,19 @@ typedef struct LimeParserTables {
     const char *grammar_source;
     uint32_t grammar_source_len;
 
-    /* %first_token directive value (0 when not declared).
-    ** Subtracted from external token codes by parse_token() in
-    ** src/parse_engine.c to compute the internal action-table
-    ** index.  Added in v0.6.x to fix Lime-Letter-25.
-    **
-    ** Position: appended at the END of LimeParserTables so older
-    ** generated *_snapshot.c builders -- whose `LimeParserTables`
-    ** view doesn't include this field -- continue to interoperate
-    ** with the v0.6.x host: the field is value-initialised to 0
-    ** by their `LimeParserTables tables = { ... };` partial
-    ** initialiser, which preserves the pre-fix behaviour for old
-    ** snapshots (no offset applied; runtime callers must pass
-    ** internal codes themselves, as before).  Snapshots produced
-    ** by v0.6.x lime correctly populate first_token and let
-    ** runtime callers pass external codes. */
-    uint16_t first_token;
+    /* Magic + ABI version pair.  Set unconditionally by the
+    ** generator.  snapshot_build_from_tables checks both and
+    ** rejects mismatched bundles with a clear error rather than
+    ** silently producing a wrong snapshot.  v0.6.3 generated
+    ** *_snapshot.c files leave these zero (partial initialiser);
+    ** v0.7.0+ runtime detects that and reports "snapshot was
+    ** built against pre-v0.7.0 lime; rebuild required". */
+    uint32_t magic;       /* LIME_TABLES_MAGIC */
+    uint16_t abi_version; /* LIME_TABLES_ABI_VERSION */
 } LimeParserTables;
+
+#define LIME_TABLES_MAGIC       0x4C494D45U   /* 'L','I','M','E' */
+#define LIME_TABLES_ABI_VERSION 1
 
 /**
  * @brief Build a fresh ParserSnapshot from a LimeParserTables bundle.

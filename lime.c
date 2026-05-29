@@ -79,7 +79,7 @@ int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "0.6.4"
+#define LIME_VERSION_STRING "0.7.0"
 #endif
 
 
@@ -11565,6 +11565,7 @@ void ReportSnapshotInit(struct lime *lemp)
     "        .nsymbol              = %d,\n"
     "        .nterminal            = %d,\n"
     "        .ntoken               = %d,\n"
+    "        .first_token          = %d,\n"
     "        .yy_max_shift         = %d,\n"
     "        .yy_min_shiftreduce   = %d,\n"
     "        .yy_max_shiftreduce   = %d,\n"
@@ -11576,7 +11577,8 @@ void ReportSnapshotInit(struct lime *lemp)
     "        .nfallback            = 0,\n"
     "        .grammar_source       = (const char *)s_grammar_source,\n"
     "        .grammar_source_len   = sizeof(s_grammar_source) - 1,\n"
-    "        .first_token          = %d,\n"
+    "        .magic                = LIME_TABLES_MAGIC,\n"
+    "        .abi_version          = LIME_TABLES_ABI_VERSION,\n"
     "    };\n"
     "    return snapshot_build_from_tables(&tables);\n"
     "}\n"
@@ -11604,6 +11606,7 @@ void ReportSnapshotInit(struct lime *lemp)
     lemp->nsymbol,
     lemp->nterminal,
     lemp->nterminal,                            /* YYNTOKEN = nterminal */
+    lemp->first_token,                          /* YYFIRSTTOKEN paired with ntoken */
     lemp->nxstate - 1,                          /* YY_MAX_SHIFT */
     lemp->minShiftReduce,                       /* YY_MIN_SHIFTREDUCE */
     lemp->minShiftReduce + lemp->nrule - 1,     /* YY_MAX_SHIFTREDUCE */
@@ -11611,7 +11614,6 @@ void ReportSnapshotInit(struct lime *lemp)
     lemp->accAction,
     lemp->noAction,
     lemp->minReduce,
-    lemp->first_token,                          /* YYFIRSTTOKEN at end-of-struct */
     name
   );
 
@@ -12134,6 +12136,8 @@ static struct ParserSnapshot *build_snapshot_from_lime(struct lime *lemp,
     tables.nterminal            = (uint32_t)lemp->nterminal;
     tables.ntoken               = (uint16_t)lemp->nterminal;
     tables.first_token          = (uint16_t)lemp->first_token;
+    tables.magic                = LIME_TABLES_MAGIC;
+    tables.abi_version          = LIME_TABLES_ABI_VERSION;
     tables.yy_max_shift         = (uint16_t)(lemp->nxstate - 1);
     tables.yy_min_shiftreduce   = (uint16_t)lemp->minShiftReduce;
     tables.yy_max_shiftreduce   = (uint16_t)(lemp->minShiftReduce + lemp->nrule - 1);

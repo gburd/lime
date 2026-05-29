@@ -13,6 +13,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* Magic + ABI version stamped on every ParserSnapshot constructed
+** via snapshot_build_from_tables.  Bumped on any layout-breaking
+** change to the struct. */
+#define LIME_SNAPSHOT_MAGIC       0x4C494D45U   /* L,I,M,E */
+#define LIME_SNAPSHOT_ABI_VERSION 1
+
+
 /* Atomic refcount type.
 **
 ** In C this is just <stdatomic.h>'s atomic_uint_fast32_t.  In C++
@@ -132,6 +139,16 @@ typedef struct ParserModule {
 **   4. Module data   - optional module identity and content hash
 */
 typedef struct ParserSnapshot {
+    /** Magic 'LIME' + ABI version stamped by snapshot_build_from_tables
+    ** at construction time.  Consumers that receive a ParserSnapshot
+    ** pointer of dubious origin (a void* across an extension boundary,
+    ** a corrupted dlopen, a debugger session) can sanity-check before
+    ** dereferencing.  Mismatched magic = treat the pointer as garbage.
+    ** Added in v0.7.0. */
+    uint32_t magic;
+    uint16_t abi_version;
+    uint16_t reserved16; /**< Padding -- next field is 8-byte aligned. */
+
     /** Monotonically increasing version number.  Each new snapshot
     ** produced from a grammar modification gets a higher version
     ** than the last. */
