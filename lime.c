@@ -4663,6 +4663,10 @@ int main(int argc, char **argv){
   static int lexFlag = 0;       /* -X: run as .lex compiler */
   static int rustFlag = 0;      /* --rust: emit Rust output instead of C
                                 ** (additive; no replacement of C output) */
+  static int rustCrateFlag = 0; /* --rust-crate: emit a complete Cargo
+                                ** crate alongside the .rs file
+                                ** (Cargo.toml + src/lib.rs).  Only valid
+                                ** with --rust. */
   /* v0.4.3 (--diff-conflicts): see docs/DIFF_CONFLICTS.md */
   static int diffConflictsFlag = 0;
   static int jsonFlag = 0;
@@ -4725,9 +4729,15 @@ int main(int argc, char **argv){
                     "Verbose conflict diagnostics with derivation paths."},
     {OPT_FLAG, "X", (char*)&lexFlag,
                     "Run as .lex compiler (lexer subsystem M1 frontend)."},
+    /* NOTE: --rustcrate must appear BEFORE --rust because handleflags
+    ** does prefix-match and breaks on first hit; --rust is a prefix
+    ** of --rustcrate. */
+    {OPT_FLAG, "-rustcrate", (char*)&rustCrateFlag,
+                    "With --rust, also emit Cargo.toml + src/lib.rs around "
+                    "the parser.rs so the output is a ready-to-build crate."},
     {OPT_FLAG, "-rust", (char*)&rustFlag,
-                    "Emit Rust output (parser only; SKELETON in v0.7.x).  "
-                    "Additive: C output is unaffected."},
+                    "Emit Rust output alongside the C output.  Additive: "
+                    "C output is unaffected.  See docs/RUST_OUTPUT.md."},
     {OPT_FSTR, "W", 0, "Ignored.  (Placeholder for '-W' compiler options.)"},
     {OPT_FLAG, "-diff-conflicts", (char*)&diffConflictsFlag,
      "Diff LALR conflicts between two grammars (base.lime ext.lime)."},
@@ -4949,6 +4959,19 @@ int main(int argc, char **argv){
             lem.errorcnt++;
         }else if( !quiet ){
             fprintf(stderr, "Wrote Rust parser to %s\n", rust_path);
+        }
+
+        if( rustCrateFlag && lem.errorcnt == 0 ){
+            extern int emit_rust_crate(struct lime *lemp, const char *rs_path,
+                                       char **error);
+            char *cerr = NULL;
+            if( emit_rust_crate(&lem, rust_path, &cerr) != 0 ){
+                fprintf(stderr, "lime --rust-crate: %s\n", cerr ? cerr : "emit failed");
+                free(cerr);
+                lem.errorcnt++;
+            }else if( !quiet ){
+                fprintf(stderr, "Wrote Cargo crate skeleton next to %s\n", rust_path);
+            }
         }
     }
 
