@@ -93,19 +93,17 @@ pub struct ReduceCtx<'a> {
     pub user: &'a mut UserArg,
 }
 
-/// Default semantic value type.  Subsequent commits on the
-/// feat/rust-output branch wire %token_type / %type into
-/// a generic Value enum; this skeleton uses i64 universally,
-/// which is fine for arithmetic grammars and OK as a
-/// placeholder for grammars that don't consume LHS values.
+/// Default semantic Value type.  Override via
+/// %rust_value_type {T} in the grammar to use a
+/// custom type (String, struct, Box<dyn Any>, etc.).
 pub type Value = i64;
 
 /// Rule 0: nrhs=3, lhs symbol index=6 (line 12)
 fn yy_rule_0(ctx: &mut ReduceCtx) {
     let mut A: Value = Value::default();
-    let B: Value = ctx.rhs[0];
-    let _rhs1: Value = ctx.rhs[1];
-    let C: Value = ctx.rhs[2];
+    let B: Value = ctx.rhs[0].clone();
+    let _rhs1: Value = ctx.rhs[1].clone();
+    let C: Value = ctx.rhs[2].clone();
     // user action body (literal copy with $$/$N substitution)
      A = B + C; 
     *ctx.lhs = A;
@@ -114,9 +112,9 @@ fn yy_rule_0(ctx: &mut ReduceCtx) {
 /// Rule 1: nrhs=3, lhs symbol index=6 (line 13)
 fn yy_rule_1(ctx: &mut ReduceCtx) {
     let mut A: Value = Value::default();
-    let B: Value = ctx.rhs[0];
-    let _rhs1: Value = ctx.rhs[1];
-    let C: Value = ctx.rhs[2];
+    let B: Value = ctx.rhs[0].clone();
+    let _rhs1: Value = ctx.rhs[1].clone();
+    let C: Value = ctx.rhs[2].clone();
     // user action body (literal copy with $$/$N substitution)
      A = B - C; 
     *ctx.lhs = A;
@@ -125,9 +123,9 @@ fn yy_rule_1(ctx: &mut ReduceCtx) {
 /// Rule 2: nrhs=3, lhs symbol index=6 (line 14)
 fn yy_rule_2(ctx: &mut ReduceCtx) {
     let mut A: Value = Value::default();
-    let B: Value = ctx.rhs[0];
-    let _rhs1: Value = ctx.rhs[1];
-    let C: Value = ctx.rhs[2];
+    let B: Value = ctx.rhs[0].clone();
+    let _rhs1: Value = ctx.rhs[1].clone();
+    let C: Value = ctx.rhs[2].clone();
     // user action body (literal copy with $$/$N substitution)
      A = B * C; 
     *ctx.lhs = A;
@@ -136,7 +134,7 @@ fn yy_rule_2(ctx: &mut ReduceCtx) {
 /// Rule 3: nrhs=1, lhs symbol index=6 (line 15)
 fn yy_rule_3(ctx: &mut ReduceCtx) {
     let mut A: Value = Value::default();
-    let B: Value = ctx.rhs[0];
+    let B: Value = ctx.rhs[0].clone();
     // user action body (literal copy with $$/$N substitution)
      A = B; 
     *ctx.lhs = A;
@@ -145,7 +143,7 @@ fn yy_rule_3(ctx: &mut ReduceCtx) {
 /// Rule 4: nrhs=1, lhs symbol index=5 (line 0)
 fn yy_rule_4(ctx: &mut ReduceCtx) {
     let mut lhs: Value = Value::default();
-    let rhs0: Value = ctx.rhs[0];
+    let rhs0: Value = ctx.rhs[0].clone();
     lhs = rhs0;  // default: $$ = $1
     *ctx.lhs = lhs;
 }
@@ -175,7 +173,7 @@ pub enum ParseError {
     StackUnderflow,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct Frame {
     state: u16,
     major: u16,
@@ -396,7 +394,7 @@ impl CalcParser {
         let mut lhs_value = Value::default();
         let mut rhs_values: Vec<Value> = self.stack[split..]
             .iter()
-            .map(|f| f.value)
+            .map(|f| f.value.clone())
             .collect();
         let cb = YY_RULE_REDUCE_FN[ruleno as usize];
         cb(&mut ReduceCtx {

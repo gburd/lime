@@ -944,6 +944,13 @@ struct lime {
   char *name;              /* Name of the generated parser */
   char *arg;               /* Declaration of the 3rd argument to parser */
   char *ctx;               /* Declaration of 2nd argument to constructor */
+  char *rust_value_type;   /* %rust_value_type {Type} -- Rust output type for
+                           ** semantic Value (default i64).  Lets grammars
+                           ** that need String / struct / Box<dyn Any>
+                           ** semantic values choose a type without going
+                           ** through the C-side %token_type / %type
+                           ** translation (which would require generic
+                           ** Value enum codegen). */
   char *rust_arg;          /* %rust_extra_argument {Type} -- Rust output type
                            ** for the parser's user-arg threading.  When NULL
                            ** and the C side has %extra_argument, the Rust
@@ -4680,6 +4687,8 @@ int main(int argc, char **argv){
   static int lexFlag = 0;       /* -X: run as .lex compiler */
   static int rustFlag = 0;      /* --rust: emit Rust output instead of C
                                 ** (additive; no replacement of C output) */
+  static int rustNoStdFlag = 0; /* --rust-nostd: parser.rs gets #![no_std] */
+  extern int g_lime_rust_no_std;
   static int rustCrateFlag = 0; /* --rust-crate: emit a complete Cargo
                                 ** crate alongside the .rs file
                                 ** (Cargo.toml + src/lib.rs).  Only valid
@@ -4746,9 +4755,11 @@ int main(int argc, char **argv){
                     "Verbose conflict diagnostics with derivation paths."},
     {OPT_FLAG, "X", (char*)&lexFlag,
                     "Run as .lex compiler (lexer subsystem M1 frontend)."},
-    /* NOTE: --rustcrate must appear BEFORE --rust because handleflags
-    ** does prefix-match and breaks on first hit; --rust is a prefix
-    ** of --rustcrate. */
+    /* NOTE: --rust* options ordered LONG-TO-SHORT because handleflags
+    ** does prefix-match and breaks on first hit. */
+    {OPT_FLAG, "-rustnostd", (char*)&rustNoStdFlag,
+                    "Emit #![no_std] on the parser.rs.  Replaces Vec<Frame> "
+                    "with alloc::vec::Vec (parser still requires alloc)."},
     {OPT_FLAG, "-rustcrate", (char*)&rustCrateFlag,
                     "With --rust, also emit Cargo.toml + src/lib.rs around "
                     "the parser.rs so the output is a ready-to-build crate."},
@@ -4964,6 +4975,7 @@ int main(int argc, char **argv){
     ** Additive -- ReportTable still runs below to produce the C
     ** output.  Both .c and .rs are written in one lime invocation. */
     if( rustFlag ){
+        g_lime_rust_no_std = rustNoStdFlag;
         char rust_path[512];
         const char *cp = strrchr(lem.filename, '.');
         size_t base_len = cp ? (size_t)(cp - lem.filename) : strlen(lem.filename);
@@ -6588,6 +6600,10 @@ static void parseonetoken(struct pstate *psp)
           psp->declargslot = &(psp->gp->stacksize);
           psp->insertLineMacro = 0;
           attach_directive_comment(psp, &psp->gp->stacksize_comment);
+        }else if( strcmp(x,"rust_value_type")==0 ){
+          psp->declargslot = &(psp->gp->rust_value_type);
+          psp->insertLineMacro = 0;
+          break;
         }else if( strcmp(x,"rust_syntax_error")==0 ){
           psp->declargslot = &(psp->gp->rust_error);
           psp->insertLineMacro = 0;
@@ -13561,6 +13577,9 @@ const char *lime_emit_rust_rule_rust_code(const struct lime *lemp, int iRule) {
 const char *lime_emit_rust_get_rust_arg(const struct lime *lemp) {
     return lemp ? lemp->rust_arg : 0;
 }
+const char *lime_emit_rust_get_rust_value_type(const struct lime *lemp) {
+    return lemp ? lemp->rust_value_type : 0;
+}
 const char *lime_emit_rust_get_rust_error(const struct lime *lemp) {
     return lemp ? lemp->rust_error : 0;
 }
@@ -13573,3 +13592,5 @@ const char *lime_emit_rust_get_rust_failure(const struct lime *lemp) {
 const char *lime_emit_rust_get_rust_overflow(const struct lime *lemp) {
     return lemp ? lemp->rust_overflow : 0;
 }
+
+int g_lime_rust_no_std = 0;
