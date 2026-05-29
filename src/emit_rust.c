@@ -95,6 +95,7 @@ extern int  lime_emit_rust_rule_info(const struct lime *lemp, int iRule,
 extern int  lime_emit_rust_rule_rhs(const struct lime *lemp, int iRule, int i,
                                     const char **out_rhs_alias,
                                     const char **out_rhs_name);
+extern const char *lime_emit_rust_rule_rust_code(const struct lime *lemp, int iRule);
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -392,6 +393,18 @@ static void emit_reduce_callbacks(FILE *out, struct lime *lemp,
             fprintf(out, "    let %s%s: Value = ctx.rhs[%d];\n",
                     used ? "" : "_",
                     binding, i);
+        }
+        /* feat/rust-output: prefer the per-rule %rust_action body
+        ** when present.  Emit verbatim (no $-substitution; user is
+        ** expected to write actual Rust referencing the bound aliases
+        ** or the fallback lhs/rhsN bindings). */
+        const char *rust_override = lime_emit_rust_rule_rust_code(lemp, r);
+        if (rust_override && rust_override[0]) {
+            fprintf(out, "    // user %%rust_action body (verbatim)\n");
+            fprintf(out, "    %s\n", rust_override);
+            fprintf(out, "    *ctx.lhs = %s;\n", lhs_name);
+            fprintf(out, "}\n\n");
+            continue;
         }
         if (no_code || !code) {
             if (nrhs > 0) {

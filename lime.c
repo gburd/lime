@@ -724,6 +724,12 @@ struct rule {
   ** in a `|`-alternation group, the comment was attached to the
   ** first rule of the group). */
   char *leading_comment;
+  /* v0.8 feat/rust-output: optional Rust-specific action body that
+  ** overrides the C `code` field when emitting Rust.  Set by
+  ** `%rust_action { ... }` directive parsed in WAITING_FOR_DECL_OR_RULE.
+  ** NULL when the user didn't provide a Rust override; emit_rust
+  ** falls back to `code` with $-substitution in that case. */
+  char *rust_code;
   /* Lime-Letter-23: linked list of mid-RHS comments captured between
   ** ::= and . during Parse().  Emitted inline by `lime -F` at the
   ** position they originally appeared.  NULL when no mid-RHS comments. */
@@ -5601,6 +5607,10 @@ struct pstate {
   ** commit_current_rule() transfers them to rp->rhs_comments. */
   struct rhs_comment *pending_rhs_comments;
   struct rhs_comment *pending_rhs_comments_tail;
+  /* v0.8 feat/rust-output: when a `%rust_action` directive precedes
+  ** the next `{ body }`, divert the body into prevrule->rust_code
+  ** instead of prevrule->code.  Cleared after use. */
+  int next_brace_is_rust;
 };
 
 /*
@@ -5904,6 +5914,7 @@ static void commit_current_rule(struct pstate *psp)
     rp->lhsalias = psp->lhsalias;
     rp->nrhs = psp->nrhs;
     rp->code = 0;
+    rp->rust_code = 0;
     rp->noCode = 1;
     rp->precsym = 0;
     /* v0.4.1: provenance for diamond resolution + override matching. */
@@ -6123,6 +6134,7 @@ static void propagate_alt_group_attach(struct pstate *psp)
   for(rp=head; rp!=last && rp!=0; rp=rp->next){
     if( rp->code==0 ){
       rp->code      = last->code;
+      rp->rust_code = rp->rust_code ? rp->rust_code : last->rust_code;
       rp->line      = last->line;
       rp->noCode    = last->noCode;
     }
@@ -6236,6 +6248,14 @@ static void parseonetoken(struct pstate *psp)
             "There is no prior rule upon which to attach the code "
             "fragment which begins on this line.");
           psp->errorcnt++;
+        }else if( psp->next_brace_is_rust ){
+          /* v0.8 feat/rust-output: %rust_action diverts the next
+          ** brace body to rust_code, which IS allowed even when
+          ** the rule already has a C `code` body (the whole point
+          ** of the directive is to provide a Rust override). */
+          psp->prevrule->rust_code = &x[1];
+          psp->next_brace_is_rust = 0;
+          propagate_alt_group_attach(psp);
         }else if( psp->prevrule->code!=0 ){
           if( psp->extends_depth > 0 ){
             /* v0.4.1: the previous "rule" was actually deduped
@@ -6557,6 +6577,21 @@ static void parseonetoken(struct pstate *psp)
           psp->declargslot = &(psp->gp->stacksize);
           psp->insertLineMacro = 0;
           attach_directive_comment(psp, &psp->gp->stacksize_comment);
+        }else if( strcmp(x,"rust_action")==0 ){
+          /* v0.8 feat/rust-output: per-rule Rust body override.
+          ** The directive takes a `{ body }` on the same line; we
+          ** divert the next-brace handler to attach to
+          ** prevrule->rust_code instead of prevrule->code. */
+          if( psp->prevrule == 0 ){
+            ErrorMsg(psp->filename, psp->tokenlineno,
+              "%%rust_action requires a preceding rule");
+            psp->errorcnt++;
+            psp->state = RESYNC_AFTER_DECL_ERROR;
+          } else {
+            psp->next_brace_is_rust = 1;
+            psp->state = WAITING_FOR_DECL_OR_RULE;
+          }
+          break;
         }else if( strcmp(x,"start_symbol")==0 ){
           psp->declargslot = &(psp->gp->start);
           psp->insertLineMacro = 0;
@@ -13476,4 +13511,16 @@ struct symbol *lime_emit_rust_symbol_at(const struct lime *lemp, int i) {
 }
 const char *lime_emit_rust_symbol_name(const struct symbol *sp) {
     return sp ? sp->name : 0;
+}
+
+/* feat/rust-output: per-rule Rust body override accessor.  Returns
+** the rust_code text or NULL when the grammar didn't supply
+** %rust_action for this rule. */
+const char *lime_emit_rust_rule_rust_code(const struct lime *lemp, int iRule) {
+    if (!lemp) return 0;
+    struct rule *rp;
+    for (rp = lemp->rule; rp; rp = rp->next) {
+        if (rp->iRule == iRule) return rp->rust_code;
+    }
+    return 0;
 }
