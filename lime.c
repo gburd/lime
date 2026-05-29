@@ -4661,6 +4661,8 @@ int main(int argc, char **argv){
   static int verboseConflict = 0;
   static int aotFlag = 0;
   static int lexFlag = 0;       /* -X: run as .lex compiler */
+  static int rustFlag = 0;      /* --rust: emit Rust output instead of C
+                                ** (additive; no replacement of C output) */
   /* v0.4.3 (--diff-conflicts): see docs/DIFF_CONFLICTS.md */
   static int diffConflictsFlag = 0;
   static int jsonFlag = 0;
@@ -4674,6 +4676,11 @@ int main(int argc, char **argv){
   ** and `-X` works normally. */
   extern int lime_lex_run_compiler(const char *input_path,
                                    const char *output_dir);
+
+  /* v0.8 feat/rust-output: implemented in src/emit_rust.c.  Stub
+  ** when the lib isn't linked (single-file lime.c builds). */
+  extern int emit_rust_parser(struct lime *lemp, const char *out_path,
+                              const char *grammar_path, char **error);
 
 
   static struct s_options options[] = {
@@ -4718,6 +4725,9 @@ int main(int argc, char **argv){
                     "Verbose conflict diagnostics with derivation paths."},
     {OPT_FLAG, "X", (char*)&lexFlag,
                     "Run as .lex compiler (lexer subsystem M1 frontend)."},
+    {OPT_FLAG, "-rust", (char*)&rustFlag,
+                    "Emit Rust output (parser only; SKELETON in v0.7.x).  "
+                    "Additive: C output is unaffected."},
     {OPT_FSTR, "W", 0, "Ignored.  (Placeholder for '-W' compiler options.)"},
     {OPT_FLAG, "-diff-conflicts", (char*)&diffConflictsFlag,
      "Diff LALR conflicts between two grammars (base.lime ext.lime)."},
@@ -4919,6 +4929,25 @@ int main(int argc, char **argv){
 
     /* Generate the source code for the parser */
     ReportTable(&lem, mhflag, sqlFlag);
+
+    /* v0.8 feat/rust-output: emit a Rust mirror of the parser when
+    ** --rust is set.  Additive -- C output already happened above.
+    ** Skeleton: real action-table population pending. */
+    if( rustFlag ){
+        char rust_path[512];
+        const char *cp = strrchr(lem.filename, '.');
+        size_t base_len = cp ? (size_t)(cp - lem.filename) : strlen(lem.filename);
+        snprintf(rust_path, sizeof(rust_path), "%.*s.rs",
+                 (int)base_len, lem.filename);
+        char *err = NULL;
+        if( emit_rust_parser(&lem, rust_path, lem.filename, &err) != 0 ){
+            fprintf(stderr, "lime --rust: %s\n", err ? err : "emit failed");
+            free(err);
+            lem.errorcnt++;
+        }else if( !quiet ){
+            fprintf(stderr, "Wrote Rust parser to %s\n", rust_path);
+        }
+    }
 
     /* Generate snapshot initialization code if -n flag is set */
     if( snapshotFlag ) ReportSnapshotInit(&lem);
@@ -13097,4 +13126,44 @@ void Configtable_clear(int(*f)(struct config *))
   for(i=0; i<x4a->size; i++) x4a->ht[i] = 0;
   x4a->count = 0;
   return;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Bridge functions for src/emit_rust.c                              */
+/* ------------------------------------------------------------------ */
+/*
+** struct lime / struct symbol / struct rule are defined locally in
+** this file and the C-side codegen reads their fields directly.
+** src/emit_rust.c is a separate translation unit and can't see the
+** internal layout, so we expose narrow accessors (getter functions)
+** that emit_rust_parser() calls.  Keep the surface minimal -- when
+** the action-table emit is wired in subsequent commits the same
+** accessor set will need to grow to expose yy_action / yy_lookahead
+** etc., but for the SKELETON these few names + counts are enough.
+*/
+
+int lime_emit_rust_get_nstate(const struct lime *lemp) {
+    return lemp ? lemp->nxstate : 0;
+}
+int lime_emit_rust_get_nrule(const struct lime *lemp) {
+    return lemp ? lemp->nrule : 0;
+}
+int lime_emit_rust_get_nterminal(const struct lime *lemp) {
+    return lemp ? lemp->nterminal : 0;
+}
+int lime_emit_rust_get_nsymbol(const struct lime *lemp) {
+    return lemp ? lemp->nsymbol : 0;
+}
+int lime_emit_rust_get_first_token(const struct lime *lemp) {
+    return lemp ? lemp->first_token : 0;
+}
+const char *lime_emit_rust_get_name(const struct lime *lemp) {
+    return lemp ? lemp->name : 0;
+}
+struct symbol *lime_emit_rust_symbol_at(const struct lime *lemp, int i) {
+    if (!lemp || i < 0 || i >= lemp->nsymbol) return 0;
+    return lemp->symbols[i];
+}
+const char *lime_emit_rust_symbol_name(const struct symbol *sp) {
+    return sp ? sp->name : 0;
 }
