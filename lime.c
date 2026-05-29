@@ -79,7 +79,7 @@ int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "0.6.3"
+#define LIME_VERSION_STRING "0.6.4"
 #endif
 
 
@@ -11576,6 +11576,7 @@ void ReportSnapshotInit(struct lime *lemp)
     "        .nfallback            = 0,\n"
     "        .grammar_source       = (const char *)s_grammar_source,\n"
     "        .grammar_source_len   = sizeof(s_grammar_source) - 1,\n"
+    "        .first_token          = %d,\n"
     "    };\n"
     "    return snapshot_build_from_tables(&tables);\n"
     "}\n"
@@ -11610,6 +11611,7 @@ void ReportSnapshotInit(struct lime *lemp)
     lemp->accAction,
     lemp->noAction,
     lemp->minReduce,
+    lemp->first_token,                          /* YYFIRSTTOKEN at end-of-struct */
     name
   );
 
@@ -12131,6 +12133,7 @@ static struct ParserSnapshot *build_snapshot_from_lime(struct lime *lemp,
     tables.nsymbol              = (uint32_t)lemp->nsymbol;
     tables.nterminal            = (uint32_t)lemp->nterminal;
     tables.ntoken               = (uint16_t)lemp->nterminal;
+    tables.first_token          = (uint16_t)lemp->first_token;
     tables.yy_max_shift         = (uint16_t)(lemp->nxstate - 1);
     tables.yy_min_shiftreduce   = (uint16_t)lemp->minShiftReduce;
     tables.yy_max_shiftreduce   = (uint16_t)(lemp->minShiftReduce + lemp->nrule - 1);

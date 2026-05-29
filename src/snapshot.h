@@ -184,6 +184,17 @@ typedef struct ParserSnapshot {
     uint16_t yy_no_action;       /**< Marker for unused slot */
     uint16_t yy_min_reduce;      /**< Reduce range minimum (max = nstate+nrule) */
     uint16_t yy_ntoken;          /**< Highest terminal code + 1 */
+    /** %first_token directive value: subtracted from external token
+    ** codes to get the internal action-table index.  Zero when the
+    ** grammar didn't declare %first_token.  Mirrors the YYFIRSTTOKEN
+    ** define in generated parsers (limpar.c template).  Added in
+    ** v0.6.x to fix Lime-Letter-25: parse_token() in
+    ** src/parse_engine.c was not applying this subtraction so
+    ** runtime callers passing externally-visible codes (e.g.
+    ** PostgreSQL extension keywords with %first_token 257) were
+    ** indexing the action table at the wrong offset and getting
+    ** spurious syntax errors. */
+    uint16_t yy_first_token;
 
     /* --- Rule metadata (parallel arrays, length = nrule) -------------- */
 

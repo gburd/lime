@@ -258,6 +258,20 @@ test_snapshot_diff = executable('test_snapshot_diff',
 
 test('snapshot_diff', test_snapshot_diff)
 
+# Lime-Letter-25 regression: parse_token must apply the
+# %first_token offset.  Pre-v0.6.4 it didn't; PG's runtime
+# extension pipeline rejected extension-added tokens because
+# external codes were indexed directly into the internal
+# action table.
+test_first_token_runtime = executable('test_first_token_runtime',
+  'test_first_token_runtime.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+  c_args : ['-DLIME_HAVE_SNAPSHOT_BUILD'],
+)
+
+test('first_token_runtime', test_first_token_runtime)
+
 # v0.6.x: YYFALLBACK AOT codegen regression.  Verifies the JIT
 # trace bakes yy_fallback into the find_shift_action emit path so
 # the runtime path that consults snap->yy_fallback is bypassed.

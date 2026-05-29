@@ -121,6 +121,7 @@ ParserSnapshot *snapshot_build_from_tables(const LimeParserTables *t) {
     }
 
     snap->yy_ntoken = t->ntoken;
+    snap->yy_first_token = t->first_token;
     snap->yy_max_shift = t->yy_max_shift;
     snap->yy_min_shiftreduce = t->yy_min_shiftreduce;
     snap->yy_max_shiftreduce = t->yy_max_shiftreduce;

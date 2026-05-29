@@ -303,9 +303,29 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
     if (eng->accepted) return 1;
     if (eng->errored) return -1;
 
-    /* Apply fallback if grammar declared %fallback and current token
-    ** has no action in the current state. */
+    /* %first_token N -- runtime callers pass the externally-visible
+    ** token code (with the offset applied per the emitted #defines).
+    ** Convert to the internal action-table index by subtracting the
+    ** offset.  EOF (0) is preserved.  When yy_first_token is 0 (the
+    ** default), this entire block is a no-op.  Mirrors the same
+    ** subtraction in limpar.c at parse-token entry; without it,
+    ** parse_token() at the runtime layer indexed the action table
+    ** at the wrong slot and produced spurious "syntax error" returns
+    ** for grammars with %first_token > 0.  Lime-Letter-25 fix. */
     int major = token_code;
+    if (snap->yy_first_token > 0 && token_code != 0) {
+        int internal = token_code - (int)snap->yy_first_token;
+        if (internal < 0 || internal >= (int)snap->yy_ntoken) {
+            /* Out-of-range external code -- e.g. an ASCII character
+            ** sneaking through to a parser declared with
+            ** %first_token 258.  Indexing the action table at a
+            ** negative or out-of-range slot is undefined behaviour.
+            ** Surface as a parse error so the caller can recover. */
+            eng->errored = true;
+            return -1;
+        }
+        major = internal;
+    }
     bool retried_with_fallback = false;
 
     for (;;) {

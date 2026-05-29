@@ -96,6 +96,23 @@ typedef struct LimeParserTables {
     ** consumption). */
     const char *grammar_source;
     uint32_t grammar_source_len;
+
+    /* %first_token directive value (0 when not declared).
+    ** Subtracted from external token codes by parse_token() in
+    ** src/parse_engine.c to compute the internal action-table
+    ** index.  Added in v0.6.x to fix Lime-Letter-25.
+    **
+    ** Position: appended at the END of LimeParserTables so older
+    ** generated *_snapshot.c builders -- whose `LimeParserTables`
+    ** view doesn't include this field -- continue to interoperate
+    ** with the v0.6.x host: the field is value-initialised to 0
+    ** by their `LimeParserTables tables = { ... };` partial
+    ** initialiser, which preserves the pre-fix behaviour for old
+    ** snapshots (no offset applied; runtime callers must pass
+    ** internal codes themselves, as before).  Snapshots produced
+    ** by v0.6.x lime correctly populate first_token and let
+    ** runtime callers pass external codes. */
+    uint16_t first_token;
 } LimeParserTables;
 
 /**
