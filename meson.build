@@ -150,6 +150,7 @@ subdir('src')
 
 lime_exe = executable('lime',
   'lime.c',
+  'src/emit_rust.c',
   link_with : [lime_lex_compiler_lib],
   include_directories : [inc, include_directories('src/lex')],
   c_args : ['-DLIME_HAS_LEX_COMPILER'],

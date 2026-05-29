@@ -724,6 +724,12 @@ struct rule {
   ** in a `|`-alternation group, the comment was attached to the
   ** first rule of the group). */
   char *leading_comment;
+  /* v0.8 feat/rust-output: optional Rust-specific action body that
+  ** overrides the C `code` field when emitting Rust.  Set by
+  ** `%rust_action { ... }` directive parsed in WAITING_FOR_DECL_OR_RULE.
+  ** NULL when the user didn't provide a Rust override; emit_rust
+  ** falls back to `code` with $-substitution in that case. */
+  char *rust_code;
   /* Lime-Letter-23: linked list of mid-RHS comments captured between
   ** ::= and . during Parse().  Emitted inline by `lime -F` at the
   ** position they originally appeared.  NULL when no mid-RHS comments. */
@@ -938,6 +944,17 @@ struct lime {
   char *name;              /* Name of the generated parser */
   char *arg;               /* Declaration of the 3rd argument to parser */
   char *ctx;               /* Declaration of 2nd argument to constructor */
+  char *rust_value_type;   /* %rust_value_type {Type} -- Rust output type for
+                           ** semantic Value (default i64).  Lets grammars
+                           ** that need String / struct / Box<dyn Any>
+                           ** semantic values choose a type without going
+                           ** through the C-side %token_type / %type
+                           ** translation (which would require generic
+                           ** Value enum codegen). */
+  char *rust_arg;          /* %rust_extra_argument {Type} -- Rust output type
+                           ** for the parser's user-arg threading.  When NULL
+                           ** and the C side has %extra_argument, the Rust
+                           ** emitter falls back to () (no user arg). */
   char *tokentype;         /* Type of terminal symbols in the parser stack */
   char *vartype;           /* The default type of non-terminal symbols */
   char *start;             /* Name of the start symbol for the grammar */
@@ -947,6 +964,13 @@ struct lime {
   char *overflow;          /* Code to execute on a stack overflow */
   char *failure;           /* Code to execute on parser failure */
   char *accept;            /* Code to execute when the parser excepts */
+  /* feat/rust-output: parallel Rust hooks.  Each NULL when grammar
+  ** doesn't supply the directive; emit_rust uses default no-op
+  ** closures.  Bodies are emitted verbatim. */
+  char *rust_error;        /* %rust_syntax_error { ... } */
+  char *rust_accept;       /* %rust_parse_accept { ... } */
+  char *rust_failure;      /* %rust_parse_failure { ... } */
+  char *rust_overflow;     /* %rust_stack_overflow { ... } */
   char *extracode;         /* Code appended to the generated file */
   char *tokendest;         /* Code to execute to destroy token data */
   char *vardest;           /* Code for the default non-terminal destructor */
@@ -4661,6 +4685,15 @@ int main(int argc, char **argv){
   static int verboseConflict = 0;
   static int aotFlag = 0;
   static int lexFlag = 0;       /* -X: run as .lex compiler */
+  static int rustFlag = 0;      /* --rust: emit Rust output instead of C
+                                ** (additive; no replacement of C output) */
+  static int rustNoStdFlag = 0; /* --rust-nostd: parser.rs gets #![no_std] */
+  static int rustLexFlag   = 0; /* --rustlex: emit Rust lexer (deferred) */
+  extern int g_lime_rust_no_std;
+  static int rustCrateFlag = 0; /* --rust-crate: emit a complete Cargo
+                                ** crate alongside the .rs file
+                                ** (Cargo.toml + src/lib.rs).  Only valid
+                                ** with --rust. */
   /* v0.4.3 (--diff-conflicts): see docs/DIFF_CONFLICTS.md */
   static int diffConflictsFlag = 0;
   static int jsonFlag = 0;
@@ -4674,6 +4707,11 @@ int main(int argc, char **argv){
   ** and `-X` works normally. */
   extern int lime_lex_run_compiler(const char *input_path,
                                    const char *output_dir);
+
+  /* v0.8 feat/rust-output: implemented in src/emit_rust.c.  Stub
+  ** when the lib isn't linked (single-file lime.c builds). */
+  extern int emit_rust_parser(struct lime *lemp, const char *out_path,
+                              const char *grammar_path, char **error);
 
 
   static struct s_options options[] = {
@@ -4718,6 +4756,21 @@ int main(int argc, char **argv){
                     "Verbose conflict diagnostics with derivation paths."},
     {OPT_FLAG, "X", (char*)&lexFlag,
                     "Run as .lex compiler (lexer subsystem M1 frontend)."},
+    /* NOTE: --rust* options ordered LONG-TO-SHORT because handleflags
+    ** does prefix-match and breaks on first hit. */
+    {OPT_FLAG, "-rustnostd", (char*)&rustNoStdFlag,
+                    "Emit #![no_std] on the parser.rs.  Replaces Vec<Frame> "
+                    "with alloc::vec::Vec (parser still requires alloc)."},
+    {OPT_FLAG, "-rustlex", (char*)&rustLexFlag,
+                    "Emit a Rust mirror of the lex (.lex) tokenizer alongside "
+                    "the C output.  DEFERRED in v0.8.0 -- prints a notice and "
+                    "exits 0.  See docs/RUST_OUTPUT.md for status."},
+    {OPT_FLAG, "-rustcrate", (char*)&rustCrateFlag,
+                    "With --rust, also emit Cargo.toml + src/lib.rs around "
+                    "the parser.rs so the output is a ready-to-build crate."},
+    {OPT_FLAG, "-rust", (char*)&rustFlag,
+                    "Emit Rust output alongside the C output.  Additive: "
+                    "C output is unaffected.  See docs/RUST_OUTPUT.md."},
     {OPT_FSTR, "W", 0, "Ignored.  (Placeholder for '-W' compiler options.)"},
     {OPT_FLAG, "-diff-conflicts", (char*)&diffConflictsFlag,
      "Diff LALR conflicts between two grammars (base.lime ext.lime)."},
@@ -4916,6 +4969,53 @@ int main(int argc, char **argv){
 
     /* Generate automatic AST reduction actions if %ast_auto is enabled */
     GenerateASTActions(&lem);
+
+    /* v0.8 feat/rust-output: emit a Rust mirror of the parser
+    ** BEFORE ReportTable runs.  ReportTable's translate_code pass
+    ** mutates each rule's code text (substitutes $$/$N with
+    ** yymsp[N].minor.yyM stack-relative addressing for the C
+    ** output); the Rust emitter wants the pristine original text
+    ** so it can do its own $-substitution to Rust slot variables.
+    **
+    ** Additive -- ReportTable still runs below to produce the C
+    ** output.  Both .c and .rs are written in one lime invocation. */
+    if( rustLexFlag ){
+        fprintf(stderr,
+            "lime --rustlex: Rust lexer output is DEFERRED in v0.8.0.  The\n"
+            "  parser-side --rust path is fully functional; the lex subsystem\n"
+            "  (M0-M5) hasn't been mirrored to Rust yet.  Tracking item in\n"
+            "  docs/RUST_OUTPUT.md.  Exiting without emitting a .lex.rs.\n");
+        /* Continue with C output for the .lex / .y file as normal. */
+    }
+    if( rustFlag ){
+        g_lime_rust_no_std = rustNoStdFlag;
+        char rust_path[512];
+        const char *cp = strrchr(lem.filename, '.');
+        size_t base_len = cp ? (size_t)(cp - lem.filename) : strlen(lem.filename);
+        snprintf(rust_path, sizeof(rust_path), "%.*s.rs",
+                 (int)base_len, lem.filename);
+        char *err = NULL;
+        if( emit_rust_parser(&lem, rust_path, lem.filename, &err) != 0 ){
+            fprintf(stderr, "lime --rust: %s\n", err ? err : "emit failed");
+            free(err);
+            lem.errorcnt++;
+        }else if( !quiet ){
+            fprintf(stderr, "Wrote Rust parser to %s\n", rust_path);
+        }
+
+        if( rustCrateFlag && lem.errorcnt == 0 ){
+            extern int emit_rust_crate(struct lime *lemp, const char *rs_path,
+                                       char **error);
+            char *cerr = NULL;
+            if( emit_rust_crate(&lem, rust_path, &cerr) != 0 ){
+                fprintf(stderr, "lime --rust-crate: %s\n", cerr ? cerr : "emit failed");
+                free(cerr);
+                lem.errorcnt++;
+            }else if( !quiet ){
+                fprintf(stderr, "Wrote Cargo crate skeleton next to %s\n", rust_path);
+            }
+        }
+    }
 
     /* Generate the source code for the parser */
     ReportTable(&lem, mhflag, sqlFlag);
@@ -5543,6 +5643,10 @@ struct pstate {
   ** commit_current_rule() transfers them to rp->rhs_comments. */
   struct rhs_comment *pending_rhs_comments;
   struct rhs_comment *pending_rhs_comments_tail;
+  /* v0.8 feat/rust-output: when a `%rust_action` directive precedes
+  ** the next `{ body }`, divert the body into prevrule->rust_code
+  ** instead of prevrule->code.  Cleared after use. */
+  int next_brace_is_rust;
 };
 
 /*
@@ -5846,6 +5950,7 @@ static void commit_current_rule(struct pstate *psp)
     rp->lhsalias = psp->lhsalias;
     rp->nrhs = psp->nrhs;
     rp->code = 0;
+    rp->rust_code = 0;
     rp->noCode = 1;
     rp->precsym = 0;
     /* v0.4.1: provenance for diamond resolution + override matching. */
@@ -6065,6 +6170,7 @@ static void propagate_alt_group_attach(struct pstate *psp)
   for(rp=head; rp!=last && rp!=0; rp=rp->next){
     if( rp->code==0 ){
       rp->code      = last->code;
+      rp->rust_code = rp->rust_code ? rp->rust_code : last->rust_code;
       rp->line      = last->line;
       rp->noCode    = last->noCode;
     }
@@ -6178,6 +6284,14 @@ static void parseonetoken(struct pstate *psp)
             "There is no prior rule upon which to attach the code "
             "fragment which begins on this line.");
           psp->errorcnt++;
+        }else if( psp->next_brace_is_rust ){
+          /* v0.8 feat/rust-output: %rust_action diverts the next
+          ** brace body to rust_code, which IS allowed even when
+          ** the rule already has a C `code` body (the whole point
+          ** of the directive is to provide a Rust override). */
+          psp->prevrule->rust_code = &x[1];
+          psp->next_brace_is_rust = 0;
+          propagate_alt_group_attach(psp);
         }else if( psp->prevrule->code!=0 ){
           if( psp->extends_depth > 0 ){
             /* v0.4.1: the previous "rule" was actually deduped
@@ -6499,6 +6613,47 @@ static void parseonetoken(struct pstate *psp)
           psp->declargslot = &(psp->gp->stacksize);
           psp->insertLineMacro = 0;
           attach_directive_comment(psp, &psp->gp->stacksize_comment);
+        }else if( strcmp(x,"rust_value_type")==0 ){
+          psp->declargslot = &(psp->gp->rust_value_type);
+          psp->insertLineMacro = 0;
+          break;
+        }else if( strcmp(x,"rust_syntax_error")==0 ){
+          psp->declargslot = &(psp->gp->rust_error);
+          psp->insertLineMacro = 0;
+          break;
+        }else if( strcmp(x,"rust_parse_accept")==0 ){
+          psp->declargslot = &(psp->gp->rust_accept);
+          psp->insertLineMacro = 0;
+          break;
+        }else if( strcmp(x,"rust_parse_failure")==0 ){
+          psp->declargslot = &(psp->gp->rust_failure);
+          psp->insertLineMacro = 0;
+          break;
+        }else if( strcmp(x,"rust_stack_overflow")==0 ){
+          psp->declargslot = &(psp->gp->rust_overflow);
+          psp->insertLineMacro = 0;
+          break;
+        }else if( strcmp(x,"rust_extra_argument")==0 ){
+          /* feat/rust-output: Rust-side %extra_argument equivalent.
+          ** Type inside braces becomes the parser's user-arg type. */
+          psp->declargslot = &(psp->gp->rust_arg);
+          psp->insertLineMacro = 0;
+          break;
+        }else if( strcmp(x,"rust_action")==0 ){
+          /* v0.8 feat/rust-output: per-rule Rust body override.
+          ** The directive takes a `{ body }` on the same line; we
+          ** divert the next-brace handler to attach to
+          ** prevrule->rust_code instead of prevrule->code. */
+          if( psp->prevrule == 0 ){
+            ErrorMsg(psp->filename, psp->tokenlineno,
+              "%%rust_action requires a preceding rule");
+            psp->errorcnt++;
+            psp->state = RESYNC_AFTER_DECL_ERROR;
+          } else {
+            psp->next_brace_is_rust = 1;
+            psp->state = WAITING_FOR_DECL_OR_RULE;
+          }
+          break;
         }else if( strcmp(x,"start_symbol")==0 ){
           psp->declargslot = &(psp->gp->start);
           psp->insertLineMacro = 0;
@@ -13098,3 +13253,357 @@ void Configtable_clear(int(*f)(struct config *))
   x4a->count = 0;
   return;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Rust-emit table assembly                                          */
+/* ------------------------------------------------------------------ */
+/*
+** Data the Rust emitter needs.  The contents mirror what the C
+** generator emits via ReportTable's table loops; capturing them
+** as plain arrays lets src/emit_rust.c walk them without needing
+** access to acttab / axset / state internals.
+**
+** Lifetime: the caller owns the returned arrays.  Free with
+** lime_emit_rust_free_tables().  Allocated as a single struct so
+** errno/oom handling is one path.
+*/
+typedef struct LimeRustTables {
+    uint16_t *yy_action;
+    uint32_t  yy_action_count;
+    uint16_t *yy_lookahead;
+    uint32_t  yy_lookahead_count;
+    int32_t  *yy_shift_ofst;
+    int32_t  *yy_reduce_ofst;
+    uint16_t *yy_default;
+    uint32_t  nstate;     /* nxstate */
+
+    int16_t  *yy_rule_lhs;
+    int8_t   *yy_rule_nrhs;
+    uint32_t  nrule;
+
+    uint16_t *yy_fallback;
+    uint32_t  nfallback;
+
+    /* Action-range dispatch constants */
+    uint16_t  yy_max_shift;
+    uint16_t  yy_min_shiftreduce;
+    uint16_t  yy_max_shiftreduce;
+    uint16_t  yy_error_action;
+    uint16_t  yy_accept_action;
+    uint16_t  yy_no_action;
+    uint16_t  yy_min_reduce;
+
+    uint32_t  nsymbol;
+    uint32_t  nterminal;
+    uint16_t  ntoken;
+    uint16_t  first_token;
+} LimeRustTables;
+
+/*
+** Compute the assembled action / lookahead / state-offset / rule
+** tables.  Mirrors the assembly block at the top of
+** build_snapshot_from_lime, factored out so emit_rust.c (which is
+** a separate translation unit and can't see acttab etc.) can
+** consume the result.
+**
+** Returns 0 on success.  On failure returns non-zero with *error
+** set to a heap-allocated diagnostic the caller free()s.
+*/
+int lime_emit_rust_assemble_tables(struct lime *lemp, LimeRustTables *out, char **error) {
+    if (lemp == NULL || out == NULL) {
+        if (error) *error = strdup("assemble: bad arguments");
+        return -1;
+    }
+    if (error) *error = NULL;
+    memset(out, 0, sizeof(*out));
+
+    /* 1. Action-range constants -- mirrors build_snapshot_from_lime
+    ** and the top of ReportTable.  Idempotent: setting again to
+    ** the same values when ReportTable has already run. */
+    lemp->minShiftReduce = lemp->nstate;
+    lemp->errAction      = lemp->minShiftReduce + lemp->nrule;
+    lemp->accAction      = lemp->errAction + 1;
+    lemp->noAction       = lemp->accAction + 1;
+    lemp->minReduce      = lemp->noAction + 1;
+    lemp->maxAction      = lemp->minReduce + lemp->nrule;
+
+    out->nstate     = (uint32_t)lemp->nxstate;
+    out->nrule      = (uint32_t)lemp->nrule;
+    out->nsymbol    = (uint32_t)lemp->nsymbol;
+    out->nterminal  = (uint32_t)lemp->nterminal;
+    out->ntoken     = (uint16_t)lemp->nterminal;
+    out->first_token= (uint16_t)lemp->first_token;
+    out->yy_max_shift       = (uint16_t)(lemp->nxstate - 1);
+    out->yy_min_shiftreduce = (uint16_t)lemp->minShiftReduce;
+    out->yy_max_shiftreduce = (uint16_t)(lemp->minShiftReduce + lemp->nrule - 1);
+    out->yy_error_action    = (uint16_t)lemp->errAction;
+    out->yy_accept_action   = (uint16_t)lemp->accAction;
+    out->yy_no_action       = (uint16_t)lemp->noAction;
+    out->yy_min_reduce      = (uint16_t)lemp->minReduce;
+
+    /* 2. Action table assembly via acttab.  Same logic as
+    ** build_snapshot_from_lime.  We rerun rather than capture in
+    ** ReportTable to keep the emitter additive. */
+    struct axset *ax = (struct axset *)lime_calloc(lemp->nxstate * 2, sizeof(ax[0]));
+    if (ax == 0) {
+        if (error) *error = strdup("assemble: oom on axset");
+        return -1;
+    }
+    int i;
+    for (i = 0; i < lemp->nxstate; i++) {
+        struct state *stp = lemp->sorted[i];
+        ax[i*2].stp = stp;   ax[i*2].isTkn   = 1; ax[i*2].nAction   = stp->nTknAct;
+        ax[i*2+1].stp = stp; ax[i*2+1].isTkn = 0; ax[i*2+1].nAction = stp->nNtAct;
+    }
+    for (i = 0; i < lemp->nxstate * 2; i++) ax[i].iOrder = i;
+    qsort(ax, lemp->nxstate * 2, sizeof(ax[0]), axset_compare);
+
+    acttab *pActtab = acttab_alloc(lemp->nsymbol, lemp->nterminal);
+    if (pActtab == 0) {
+        lime_free(ax);
+        if (error) *error = strdup("assemble: oom on acttab");
+        return -1;
+    }
+    for (i = 0; i < lemp->nxstate * 2 && ax[i].nAction > 0; i++) {
+        struct state *stp = ax[i].stp;
+        struct action *ap;
+        if (ax[i].isTkn) {
+            for (ap = stp->ap; ap; ap = ap->next) {
+                if (ap->sp->index >= lemp->nterminal) continue;
+                int action = compute_action(lemp, ap);
+                if (action < 0) continue;
+                acttab_action(pActtab, ap->sp->index, action);
+            }
+            stp->iTknOfst = acttab_insert(pActtab, 1);
+        } else {
+            for (ap = stp->ap; ap; ap = ap->next) {
+                if (ap->sp->index < lemp->nterminal) continue;
+                if (ap->sp->index == lemp->nsymbol) continue;
+                int action = compute_action(lemp, ap);
+                if (action < 0) continue;
+                acttab_action(pActtab, ap->sp->index, action);
+            }
+            stp->iNtOfst = acttab_insert(pActtab, 0);
+        }
+    }
+    lime_free(ax);
+
+    int nactiontab    = acttab_action_size(pActtab);
+    int nlookaheadtab = acttab_lookahead_size(pActtab);
+    int nLookAhead    = lemp->nterminal + nactiontab;
+    if (nLookAhead < nlookaheadtab) nLookAhead = nlookaheadtab;
+
+    out->yy_action_count    = (uint32_t)nactiontab;
+    out->yy_lookahead_count = (uint32_t)nLookAhead;
+
+    /* 3. Allocate + populate the typed arrays. */
+    if (nactiontab > 0) {
+        out->yy_action = (uint16_t *)calloc((size_t)nactiontab, sizeof(uint16_t));
+        if (!out->yy_action) goto oom;
+        for (i = 0; i < nactiontab; i++) {
+            int act = acttab_yyaction(pActtab, i);
+            if (act < 0) act = lemp->noAction;
+            out->yy_action[i] = (uint16_t)act;
+        }
+    }
+    if (nLookAhead > 0) {
+        out->yy_lookahead = (uint16_t *)calloc((size_t)nLookAhead, sizeof(uint16_t));
+        if (!out->yy_lookahead) goto oom;
+        for (i = 0; i < nlookaheadtab; i++) {
+            int la = acttab_yylookahead(pActtab, i);
+            if (la < 0) la = lemp->nsymbol;
+            out->yy_lookahead[i] = (uint16_t)la;
+        }
+        /* Tail padding: lookahead entries beyond the acttab need to
+        ** point at nsymbol so out-of-range token tests fail. */
+        for (; i < nLookAhead; i++) out->yy_lookahead[i] = (uint16_t)lemp->nsymbol;
+    }
+    if (lemp->nxstate > 0) {
+        out->yy_shift_ofst  = (int32_t *)calloc((size_t)lemp->nxstate, sizeof(int32_t));
+        out->yy_reduce_ofst = (int32_t *)calloc((size_t)lemp->nxstate, sizeof(int32_t));
+        out->yy_default     = (uint16_t *)calloc((size_t)lemp->nxstate, sizeof(uint16_t));
+        if (!out->yy_shift_ofst || !out->yy_reduce_ofst || !out->yy_default) goto oom;
+        for (i = 0; i < lemp->nxstate; i++) {
+            struct state *stp = lemp->sorted[i];
+            out->yy_shift_ofst[i]  = stp->iTknOfst;
+            out->yy_reduce_ofst[i] = stp->iNtOfst;
+            out->yy_default[i]     = (uint16_t)(stp->iDfltReduce >= 0
+                                                ? stp->iDfltReduce + lemp->minReduce
+                                                : lemp->errAction);
+        }
+    }
+    if (lemp->nrule > 0) {
+        out->yy_rule_lhs  = (int16_t *)calloc((size_t)lemp->nrule, sizeof(int16_t));
+        out->yy_rule_nrhs = (int8_t  *)calloc((size_t)lemp->nrule, sizeof(int8_t));
+        if (!out->yy_rule_lhs || !out->yy_rule_nrhs) goto oom;
+        struct rule *rp;
+        for (rp = lemp->rule; rp; rp = rp->next) {
+            if (rp->iRule < 0 || rp->iRule >= lemp->nrule) continue;
+            out->yy_rule_lhs[rp->iRule]  = (int16_t)rp->lhs->index;
+            out->yy_rule_nrhs[rp->iRule] = (int8_t)(-rp->nrhs);  /* lemon convention */
+        }
+    }
+    /* yy_fallback when has_fallback */
+    if (lemp->has_fallback && lemp->nterminal > 0) {
+        out->nfallback   = (uint32_t)lemp->nterminal;
+        out->yy_fallback = (uint16_t *)calloc(out->nfallback, sizeof(uint16_t));
+        if (!out->yy_fallback) goto oom;
+        for (uint32_t fi = 0; fi < out->nfallback; fi++) {
+            struct symbol *p = lemp->symbols[fi];
+            out->yy_fallback[fi] = (p && p->fallback) ? (uint16_t)p->fallback->index : 0;
+        }
+    }
+
+    acttab_free(pActtab);
+    return 0;
+
+oom:
+    acttab_free(pActtab);
+    if (error) *error = strdup("assemble: oom while populating typed arrays");
+    free(out->yy_action);     out->yy_action = NULL;
+    free(out->yy_lookahead);  out->yy_lookahead = NULL;
+    free(out->yy_shift_ofst); out->yy_shift_ofst = NULL;
+    free(out->yy_reduce_ofst);out->yy_reduce_ofst = NULL;
+    free(out->yy_default);    out->yy_default = NULL;
+    free(out->yy_rule_lhs);   out->yy_rule_lhs = NULL;
+    free(out->yy_rule_nrhs);  out->yy_rule_nrhs = NULL;
+    free(out->yy_fallback);   out->yy_fallback = NULL;
+    return -1;
+}
+
+void lime_emit_rust_free_tables(LimeRustTables *t) {
+    if (!t) return;
+    free(t->yy_action);
+    free(t->yy_lookahead);
+    free(t->yy_shift_ofst);
+    free(t->yy_reduce_ofst);
+    free(t->yy_default);
+    free(t->yy_rule_lhs);
+    free(t->yy_rule_nrhs);
+    free(t->yy_fallback);
+    memset(t, 0, sizeof(*t));
+}
+
+/* Iterate user rules for the Rust emitter.  We expose this as a
+** count + accessor because struct rule's full layout isn't visible
+** to emit_rust.c. */
+int lime_emit_rust_rule_count(const struct lime *lemp) {
+    return lemp ? lemp->nrule : 0;
+}
+
+/* For rule iRule, return the LHS index, nrhs, code text (raw, with
+** $$/$N still present), and the line number for diagnostics.  Out
+** parameters may be NULL if the caller doesn't need that field. */
+int lime_emit_rust_rule_info(const struct lime *lemp, int iRule,
+                             int *out_lhs_index,
+                             int *out_nrhs,
+                             const char **out_code,
+                             const char **out_lhs_alias,
+                             int *out_line,
+                             int *out_no_code) {
+    if (!lemp) return -1;
+    struct rule *rp;
+    for (rp = lemp->rule; rp; rp = rp->next) {
+        if (rp->iRule == iRule) {
+            if (out_lhs_index) *out_lhs_index = rp->lhs->index;
+            if (out_nrhs)      *out_nrhs      = rp->nrhs;
+            if (out_code)      *out_code      = rp->code;
+            if (out_lhs_alias) *out_lhs_alias = rp->lhsalias;
+            if (out_line)      *out_line      = rp->line;
+            if (out_no_code)   *out_no_code   = rp->noCode;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* For rule iRule, RHS slot i, return the alias (may be NULL) and
+** symbol name. */
+int lime_emit_rust_rule_rhs(const struct lime *lemp, int iRule, int i,
+                            const char **out_rhs_alias,
+                            const char **out_rhs_name) {
+    if (!lemp) return -1;
+    struct rule *rp;
+    for (rp = lemp->rule; rp; rp = rp->next) {
+        if (rp->iRule == iRule) {
+            if (i < 0 || i >= rp->nrhs) return -1;
+            if (out_rhs_alias) *out_rhs_alias = rp->rhsalias ? rp->rhsalias[i] : NULL;
+            if (out_rhs_name)  *out_rhs_name  = rp->rhs[i]->name;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Bridge functions for src/emit_rust.c                              */
+/* ------------------------------------------------------------------ */
+/*
+** struct lime / struct symbol / struct rule are defined locally in
+** this file and the C-side codegen reads their fields directly.
+** src/emit_rust.c is a separate translation unit and can't see the
+** internal layout, so we expose narrow accessors (getter functions)
+** that emit_rust_parser() calls.  Keep the surface minimal -- when
+** the action-table emit is wired in subsequent commits the same
+** accessor set will need to grow to expose yy_action / yy_lookahead
+** etc., but for the SKELETON these few names + counts are enough.
+*/
+
+int lime_emit_rust_get_nstate(const struct lime *lemp) {
+    return lemp ? lemp->nxstate : 0;
+}
+int lime_emit_rust_get_nrule(const struct lime *lemp) {
+    return lemp ? lemp->nrule : 0;
+}
+int lime_emit_rust_get_nterminal(const struct lime *lemp) {
+    return lemp ? lemp->nterminal : 0;
+}
+int lime_emit_rust_get_nsymbol(const struct lime *lemp) {
+    return lemp ? lemp->nsymbol : 0;
+}
+int lime_emit_rust_get_first_token(const struct lime *lemp) {
+    return lemp ? lemp->first_token : 0;
+}
+const char *lime_emit_rust_get_name(const struct lime *lemp) {
+    return lemp ? lemp->name : 0;
+}
+struct symbol *lime_emit_rust_symbol_at(const struct lime *lemp, int i) {
+    if (!lemp || i < 0 || i >= lemp->nsymbol) return 0;
+    return lemp->symbols[i];
+}
+const char *lime_emit_rust_symbol_name(const struct symbol *sp) {
+    return sp ? sp->name : 0;
+}
+
+/* feat/rust-output: per-rule Rust body override accessor.  Returns
+** the rust_code text or NULL when the grammar didn't supply
+** %rust_action for this rule. */
+const char *lime_emit_rust_rule_rust_code(const struct lime *lemp, int iRule) {
+    if (!lemp) return 0;
+    struct rule *rp;
+    for (rp = lemp->rule; rp; rp = rp->next) {
+        if (rp->iRule == iRule) return rp->rust_code;
+    }
+    return 0;
+}
+
+const char *lime_emit_rust_get_rust_arg(const struct lime *lemp) {
+    return lemp ? lemp->rust_arg : 0;
+}
+const char *lime_emit_rust_get_rust_value_type(const struct lime *lemp) {
+    return lemp ? lemp->rust_value_type : 0;
+}
+const char *lime_emit_rust_get_rust_error(const struct lime *lemp) {
+    return lemp ? lemp->rust_error : 0;
+}
+const char *lime_emit_rust_get_rust_accept(const struct lime *lemp) {
+    return lemp ? lemp->rust_accept : 0;
+}
+const char *lime_emit_rust_get_rust_failure(const struct lime *lemp) {
+    return lemp ? lemp->rust_failure : 0;
+}
+const char *lime_emit_rust_get_rust_overflow(const struct lime *lemp) {
+    return lemp ? lemp->rust_overflow : 0;
+}
+
+int g_lime_rust_no_std = 0;

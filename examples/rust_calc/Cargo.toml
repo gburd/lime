@@ -1,0 +1,14 @@
+[package]
+name = "rust_calc"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Lime --rust end-to-end demo: arithmetic calculator"
+
+[[bin]]
+name = "rust_calc"
+path = "src/main.rs"
+
+[lib]
+name = "rust_calc"
+path = "src/lib.rs"
