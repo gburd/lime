@@ -944,6 +944,10 @@ struct lime {
   char *name;              /* Name of the generated parser */
   char *arg;               /* Declaration of the 3rd argument to parser */
   char *ctx;               /* Declaration of 2nd argument to constructor */
+  char *rust_arg;          /* %rust_extra_argument {Type} -- Rust output type
+                           ** for the parser's user-arg threading.  When NULL
+                           ** and the C side has %extra_argument, the Rust
+                           ** emitter falls back to () (no user arg). */
   char *tokentype;         /* Type of terminal symbols in the parser stack */
   char *vartype;           /* The default type of non-terminal symbols */
   char *start;             /* Name of the start symbol for the grammar */
@@ -6577,6 +6581,12 @@ static void parseonetoken(struct pstate *psp)
           psp->declargslot = &(psp->gp->stacksize);
           psp->insertLineMacro = 0;
           attach_directive_comment(psp, &psp->gp->stacksize_comment);
+        }else if( strcmp(x,"rust_extra_argument")==0 ){
+          /* feat/rust-output: Rust-side %extra_argument equivalent.
+          ** Type inside braces becomes the parser's user-arg type. */
+          psp->declargslot = &(psp->gp->rust_arg);
+          psp->insertLineMacro = 0;
+          break;
         }else if( strcmp(x,"rust_action")==0 ){
           /* v0.8 feat/rust-output: per-rule Rust body override.
           ** The directive takes a `{ body }` on the same line; we
@@ -13523,4 +13533,8 @@ const char *lime_emit_rust_rule_rust_code(const struct lime *lemp, int iRule) {
         if (rp->iRule == iRule) return rp->rust_code;
     }
     return 0;
+}
+
+const char *lime_emit_rust_get_rust_arg(const struct lime *lemp) {
+    return lemp ? lemp->rust_arg : 0;
 }

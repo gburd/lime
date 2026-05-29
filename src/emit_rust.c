@@ -96,6 +96,7 @@ extern int  lime_emit_rust_rule_rhs(const struct lime *lemp, int iRule, int i,
                                     const char **out_rhs_alias,
                                     const char **out_rhs_name);
 extern const char *lime_emit_rust_rule_rust_code(const struct lime *lemp, int iRule);
+extern const char *lime_emit_rust_get_rust_arg(const struct lime *lemp);
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -318,13 +319,24 @@ static void emit_action_body_substituted(FILE *out, const char *code,
 static void emit_reduce_callbacks(FILE *out, struct lime *lemp,
                                   const LimeRustTables *t) {
     emit_section(out, "Per-rule reduce callbacks");
+
+    /* Emit UserArg type before ReduceCtx so it's in scope. */
+    const char *rust_arg = lime_emit_rust_get_rust_arg(lemp);
+    if (rust_arg && rust_arg[0]) {
+        fprintf(out, "/// %%rust_extra_argument type.\n");
+        fprintf(out, "pub type UserArg = %s;\n\n", rust_arg);
+    } else {
+        fprintf(out, "pub type UserArg = ();\n\n");
+    }
+
     fprintf(out,
             "/// Context passed to each rule's reduce callback.\n"
-            "/// Rules read RHS values via the `rhs` slice (oldest at\n"
-            "/// index 0) and write the LHS via `lhs`.\n"
+            "/// Rules read RHS values via the `rhs` slice, write LHS via\n"
+            "/// `lhs`, and access the user arg (if any) via `user`.\n"
             "pub struct ReduceCtx<'a> {\n"
             "    pub lhs:  &'a mut Value,\n"
             "    pub rhs:  &'a mut [Value],\n"
+            "    pub user: &'a mut UserArg,\n"
             "}\n\n");
     fprintf(out,
             "/// Default semantic value type.  Subsequent commits on the\n"
@@ -444,8 +456,17 @@ static void emit_reduce_callbacks(FILE *out, struct lime *lemp,
 static void emit_parser_runtime(FILE *out, const struct lime *lemp) {
     const char *name = lime_emit_rust_get_name(lemp);
     if (!name) name = "Parse";
+    const char *rust_arg = lime_emit_rust_get_rust_arg(lemp);
+    /* Thread user-arg through the parser.  When grammar declares
+    ** %rust_extra_argument {T}, T becomes UserArg.  Otherwise UserArg = ().
+    ** Action bodies read/write via ctx.user.  Parser struct stores a
+    ** mutable user value the caller injects via push_with_user(). */
+    int has_user_arg = (rust_arg && rust_arg[0]);
 
     emit_section(out, "Parser API + LALR runtime");
+
+    /* UserArg type already emitted by emit_reduce_callbacks. */
+    (void)rust_arg; (void)has_user_arg;
 
     /* Error type. */
     fprintf(out,
@@ -476,20 +497,31 @@ static void emit_parser_runtime(FILE *out, const struct lime *lemp) {
     fprintf(out, "    stack: Vec<Frame>,\n");
     fprintf(out, "    accepted: bool,\n");
     fprintf(out, "    errored: bool,\n");
-    fprintf(out, "    /// Value the start-rule's reduce computed.\n");
-    fprintf(out, "    /// Populated when reduce(0) fires; usable after\n");
-    fprintf(out, "    /// finalize() returns Ok.\n");
     fprintf(out, "    pub final_value: Value,\n");
+    fprintf(out, "    /// User argument threaded into ReduceCtx for\n");
+    fprintf(out, "    /// every reduce callback.  Populated from\n");
+    fprintf(out, "    /// %%rust_extra_argument; () when unset.\n");
+    fprintf(out, "    pub user: UserArg,\n");
     fprintf(out, "}\n\n");
 
     fprintf(out, "impl %sParser {\n", name);
     /* new */
     fprintf(out,
-            "    /// Construct a fresh parser at state 0.\n"
-            "    pub fn new() -> Self {\n"
+            "    /// Construct a parser with a user-supplied UserArg.\n"
+            "    /// When UserArg is () use new() instead.\n"
+            "    pub fn new_with_user(user: UserArg) -> Self {\n"
             "        let mut stack = Vec::with_capacity(64);\n"
             "        stack.push(Frame::default());\n"
-            "        Self { stack, accepted: false, errored: false, final_value: Value::default() }\n"
+            "        Self {\n"
+            "            stack, accepted: false, errored: false,\n"
+            "            final_value: Value::default(),\n"
+            "            user,\n"
+            "        }\n"
+            "    }\n\n"
+            "    /// Construct a fresh parser at state 0 with the\n"
+            "    /// UserArg's Default value.\n"
+            "    pub fn new() -> Self where UserArg: Default {\n"
+            "        Self::new_with_user(UserArg::default())\n"
             "    }\n\n");
 
     /* push -- the LALR loop. */
@@ -656,6 +688,7 @@ static void emit_parser_runtime(FILE *out, const struct lime *lemp) {
             "        cb(&mut ReduceCtx {\n"
             "            lhs: &mut lhs_value,\n"
             "            rhs: &mut rhs_values,\n"
+            "            user: &mut self.user,\n"
             "        });\n"
             "\n"
             "        // Pop nrhs frames.\n"

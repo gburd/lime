@@ -82,12 +82,15 @@ pub static YY_FALLBACK: &[u16] = &[];
 // Per-rule reduce callbacks
 // ======================================================================
 
+pub type UserArg = ();
+
 /// Context passed to each rule's reduce callback.
-/// Rules read RHS values via the `rhs` slice (oldest at
-/// index 0) and write the LHS via `lhs`.
+/// Rules read RHS values via the `rhs` slice, write LHS via
+/// `lhs`, and access the user arg (if any) via `user`.
 pub struct ReduceCtx<'a> {
     pub lhs:  &'a mut Value,
     pub rhs:  &'a mut [Value],
+    pub user: &'a mut UserArg,
 }
 
 /// Default semantic value type.  Subsequent commits on the
@@ -184,18 +187,30 @@ pub struct CalcParser {
     stack: Vec<Frame>,
     accepted: bool,
     errored: bool,
-    /// Value the start-rule's reduce computed.
-    /// Populated when reduce(0) fires; usable after
-    /// finalize() returns Ok.
     pub final_value: Value,
+    /// User argument threaded into ReduceCtx for
+    /// every reduce callback.  Populated from
+    /// %rust_extra_argument; () when unset.
+    pub user: UserArg,
 }
 
 impl CalcParser {
-    /// Construct a fresh parser at state 0.
-    pub fn new() -> Self {
+    /// Construct a parser with a user-supplied UserArg.
+    /// When UserArg is () use new() instead.
+    pub fn new_with_user(user: UserArg) -> Self {
         let mut stack = Vec::with_capacity(64);
         stack.push(Frame::default());
-        Self { stack, accepted: false, errored: false, final_value: Value::default() }
+        Self {
+            stack, accepted: false, errored: false,
+            final_value: Value::default(),
+            user,
+        }
+    }
+
+    /// Construct a fresh parser at state 0 with the
+    /// UserArg's Default value.
+    pub fn new() -> Self where UserArg: Default {
+        Self::new_with_user(UserArg::default())
     }
 
     /// Feed an external token code (with semantic value).
@@ -364,6 +379,7 @@ impl CalcParser {
         cb(&mut ReduceCtx {
             lhs: &mut lhs_value,
             rhs: &mut rhs_values,
+            user: &mut self.user,
         });
 
         // Pop nrhs frames.
