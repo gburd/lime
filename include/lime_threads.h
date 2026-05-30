@@ -71,7 +71,14 @@
 #include <process.h>
 
 typedef SRWLOCK             pthread_rwlock_t;
-typedef CRITICAL_SECTION    pthread_mutex_t;
+/* mutex on Windows: implemented over SRWLOCK in exclusive mode
+** rather than CRITICAL_SECTION, so we can supply a
+** PTHREAD_MUTEX_INITIALIZER for static-initialised mutexes
+** (CRITICAL_SECTION has no static initializer; it requires a
+** runtime InitializeCriticalSection call).  All Lime mutex
+** uses are non-recursive single-process locks; SRWLOCK in
+** exclusive mode is a faithful substitute. */
+typedef SRWLOCK             pthread_mutex_t;
 typedef HANDLE              pthread_t;
 typedef int                 pthread_attr_t;
 typedef int                 pthread_rwlockattr_t;
@@ -79,6 +86,11 @@ typedef int                 pthread_mutexattr_t;
 
 #define PTHREAD_CREATE_DETACHED 1
 #define PTHREAD_CREATE_JOINABLE 0
+
+/* Static-initialiser parity with POSIX <pthread.h>.  SRWLOCK_INIT
+** is the documented zero-value SRWLOCK initialiser. */
+#define PTHREAD_MUTEX_INITIALIZER  SRWLOCK_INIT
+#define PTHREAD_RWLOCK_INITIALIZER SRWLOCK_INIT
 
 /* --- rwlock --- */
 static __inline int pthread_rwlock_init(pthread_rwlock_t *lock,
@@ -118,23 +130,23 @@ static __inline int pthread_rwlock_unlock(pthread_rwlock_t *lock) {
     return 0;
 }
 
-/* --- mutex --- */
+/* --- mutex (over SRWLOCK in exclusive mode) --- */
 static __inline int pthread_mutex_init(pthread_mutex_t *m,
                                        const pthread_mutexattr_t *a) {
     (void)a;
-    InitializeCriticalSection(m);
+    InitializeSRWLock(m);
     return 0;
 }
 static __inline int pthread_mutex_destroy(pthread_mutex_t *m) {
-    DeleteCriticalSection(m);
+    (void)m;
     return 0;
 }
 static __inline int pthread_mutex_lock(pthread_mutex_t *m) {
-    EnterCriticalSection(m);
+    AcquireSRWLockExclusive(m);
     return 0;
 }
 static __inline int pthread_mutex_unlock(pthread_mutex_t *m) {
-    LeaveCriticalSection(m);
+    ReleaseSRWLockExclusive(m);
     return 0;
 }
 
