@@ -29,17 +29,23 @@ if parse_manager_dl_dep.found()
   parse_manager_link_args += ['-ldl']
 endif
 
-parse_manager_exe = executable('parse-manager',
-  'parse-manager.c',
-  include_directories : [inc, include_directories('../src')],
-  dependencies : [lime_parser_dep],
-  link_args : parse_manager_link_args,
-  # export_dynamic : true so plugins loaded via parser_manager_load()
-  # can resolve back into the host's lime_parser symbols (matches the
-  # pattern in tests/test_snapshot_create and examples/plugin_template).
-  export_dynamic : true,
-  install : true,
-)
+# Skipped on Windows: parse-manager uses getopt(3) and dlopen
+# (POSIX-only); a Win32 port via getopt_long_w + LoadLibraryA is
+# feasible but unfunded.  See tests/meson.build for the matching
+# test_parse_manager gate.
+if host_machine.system() != 'windows'
+  parse_manager_exe = executable('parse-manager',
+    'parse-manager.c',
+    include_directories : [inc, include_directories('../src')],
+    dependencies : [lime_parser_dep],
+    link_args : parse_manager_link_args,
+    # export_dynamic : true so plugins loaded via parser_manager_load()
+    # can resolve back into the host's lime_parser symbols (matches the
+    # pattern in tests/test_snapshot_create and examples/plugin_template).
+    export_dynamic : true,
+    install : true,
+  )
 
-# Install the man page alongside the binary.
-install_man('parse-manager.1')
+  # Install the man page alongside the binary.
+  install_man('parse-manager.1')
+endif

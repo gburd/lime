@@ -116,50 +116,52 @@ endif
 # subprocess-driven lime_compile_grammar_text comparison baseline.
 # include_directories includes ../src so snapshot.h / snapshot_build.h
 # resolve when lime.c is compiled with LIME_HAVE_SNAPSHOT_BUILD.
-test_lime_compile_in_process = executable('test_lime_compile_in_process',
-  'test_lime_compile_in_process.c',
-  link_with : [lime_lex_compiler_lib],
-  dependencies : lime_parser_dep,
-  include_directories : [inc, include_directories('../src'),
-                         include_directories('../src/lex')],
-  c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAVE_SNAPSHOT_BUILD',
-            '-DLIME_HAS_LEX_COMPILER',
-            '-Wno-unused-function', '-Wno-unused-parameter',
-            '-Wno-format-overflow'],
-  # Export the executable's runtime symbols so the .so produced
-  # by the subprocess path's dlopen (used in the equivalence sub-
-  # test) can resolve snapshot_release / parse_token / etc.
-  # Same trick test_snapshot_create + test_extension_rebuild use.
-  export_dynamic : true,
-)
+if host_machine.system() != 'windows'
+  test_lime_compile_in_process = executable('test_lime_compile_in_process',
+    'test_lime_compile_in_process.c',
+    link_with : [lime_lex_compiler_lib],
+    dependencies : lime_parser_dep,
+    include_directories : [inc, include_directories('../src'),
+                           include_directories('../src/lex')],
+    c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAVE_SNAPSHOT_BUILD',
+              '-DLIME_HAS_LEX_COMPILER',
+              '-Wno-unused-function', '-Wno-unused-parameter',
+              '-Wno-format-overflow'],
+    # Export the executable's runtime symbols so the .so produced
+    # by the subprocess path's dlopen (used in the equivalence sub-
+    # test) can resolve snapshot_release / parse_token / etc.
+    # Same trick test_snapshot_create + test_extension_rebuild use.
+    export_dynamic : true,
+  )
 
-test('lime_compile_in_process', test_lime_compile_in_process,
-  # Point the subprocess fallback at the just-built lime + parser lib
-  # so the equivalence and perf-comparison sub-tests run against the
-  # real subprocess pipeline rather than skipping when `lime` is not
-  # on $PATH.  This is a runtime env, not a build-time link.
-  # LIME_INCLUDE / LIME_SRC_INCLUDE are read by snapshot_create.c so
-  # the subprocess `cc` invocation finds the runtime headers.
-  #
-  # ROADMAP-1 phase 4: this test predates the in-process dispatch
-  # default in src/snapshot_create.c::lime_compile_grammar_text and
-  # explicitly compares the in-process and subprocess pipelines.
-  # Force subprocess for `lime_compile_grammar_text` so the
-  # comparison still measures the fork+exec pipeline rather than the
-  # transparently-dispatched in-process path.  Direct calls to
-  # `lime_compile_grammar_in_process` (the subject of this test) are
-  # unaffected by LIME_FORCE_SUBPROCESS.
-  env : [
-    'LIME_BIN=' + lime_exe.full_path(),
-    'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
-    'LIME_INCLUDE=' + meson.project_source_root() / 'include',
-    'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
-    'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
-    'LIME_FORCE_SUBPROCESS=1',
-  ],
-  depends : [lime_exe],
-  workdir : meson.project_source_root(),
-  timeout : 60)
+  test('lime_compile_in_process', test_lime_compile_in_process,
+    # Point the subprocess fallback at the just-built lime + parser lib
+    # so the equivalence and perf-comparison sub-tests run against the
+    # real subprocess pipeline rather than skipping when `lime` is not
+    # on $PATH.  This is a runtime env, not a build-time link.
+    # LIME_INCLUDE / LIME_SRC_INCLUDE are read by snapshot_create.c so
+    # the subprocess `cc` invocation finds the runtime headers.
+    #
+    # ROADMAP-1 phase 4: this test predates the in-process dispatch
+    # default in src/snapshot_create.c::lime_compile_grammar_text and
+    # explicitly compares the in-process and subprocess pipelines.
+    # Force subprocess for `lime_compile_grammar_text` so the
+    # comparison still measures the fork+exec pipeline rather than the
+    # transparently-dispatched in-process path.  Direct calls to
+    # `lime_compile_grammar_in_process` (the subject of this test) are
+    # unaffected by LIME_FORCE_SUBPROCESS.
+    env : [
+      'LIME_BIN=' + lime_exe.full_path(),
+      'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
+      'LIME_INCLUDE=' + meson.project_source_root() / 'include',
+      'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
+      'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
+      'LIME_FORCE_SUBPROCESS=1',
+    ],
+    depends : [lime_exe],
+    workdir : meson.project_source_root(),
+    timeout : 60)
+endif
 
 # ROADMAP item 1, phase 4: in-process dispatch through
 # lime_compile_grammar_text and (transitively) publish_modified_snapshot

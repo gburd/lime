@@ -90,6 +90,8 @@ int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
 #endif
 
 #ifdef __WIN32__
+#include <io.h>
+#include <process.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -97,15 +99,17 @@ extern int access(const char *path, int mode);
 #ifdef __cplusplus
 }
 #endif
-#else
-#if defined(_WIN32)
-#include <io.h>
-#define dup2 _dup2
+/* MSVC names POSIX file-descriptor APIs with leading underscore.
+** MinGW provides the unprefixed names via its POSIX layer; the
+** redefines are harmless there because the targets are identical. */
+#if !defined(__MINGW32__)
+#define dup   _dup
+#define dup2  _dup2
 #define close _close
-#define open _open
+#define open  _open
+#endif
 #else
 #include <unistd.h>
-#endif
 #endif
 
 /* #define PRIVATE static */
