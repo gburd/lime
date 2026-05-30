@@ -85,10 +85,9 @@ static int ordered(const char *hay, const char *before, const char *after,
 
 /* Run `<lime> -F <path>` and return the slurped <path>.formatted. */
 static char *format_once(const char *lime_bin, const char *path) {
-    char cmd[2048];
-    snprintf(cmd, sizeof(cmd),
-             "'%s' -F '%s' > /dev/null 2>&1", lime_bin, path);
-    if (system(cmd) != 0) {
+    char *fmt_argv[] = { (char *)lime_bin, "-F", (char *)path, NULL };
+    int rc = 0;
+    if (test_compat_run(fmt_argv, &rc) != 0 || rc != 0) {
         fprintf(stderr, "FAIL: lime -F %s exited non-zero\n", path);
         return NULL;
     }
@@ -116,13 +115,16 @@ int main(int argc, char **argv) {
         return 77;
     }
 
-    /* Working copies in /tmp so we don't litter the source tree. */
-    const char *work = "/tmp/lime_fmttg_input.lime";
-    const char *fmt1 = "/tmp/lime_fmttg_input.lime.formatted";
+    char tmpdir[256];
+    if (test_compat_tmpdir("lime_fmttg", tmpdir, sizeof(tmpdir)) != 0) {
+        fprintf(stderr, "FAIL: tmpdir creation failed\n");
+        return 1;
+    }
+    char work[512], fmt1[512];
+    snprintf(work, sizeof(work), "%s/input.lime", tmpdir);
+    snprintf(fmt1, sizeof(fmt1), "%s/input.lime.formatted", tmpdir);
 
-    char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "cp '%s' '%s'", fixture, work);
-    if (system(cmd) != 0) {
+    if (test_compat_copy_file(fixture, work) != 0) {
         fprintf(stderr, "FAIL: could not copy fixture to %s\n", work);
         return 1;
     }

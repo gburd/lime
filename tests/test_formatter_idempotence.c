@@ -95,6 +95,11 @@ static int run_format(const char *lime_exe, const char *path) {
 }
 
 int main(int argc, char **argv) {
+    char g_tmpdir[256];
+    if (test_compat_tmpdir("lime_idem", g_tmpdir, sizeof(g_tmpdir)) != 0) {
+        return 1;
+    }
+
     if (argc < 3) {
         fprintf(stderr, "usage: %s <lime_exe> <project_source_root>\n",
                 argv[0]);
@@ -113,7 +118,7 @@ int main(int argc, char **argv) {
         snprintf(src, sizeof(src), "%s/%s", src_root, fixtures[i]);
 
         /* p1 = first-pass formatted output */
-        snprintf(path1, sizeof(path1), "/tmp/lime_idem_%zu_p1.lime", i);
+        snprintf(path1, sizeof(path1), "%s/idem_%zu_p1.lime", g_tmpdir, i);
         snprintf(path1_out, sizeof(path1_out),
                  "%s.formatted", path1);
         if (copy_file(src, path1) != 0) {
@@ -129,7 +134,7 @@ int main(int argc, char **argv) {
         }
 
         /* p2 = format applied to p1's output */
-        snprintf(path2, sizeof(path2), "/tmp/lime_idem_%zu_p2.lime", i);
+        snprintf(path2, sizeof(path2), "%s/idem_%zu_p2.lime", g_tmpdir, i);
         snprintf(path2_out, sizeof(path2_out),
                  "%s.formatted", path2);
         if (copy_file(path1_out, path2) != 0) {

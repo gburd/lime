@@ -70,23 +70,31 @@ int main(int argc, char **argv) {
         return 77;
     }
 
-    /* Working copy in /tmp so we don't litter the source tree. */
-    const char *work     = "/tmp/lime_fmttest_input.lime";
-    const char *fmt1     = "/tmp/lime_fmttest_input.lime.formatted";
-    const char *fmt2     = "/tmp/lime_fmttest_input.lime.formatted.formatted";
+    /* Working copy in a per-process tmpdir so we don't litter the
+    ** source tree and don't collide between concurrent runs. */
+    char tmpdir[256];
+    if (test_compat_tmpdir("lime_fmttest", tmpdir, sizeof(tmpdir)) != 0) {
+        fprintf(stderr, "FAIL: could not create tmpdir\n");
+        return 1;
+    }
+    char work[512], fmt1[512], fmt2[512];
+    snprintf(work, sizeof(work), "%s/input.lime", tmpdir);
+    snprintf(fmt1, sizeof(fmt1), "%s/input.lime.formatted", tmpdir);
+    snprintf(fmt2, sizeof(fmt2), "%s/input.lime.formatted.formatted", tmpdir);
 
-    char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "cp '%s' '%s'", fixture, work);
-    if (system(cmd) != 0) {
+    if (test_compat_copy_file(fixture, work) != 0) {
         fprintf(stderr, "FAIL: could not copy fixture to %s\n", work);
         return 1;
     }
 
     /* First pass. */
-    snprintf(cmd, sizeof(cmd), "'%s' -F '%s' > /dev/null 2>&1", lime_bin, work);
-    if (system(cmd) != 0) {
-        fprintf(stderr, "FAIL: lime -F %s exited non-zero\n", work);
-        return 1;
+    {
+        char *fmt_argv[] = { (char *)lime_bin, "-F", work, NULL };
+        int rc = 0;
+        if (test_compat_run(fmt_argv, &rc) != 0 || rc != 0) {
+            fprintf(stderr, "FAIL: lime -F %s exited non-zero\n", work);
+            return 1;
+        }
     }
 
     char *first = slurp(fmt1);
@@ -110,11 +118,14 @@ int main(int argc, char **argv) {
                    "action body preservation");
 
     /* Second pass on the formatted output -- idempotence check. */
-    snprintf(cmd, sizeof(cmd), "'%s' -F '%s' > /dev/null 2>&1", lime_bin, fmt1);
-    if (system(cmd) != 0) {
-        fprintf(stderr, "FAIL: lime -F %s exited non-zero\n", fmt1);
-        free(first);
-        return 1;
+    {
+        char *fmt_argv[] = { (char *)lime_bin, "-F", fmt1, NULL };
+        int rc = 0;
+        if (test_compat_run(fmt_argv, &rc) != 0 || rc != 0) {
+            fprintf(stderr, "FAIL: lime -F %s exited non-zero\n", fmt1);
+            free(first);
+            return 1;
+        }
     }
 
     char *second = slurp(fmt2);
@@ -133,6 +144,7 @@ int main(int argc, char **argv) {
 
     free(first);
     free(second);
+    test_compat_rmdir_recursive(tmpdir);
 
     if (!ok) return 1;
     printf("PASS: header preserved, brace bodies preserved, idempotent\n");

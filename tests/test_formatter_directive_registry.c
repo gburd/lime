@@ -73,6 +73,8 @@ static char *slurp(const char *path) {
     return buf;
 }
 
+static char g_tmpdir[256];
+
 static int run_format(const char *lime_bin, const char *grammar_path) {
     char cmd[8192];
     snprintf(cmd, sizeof(cmd), "'%s' -F '%s' > /dev/null 2>&1",
@@ -222,7 +224,7 @@ static int test_idempotence(const char *lime_bin, const char *src_dir) {
         char fmt2[4096];
         snprintf(src_path, sizeof(src_path), "%s/%s", src_dir, fix);
         snprintf(work, sizeof(work),
-                 "/tmp/lime_dir_reg_%zu_%s", i, fix);
+                 "%s/dir_reg_%zu_%s", g_tmpdir, i, fix);
         snprintf(fmt1, sizeof(fmt1), "%s.formatted", work);
         snprintf(fmt2, sizeof(fmt2), "%s.formatted.formatted", work);
 
@@ -292,8 +294,7 @@ static int test_category_placement(const char *lime_bin, const char *src_dir) {
     char fmt[4096];
     snprintf(src_path, sizeof(src_path),
              "%s/test_formatter_grammar.lime", src_dir);
-    snprintf(work, sizeof(work),
-             "/tmp/lime_dir_reg_cat_test_formatter_grammar.lime");
+    snprintf(work, sizeof(work), "%s/dir_reg_cat_test_formatter_grammar.lime", g_tmpdir);
     snprintf(fmt, sizeof(fmt), "%s.formatted", work);
 
     struct stat st;
@@ -438,8 +439,8 @@ static int test_byte_identity(const char *lime_bin, const char *project_root) {
         char fmt[4096];
         snprintf(src_path, sizeof(src_path), "%s/%s/%s",
                  project_root, e->subdir, e->basename);
-        snprintf(work, sizeof(work), "/tmp/lime_dir_reg_md5_%zu_%s",
-                 i, e->basename);
+        snprintf(work, sizeof(work), "%s/dir_reg_md5_%zu_%s",
+                 g_tmpdir, i, e->basename);
         snprintf(fmt, sizeof(fmt), "%s.formatted", work);
 
         struct stat st;
@@ -489,6 +490,11 @@ static int test_byte_identity(const char *lime_bin, const char *project_root) {
 /* ---------------------------------------------------------------- */
 
 int main(int argc, char **argv) {
+    if (test_compat_tmpdir("lime_dir_reg", g_tmpdir, sizeof(g_tmpdir)) != 0) {
+        fprintf(stderr, "FAIL: tmpdir creation failed\n");
+        return 1;
+    }
+
     if (argc < 3) {
         fprintf(stderr,
             "usage: %s <lime-binary> <project-source-root>\n", argv[0]);
