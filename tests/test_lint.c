@@ -84,23 +84,31 @@ static int enter_scratch_dir(void) {
 
 /* Run `lime <flags> <fixture>` capturing stdout, stderr, and exit
 ** code.  out_stdout / out_stderr receive the captured contents
-** (caller frees).  Return code is the WEXITSTATUS of system(). */
+** (caller frees).  Returns the child's exit code, or -1 on spawn
+** failure. */
 static int run_lime(const char *lime_bin,
                     const char *flags,
                     const char *fixture,
                     char **out_stdout,
                     char **out_stderr) {
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd),
-             "'%s' %s '%s' >stdout.txt 2>stderr.txt",
-             lime_bin, flags, fixture);
-    int rc = system(cmd);
+    /* Tokenize flags into argv[].  Single-flag boundary is space;
+    ** matches the existing call sites' usage "-L", "-L --lint-style",
+    ** etc.  Doesn't handle quoted args (none of the call sites need
+    ** that). */
+    char flagbuf[256];
+    snprintf(flagbuf, sizeof(flagbuf), "%s", flags);
+    char *argv[20] = { (char *)lime_bin };
+    int argc = 1;
+    char *tok = strtok(flagbuf, " ");
+    while (tok && argc < 18) { argv[argc++] = tok; tok = strtok(NULL, " "); }
+    argv[argc++] = (char *)fixture;
+    argv[argc] = NULL;
+    int rc = 0;
+    if (test_compat_run_to_files(argv, "stdout.txt", "stderr.txt", &rc) != 0) {
+        return -1;
+    }
     *out_stdout = slurp("stdout.txt");
     *out_stderr = slurp("stderr.txt");
-    /* WEXITSTATUS extraction; system() already returns the encoded form */
-    if (rc == -1) return -1;
-    /* On POSIX system() returns waitpid status; portable normalize: */
-    if (rc >= 256) rc = (rc >> 8) & 0xff;
     return rc;
 }
 

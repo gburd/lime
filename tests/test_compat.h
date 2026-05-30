@@ -532,4 +532,95 @@ static int test_compat_run_capture_stderr(char *const argv[],
 #endif
 }
 
+/* Spawn argv[0] with argv[1..]; redirect child stdout to
+** stdout_path, stderr to stderr_path (both created/truncated).
+** Either path may be NULL to discard. */
+static int test_compat_run_to_files(char *const argv[],
+                                    const char *stdout_path,
+                                    const char *stderr_path,
+                                    int *exit_code) {
+    if (exit_code) *exit_code = -1;
+#if defined(_WIN32)
+    char cmdline[4096];
+    size_t pos = 0;
+    for (int i = 0; argv[i]; i++) {
+        if (i > 0) {
+            if (pos + 1 >= sizeof(cmdline)) return -1;
+            cmdline[pos++] = ' ';
+        }
+        int n = test_compat_quote_arg(argv[i], cmdline + pos,
+                                      sizeof(cmdline) - pos);
+        if (n < 0) return -1;
+        pos += (size_t)n;
+    }
+    cmdline[pos] = 0;
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
+    HANDLE hout = INVALID_HANDLE_VALUE, herr = INVALID_HANDLE_VALUE;
+    if (stdout_path) {
+        hout = CreateFileA(stdout_path, GENERIC_WRITE, FILE_SHARE_READ,
+            &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (hout == INVALID_HANDLE_VALUE) return -1;
+    } else {
+        hout = CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_READ,
+            &sa, OPEN_EXISTING, 0, NULL);
+    }
+    if (stderr_path) {
+        herr = CreateFileA(stderr_path, GENERIC_WRITE, FILE_SHARE_READ,
+            &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (herr == INVALID_HANDLE_VALUE) {
+            if (hout != INVALID_HANDLE_VALUE) CloseHandle(hout);
+            return -1;
+        }
+    } else {
+        herr = CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_READ,
+            &sa, OPEN_EXISTING, 0, NULL);
+    }
+    PROCESS_INFORMATION pi;
+    STARTUPINFOA si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = hout;
+    si.hStdError  = herr;
+    si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+    BOOL ok = CreateProcessA(argv[0], cmdline, NULL, NULL, TRUE,
+                             0, NULL, NULL, &si, &pi);
+    CloseHandle(hout);
+    CloseHandle(herr);
+    if (!ok) return -1;
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    if (exit_code) *exit_code = (int)code;
+    return 0;
+#else
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        if (stdout_path) {
+            int fd = open(stdout_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd >= 0) { dup2(fd, 1); close(fd); }
+        } else {
+            int fd = open("/dev/null", O_WRONLY);
+            if (fd >= 0) { dup2(fd, 1); close(fd); }
+        }
+        if (stderr_path) {
+            int fd = open(stderr_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd >= 0) { dup2(fd, 2); close(fd); }
+        } else {
+            int fd = open("/dev/null", O_WRONLY);
+            if (fd >= 0) { dup2(fd, 2); close(fd); }
+        }
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    if (exit_code) *exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    return 0;
+#endif
+}
+
 #endif /* LIME_TEST_COMPAT_H */
