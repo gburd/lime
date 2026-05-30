@@ -683,34 +683,48 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
 ** real definition; otherwise it resolves to NULL and we fall through
 ** to the subprocess fallback below.
 */
-extern int lime_compile_grammar_in_process(const char *grammar_text,
-                                           size_t len,
-                                           ParserSnapshot **out_snapshot,
-                                           char **error)
-#if (defined(__GNUC__) || defined(__clang__)) && !defined(_WIN32)
-    __attribute__((weak))
-#endif
-    ;
-
+/*
+** lime_compile_grammar_in_process is supplied by lime.c when built
+** with -DLIME_HAVE_SNAPSHOT_BUILD (the lime_compiler_dep target).
+** Otherwise it isn't linked into the binary at all.
+**
+** POSIX: declare weak; the linker resolves to NULL when the real
+** symbol isn't present, and the dispatcher checks != NULL.
+**
+** Windows: lld-link doesn't honour __attribute__((weak)) but it
+** does honour the linker's '/alternatename' directive, set via
+** '#pragma comment(linker, "/alternatename:foo=foo_default")'.
+** This says 'if foo is undefined at final link, alias it to
+** foo_default'.  Functionally equivalent to weak symbols.  We
+** provide a strong _default stub that returns -1 ("in-process
+** not available"); when lime.c IS linked, its real definition
+** wins and /alternatename is ignored.
+*/
 #ifdef _WIN32
-/* Windows: no weak-symbol support under lld-link / clang-cl, so the
-** weak reference above resolves to a hard external.  Provide a static
-** stub so destroy_snapshot's call site links cleanly when no consumer
-** has supplied the real definition (i.e. when liblime_compiler is not
-** linked).  Any consumer that DOES link the in-process compiler
-** (currently gated on Windows so this path is unreachable) would get
-** a duplicate-symbol error -- desirable, since it surfaces the
-** mismatch loudly.  Functionally identical to the POSIX weak-NULL
-** semantics: no in-process compile available, fall through. */
-static int win32_lime_compile_in_process_stub(const char *grammar_text,
-                                              size_t len,
-                                              ParserSnapshot **out_snapshot,
-                                              char **error) {
+int lime_compile_grammar_in_process(const char *grammar_text,
+                                    size_t len,
+                                    ParserSnapshot **out_snapshot,
+                                    char **error);
+
+#pragma comment(linker, "/alternatename:lime_compile_grammar_in_process=lime_compile_grammar_in_process_default")
+
+int lime_compile_grammar_in_process_default(const char *grammar_text,
+                                             size_t len,
+                                             ParserSnapshot **out_snapshot,
+                                             char **error) {
     (void)grammar_text; (void)len; (void)out_snapshot;
     if (error) *error = NULL;
     return -1;
 }
-#define lime_compile_grammar_in_process win32_lime_compile_in_process_stub
+#else
+extern int lime_compile_grammar_in_process(const char *grammar_text,
+                                           size_t len,
+                                           ParserSnapshot **out_snapshot,
+                                           char **error)
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((weak))
+#endif
+    ;
 #endif
 
 ParserSnapshot *lime_compile_grammar_text(const char *grammar_text, size_t len, char **error) {
