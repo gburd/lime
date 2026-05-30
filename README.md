@@ -130,12 +130,13 @@ transparently.  Rust-specific directives:
   %rust_stack_overflow { ... }` -- Rust-side parse hooks.
 
 Performance on a 226 KB JSON fixture (i9-12900H, --release fat
-LTO):  Lime's `--rust` parse hits ~314 MB/s, ~1.58x slower than
-lalrpop and ~1.30x faster than serde_json's AST build.  The
-`--rustlex` lexer hits ~225 MB/s, ~1.88x slower than logos.
-Lime's table-driven approach is the cost of supporting runtime
-composition (lalrpop has no equivalent); it beats pest (PEG) and
-serde_json (AST) on the same workload.
+LTO):  Lime's `--rust` parse hits ~327 MB/s, ~1.55x slower than
+lalrpop and ~1.34x faster than serde_json's AST build.  The
+`--rustlex` lexer hits ~265 MB/s, ~1.74x slower than logos
+(closed from 1.88x in v0.8.1 via the v0.8.2 flat-layout
+rewrite).  Lime's table-driven approach is the cost of
+supporting runtime composition (lalrpop has no equivalent); it
+beats pest (PEG) and serde_json (AST) on the same workload.
 
 See **[docs/RUST_OUTPUT.md](docs/RUST_OUTPUT.md)** for the full
 feature surface, **[docs/RUST_BENCHMARK.md](docs/RUST_BENCHMARK.md)**
