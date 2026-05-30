@@ -692,6 +692,27 @@ extern int lime_compile_grammar_in_process(const char *grammar_text,
 #endif
     ;
 
+#ifdef _WIN32
+/* Windows: no weak-symbol support under lld-link / clang-cl, so the
+** weak reference above resolves to a hard external.  Provide a static
+** stub so destroy_snapshot's call site links cleanly when no consumer
+** has supplied the real definition (i.e. when liblime_compiler is not
+** linked).  Any consumer that DOES link the in-process compiler
+** (currently gated on Windows so this path is unreachable) would get
+** a duplicate-symbol error -- desirable, since it surfaces the
+** mismatch loudly.  Functionally identical to the POSIX weak-NULL
+** semantics: no in-process compile available, fall through. */
+static int win32_lime_compile_in_process_stub(const char *grammar_text,
+                                              size_t len,
+                                              ParserSnapshot **out_snapshot,
+                                              char **error) {
+    (void)grammar_text; (void)len; (void)out_snapshot;
+    if (error) *error = NULL;
+    return -1;
+}
+#define lime_compile_grammar_in_process win32_lime_compile_in_process_stub
+#endif
+
 ParserSnapshot *lime_compile_grammar_text(const char *grammar_text, size_t len, char **error) {
     if (grammar_text == NULL || len == 0) {
         if (error) *error = xstrdup("lime_compile_grammar_text: grammar_text is empty");

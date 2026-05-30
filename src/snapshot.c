@@ -23,8 +23,14 @@
 */
 #if (defined(__GNUC__) || defined(__clang__)) && !defined(_WIN32)
 __attribute__((weak))
-#endif
 void snapshot_dlopen_release(ParserSnapshot *snap);
+#else
+/* Windows: no .so / dlopen machinery; provide a strong no-op so
+** destroy_snapshot's call site links cleanly.  When the day comes
+** to port the subprocess + LoadLibrary path to Win32, replace this
+** with a real implementation in snapshot_create.c (Win32 branch). */
+static void snapshot_dlopen_release(ParserSnapshot *snap) { (void)snap; }
+#endif
 
 /* ------------------------------------------------------------------ */
 /*  Internal helpers                                                    */
@@ -84,9 +90,16 @@ static void destroy_snapshot(ParserSnapshot *snap) {
     ** the weak reference resolves to NULL and we skip the call.
     ** Added v0.6.x; prior to that the handle was deliberately leaked
     ** at process scope. */
+    /* On Windows snapshot_dlopen_release is a static no-op (no
+    ** dlopen machinery); on POSIX it's a weak symbol that may
+    ** resolve to NULL if snapshot_create.c isn't linked. */
+#ifdef _WIN32
+    snapshot_dlopen_release(snap);
+#else
     if (snapshot_dlopen_release != NULL) {
         snapshot_dlopen_release(snap);
     }
+#endif
 
     free(snap);
 }
