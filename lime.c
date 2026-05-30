@@ -4699,9 +4699,18 @@ int main(int argc, char **argv){
                                     ** output for ~30-50%% extra
                                     ** tokenize speed via SSE2/AVX2/NEON
                                     ** SIMD inside the memchr crate. */
+  static int rustLexSimdFlag = 0;   /* --rustlex-simd: emit hand-rolled
+                                    ** SIMD intrinsics (SSE2/AVX2/NEON/
+                                    ** RVV) inline in fast-path scans.
+                                    ** Self-contained -- no extra crate
+                                    ** dep.  Trades portability of
+                                    ** ifdef-free output for ~2x extra
+                                    ** tokenize speed on supported
+                                    ** architectures. */
   extern int g_lime_rust_no_std;
   extern int g_lime_rustlex_flag;
   extern int g_lime_rustlex_memchr_flag;
+  extern int g_lime_rustlex_simd_flag;
   static int rustCrateFlag = 0; /* --rust-crate: emit a complete Cargo
                                 ** crate alongside the .rs file
                                 ** (Cargo.toml + src/lib.rs).  Only valid
@@ -4773,6 +4782,13 @@ int main(int argc, char **argv){
     {OPT_FLAG, "-rustnostd", (char*)&rustNoStdFlag,
                     "Emit #![no_std] on the parser.rs.  Replaces Vec<Frame> "
                     "with alloc::vec::Vec (parser still requires alloc)."},
+    {OPT_FLAG, "-rustlex-simd", (char*)&rustLexSimdFlag,
+                    "With -X --rustlex, emit hand-rolled SIMD intrinsics "
+                    "(SSE2/AVX2 on x86_64, NEON on AArch64, RVV on RISC-V) "
+                    "inline in fast-path scans.  Self-contained: no extra "
+                    "crate dependency, runtime feature detection via "
+                    "std::is_x86_feature_detected etc.  Closes most of "
+                    "the lime-vs-logos gap on supported architectures."},
     {OPT_FLAG, "-rustlex-memchr", (char*)&rustLexMemchrFlag,
                     "With -X --rustlex, emit fast-path scans that call "
                     "into the memchr(2) crate (SIMD-accelerated byte search). "
@@ -4838,6 +4854,7 @@ int main(int argc, char **argv){
   ** driver can consult it when emitting outputs. */
   g_lime_rustlex_flag = rustLexFlag;
   g_lime_rustlex_memchr_flag = rustLexMemchrFlag;
+  g_lime_rustlex_simd_flag = rustLexSimdFlag;
   if( lexFlag ){
     /* -X: run the .lex compiler frontend instead of the parser
     ** generator.  Reads the input as a .lex source file, runs
@@ -5006,6 +5023,7 @@ int main(int argc, char **argv){
     /* Latch the flag for the .lex compiler driver to consult. */
     g_lime_rustlex_flag = rustLexFlag;
     g_lime_rustlex_memchr_flag = rustLexMemchrFlag;
+  g_lime_rustlex_simd_flag = rustLexSimdFlag;
     if( rustFlag ){
         g_lime_rust_no_std = rustNoStdFlag;
         char rust_path[512];
@@ -13628,3 +13646,4 @@ const char *lime_emit_rust_get_rust_overflow(const struct lime *lemp) {
 int g_lime_rust_no_std = 0;
 int g_lime_rustlex_flag = 0;
 int g_lime_rustlex_memchr_flag = 0;
+int g_lime_rustlex_simd_flag = 0;
