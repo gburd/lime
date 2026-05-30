@@ -228,6 +228,18 @@ static json_value *parse_line(const char *line, size_t line_len) {
 
     const char *p = line;
     const char *end = line + line_len;
+    /* On Windows the file path starts with a drive letter (e.g.,
+    ** "C:\Users\...\file.lime:42:7: warning: ...").  The first ':'
+    ** is the drive-letter delimiter, not the path/line separator.
+    ** Skip past it when the line begins with [A-Za-z]:[\\/]. */
+    if (line_len >= 3
+            && ((line[0] >= 'A' && line[0] <= 'Z')
+                || (line[0] >= 'a' && line[0] <= 'z'))
+            && line[1] == ':'
+            && (line[2] == '\\' || line[2] == '/')) {
+        p = line + 2;  /* points at ':' so memchr(p+1, ...) finds the next */
+        p++;
+    }
     const char *colon1 = memchr(p, ':', (size_t)(end - p));
     if (!colon1) return NULL;
     /* line number */
