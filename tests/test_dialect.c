@@ -109,11 +109,22 @@ static int run_lime(const char *lime_bin,
                     const char *flags,
                     const char *outdir,
                     const char *fixture) {
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd),
-             "'%s' %s -T'%s' -d'%s' '%s' >/dev/null 2>&1",
-             lime_bin, flags, limpar, outdir, fixture);
-    return system(cmd);
+    char flagbuf[256];
+    snprintf(flagbuf, sizeof(flagbuf), "%s", flags ? flags : "");
+    char tflag[1024], dflag[1024];
+    snprintf(tflag, sizeof(tflag), "-T%s", limpar);
+    snprintf(dflag, sizeof(dflag), "-d%s", outdir);
+    char *argv[24] = { (char *)lime_bin };
+    int argc = 1;
+    char *tok = strtok(flagbuf, " ");
+    while (tok && argc < 18) { argv[argc++] = tok; tok = strtok(NULL, " "); }
+    argv[argc++] = tflag;
+    argv[argc++] = dflag;
+    argv[argc++] = (char *)fixture;
+    argv[argc] = NULL;
+    int rc = 0;
+    if (test_compat_run_to_files(argv, NULL, NULL, &rc) != 0) return -1;
+    return rc;
 }
 
 /* Run lime expecting failure; capture stderr to a buffer for
@@ -125,17 +136,31 @@ static int run_lime_capture_stderr(const char *lime_bin,
                                    const char *fixture,
                                    char *err_out,
                                    size_t err_cap) {
-    char cmd[4096];
+    char flagbuf[256];
+    snprintf(flagbuf, sizeof(flagbuf), "%s", flags ? flags : "");
+    char tflag[1024], dflag[1024];
+    snprintf(tflag, sizeof(tflag), "-T%s", limpar);
+    snprintf(dflag, sizeof(dflag), "-d%s", outdir);
+    char *argv[24] = { (char *)lime_bin };
+    int argc = 1;
+    char *tok = strtok(flagbuf, " ");
+    while (tok && argc < 18) { argv[argc++] = tok; tok = strtok(NULL, " "); }
+    argv[argc++] = tflag;
+    argv[argc++] = dflag;
+    argv[argc++] = (char *)fixture;
+    argv[argc] = NULL;
     char errfile[1024];
     snprintf(errfile, sizeof(errfile), "%s/stderr.txt", outdir);
-    snprintf(cmd, sizeof(cmd),
-             "'%s' %s -T'%s' -d'%s' '%s' >/dev/null 2>'%s'",
-             lime_bin, flags, limpar, outdir, fixture, errfile);
-    int rc = system(cmd);
-    char *err = slurp(errfile);
-    if (err != NULL) {
-        snprintf(err_out, err_cap, "%s", err);
-        free(err);
+    int rc = 0;
+    if (test_compat_run_to_files(argv, NULL, errfile, &rc) != 0) {
+        err_out[0] = 0;
+        return -1;
+    }
+    FILE *f = fopen(errfile, "rb");
+    if (f != NULL) {
+        size_t n = fread(err_out, 1, err_cap - 1, f);
+        err_out[n] = 0;
+        fclose(f);
     } else {
         err_out[0] = 0;
     }
