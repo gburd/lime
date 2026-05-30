@@ -16,13 +16,15 @@ common JSON parsing benchmark.
 - All competitors compiled with `--release`, `lto = "fat"`, `codegen-units = 1`.
 - All parsers do the **same work**: parse the JSON to "OK or error" -- no AST construction except where the API forces it (serde_json builds a Value).
 
-## Headline numbers (v0.8.3)
+## Headline numbers (v0.8.4)
 
 Median of 5 runs each, after warmup.
 
-| Tool | Operation | µs / parse | MB/s | vs lime |
+| Tool | Operation | u-s / parse | MB/s | vs lime |
 |---|---|---:|---:|---:|
-| **lime --rustlex** | tokenize | **734** | **295** | 1.00x |
+| **lime --rustlex** (default scalar) | tokenize | **835** | **272** | 1.00x |
+| lime --rustlex --rustlex-memchr | tokenize | 893 | 254 | 1.07x slower |
+| lime --rustlex --rustlex-simd | tokenize | 847 | 268 | 1.02x slower |
 | **lime --rust**    | parse (token stream) | 660 | 327 | 1.00x |
 | **lime combined**  | tokenize + parse | 1394 | 156 | 1.00x |
 | logos              | tokenize | 451 | 481 | **0.61x** (1.63x faster) |
@@ -131,6 +133,70 @@ machinery we deliberately deferred:
 None landed in v0.8.3.  Listed in `docs/RUST_OUTPUT.md` for
 follow-up if a consumer's profile shows the lexer as the
 bottleneck.
+
+## What changed in v0.8.4
+
+Three new opt-in flags and one Windows-test-portability scaffold:
+
+- **--rustlex-memchr**: emit fast-path scans that call into
+  the memchr(2) crate (SIMD-accelerated byte search).  Adds
+  memchr = "2" to the generated Cargo.toml when used with
+  --rustcrate.  The scalar default remains self-contained.
+
+- **--rustlex-simd**: emit hand-rolled SIMD intrinsics
+  (SSE2/AVX2 on x86_64, NEON on aarch64) inline in fast-path
+  scans.  Self-contained -- no extra crate dependency, runtime
+  feature detection via std::is_x86_feature_detected.
+  RISC-V V-extension is gated off (intrinsic API still
+  stabilising; falls through to scalar).
+
+- tests/test_compat.h: portability shim providing
+  tmpdir/rmdir-recursive/setenv/unsetenv/realpath plus a
+  fork+exec-or-CreateProcessA subprocess capture.  POSIX
+  implementations are pure passthroughs; Windows uses
+  GetTempPathA, CreateDirectoryA, FindFirstFileA recursion,
+  _putenv_s, GetFullPathNameA, and CreateProcessA + pipes.
+
+- tests/test_jit.c, tests/test_jit_fallback.c: refactored
+  to use test_compat_setenv / _unsetenv.  Their
+  host_machine.system != windows gates removed; both should
+  now build under MinGW gcc / clang / clang-cl on Windows.
+
+The remaining 15 POSIX-gated tests still need refactoring
+(each uses system() with shell utilities; 50-100 LOC per
+test).  Pattern documented in the test_compat.h header.
+
+### What got measured but not shipped
+
+- **Per-token DFA emission**: investigated as a narrow
+  variant (leading-byte direct dispatch for 1-byte tokens)
+  and as a full per-rule DFA construction.  The narrow
+  variant added overhead on the common path and measured
+  slower than the v0.8.3 default; reverted.  The full
+  per-rule DFA construction is 600-1000 LOC of new emit
+  code -- deferred until consumer demand justifies the
+  scope.
+
+- **Windows LSP port**: substantial CreateProcessA + pipe
+  rewrite of src/lsp/lsp_diagnostics.c and lsp_format.c.
+  Deferred.  LSP remains gated off on Windows.
+
+### Honest conclusion
+
+For JSON-shaped workloads the v0.8.3 default scalar emit
+remains the best lime configuration: ~835 us / 272 MB/s
+median.  --rustlex-memchr and --rustlex-simd cost more than
+they save on JSON's short scans because the per-call
+dispatch boundary (function call, target_feature inlining
+barrier) exceeds the scan savings.  Both flags WIN on
+grammars with long self-loop runs (HTML/XML body text,
+comments, multiline strings) -- worth benchmarking on those
+workloads before committing to either.
+
+The 1.6x lime-vs-logos gap on JSON is NOT closeable with
+the current architecture.  Closing it requires per-token
+DFA emission as a separate compilation pass; that work is
+deferred.
 
 ## Cross-platform verification
 

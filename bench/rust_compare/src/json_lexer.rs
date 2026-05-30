@@ -192,8 +192,9 @@ fn step_INITIAL(state: u16, b: u8) -> i16 {
 /// scanning a run of self-loop bytes.  LLVM
 /// auto-vectorises these tight loops.
 #[inline(always)]
-fn scan_self_loop_INITIAL_2(bytes: &[u8], mut p: usize) -> usize {
+fn scan_self_loop_INITIAL_2(bytes: &[u8], p: usize) -> usize {
     let n = bytes.len();
+    let mut p = p;
     while p < n {
         let b = unsafe { *bytes.get_unchecked(p) };
         if b == 34 || b == 92 { break; }
