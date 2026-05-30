@@ -687,7 +687,10 @@ extern int lime_compile_grammar_in_process(const char *grammar_text,
                                            size_t len,
                                            ParserSnapshot **out_snapshot,
                                            char **error)
-    __attribute__((weak));
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(_WIN32)
+    __attribute__((weak))
+#endif
+    ;
 
 ParserSnapshot *lime_compile_grammar_text(const char *grammar_text, size_t len, char **error) {
     if (grammar_text == NULL || len == 0) {

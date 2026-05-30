@@ -230,7 +230,15 @@ JITStatus jit_attach_to_snapshot(ParserSnapshot *snap);
 ** on Windows links snapshot.c directly into the .dll along
 ** with everything else).
 */
-#if defined(__GNUC__) || defined(__clang__)
+/* `__attribute__((weak))` on a declaration causes clang targeting
+** the MSVC ABI (x86_64-pc-windows-msvc) to emit a weak alias
+** definition in EVERY translation unit that pulls the header.
+** lld-link then errors with 'duplicate symbol: ...' because
+** the strong definition in jit_context.c collides with the
+** synthesised weak def in snapshot.c.obj.  GNU ld dedupes; lld-link
+** does not.  Make LIME_WEAK a no-op on Windows -- the runtime
+** doesn't have the dynamic-snapshot .so case there anyway. */
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(_WIN32)
 #define LIME_WEAK __attribute__((weak))
 #else
 #define LIME_WEAK
