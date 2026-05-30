@@ -42,6 +42,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "lime_time.h"  /* clock_gettime + CLOCK_MONOTONIC shim on _WIN32 */
 
 extern ParserSnapshot *ArithBuildSnapshot(void);
 

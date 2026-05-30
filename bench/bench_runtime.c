@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "lime_time.h"  /* clock_gettime + CLOCK_MONOTONIC shim on _WIN32 */
 
 #if !defined(USE_BISON) && !defined(USE_LIME)
 #error "Define USE_BISON or USE_LIME"
