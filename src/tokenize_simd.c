@@ -302,7 +302,7 @@ CharClassVector classify_simd_neon(const char *input, size_t offset) {
 ** scalar path via get_classify_func).
 ** ====================================================================== */
 
-#if defined(__riscv) && defined(__riscv_v_intrinsic)
+#if defined(__riscv) && defined(__riscv_v_intrinsic) && defined(__riscv_vector)
 #include <riscv_vector.h>
 
 CharClassVector classify_simd_rvv(const char *input, size_t offset) {
@@ -392,7 +392,7 @@ ClassifyFunc get_classify_func(void) {
     return classify_simd_neon;
 #endif
 
-#if defined(__riscv) && defined(__riscv_v_intrinsic)
+#if defined(__riscv) && defined(__riscv_v_intrinsic) && defined(__riscv_vector)
     /* RVV is unconditionally selected when the compiler builds with
     ** RVV intrinsic support; the runtime VLEN determines throughput
     ** but every RVV-1.0 host accepts the instructions emitted by
