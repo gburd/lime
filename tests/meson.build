@@ -24,23 +24,25 @@ test('version', test_version)
 #   - textDocument/hover (directive doc + non-terminal info)
 #   - textDocument/documentSymbol (full outline)
 # Args: <lime-lsp-bin> <lime-bin> <fixtures-dir>.
-# Windows: skipped (lime-lsp itself isn't built on Windows).
-if host_machine.system() != 'windows'
-  test_lsp = executable('test_lsp',
-    'test_lsp.c',
-    c_args : nounusedparam,
-  )
+# Cross-platform: lime-lsp builds on Windows now (CreateProcessA +
+# anonymous pipes replacing fork+exec+pipe in lsp_diagnostics.c +
+# lsp_format.c).  test_lsp itself was POSIX-only fork+exec; v0.8.5
+# ports its spawn_server/send_message/read_message/shutdown_server
+# helpers to use the Win32 CreateProcessA + ReadFile/WriteFile path.
+test_lsp = executable('test_lsp',
+  'test_lsp.c',
+  c_args : nounusedparam,
+)
 
-  test('lsp', test_lsp,
-    args : [
-      lime_lsp_exe.full_path(),
-      lime_exe.full_path(),
-      meson.current_source_dir() / 'test_lsp_fixtures',
-    ],
-    depends : [lime_lsp_exe, lime_exe],
-    timeout : 60,
-  )
-endif
+test('lsp', test_lsp,
+  args : [
+    lime_lsp_exe.full_path(),
+    lime_exe.full_path(),
+    meson.current_source_dir() / 'test_lsp_fixtures',
+  ],
+  depends : [lime_lsp_exe, lime_exe],
+  timeout : 60,
+)
 
 test_tokenize = executable('test_tokenize',
   'test_tokenize.c',

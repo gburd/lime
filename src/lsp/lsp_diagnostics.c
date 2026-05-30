@@ -26,13 +26,22 @@
 
 #include <ctype.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
+
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#  include <io.h>
+#  include <fcntl.h>
+#  include <direct.h>
+#else
+#  include <fcntl.h>
+#  include <sys/types.h>
+#  include <sys/wait.h>
+#  include <unistd.h>
+#endif
 
 /* LSP DiagnosticSeverity codes. */
 enum {
@@ -52,13 +61,45 @@ static int parse_severity(const char *s, size_t n) {
 }
 
 static const char *get_tmpdir(void) {
+#if defined(_WIN32)
+    static char tmp_root[MAX_PATH];
+    DWORD got = GetTempPathA((DWORD)sizeof(tmp_root), tmp_root);
+    if (got > 0 && got < sizeof(tmp_root)) {
+        /* Strip trailing backslash for path concatenation parity. */
+        size_t len = strlen(tmp_root);
+        if (len > 0 && (tmp_root[len-1] == '\\' || tmp_root[len-1] == '/'))
+            tmp_root[len-1] = 0;
+        return tmp_root;
+    }
+    return "C:\\Windows\\Temp";
+#else
     const char *t = getenv("TMPDIR");
     if (t && *t) return t;
     return "/tmp";
+#endif
 }
 
 static int write_temp_file(const char *text, size_t text_len, char *out_path,
                            size_t out_path_cap) {
+#if defined(_WIN32)
+    /* GetTempFileNameA generates a unique name in the given dir.
+    ** It can't append a custom suffix (.lime), but `lime -L` doesn't
+    ** care about the file extension. */
+    if (GetTempFileNameA(get_tmpdir(), "lim", 0, out_path) == 0) return -1;
+    if (strlen(out_path) + 1 > out_path_cap) return -1;
+    HANDLE h = CreateFileA(out_path, GENERIC_WRITE, 0, NULL,
+                            TRUNCATE_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return -1;
+    DWORD written = 0;
+    if (!WriteFile(h, text, (DWORD)text_len, &written, NULL)
+            || written != text_len) {
+        CloseHandle(h);
+        DeleteFileA(out_path);
+        return -1;
+    }
+    CloseHandle(h);
+    return 0;
+#else
     int n = snprintf(out_path, out_path_cap, "%s/lime-lsp-XXXXXX.lime",
                      get_tmpdir());
     if (n < 0 || (size_t)n >= out_path_cap) return -1;
@@ -77,8 +118,31 @@ static int write_temp_file(const char *text, size_t text_len, char *out_path,
     }
     close(fd);
     return 0;
+#endif
 }
 
+#if defined(_WIN32)
+static char *read_all_handle(HANDLE h, size_t *out_len) {
+    size_t cap = 4096;
+    size_t len = 0;
+    char  *buf = (char *)malloc(cap);
+    if (!buf) return NULL;
+    for (;;) {
+        if (len == cap) {
+            size_t nc = cap * 2;
+            char *nb = (char *)realloc(buf, nc);
+            if (!nb) { free(buf); return NULL; }
+            buf = nb; cap = nc;
+        }
+        DWORD got = 0;
+        BOOL ok = ReadFile(h, buf + len, (DWORD)(cap - len), &got, NULL);
+        if (!ok || got == 0) break;
+        len += got;
+    }
+    *out_len = len;
+    return buf;
+}
+#else
 static char *read_all(int fd, size_t *out_len) {
     size_t cap = 4096;
     size_t len = 0;
@@ -103,10 +167,12 @@ static char *read_all(int fd, size_t *out_len) {
     *out_len = len;
     return buf;
 }
+#endif /* !_WIN32 */
 
 /* Build an LSP Diagnostic object.  Lines/cols converted from
  * 1-based (compiler convention) to 0-based (LSP).
  */
+
 static json_value *make_diag(long line1, long col1, int severity,
                              const char *message, size_t message_len) {
     if (line1 < 1) line1 = 1;
@@ -247,6 +313,63 @@ json_value *lsp_diagnostics_run(const char *lime_bin,
         return arr;  /* report nothing rather than fail noisily */
     }
 
+#if defined(_WIN32)
+    /* Win32 port: CreateProcessA + anonymous pipe instead of
+    ** fork+exec+pipe.  Same observable behaviour: spawn lime
+    ** with -L and the tmp file, capture its stderr to a buffer,
+    ** parse the diagnostic stream. */
+    HANDLE pipe_r, pipe_w;
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
+    if (!CreatePipe(&pipe_r, &pipe_w, &sa, 0)) {
+        DeleteFileA(tmp_path);
+        return arr;
+    }
+    SetHandleInformation(pipe_r, HANDLE_FLAG_INHERIT, 0);
+
+    HANDLE devnull = CreateFileA("NUL", GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+        OPEN_EXISTING, 0, NULL);
+
+    char cmdline[2048];
+    const char *bin = lime_bin && *lime_bin ? lime_bin : "lime";
+    /* Naive quoting -- lime_bin and tmp_path can contain spaces
+    ** but no embedded quotes in practice. */
+    snprintf(cmdline, sizeof(cmdline), "\"%s\" -L \"%s\"",
+             bin, tmp_path);
+
+    PROCESS_INFORMATION pi;
+    STARTUPINFOA si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdOutput = devnull;
+    si.hStdError  = pipe_w;
+
+    BOOL ok = CreateProcessA(NULL, cmdline, NULL, NULL, TRUE,
+                             0, NULL, NULL, &si, &pi);
+    CloseHandle(pipe_w);
+    if (devnull != INVALID_HANDLE_VALUE) CloseHandle(devnull);
+    if (!ok) {
+        CloseHandle(pipe_r);
+        DeleteFileA(tmp_path);
+        return arr;
+    }
+
+    size_t out_len = 0;
+    char *out = read_all_handle(pipe_r, &out_len);
+    CloseHandle(pipe_r);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    DeleteFileA(tmp_path);
+
+    if (out) {
+        parse_output(out, out_len, arr);
+        free(out);
+    }
+    return arr;
+#else
     int err_pipe[2];
     if (pipe(err_pipe) != 0) {
         unlink(tmp_path);
@@ -288,4 +411,5 @@ json_value *lsp_diagnostics_run(const char *lime_bin,
         free(out);
     }
     return arr;
+#endif /* _WIN32 */
 }

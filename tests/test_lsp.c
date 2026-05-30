@@ -28,15 +28,26 @@
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
+
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#  include <io.h>
+#  include <fcntl.h>
+#  include <process.h>
+   /* Win32 doesn't have strncasecmp; map to _strnicmp. */
+#  define strncasecmp _strnicmp
+#else
+#  include <fcntl.h>
+#  include <signal.h>
+#  include <strings.h>
+#  include <sys/types.h>
+#  include <sys/wait.h>
+#  include <unistd.h>
+#endif
 
 /* ---- minimal JSON probing.  Not a real parser: the assertions
  *      below all use strstr() against the raw response body plus
@@ -102,12 +113,65 @@ static long long parse_int(const char *json, int i) {
 
 /* ---- subprocess plumbing ------------------------------------------- */
 
+#if defined(_WIN32)
+typedef struct {
+    HANDLE  process;
+    HANDLE  stdin_w;   /* parent writes here  */
+    HANDLE  stdout_r;  /* parent reads here   */
+} server_t;
+#else
 typedef struct {
     pid_t pid;
     int   in_fd;
     int   out_fd;
 } server_t;
+#endif
 
+#if defined(_WIN32)
+static server_t spawn_server(const char *bin, const char *lime_bin) {
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
+    HANDLE in_r, in_w, out_r, out_w;
+    if (!CreatePipe(&in_r,  &in_w,  &sa, 0)) { perror("CreatePipe"); exit(2); }
+    if (!CreatePipe(&out_r, &out_w, &sa, 0)) { perror("CreatePipe"); exit(2); }
+    /* Parent ends must NOT be inherited by the child. */
+    SetHandleInformation(in_w,  HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
+
+    /* Set LIME_BIN in the parent's environment so it propagates
+    ** through CreateProcessA's NULL-environment-block path.
+    ** Restore on exit ... we don't bother; tests are short-lived. */
+    if (lime_bin) {
+        char buf[1024];
+        snprintf(buf, sizeof(buf), "LIME_BIN=%s", lime_bin);
+        _putenv(buf);
+    }
+
+    char cmdline[1024];
+    snprintf(cmdline, sizeof(cmdline), "\"%s\"", bin);
+
+    PROCESS_INFORMATION pi;
+    STARTUPINFOA si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput  = in_r;
+    si.hStdOutput = out_w;
+    si.hStdError  = GetStdHandle(STD_ERROR_HANDLE);
+
+    if (!CreateProcessA(bin, cmdline, NULL, NULL, TRUE, 0,
+                        NULL, NULL, &si, &pi)) {
+        fprintf(stderr, "CreateProcessA(%s) failed: %lu\n",
+                bin, (unsigned long)GetLastError());
+        exit(2);
+    }
+    /* Close the child ends in the parent. */
+    CloseHandle(in_r);
+    CloseHandle(out_w);
+    CloseHandle(pi.hThread);
+    server_t s = { pi.hProcess, in_w, out_r };
+    return s;
+}
+#else
 static server_t spawn_server(const char *bin, const char *lime_bin) {
     int in_pipe[2];   /* parent->child stdin  */
     int out_pipe[2];  /* child->parent stdout */
@@ -133,14 +197,24 @@ static server_t spawn_server(const char *bin, const char *lime_bin) {
     server_t s = { pid, in_pipe[1], out_pipe[0] };
     return s;
 }
+#endif
 
 static void send_message(server_t *s, const char *json) {
     char hdr[64];
     int hlen = snprintf(hdr, sizeof(hdr), "Content-Length: %zu\r\n\r\n",
                         strlen(json));
+#if defined(_WIN32)
+    DWORD wrote = 0;
+    if (!WriteFile(s->stdin_w, hdr, (DWORD)hlen, &wrote, NULL)
+            || (int)wrote != hlen) abort();
+    size_t n = strlen(json);
+    if (!WriteFile(s->stdin_w, json, (DWORD)n, &wrote, NULL)
+            || (size_t)wrote != n) abort();
+#else
     if (write(s->in_fd, hdr, (size_t)hlen) != hlen) abort();
     size_t n = strlen(json);
     if (write(s->in_fd, json, n) != (ssize_t)n) abort();
+#endif
 }
 
 /* Read one framed message into `buf`.  Returns body length or -1 on
@@ -153,8 +227,14 @@ static int read_message(server_t *s, char *buf, size_t cap) {
         size_t pos = 0;
         while (1) {
             char c;
+#if defined(_WIN32)
+            DWORD got = 0;
+            BOOL ok = ReadFile(s->stdout_r, &c, 1, &got, NULL);
+            if (!ok || got == 0) return -1;
+#else
             ssize_t r = read(s->out_fd, &c, 1);
             if (r <= 0) return -1;
+#endif
             if (pos + 1 < sizeof(hdr)) hdr[pos++] = c;
             if (c == '\n') break;
         }
@@ -171,10 +251,19 @@ static int read_message(server_t *s, char *buf, size_t cap) {
     if (content_length < 0 || (size_t)content_length >= cap) return -1;
     size_t total = 0;
     while (total < (size_t)content_length) {
+#if defined(_WIN32)
+        DWORD got = 0;
+        BOOL ok = ReadFile(s->stdout_r, buf + total,
+                           (DWORD)((size_t)content_length - total),
+                           &got, NULL);
+        if (!ok || got == 0) return -1;
+        total += got;
+#else
         ssize_t r = read(s->out_fd, buf + total,
                          (size_t)content_length - total);
         if (r <= 0) return -1;
         total += (size_t)r;
+#endif
     }
     buf[total] = 0;
     return (int)total;
@@ -203,10 +292,17 @@ static void shutdown_server(server_t *s) {
     char buf[1024];
     wait_for_response_id(s, 999, buf, sizeof(buf));
     send_message(s, exit_msg);
+#if defined(_WIN32)
+    CloseHandle(s->stdin_w);
+    WaitForSingleObject(s->process, INFINITE);
+    CloseHandle(s->process);
+    CloseHandle(s->stdout_r);
+#else
     close(s->in_fd);
     int status = 0;
     waitpid(s->pid, &status, 0);
     close(s->out_fd);
+#endif
 }
 
 /* ---- helpers shared by sub-tests ----------------------------------- */

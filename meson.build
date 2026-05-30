@@ -215,13 +215,13 @@ lime_compiler_dep = declare_dependency(
 # hot-path stays untouched -- it shells out to the lime binary
 # above for diagnostics.  See docs/LSP.md.
 #
-# Skipped on Windows: the LSP uses POSIX fork/execvp/waitpid/pipe
-# (see src/lsp/lsp_diagnostics.c).  A Win32 port via CreateProcessA
-# + anonymous pipes is feasible but unfunded; the CI matrix lists
-# Windows for the parser/lexer side only.
-if host_machine.system() != 'windows'
-  subdir('src/lsp')
-endif
+# Cross-platform: lsp_diagnostics.c and lsp_format.c contain
+# parallel POSIX (fork+execlp+pipe+waitpid) and Win32
+# (CreateProcessA + anonymous pipe + WaitForSingleObject)
+# implementations gated on _WIN32.  Both share the same
+# observable behaviour: spawn 'lime -L file' or 'lime -F file',
+# capture stderr, parse the diagnostic / formatted output.
+subdir('src/lsp')
 
 # pkg-config file so downstream meson/cmake/autotools builds can
 # locate Lime via dependency('lime') / pkg_check_modules(LIME ..) /

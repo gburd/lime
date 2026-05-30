@@ -112,7 +112,11 @@ json_value *lsp_format_run(const char *lime_bin,
 
     int err_pipe[2];
     if (pipe(err_pipe) != 0) {
-        unlink(tmp_path);
+        #if defined(_WIN32)
+    DeleteFileA(tmp_path);
+#else
+    unlink(tmp_path);
+#endif
         return json_make_array();
     }
 
@@ -120,7 +124,11 @@ json_value *lsp_format_run(const char *lime_bin,
     if (pid < 0) {
         close(err_pipe[0]);
         close(err_pipe[1]);
-        unlink(tmp_path);
+        #if defined(_WIN32)
+    DeleteFileA(tmp_path);
+#else
+    unlink(tmp_path);
+#endif
         return json_make_array();
     }
     if (pid == 0) {
@@ -181,7 +189,11 @@ json_value *lsp_format_run(const char *lime_bin,
      * Returning an empty edit array is the LSP-clean way to say
      * "no change". */
 
+    #if defined(_WIN32)
+    DeleteFileA(tmp_path);
+#else
     unlink(tmp_path);
+#endif
     unlink(fmt_path);
     return result;
 }
