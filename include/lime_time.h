@@ -35,21 +35,19 @@
 ** because <sys/types.h> on MinGW pulls them in transitively.
 ** Detect MinGW and skip the shim; only MSVC (and clang-cl) need
 ** the locally-defined POSIX-style stubs. */
+/* MinGW supplies the full POSIX layer (clock_gettime + CLOCK_*
+** + struct timespec).  UCRT supplies struct timespec but not
+** clock_gettime.  Legacy MSVCRT supplies neither. */
 #if defined(__MINGW32__)
 #include <time.h>
 #else
-/* Provide a minimal POSIX-style clock_gettime shim so existing
-** call sites that use `struct timespec ts; clock_gettime(...)`
-** compile on MSVC without per-site #ifdef branches.  Only the
-** clock IDs Lime uses are defined; calling with a different
-** clk_id returns -1.
-**
-** Modern Windows SDKs (UCRT, Win10+) provide a C11 'struct
-** timespec' in <time.h>; we pull it in conditionally on
-** _CRT_NO_TIME_T (MSVC's gate) being absent.  When the CRT
-** already supplies the struct, skip our re-definition. */
 #include <time.h>
-#if !defined(_TIMESPEC_DEFINED) && !defined(__struct_timespec_defined)
+
+/* Define struct timespec only when neither MinGW nor UCRT have
+** already done it.  _UCRT is defined by clang/MSVC against the
+** Universal CRT (Win10 1809+) which supplies the C11 struct. */
+#if !defined(_TIMESPEC_DEFINED) && !defined(__struct_timespec_defined) \
+    && !defined(_UCRT)
 struct timespec {
     long long tv_sec;
     long      tv_nsec;
@@ -64,6 +62,9 @@ struct timespec {
 #define CLOCK_REALTIME  0
 #endif
 
+/* clock_gettime is NOT in UCRT or legacy MSVC; provide it.
+** MinGW's POSIX layer already does, so the !defined(__MINGW32__)
+** outer guard prevents a redefinition there. */
 static inline int clock_gettime(int clk_id, struct timespec *tp) {
     if (clk_id == CLOCK_MONOTONIC) {
         LARGE_INTEGER counter, frequency;
