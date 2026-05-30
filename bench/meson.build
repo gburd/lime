@@ -1,4 +1,10 @@
 # Benchmark executables
+
+# libm: present on POSIX (-lm), part of the CRT on Windows.  Use a
+# meson find_library so the build is portable; on Windows the result
+# is .found() == False and we just don't add anything to link_args.
+math_dep = cc.find_library('m', required : false)
+
 parser_bench = executable('parser_bench',
   'parser_bench.c',
   dependencies : lime_parser_dep,
@@ -7,16 +13,14 @@ parser_bench = executable('parser_bench',
 
 jit_comparison = executable('jit_comparison',
   'jit_comparison.c',
-  dependencies : lime_parser_dep,
   include_directories : include_directories('../src'),
-  link_args : ['-lm'],  # Link math library for sqrt()
+  dependencies : [lime_parser_dep, math_dep],
 )
 
 extension_overhead = executable('extension_overhead',
   'extension_overhead.c',
-  dependencies : lime_parser_dep,
   include_directories : include_directories('../src'),
-  link_args : ['-lm'],
+  dependencies : [lime_parser_dep, math_dep],
 )
 
 # jsonb extension example -- compiled as a static archive so it gets
@@ -66,9 +70,8 @@ bench_json_gen = custom_target('bench_json_parser',
 bench_jit_real_parser = executable('bench_jit_real_parser',
   'bench_jit_real_parser.c',
   bench_arith_gen,
-  dependencies : lime_parser_dep,
   include_directories : include_directories('../src'),
-  link_args : ['-lm'],
+  dependencies : [lime_parser_dep, math_dep],
 )
 
 
