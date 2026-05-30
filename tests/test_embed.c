@@ -32,7 +32,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <limits.h>
-#include "posix_shim.h"
 
 #include "grammar_context.h"
 #include "snapshot.h"

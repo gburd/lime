@@ -50,13 +50,15 @@ test_tokenize = executable('test_tokenize',
 
 test('tokenize', test_tokenize)
 
-test_jit = executable('test_jit',
-  'test_jit.c',
-  dependencies : lime_parser_dep,
-  include_directories : include_directories('../src'),
-)
+if host_machine.system() != 'windows'
+  test_jit = executable('test_jit',
+    'test_jit.c',
+    dependencies : lime_parser_dep,
+    include_directories : include_directories('../src'),
+  )
 
-test('jit', test_jit)
+  test('jit', test_jit)
+endif
 
 test_snapshot = executable('test_snapshot',
   'test_snapshot.c',
@@ -89,16 +91,18 @@ test('concurrent', test_concurrent, timeout : 120)
 # the lime.c references to lime_lex_run_compiler resolve (the
 # reference itself is inside the gated main() and is not exercised,
 # but link-resolution still requires the symbol).
-test_compiler_context = executable('test_compiler_context',
-  'test_compiler_context.c',
-  link_with : [lime_lex_compiler_lib],
-  include_directories : [inc, include_directories('../src/lex')],
-  c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAS_LEX_COMPILER',
-            '-Wno-unused-function', '-Wno-unused-parameter',
-            '-Wno-format-overflow'],
-)
+if host_machine.system() != 'windows'
+  test_compiler_context = executable('test_compiler_context',
+    'test_compiler_context.c',
+    link_with : [lime_lex_compiler_lib],
+    include_directories : [inc, include_directories('../src/lex')],
+    c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAS_LEX_COMPILER',
+              '-Wno-unused-function', '-Wno-unused-parameter',
+              '-Wno-format-overflow'],
+  )
 
-test('compiler_context', test_compiler_context)
+  test('compiler_context', test_compiler_context)
+endif
 
 # ROADMAP item 1, phase 3: in-process LALR rebuild library.
 # test_lime_compile_in_process exercises the new public API
@@ -315,14 +319,16 @@ endif
 # trace bakes yy_fallback into the find_shift_action emit path so
 # the runtime path that consults snap->yy_fallback is bypassed.
 # Skips at runtime when JIT isn't available (LIME_NO_JIT).
-test_jit_fallback = executable('test_jit_fallback',
-  'test_jit_fallback.c',
-  include_directories : include_directories('../src'),
-  dependencies : [lime_parser_dep, lime_compiler_dep],
-  c_args : ['-DLIME_HAVE_SNAPSHOT_BUILD'],
-)
+if host_machine.system() != 'windows'
+  test_jit_fallback = executable('test_jit_fallback',
+    'test_jit_fallback.c',
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, lime_compiler_dep],
+    c_args : ['-DLIME_HAVE_SNAPSHOT_BUILD'],
+  )
 
-test('jit_fallback', test_jit_fallback)
+  test('jit_fallback', test_jit_fallback)
+endif
 
 test_parse_context = executable('test_parse_context',
   'test_parse_context.c',
@@ -364,17 +370,19 @@ test('utf8', test_utf8)
 # headers and brace-block directive bodies (e.g. %include) that
 # the parser cannot meaningfully reformat, and must be idempotent
 # under repeated runs (so PG can wire it as a CI format-check).
-test_formatter = executable('test_formatter',
-  'test_formatter.c',
-  dependencies : lime_parser_dep,
-)
+if host_machine.system() != 'windows'
+  test_formatter = executable('test_formatter',
+    'test_formatter.c',
+    dependencies : lime_parser_dep,
+  )
 
-test('formatter', test_formatter,
-  args : [
-    lime_exe.full_path(),
-    meson.current_source_dir() / 'test_formatter_grammar.lime',
-  ],
-)
+  test('formatter', test_formatter,
+    args : [
+      lime_exe.full_path(),
+      meson.current_source_dir() / 'test_formatter_grammar.lime',
+    ],
+  )
+endif
 
 # Lime-Letter-19 regression: `lime -F` must (A) preserve inter-
 # directive and inter-rule comments PG's grammar maintainers rely
@@ -385,17 +393,19 @@ test('formatter', test_formatter,
 # header, block-comment, //-stack, brace-indent, rule-leading
 # comment, idempotence, empty-grammar regression, and the
 # documented per-token-comment limitation.
-test_formatter_comments = executable('test_formatter_comments',
-  'test_formatter_comments.c',
-  dependencies : lime_parser_dep,
-)
+if host_machine.system() != 'windows'
+  test_formatter_comments = executable('test_formatter_comments',
+    'test_formatter_comments.c',
+    dependencies : lime_parser_dep,
+  )
 
-test('formatter_comments', test_formatter_comments,
-  args : [
-    lime_exe.full_path(),
-    meson.current_source_dir() / 'test_formatter_comments_grammar.lime',
-  ],
-)
+  test('formatter_comments', test_formatter_comments,
+    args : [
+      lime_exe.full_path(),
+      meson.current_source_dir() / 'test_formatter_comments_grammar.lime',
+    ],
+  )
+endif
 
 # Lime-Letter-20: regression test asserting LHS / RHS letter labels
 # (`(A)`, `(B)`, etc.) and explicit `[SYMBOL]` precedence markers
@@ -404,17 +414,19 @@ test('formatter_comments', test_formatter_comments,
 # undeclared identifiers.  Six sub-tests cover LHS labels, RHS labels,
 # mixed labeled+unlabeled symbols, precedence markers, label-count
 # parity (formatted vs source), and idempotence.
-test_formatter_labels = executable('test_formatter_labels',
-  'test_formatter_labels.c',
-  dependencies : lime_parser_dep,
-)
+if host_machine.system() != 'windows'
+  test_formatter_labels = executable('test_formatter_labels',
+    'test_formatter_labels.c',
+    dependencies : lime_parser_dep,
+  )
 
-test('formatter_labels', test_formatter_labels,
-  args : [
-    lime_exe.full_path(),
-    meson.current_source_dir() / 'test_formatter_labels_grammar.lime',
-  ],
-)
+  test('formatter_labels', test_formatter_labels,
+    args : [
+      lime_exe.full_path(),
+      meson.current_source_dir() / 'test_formatter_labels_grammar.lime',
+    ],
+  )
+endif
 
 # Lime-Letter-21 (v0.3.5): per-%token-group and per-%type-group
 # leading-comment preservation.  v0.3.4 emitted both sections in
@@ -426,17 +438,19 @@ test('formatter_labels', test_formatter_labels,
 # a run dropped.  Eight sub-tests cover header preservation, three
 # %token banners, two %type banners, declaration-order emit (vs
 # index-order shuffle), and idempotence.
-test_formatter_token_groups = executable('test_formatter_token_groups',
-  'test_formatter_token_groups.c',
-  dependencies : lime_parser_dep,
-)
+if host_machine.system() != 'windows'
+  test_formatter_token_groups = executable('test_formatter_token_groups',
+    'test_formatter_token_groups.c',
+    dependencies : lime_parser_dep,
+  )
 
-test('formatter_token_groups', test_formatter_token_groups,
-  args : [
-    lime_exe.full_path(),
-    meson.current_source_dir() / 'test_formatter_token_groups_grammar.lime',
-  ],
-)
+  test('formatter_token_groups', test_formatter_token_groups,
+    args : [
+      lime_exe.full_path(),
+      meson.current_source_dir() / 'test_formatter_token_groups_grammar.lime',
+    ],
+  )
+endif
 
 # v0.3.6 / Letter-22 regression: `lime -F` must preserve %left /
 # %right / %nonassoc precedence directives.  Pre-fix the formatter
@@ -444,18 +458,20 @@ test('formatter_token_groups', test_formatter_token_groups,
 # from 0 to 1682 parsing conflicts.  Six sub-tests cover keyword
 # survival, group preservation, [SYMBOL] override, conflict-count
 # parity (source vs formatted), and idempotence.
-test_formatter_precedence = executable('test_formatter_precedence',
-  'test_formatter_precedence.c',
-  dependencies : lime_parser_dep,
-)
+if host_machine.system() != 'windows'
+  test_formatter_precedence = executable('test_formatter_precedence',
+    'test_formatter_precedence.c',
+    dependencies : lime_parser_dep,
+  )
 
-test('formatter_precedence', test_formatter_precedence,
-  args : [
-    lime_exe.full_path(),
-    meson.project_source_root() / 'limpar.c',
-    meson.current_source_dir() / 'test_formatter_precedence_grammar.lime',
-  ],
-)
+  test('formatter_precedence', test_formatter_precedence,
+    args : [
+      lime_exe.full_path(),
+      meson.project_source_root() / 'limpar.c',
+      meson.current_source_dir() / 'test_formatter_precedence_grammar.lime',
+    ],
+  )
+endif
 
 # Regression test for the precedence-directive leading-comment
 # preservation gap: comments above %left / %right / %nonassoc were
@@ -463,17 +479,19 @@ test('formatter_precedence', test_formatter_precedence,
 # cover banner survival across three precedence levels, idempotence,
 # and that each banner emits adjacent to its directive (not stranded
 # elsewhere in the output).
-test_formatter_prec_comments = executable('test_formatter_prec_comments',
-  'test_formatter_prec_comments.c',
-  dependencies : lime_parser_dep,
-)
+if host_machine.system() != 'windows'
+  test_formatter_prec_comments = executable('test_formatter_prec_comments',
+    'test_formatter_prec_comments.c',
+    dependencies : lime_parser_dep,
+  )
 
-test('formatter_prec_comments', test_formatter_prec_comments,
-  args : [
-    lime_exe.full_path(),
-    meson.current_source_dir() / 'test_formatter_prec_comments_grammar.lime',
-  ],
-)
+  test('formatter_prec_comments', test_formatter_prec_comments,
+    args : [
+      lime_exe.full_path(),
+      meson.current_source_dir() / 'test_formatter_prec_comments_grammar.lime',
+    ],
+  )
+endif
 
 # Lime-Letter-23: regression test for %first_token / %locations /
 # %location_type formatter preservation.  Pre-fix all three were
@@ -481,17 +499,19 @@ test('formatter_prec_comments', test_formatter_prec_comments,
 # and pl_gram.lime hit gcc errors on every action body that
 # referenced &yyloc.  Four sub-tests cover each directive's survival
 # plus idempotence.
-test_formatter_loc_directives = executable('test_formatter_loc_directives',
-  'test_formatter_loc_directives.c',
-  dependencies : lime_parser_dep,
-)
+if host_machine.system() != 'windows'
+  test_formatter_loc_directives = executable('test_formatter_loc_directives',
+    'test_formatter_loc_directives.c',
+    dependencies : lime_parser_dep,
+  )
 
-test('formatter_loc_directives', test_formatter_loc_directives,
-  args : [
-    lime_exe.full_path(),
-    meson.current_source_dir() / 'test_formatter_loc_directives_grammar.lime',
-  ],
-)
+  test('formatter_loc_directives', test_formatter_loc_directives,
+    args : [
+      lime_exe.full_path(),
+      meson.current_source_dir() / 'test_formatter_loc_directives_grammar.lime',
+    ],
+  )
+endif
 
 # Lime-Letter-23 follow-up: table-driven directive-emit registry
 # regression test.  Sub-tests check coverage, idempotence,
@@ -500,56 +520,62 @@ test('formatter_loc_directives', test_formatter_loc_directives,
 # static lime_directives[] array directly; takes the lime binary
 # path on argv[1] for subprocess-driven fixture rounds.  See the
 # top-of-file comment in test_formatter_directive_registry.c.
-test_formatter_directive_registry = executable(
-  'test_formatter_directive_registry',
-  'test_formatter_directive_registry.c',
-  link_with : [lime_lex_compiler_lib],
-  include_directories : [inc, include_directories('../src/lex')],
-  c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAS_LEX_COMPILER',
-            '-Wno-unused-function', '-Wno-unused-parameter',
-            '-Wno-format-overflow', '-Wno-format-truncation'],
-)
+if host_machine.system() != 'windows'
+  test_formatter_directive_registry = executable(
+    'test_formatter_directive_registry',
+    'test_formatter_directive_registry.c',
+    link_with : [lime_lex_compiler_lib],
+    include_directories : [inc, include_directories('../src/lex')],
+    c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAS_LEX_COMPILER',
+              '-Wno-unused-function', '-Wno-unused-parameter',
+              '-Wno-format-overflow', '-Wno-format-truncation'],
+  )
 
-test('formatter_directive_registry', test_formatter_directive_registry,
-  args : [
-    lime_exe.full_path(),
-    meson.project_source_root(),
-  ],
-  depends : [lime_exe],
-)
+  test('formatter_directive_registry', test_formatter_directive_registry,
+    args : [
+      lime_exe.full_path(),
+      meson.project_source_root(),
+    ],
+    depends : [lime_exe],
+  )
+endif
 
 # v0.6.x: explicit byte-equality regression locking single-pass
 # formatter idempotence -- format(format(F)) == format(F) -- across
 # every formatter fixture.  Catches any future drift in directive-
 # emit ordering, prec-symbol attribution, body-trim semantics, or
 # token-group categorisation.
-test_formatter_idempotence = executable('test_formatter_idempotence',
-  'test_formatter_idempotence.c',
-)
+if host_machine.system() != 'windows'
+  test_formatter_idempotence = executable('test_formatter_idempotence',
+    'test_formatter_idempotence.c',
+  )
 
-test('formatter_idempotence', test_formatter_idempotence,
-  args : [
-    lime_exe.full_path(),
-    meson.project_source_root(),
-  ],
-  depends : [lime_exe],
-)
+  test('formatter_idempotence', test_formatter_idempotence,
+    args : [
+      lime_exe.full_path(),
+      meson.project_source_root(),
+    ],
+    depends : [lime_exe],
+  )
+endif
 
 # Lime-Letter-23: mid-RHS comment preservation in `lime -F`.  Formatter
 # now captures and re-emits comments appearing between ::= and . at their
 # original positions.  Two sub-tests: (1) format preserves all mid-RHS
 # comments, (2) idempotence -- format(format(F)) == format(F).
-test_formatter_mid_rhs_comments = executable('test_formatter_mid_rhs_comments',
-  'test_formatter_mid_rhs_comments.c',
-  dependencies : lime_parser_dep,
-)
+if host_machine.system() != 'windows'
+  test_formatter_mid_rhs_comments = executable('test_formatter_mid_rhs_comments',
+    'test_formatter_mid_rhs_comments.c',
+    dependencies : lime_parser_dep,
+  )
 
-test('formatter_mid_rhs_comments', test_formatter_mid_rhs_comments,
-  args : [
-    lime_exe.full_path(),
-    meson.current_source_dir() / 'test_formatter_mid_rhs_comments_grammar.lime',
-  ],
-)
+  test('formatter_mid_rhs_comments', test_formatter_mid_rhs_comments,
+    args : [
+      lime_exe.full_path(),
+      meson.current_source_dir() / 'test_formatter_mid_rhs_comments_grammar.lime',
+    ],
+  )
+endif
 
 # v0.5.0: lint pass expanded from a 4-rule stub to ~16 opinionated
 # rules.  Each fixture in tests/test_lint_fixtures/ is constructed
@@ -557,16 +583,18 @@ test('formatter_mid_rhs_comments', test_formatter_mid_rhs_comments,
 # in conflict-bearing fixtures); the harness runs lime -L on each
 # and asserts the structured JSON diagnostic for the targeted rule
 # appears.  See docs/LINT.md for the rule catalog.
-test_lint = executable('test_lint',
-  'test_lint.c',
-)
+if host_machine.system() != 'windows'
+  test_lint = executable('test_lint',
+    'test_lint.c',
+  )
 
-test('lint', test_lint,
-  args : [
-    lime_exe.full_path(),
-    meson.current_source_dir() / 'test_lint_fixtures',
-  ],
-)
+  test('lint', test_lint,
+    args : [
+      lime_exe.full_path(),
+      meson.current_source_dir() / 'test_lint_fixtures',
+    ],
+  )
+endif
 
 # v0.4.0: %dialect NAME { ... } directive (generator-time conditional
 # inclusion).  Drives the lime binary on test_dialect_grammar.lime
@@ -575,33 +603,37 @@ test('lint', test_lint,
 # (-Ddialect=NAME == -Ddialect_NAME), idempotence, brace-in-string
 # scan, unterminated/nested error paths, and bad-name rejection.
 # 11 sub-tests; see tests/test_dialect.c.
-test_dialect = executable('test_dialect',
-  'test_dialect.c',
-)
+if host_machine.system() != 'windows'
+  test_dialect = executable('test_dialect',
+    'test_dialect.c',
+  )
 
-test('dialect', test_dialect,
-  args : [
-    lime_exe.full_path(),
-    meson.project_source_root() / 'limpar.c',
-    meson.current_source_dir() / 'test_dialect_grammar.lime',
-  ],
-)
+  test('dialect', test_dialect,
+    args : [
+      lime_exe.full_path(),
+      meson.project_source_root() / 'limpar.c',
+      meson.current_source_dir() / 'test_dialect_grammar.lime',
+    ],
+  )
+endif
 
 # v0.4.1: %extends + %override + %remove + %override_type +
 # diamond inheritance.  Drives lime against tests/extends_fixtures/
 # (ansi_sql / oracle / mysql / unified) and several inline
 # fixtures generated at runtime (cycle, conflict, alias-identity).
 # 12 sub-tests; see tests/test_extends.c for the full matrix.
-test_extends = executable('test_extends',
-  'test_extends.c',
-)
-test('extends', test_extends,
-  args : [
-    lime_exe.full_path(),
-    meson.project_source_root() / 'limpar.c',
-    meson.current_source_dir() / 'extends_fixtures',
-  ],
-)
+if host_machine.system() != 'windows'
+  test_extends = executable('test_extends',
+    'test_extends.c',
+  )
+  test('extends', test_extends,
+    args : [
+      lime_exe.full_path(),
+      meson.project_source_root() / 'limpar.c',
+      meson.current_source_dir() / 'extends_fixtures',
+    ],
+  )
+endif
 
 # v0.4.3: --diff-conflicts CLI mode.  Drives lime against three
 # fixtures in tests/diff_conflicts_fixtures/ (clean base, clean
@@ -645,21 +677,23 @@ test_embed_gen = custom_target('test_embed_parser',
   ],
 )
 
-test_embed = executable('test_embed',
-  'test_embed.c',
-  test_embed_gen,
-  dependencies : lime_parser_dep,
-  include_directories : include_directories('../src'),
-  c_args : nounusedparam,
-)
+if host_machine.system() != 'windows'
+  test_embed = executable('test_embed',
+    'test_embed.c',
+    test_embed_gen,
+    dependencies : lime_parser_dep,
+    include_directories : include_directories('../src'),
+    c_args : nounusedparam,
+  )
 
-test('embed', test_embed,
-  args : [
-    lime_exe.full_path(),
-    meson.project_source_root() / 'limpar.c',
-    meson.current_source_dir() / 'test_embed_grammar.lime',
-  ],
-)
+  test('embed', test_embed,
+    args : [
+      lime_exe.full_path(),
+      meson.project_source_root() / 'limpar.c',
+      meson.current_source_dir() / 'test_embed_grammar.lime',
+    ],
+  )
+endif
 
 test_parse_context_coverage = executable('test_parse_context_coverage',
   'test_parse_context_coverage.c',

@@ -30,7 +30,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "posix_shim.h"
 
 static int test_count = 0;
 static int pass_count = 0;
