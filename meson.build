@@ -214,7 +214,14 @@ lime_compiler_dep = declare_dependency(
 # src/lsp/ and links nothing from lime_parser_lib so the runtime
 # hot-path stays untouched -- it shells out to the lime binary
 # above for diagnostics.  See docs/LSP.md.
-subdir('src/lsp')
+#
+# Skipped on Windows: the LSP uses POSIX fork/execvp/waitpid/pipe
+# (see src/lsp/lsp_diagnostics.c).  A Win32 port via CreateProcessA
+# + anonymous pipes is feasible but unfunded; the CI matrix lists
+# Windows for the parser/lexer side only.
+if host_machine.system() != 'windows'
+  subdir('src/lsp')
+endif
 
 # pkg-config file so downstream meson/cmake/autotools builds can
 # locate Lime via dependency('lime') / pkg_check_modules(LIME ..) /

@@ -24,20 +24,23 @@ test('version', test_version)
 #   - textDocument/hover (directive doc + non-terminal info)
 #   - textDocument/documentSymbol (full outline)
 # Args: <lime-lsp-bin> <lime-bin> <fixtures-dir>.
-test_lsp = executable('test_lsp',
-  'test_lsp.c',
-  c_args : nounusedparam,
-)
+# Windows: skipped (lime-lsp itself isn't built on Windows).
+if host_machine.system() != 'windows'
+  test_lsp = executable('test_lsp',
+    'test_lsp.c',
+    c_args : nounusedparam,
+  )
 
-test('lsp', test_lsp,
-  args : [
-    lime_lsp_exe.full_path(),
-    lime_exe.full_path(),
-    meson.current_source_dir() / 'test_lsp_fixtures',
-  ],
-  depends : [lime_lsp_exe, lime_exe],
-  timeout : 60,
-)
+  test('lsp', test_lsp,
+    args : [
+      lime_lsp_exe.full_path(),
+      lime_exe.full_path(),
+      meson.current_source_dir() / 'test_lsp_fixtures',
+    ],
+    depends : [lime_lsp_exe, lime_exe],
+    timeout : 60,
+  )
+endif
 
 test_tokenize = executable('test_tokenize',
   'test_tokenize.c',
