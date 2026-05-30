@@ -1,6 +1,7 @@
 pub mod json_tok;
 pub mod json_parser;
 pub mod json_lexer;
+pub mod json_lexer_memchr;
 
 use std::time::Instant;
 

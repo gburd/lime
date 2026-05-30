@@ -990,6 +990,18 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
             "name = \"%s\"\n"
             "path = \"src/lib.rs\"\n",
             crate_name, crate_name);
+    /* If --rustlex-memchr was passed, emit a memchr dep so the
+    ** generated lexer's fast-path scans link cleanly. */
+    extern int g_lime_rustlex_memchr_flag;
+    if (g_lime_rustlex_memchr_flag) {
+        fprintf(cargo,
+                "\n[dependencies]\n"
+                "# --rustlex-memchr: SIMD-accelerated fast-path byte\n"
+                "# search inside the lexer.  Removing this dep means\n"
+                "# the .rs output won't compile -- regenerate without\n"
+                "# --rustlex-memchr to drop the dependency.\n"
+                "memchr = \"2\"\n");
+    }
     fclose(cargo);
 
     /* src/lib.rs: re-export everything from parser.rs */

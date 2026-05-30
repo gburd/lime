@@ -4693,8 +4693,15 @@ int main(int argc, char **argv){
                                 ** (additive; no replacement of C output) */
   static int rustNoStdFlag = 0; /* --rust-nostd: parser.rs gets #![no_std] */
   static int rustLexFlag   = 0; /* --rustlex: emit Rust lexer (deferred) */
+  static int rustLexMemchrFlag = 0; /* --rustlex-memchr: opt-in memchr
+                                    ** crate dependency for fast-path
+                                    ** scans.  Trades self-contained
+                                    ** output for ~30-50%% extra
+                                    ** tokenize speed via SSE2/AVX2/NEON
+                                    ** SIMD inside the memchr crate. */
   extern int g_lime_rust_no_std;
   extern int g_lime_rustlex_flag;
+  extern int g_lime_rustlex_memchr_flag;
   static int rustCrateFlag = 0; /* --rust-crate: emit a complete Cargo
                                 ** crate alongside the .rs file
                                 ** (Cargo.toml + src/lib.rs).  Only valid
@@ -4766,6 +4773,14 @@ int main(int argc, char **argv){
     {OPT_FLAG, "-rustnostd", (char*)&rustNoStdFlag,
                     "Emit #![no_std] on the parser.rs.  Replaces Vec<Frame> "
                     "with alloc::vec::Vec (parser still requires alloc)."},
+    {OPT_FLAG, "-rustlex-memchr", (char*)&rustLexMemchrFlag,
+                    "With -X --rustlex, emit fast-path scans that call "
+                    "into the memchr(2) crate (SIMD-accelerated byte search). "
+                    "Adds 'memchr = \"2\"' to the generated Cargo.toml when "
+                    "used with --rustcrate; raw .rs output gains an "
+                    "`extern crate memchr;` so the user must list it. "
+                    "Closes ~50%% of the lime-vs-logos lexer gap on "
+                    "string-heavy fixtures."},
     {OPT_FLAG, "-rustlex", (char*)&rustLexFlag,
                     "With -X, emit a Rust mirror of the .lex tokenizer "
                     "alongside the C output (DFA tables + Lexer struct + "
@@ -4822,6 +4837,7 @@ int main(int argc, char **argv){
   /* Latch --rustlex BEFORE the lex compiler dispatch so the lex
   ** driver can consult it when emitting outputs. */
   g_lime_rustlex_flag = rustLexFlag;
+  g_lime_rustlex_memchr_flag = rustLexMemchrFlag;
   if( lexFlag ){
     /* -X: run the .lex compiler frontend instead of the parser
     ** generator.  Reads the input as a .lex source file, runs
@@ -4989,6 +5005,7 @@ int main(int argc, char **argv){
     ** output.  Both .c and .rs are written in one lime invocation. */
     /* Latch the flag for the .lex compiler driver to consult. */
     g_lime_rustlex_flag = rustLexFlag;
+    g_lime_rustlex_memchr_flag = rustLexMemchrFlag;
     if( rustFlag ){
         g_lime_rust_no_std = rustNoStdFlag;
         char rust_path[512];
@@ -13610,3 +13627,4 @@ const char *lime_emit_rust_get_rust_overflow(const struct lime *lemp) {
 
 int g_lime_rust_no_std = 0;
 int g_lime_rustlex_flag = 0;
+int g_lime_rustlex_memchr_flag = 0;

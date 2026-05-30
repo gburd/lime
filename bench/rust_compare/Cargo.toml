@@ -11,6 +11,7 @@ chumsky      = "0.10"
 pest         = "2"
 pest_derive  = "2"
 serde_json   = "1"
+memchr       = "2"   # for the bench_lime_memchr binary
 
 [dependencies.lalrpop-util]
 version = "0.20"
@@ -21,6 +22,12 @@ lalrpop      = "0.20"
 [[bin]]
 name = "bench_lime"
 path = "src/bin/bench_lime.rs"
+[[bin]]
+name = "bench_lime_memchr"
+path = "src/bin/bench_lime_memchr.rs"
+[[bin]]
+name = "dump_tokens_memchr"
+path = "src/bin/dump_tokens_memchr.rs"
 [[bin]]
 name = "bench_logos"
 path = "src/bin/bench_logos.rs"
