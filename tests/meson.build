@@ -50,15 +50,13 @@ test_tokenize = executable('test_tokenize',
 
 test('tokenize', test_tokenize)
 
-if host_machine.system() != 'windows'
-  test_jit = executable('test_jit',
-    'test_jit.c',
-    dependencies : lime_parser_dep,
-    include_directories : include_directories('../src'),
-  )
+test_jit = executable('test_jit',
+  'test_jit.c',
+  dependencies : lime_parser_dep,
+  include_directories : include_directories('../src'),
+)
 
-  test('jit', test_jit)
-endif
+test('jit', test_jit)
 
 test_snapshot = executable('test_snapshot',
   'test_snapshot.c',
@@ -321,16 +319,14 @@ endif
 # trace bakes yy_fallback into the find_shift_action emit path so
 # the runtime path that consults snap->yy_fallback is bypassed.
 # Skips at runtime when JIT isn't available (LIME_NO_JIT).
-if host_machine.system() != 'windows'
-  test_jit_fallback = executable('test_jit_fallback',
-    'test_jit_fallback.c',
-    include_directories : include_directories('../src'),
-    dependencies : [lime_parser_dep, lime_compiler_dep],
-    c_args : ['-DLIME_HAVE_SNAPSHOT_BUILD'],
-  )
+test_jit_fallback = executable('test_jit_fallback',
+  'test_jit_fallback.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+  c_args : ['-DLIME_HAVE_SNAPSHOT_BUILD'],
+)
 
-  test('jit_fallback', test_jit_fallback)
-endif
+test('jit_fallback', test_jit_fallback)
 
 test_parse_context = executable('test_parse_context',
   'test_parse_context.c',

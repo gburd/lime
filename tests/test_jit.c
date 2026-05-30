@@ -18,6 +18,8 @@
 ** When LLVM is not available (stub mode), the tests verify that all
 ** functions degrade gracefully and return appropriate error codes.
 */
+#include "test_compat.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -597,7 +599,7 @@ static int test_lime_jit_compile(void) {
     ** exercise the compilation path the test is actually about.
     ** Restore the env var afterwards so other tests aren't affected. */
     const char *prior = getenv("LIME_JIT");
-    setenv("LIME_JIT", "1", 1);
+    test_compat_setenv("LIME_JIT", "1", 1);
 
     int result = lime_jit_compile(snap);
 
@@ -613,9 +615,9 @@ static int test_lime_jit_compile(void) {
     }
 
     if (prior != NULL) {
-        setenv("LIME_JIT", prior, 1);
+        test_compat_setenv("LIME_JIT", prior, 1);
     } else {
-        unsetenv("LIME_JIT");
+        test_compat_unsetenv("LIME_JIT");
     }
 
     snapshot_release(snap);

@@ -26,6 +26,7 @@
 #include "lime_compiler.h"
 #include "jit_context.h"
 #include "parse_context.h"
+#include "test_compat.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -160,7 +161,7 @@ int main(void) {
     ** (the table-driven path beats the JIT for trivial grammars on
     ** x86_64; see src/jit_context.c).  Force the JIT on so we actually
     ** exercise the AOT-fallback codegen path under test. */
-    setenv("LIME_JIT", "1", 1);
+    test_compat_setenv("LIME_JIT", "1", 1);
 
     test_aot_fallback_jit_present();
     test_aot_fallback_parse_equivalence();
