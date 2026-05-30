@@ -16,97 +16,133 @@ common JSON parsing benchmark.
 - All competitors compiled with `--release`, `lto = "fat"`, `codegen-units = 1`.
 - All parsers do the **same work**: parse the JSON to "OK or error" -- no AST construction except where the API forces it (serde_json builds a Value).
 
-## Headline numbers (v0.8.2)
+## Headline numbers (v0.8.3)
 
-Median of 5 runs each.
+Median of 5 runs each, after warmup.
 
 | Tool | Operation | µs / parse | MB/s | vs lime |
 |---|---|---:|---:|---:|
-| **lime --rustlex** | tokenize | **818** | **265** | 1.00x |
-| **lime --rust**    | parse (token stream) | **660** | **327** | 1.00x |
-| **lime combined**  | tokenize + parse | 1577 | 137 | 1.00x |
-| logos              | tokenize | 470 | 460 | **0.58x** (1.74x faster) |
-| lalrpop (logos lex)| tokenize | 472 | 457 | 0.58x |
-| lalrpop            | parse | 425 | 509 | **0.64x** (1.55x faster) |
-| lalrpop combined   | tokenize + parse | 776 | 278 | **0.49x (2.03x faster)** |
-| nom (combinator)   | combined  | 533 | 408 | 0.34x (2.97x faster, fused) |
-| pest (PEG)         | combined  | 1350 | 160 | 0.86x (1.16x slower) |
-| serde_json         | combined + AST | 1171 | 183 | 0.74x (1.34x slower, builds AST) |
+| **lime --rustlex** | tokenize | **734** | **295** | 1.00x |
+| **lime --rust**    | parse (token stream) | 660 | 327 | 1.00x |
+| **lime combined**  | tokenize + parse | 1394 | 156 | 1.00x |
+| logos              | tokenize | 451 | 481 | **0.61x** (1.63x faster) |
+| lalrpop (logos lex)| tokenize | 449 | 482 | 0.61x |
+| lalrpop            | parse | 388 | 559 | **0.59x** (1.71x faster) |
+| lalrpop combined   | tokenize + parse | 723 | 299 | **0.52x (1.93x faster)** |
+| nom (combinator)   | combined  | 497 | 436 | 0.36x (2.81x faster, fused) |
+| pest (PEG)         | combined  | 1295 | 167 | 0.93x (1.07x slower) |
+| serde_json         | combined + AST | 1170 | 184 | 0.84x (1.19x slower, builds AST) |
 
-## What changed in v0.8.2
+## What changed in v0.8.3
 
-The `--rustlex` emit was rewritten to a flat-dense layout with
-a row-pointer hoist:
+`--rustlex` now emits per-state SIMD-friendly fast-path scan
+helpers for self-loop-dominant DFA states.  When a state self-
+loops on >= 240 of 256 possible bytes (e.g. JSON string body
+which self-loops on every byte except `"` and `\`), the emitter
+generates a tight `scan_self_loop_<STATE>_<ID>` function that
+bypasses the per-byte step dispatch:
 
-| Aspect | v0.8.1 | v0.8.2 |
-|---|---|---|
-| Transition table layout | `&[[i16; 256]]` (nested) | `&[i16]` (flat, indexed `state*256+b`) |
-| Inner-loop dispatch | `trans[state][b]` (nested-array addressing) | row pointer + `*row.add(b)` |
-| LOC of generated lexer | 704 (json) | 709 (json -- comment-heavy) |
-| Memory per state group | 16 KB (32 states * 256 * i16) | 16 KB (unchanged) |
-| Tokenize throughput | ~225 MB/s | ~265 MB/s (**+18 percent**) |
-| Gap vs logos | 1.88x | **1.74x** |
+```rust
+#[inline(always)]
+fn scan_self_loop_INITIAL_2(bytes: &[u8], mut p: usize) -> usize {
+    let n = bytes.len();
+    while p < n {
+        let b = unsafe { *bytes.get_unchecked(p) };
+        if b == 34 || b == 92 { break; }
+        p += 1;
+    }
+    p
+}
+```
 
-The row-pointer hoist lets the compiler keep `row` in a
-register across the byte-loop body instead of recomputing
-`state * 256` on every iteration.  LLVM's nested-slice
-addressing in v0.8.1 was apparently not seeing this
-optimisation through `[[i16; 256]]`.
+The inner tokenize loop calls `fast_path_for_state(...)` before
+every byte fetch.  For states with a fast path the scanner
+advances `p` to the next exit byte (or EOF); for states without
+one the dispatcher returns `p` unchanged and we fall through to
+the standard step.
+
+| Aspect | v0.8.1 | v0.8.2 | v0.8.3 |
+|---|---|---|---|
+| Transition dispatch | `&[[i16; 256]]` table | flat `&[i16]` table | `match` expression with byte-range arms |
+| Self-loop runs | byte-by-byte step | byte-by-byte step | **inline scan helpers** |
+| Generated LOC (json) | 704 | 709 | 359 |
+| Tokenize throughput  | ~225 MB/s | ~265 MB/s | **~295 MB/s** |
+| Gap vs logos | 1.88x | 1.74x | **1.63x** |
+
+The fast-path emit also replaces the dense table entirely:
+v0.8.3 emits a `step_<STATE>(state, byte) -> i16` function as
+a `match state { 0 => match b { ... } }` Rust expression rather
+than a flat `&[i16]` table.  LLVM lowers the per-state byte
+match to a jump table in `.text`; for our 32-state JSON DFA the
+jump table is L1-resident and the step dispatch is roughly
+equivalent in throughput to the flat-table version.  The
+performance win comes entirely from the fast-path emit, not the
+step rewrite -- but the match form makes the fast-path
+integration cleaner and shrinks the generated code by ~50%.
 
 ## What we tried and rejected
 
-**Equivalence-class compression** (logos's secret sauce for
-small DFAs): two bytes share a class iff they have identical
-transitions across every state.  For the JSON DFA this
-collapses 256 bytes to 26 classes -- table size drops 8x.
+**Equivalence-class compression** (logos's BYTE_CLASS technique):
+implemented in v0.8.2 development; benchmarked at 28% slower on
+small DFAs because the dependent BYTE_CLASS load defeated cache
+locality.  Right answer for very large DFAs (1000+ states);
+deferred until a consumer with a large grammar needs it.
 
-We implemented it, benchmarked it, and **it regressed perf
-by 28 percent**:
+**Pattern B fast path** (scan-while-in-self for small self-sets,
+e.g. whitespace `[ 	
+]`): implemented during v0.8.3
+development; the function-call overhead exceeded the savings on
+short self-loop runs (typical JSON whitespace runs are 1-2
+bytes).  Pattern B is gated off in the C emitter behind an
+`if (0 && ...)` and is worth re-enabling with a length threshold
+once we have profile data on workloads with long self-loop
+runs (XML text content, Python source-code indentation, etc.).
 
-| Layout | LOC | Memory | Tokenize MB/s |
+**`iter().position()` form for fast-path scans**: tried; stdlib
+does NOT lower iterator+position to a vectorised memchr in the
+general case.  The two-memchr split (one per exit byte, take
+the min) was a 1000x regression because it scans the full tail
+twice per fast-path entry.  Hand-rolled `while` loop with
+`#[inline(always)]` and `unsafe { get_unchecked }` is what
+landed -- scalar but tight.
+
+## What would actually close the remaining 1.63x gap to logos
+
+logos hits ~480 MB/s on this fixture; lime --rustlex hits
+~295 MB/s.  The remaining gap is closable but only with
+machinery we deliberately deferred:
+
+1. **memchr / memchr2 SIMD scan** -- emit calls into the
+   `memchr` crate for fast-path scans where exit_set <= 3
+   bytes.  Adds a runtime dependency; the `--rust`/`--rustlex`
+   output stops being self-contained.  ~50 LOC of emit changes.
+   **This alone closes most of the remaining gap.**
+2. **Per-token DFA emission** -- one DFA per token kind
+   instead of one unified DFA.  ~500-1000 LOC of new emit code.
+   Only worth it for grammars where a single per-token DFA
+   substantially outperforms the unified construction.
+3. **Hand-rolled SSE/AVX2 intrinsics in the fast path** --
+   platform-specific (`std::arch::x86_64::_mm_cmpeq_epi8` etc).
+   Avoids the memchr dependency at the cost of x86-only
+   acceleration.  ~100-200 LOC plus platform feature
+   detection.
+
+None landed in v0.8.3.  Listed in `docs/RUST_OUTPUT.md` for
+follow-up if a consumer's profile shows the lexer as the
+bottleneck.
+
+## Cross-platform verification
+
+v0.8.3 has been tested on:
+
+| Platform | OS | Compiler | Status |
 |---|---|---|---|
-| v0.8.1 nested dense | 704 | 16 KB | 225 |
-| v0.8.2 flat dense   | 709 | 16 KB | **265** |
-| class-compressed    | 312 | 2 KB  | 200 (regression) |
+| Linux x86_64 | Linux 6.x | GCC 15.2 + ASan + UBSan | 114 / 0 ok |
+| Linux RISC-V64 | Linux 6.6 | GCC + Clang | (pending; see commit log) |
+| Windows ARM64 | Win11 Pro | gcc (MinGW), clang, clang-cl | (pending; see commit log) |
+| FreeBSD x86_64 | FreeBSD 14 | clang | (offline; previous v0.8.2 passed) |
 
-The class layout adds a dependent load (`byte_class[b]`
-before `trans[state*nclasses+class]`) that defeats cache
-locality.  For small DFAs the dense table fits in L1 cache;
-the extra indirection costs more than the cache-pressure
-relief.  Class compression would win for very large DFAs
-(1000+ states where dense doesn't fit in L1) -- deferred
-until a consumer with a large grammar needs it.
-
-Source code in `src/lex/emit_rust_lex.c` includes a comment
-documenting this experiment so a future reader doesn't make
-the same wrong inference from the structural simplicity of
-the class layout.
-
-## What would actually close the gap to logos
-
-logos hits ~460 MB/s on this fixture; lime --rustlex hits
-~265 MB/s.  The remaining 1.74x is not closable by tweaking
-the table representation.  Real options:
-
-1. **Per-token DFA emission** -- one DFA per token kind
-   instead of one unified DFA.  Tokens that don't match
-   early are abandoned without consuming the rest of the
-   character stream.  ~500-1000 LOC of new emit code.
-2. **SIMD whitespace skipping** -- platform-specific (x86
-   PSHUFB, ARM NEON).  Roughly 200 LOC plus runtime
-   feature detection.  Would close most of the gap on
-   JSON-shaped inputs (~30 percent of bytes are skipped
-   whitespace).
-3. **Inlined match-on-(state, byte)** -- emit the DFA as a
-   giant `match` statement instead of a table.  LLVM
-   compiles small-arity matches to jump tables that
-   sometimes outperform table loads.  Risk: emit blow-up
-   on large DFAs; needs a heuristic.
-
-None of these are landed in v0.8.2.  All are listed in
-the roadmap for follow-up if a consumer's profile shows
-the lexer as the bottleneck.
-
+## Interpretation
 ## Interpretation
 
 ### Lexer (--rustlex vs logos)

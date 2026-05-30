@@ -79,7 +79,7 @@ int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "0.8.2"
+#define LIME_VERSION_STRING "0.8.3"
 #endif
 
 
