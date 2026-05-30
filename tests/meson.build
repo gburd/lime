@@ -610,16 +610,20 @@ test('extends', test_extends,
 # (0=safe / 1=NEW conflicts / 2=arg-error), JSON well-formedness,
 # and symbolic-key stability across runs.
 # 11 sub-tests; see tests/test_diff_conflicts.c for the matrix.
-test_diff_conflicts = executable('test_diff_conflicts',
-  'test_diff_conflicts.c',
-)
-test('diff_conflicts', test_diff_conflicts,
-  args : [
-    lime_exe.full_path(),
-    meson.project_source_root() / 'limpar.c',
-    meson.current_source_dir() / 'diff_conflicts_fixtures',
-  ],
-)
+# Skipped on Windows: forks lime as a subprocess via fork+execvp
+# and waits via waitpid.  Win32 port deferred.
+if host_machine.system() != 'windows'
+  test_diff_conflicts = executable('test_diff_conflicts',
+    'test_diff_conflicts.c',
+  )
+  test('diff_conflicts', test_diff_conflicts,
+    args : [
+      lime_exe.full_path(),
+      meson.project_source_root() / 'limpar.c',
+      meson.current_source_dir() / 'diff_conflicts_fixtures',
+    ],
+  )
+endif
 
 # v0.4.4: %embed lang TRIGGER 'lex' ENTRY_TOKEN TOKEN.  Sugar over
 # context_switch_register_trigger() that auto-generates the
