@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include "posix_shim.h"
 
 static char *slurp(const char *path) {
     FILE *f = fopen(path, "rb");

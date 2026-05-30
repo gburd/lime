@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "posix_shim.h"
 
 #include "parser.h"
 #include "jit_context.h"
