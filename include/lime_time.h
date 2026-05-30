@@ -28,6 +28,16 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+/* MinGW already supplies <time.h> with `struct timespec`,
+** `clock_gettime`, and the CLOCK_* constants -- using the same
+** definitions as the rest of the toolchain.  Including our shim
+** there triggers `redefinition of 'struct timespec'` errors
+** because <sys/types.h> on MinGW pulls them in transitively.
+** Detect MinGW and skip the shim; only MSVC (and clang-cl) need
+** the locally-defined POSIX-style stubs. */
+#if defined(__MINGW32__)
+#include <time.h>
+#else
 /* Provide a minimal POSIX-style clock_gettime shim so existing
 ** call sites that use `struct timespec ts; clock_gettime(...)`
 ** compile on MSVC without per-site #ifdef branches.  Only the
@@ -64,6 +74,7 @@ static inline int clock_gettime(int clk_id, struct timespec *tp) {
     }
     return -1;
 }
+#endif /* !__MINGW32__ */
 #else
 #include <time.h>
 #endif
