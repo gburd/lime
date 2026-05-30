@@ -129,7 +129,13 @@ lime_parser_lib = static_library('lime_parser',
 )
 
 lime_parser_dep = declare_dependency(
-  link_with : [lime_parser_lib, tokenize_simd_lib, jit_lib],
+  # link_with lists ONLY lime_parser_lib here.  jit_lib and
+  # tokenize_simd_lib are propagated transitively via
+  # lime_parser_lib's own link_with.  Listing them again would
+  # cause lld-link (Windows / clang-cl) to error with 'duplicate
+  # symbol' on jit_detach_from_snapshot et al -- GNU ld dedupes
+  # static-archive contents but lld-link does not.
+  link_with : [lime_parser_lib],
   include_directories : inc,
   dependencies : [thread_dep, dl_dep] + jit_deps,
 )
