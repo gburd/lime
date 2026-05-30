@@ -98,6 +98,51 @@ Reference docs:
 - **[examples/pg_bootscanner/](examples/pg_bootscanner/)** -- PG's
   `bootscanner.l` ported end-to-end as a worked example.
 
+## Rust output
+
+Since v0.8.0 Lime can emit Rust as well as C.  The `--rust` flag
+adds a self-contained `.rs` parser alongside the existing
+`.c` / `.h` output; `--rustlex` does the same for `.lex` lexers.
+Both outputs are additive -- the C path is unchanged.
+
+```sh
+lime --rust grammar.lime                # writes grammar.rs
+lime --rust --rustcrate grammar.lime    # also a Cargo crate skeleton
+lime --rust --rustnostd grammar.lime    # use alloc::vec::Vec; no std
+lime -X --rustlex tokenizer.lex         # writes tokenizer_lex.rs
+```
+
+The Rust output is a single self-contained `.rs` module.  No Lime
+runtime dependency: the file compiles with `rustc --crate-type lib`
+in isolation.  Action tables, per-rule reduce callbacks, and the
+LALR loop are all emitted; `%fallback`, `%first_token`, `%left` /
+`%right` / `%nonassoc`, `%name`, and `%start_symbol` work
+transparently.  Rust-specific directives:
+
+- `%rust_action { ... }` -- per-rule Rust body override (parallel
+  to the C action body; lets a grammar declare bodies in either
+  language).
+- `%rust_extra_argument {T}` -- threads a user value through every
+  reduce callback (Rust analog of `%extra_argument`).
+- `%rust_value_type {T}` -- override the semantic value type
+  (default `i64`).
+- `%rust_syntax_error / %rust_parse_accept / %rust_parse_failure /
+  %rust_stack_overflow { ... }` -- Rust-side parse hooks.
+
+Performance on a 226 KB JSON fixture (i9-12900H, --release fat
+LTO):  Lime's `--rust` parse hits ~314 MB/s, ~1.58x slower than
+lalrpop and ~1.30x faster than serde_json's AST build.  The
+`--rustlex` lexer hits ~225 MB/s, ~1.88x slower than logos.
+Lime's table-driven approach is the cost of supporting runtime
+composition (lalrpop has no equivalent); it beats pest (PEG) and
+serde_json (AST) on the same workload.
+
+See **[docs/RUST_OUTPUT.md](docs/RUST_OUTPUT.md)** for the full
+feature surface, **[docs/RUST_BENCHMARK.md](docs/RUST_BENCHMARK.md)**
+for the head-to-head numbers vs logos / lalrpop / nom / pest /
+serde_json, and **[examples/rust_calc/](examples/rust_calc/)** for
+a working Cargo example.
+
 ## Quick Start
 
 ```bash

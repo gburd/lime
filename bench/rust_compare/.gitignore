@@ -1,2 +1,13 @@
+# cargo build output
 target/
 Cargo.lock
+# transient bench output
+bench_results.txt
+# lime generator artifacts (regenerate from json.lime / json.lex)
+json.c
+json.h
+json.out
+json.rs
+json_lex.c
+json_lex.h
+json_lex.rs

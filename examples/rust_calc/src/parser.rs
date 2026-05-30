@@ -190,6 +190,10 @@ pub struct CalcParser {
     /// every reduce callback.  Populated from
     /// %rust_extra_argument; () when unset.
     pub user: UserArg,
+    /// Scratch buffer for rhs values, reused across
+    /// reduces.  Avoids per-reduce Vec allocation
+    /// in the LALR loop hot path.
+    rhs_scratch: Vec<Value>,
 }
 
 impl CalcParser {
@@ -202,6 +206,7 @@ impl CalcParser {
             stack, accepted: false, errored: false,
             final_value: Value::default(),
             user,
+            rhs_scratch: Vec::with_capacity(16),
         }
     }
 
@@ -354,10 +359,12 @@ impl CalcParser {
         /* no-op */
     }
 
+    #[inline(always)]
     fn top_state(&self) -> u16 {
         self.stack.last().map(|f| f.state).unwrap_or(0)
     }
 
+    #[inline(always)]
     fn find_shift_action(state: u16, lookahead: u16) -> u16 {
         // state passthrough: states above YY_MAX_SHIFT mean
         // pending reduce; caller has already handled those.
@@ -392,15 +399,22 @@ impl CalcParser {
         }
         let split = self.stack.len() - (nrhs as usize);
         let mut lhs_value = Value::default();
-        let mut rhs_values: Vec<Value> = self.stack[split..]
-            .iter()
-            .map(|f| f.value.clone())
-            .collect();
+        // Reuse the per-parser scratch Vec to avoid an alloc
+        // per reduce.  Hot path: amortises to zero.
+        self.rhs_scratch.clear();
+        self.rhs_scratch.extend(
+            self.stack[split..].iter().map(|f| f.value.clone()));
         let cb = YY_RULE_REDUCE_FN[ruleno as usize];
+        // SAFETY: split-borrow user from rhs_scratch via raw
+        // pointers.  Both are owned by self; we're calling a
+        // user fn that gets disjoint &mut refs to them and
+        // self.stack isn't touched.  This is the same shape
+        // as Vec::split_at_mut but across struct fields.
+        let user_ptr: *mut UserArg = &mut self.user;
         cb(&mut ReduceCtx {
             lhs: &mut lhs_value,
-            rhs: &mut rhs_values,
-            user: &mut self.user,
+            rhs: &mut self.rhs_scratch,
+            user: unsafe { &mut *user_ptr },
         });
 
         // Pop nrhs frames.
@@ -439,6 +453,7 @@ impl CalcParser {
         Ok(ReduceOutcome::Continue)
     }
 
+    #[inline(always)]
     fn find_goto(state: u16, lhs: u16) -> u16 {
         if (state as u32) >= NSTATE {
             return state;

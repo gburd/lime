@@ -4763,9 +4763,9 @@ int main(int argc, char **argv){
                     "Emit #![no_std] on the parser.rs.  Replaces Vec<Frame> "
                     "with alloc::vec::Vec (parser still requires alloc)."},
     {OPT_FLAG, "-rustlex", (char*)&rustLexFlag,
-                    "Emit a Rust mirror of the lex (.lex) tokenizer alongside "
-                    "the C output.  DEFERRED in v0.8.0 -- prints a notice and "
-                    "exits 0.  See docs/RUST_OUTPUT.md for status."},
+                    "With -X, emit a Rust mirror of the .lex tokenizer "
+                    "alongside the C output (DFA tables + Lexer struct + "
+                    "tokenize()).  See docs/RUST_OUTPUT.md."},
     {OPT_FLAG, "-rustcrate", (char*)&rustCrateFlag,
                     "With --rust, also emit Cargo.toml + src/lib.rs around "
                     "the parser.rs so the output is a ready-to-build crate."},

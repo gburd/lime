@@ -955,6 +955,60 @@ The caller owns the input buffer for its lifetime; the lexer
 does
 .B not
 copy bytes.
+.SH "RUST OUTPUT"
+The
+.B \-\-rustlex
+flag on
+.BR lime (1)
+emits a self-contained Rust mirror of the lexer alongside the
+C output.  The
+.B .rs
+contains:
+.IP \(bu 4
+Per-state DFA tables as
+.B "pub static"
+slices
+.RB ( "<PFX>_<STATE>_TRANS: &[[i16; 256]]" ", " "<PFX>_<STATE>_ACCEPT: &[i16]" ).
+.IP \(bu 4
+Per-rule constants
+.RB ( "pub const <PFX>_RULE_<NAME>: u16" )
+and per-state constants
+.RB ( "pub const STATE_<NAME>: StateId" ).
+.IP \(bu 4
+A
+.B Token
+struct
+.RB ( "rule_id, start, len, line, column" )
+and a
+.B LexError
+enum
+.RB ( "NoMatch, UnknownState" ).
+.IP \(bu 4
+A
+.B Lexer
+struct with
+.BR new() ", " set_state() ", " state() ", "
+and
+.BR "tokenize(&mut self, input: &str) \-> Result<Vec<Token>, LexError>" .
+.PP
+The runtime is a longest-match DFA simulator; O(input.len())
+per tokenize call, single allocation for the result Vec.
+The Rust output is independent of the C runtime: no
+.B liblime_lex
+or analogous library is required.  Rule action bodies are not
+yet propagated to the Rust side (v0.8.x); the
+.B Token
+gives the caller
+.BR rule_id " + matched-text span"
+which is sufficient for the common pattern of feeding tokens
+into a
+.BR \-\-rust -emitted
+LALR parser.  See
+.B docs/RUST_OUTPUT.md
+for the full surface and
+.B docs/RUST_BENCHMARK.md
+for performance numbers vs
+.BR logos (3) " (the gold-standard Rust lexer crate)."
 .SH "STATUS"
 The
 .B .lex

@@ -1023,6 +1023,137 @@ during drain see no lookahead
 returns
 .BR YYEMPTY ).
 P0-NEW-8.
+.SH "RUST OUTPUT"
+The
+.B \-\-rust
+flag on
+.BR lime (1)
+emits a self-contained Rust mirror of the parser alongside the
+C output.  The Rust output is additive -- the C path is
+unchanged; both
+.B .c
+and
+.B .rs
+fall out of one
+.B lime
+invocation.  Rust-specific grammar directives let action bodies
+and types diverge from the C side when needed:
+.TP
+.B %rust_action { code }
+Per-rule Rust action body override.  Placed AFTER the rule's
+existing C
+.B { ... }
+body, attaches to the most-recent rule.  When emitting the
+Rust output the rule's
+.B yy_rule_<N>
+function uses this body verbatim instead of
+B$P-substituting the C body.  Lets the same rule have
+different semantics in C and Rust, or lets the user write
+Rust-specific syntax (Result, ?, pattern match) that doesn't
+translate from C.
+.TP
+.BI "%rust_extra_argument {" "Type" }
+Rust analog of
+.BR %extra_argument .
+Sets the Parser struct's
+.B user
+field type and threads it as
+.B "&mut Type"
+into every reduce callback's
+.BR ReduceCtx .
+Default
+.B "()"
+when the directive is omitted.
+.TP
+.BI "%rust_value_type {" "Type" }
+Override the semantic Value type in Rust output.  Default
+.BR i64 .
+Use for grammars whose semantic values aren't integers --
+.BR String ", " "Box<dyn Any>" ", " "struct" ,
+etc.  The C side is unaffected; per-symbol typing on the C side
+goes through
+.BR %type ", " %token_type
+which Rust output silently ignores.
+.TP
+.B %rust_syntax_error { code }
+.PD 0
+.TP
+.B %rust_parse_accept { code }
+.TP
+.B %rust_parse_failure { code }
+.TP
+.B %rust_stack_overflow { code }
+.PD
+Optional Rust-side parse-event hooks.  Each emits as a method
+on the
+.B XParser
+impl block; the body has access to
+.B "&mut self"
+plus
+.RB ( "_token: u16" ", " "_state: u16" )
+on
+.BR on_syntax_error .
+Default no-op when the directive is omitted.  These are the
+Rust analogs of
+.BR %syntax_error ", " %parse_accept ", " %parse_failure ", " %stack_overflow ;
+the C side keeps its own bodies independently.
+.SH "RUST API"
+The generated
+.B .rs
+exposes:
+.TP
+.B "pub struct XParser"
+The parser, named
+.B X
++
+.B Parser
+where X comes from
+.BR %name .
+Has fields
+.BR stack ", " final_value " (the start-rule's value, populated"
+on accept), and
+.BR user " (the " %rust_extra_argument
+slot).
+.TP
+.B "pub fn new() -> Self"
+.PD 0
+.TP
+.BI "pub fn new_with_user(user: " UserArg ") -> Self"
+.PD
+Construction.  The
+.B Default
+bound on
+.B new()
+is implicit when
+.B UserArg = ()
+or another type with
+.BR Default ;
+otherwise use
+.BR new_with_user .
+.TP
+.BI "pub fn push(&mut self, token_code: u16, value: " Value ") -> Result<bool, ParseError>"
+Feed an external token code (with FIRST_TOKEN offset already
+applied per the
+.B pub const
+constants emitted alongside).  Returns
+.B Ok(true)
+on accept,
+.B Ok(false)
+on accept-pending,
+.B Err(...)
+on parse error or out-of-range token.
+.TP
+.B "pub fn finalize(&mut self) -> Result<bool, ParseError>"
+Equivalent to
+.BR push(0, Value::default()) .
+.PP
+See
+.B docs/RUST_OUTPUT.md
+for the complete reference,
+.B docs/RUST_BENCHMARK.md
+for performance measurements, and
+.B examples/rust_calc/
+for an end-to-end Cargo example.
 .SH "SEE ALSO"
 .BR lime (1),
 .BR lime_lex (5),

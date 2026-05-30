@@ -522,6 +522,10 @@ static void emit_parser_runtime(FILE *out, const struct lime *lemp) {
     fprintf(out, "    /// every reduce callback.  Populated from\n");
     fprintf(out, "    /// %%rust_extra_argument; () when unset.\n");
     fprintf(out, "    pub user: UserArg,\n");
+    fprintf(out, "    /// Scratch buffer for rhs values, reused across\n");
+    fprintf(out, "    /// reduces.  Avoids per-reduce Vec allocation\n");
+    fprintf(out, "    /// in the LALR loop hot path.\n");
+    fprintf(out, "    rhs_scratch: Vec<Value>,\n");
     fprintf(out, "}\n\n");
 
     fprintf(out, "impl %sParser {\n", name);
@@ -536,6 +540,7 @@ static void emit_parser_runtime(FILE *out, const struct lime *lemp) {
             "            stack, accepted: false, errored: false,\n"
             "            final_value: Value::default(),\n"
             "            user,\n"
+            "            rhs_scratch: Vec::with_capacity(16),\n"
             "        }\n"
             "    }\n\n"
             "    /// Construct a fresh parser at state 0 with the\n"
@@ -699,9 +704,11 @@ static void emit_parser_runtime(FILE *out, const struct lime *lemp) {
 
     /* Helpers. */
     fprintf(out,
+            "    #[inline(always)]\n"
             "    fn top_state(&self) -> u16 {\n"
             "        self.stack.last().map(|f| f.state).unwrap_or(0)\n"
             "    }\n\n"
+            "    #[inline(always)]\n"
             "    fn find_shift_action(state: u16, lookahead: u16) -> u16 {\n"
             "        // state passthrough: states above YY_MAX_SHIFT mean\n"
             "        // pending reduce; caller has already handled those.\n"
@@ -738,15 +745,22 @@ static void emit_parser_runtime(FILE *out, const struct lime *lemp) {
             "        }\n"
             "        let split = self.stack.len() - (nrhs as usize);\n"
             "        let mut lhs_value = Value::default();\n"
-            "        let mut rhs_values: Vec<Value> = self.stack[split..]\n"
-            "            .iter()\n"
-            "            .map(|f| f.value.clone())\n"
-            "            .collect();\n"
+            "        // Reuse the per-parser scratch Vec to avoid an alloc\n"
+            "        // per reduce.  Hot path: amortises to zero.\n"
+            "        self.rhs_scratch.clear();\n"
+            "        self.rhs_scratch.extend(\n"
+            "            self.stack[split..].iter().map(|f| f.value.clone()));\n"
             "        let cb = YY_RULE_REDUCE_FN[ruleno as usize];\n"
+            "        // SAFETY: split-borrow user from rhs_scratch via raw\n"
+            "        // pointers.  Both are owned by self; we're calling a\n"
+            "        // user fn that gets disjoint &mut refs to them and\n"
+            "        // self.stack isn't touched.  This is the same shape\n"
+            "        // as Vec::split_at_mut but across struct fields.\n"
+            "        let user_ptr: *mut UserArg = &mut self.user;\n"
             "        cb(&mut ReduceCtx {\n"
             "            lhs: &mut lhs_value,\n"
-            "            rhs: &mut rhs_values,\n"
-            "            user: &mut self.user,\n"
+            "            rhs: &mut self.rhs_scratch,\n"
+            "            user: unsafe { &mut *user_ptr },\n"
             "        });\n"
             "\n"
             "        // Pop nrhs frames.\n"
@@ -784,6 +798,7 @@ static void emit_parser_runtime(FILE *out, const struct lime *lemp) {
             "        });\n"
             "        Ok(ReduceOutcome::Continue)\n"
             "    }\n\n"
+            "    #[inline(always)]\n"
             "    fn find_goto(state: u16, lhs: u16) -> u16 {\n"
             "        if (state as u32) >= NSTATE {\n"
             "            return state;\n"

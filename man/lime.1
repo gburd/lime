@@ -376,6 +376,91 @@ and
 for the
 .B .lex
 syntax.
+.TP
+.B \-\-rust
+Emit a self-contained Rust parser
+.RI ( <stem>.rs )
+alongside the C
+.B .c
++
+.B .h
+output.  Additive: the C output is unchanged.  The
+.B .rs
+file is a standalone module: no Lime runtime dependency, no Cargo
+crate dependency, compiles with
+.B "rustc \-\-crate-type lib"
+in isolation.  The Rust parser supports
+.BR %fallback ", " %first_token ", " "%left / %right / %nonassoc" ", "
+.BR %name ", and " %start_symbol
+transparently.  Rust-specific grammar directives
+.RB ( %rust_action ", " %rust_extra_argument ", " %rust_value_type ,
+parse hooks) let action bodies and types diverge from the C
+side; see
+.B docs/RUST_OUTPUT.md
+for the full directive set and worked examples.  Available since
+v0.8.0.
+.TP
+.B \-\-rustcrate
+With
+.BR \-\-rust ,
+also emit a Cargo crate skeleton next to the
+.B .rs
+file:
+.IR <stem>_crate/Cargo.toml " + " <stem>_crate/src/lib.rs " + " <stem>_crate/src/parser.rs
+ready to
+.B "cargo build"
+without further setup.
+.B src/parser.rs
+is overwritten on regeneration;
+.B Cargo.toml
+and
+.B src/lib.rs
+are preserved across regenerations once the user adds custom
+code.
+.TP
+.B \-\-rustnostd
+With
+.BR \-\-rust ,
+emit
+.B "extern crate alloc; use alloc::vec::Vec;"
+in the parser
+.B .rs
+instead of relying on
+.BR std .
+The parser still requires the
+.B alloc
+crate (Vec for the LALR stack); for true no-std with no allocator
+the user supplies a no-Vec stack.  When combined with
+.BR \-\-rustcrate ,
+the generated
+.B lib.rs
+gets
+.B "#![no_std]"
++
+.B "extern crate alloc;"
+at its top.
+.TP
+.B \-\-rustlex
+With
+.BR \-X ,
+emit a Rust mirror of the
+.B .lex
+tokenizer alongside the C output.  The
+.B .rs
+contains per-state DFA tables, rule constants, a
+.B Token
+struct, a
+.B LexError
+enum, and a
+.B Lexer
+impl block with
+.B "tokenize(&mut self, &str) \-> Result<Vec<Token>, LexError>" .
+Longest-match DFA simulation in O(input.len()).  See
+.B docs/RUST_OUTPUT.md
+for the API surface and
+.B docs/RUST_BENCHMARK.md
+for performance numbers vs logos / lalrpop / nom / pest /
+serde_json.
 .SH GRAMMAR FILE FORMAT
 A grammar file consists of a sequence of production rules and
 directives.
