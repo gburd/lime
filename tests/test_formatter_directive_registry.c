@@ -44,6 +44,8 @@
 #define LIME_TEST_HARNESS
 #include "../lime.c"
 
+#include "test_compat.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

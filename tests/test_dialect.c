@@ -35,6 +35,8 @@
 */
 
 #include <assert.h>
+#include "test_compat.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -83,47 +85,22 @@ static char g_scratch[256] = {0};
 
 static void cleanup_scratch(void) {
     if (g_scratch[0] == 0) return;
-    /* Step out of the dir before removing it so cwd is valid for
-    ** any post-exit hooks. */
-    if (chdir("/") != 0) return;
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", g_scratch);
-    int rc = system(cmd);
-    (void)rc;
+    test_compat_chdir_temp();
+    test_compat_rmdir_recursive(g_scratch);
     g_scratch[0] = 0;
 }
 
 static int enter_scratch_dir(void) {
-    /* Two-stage TMPDIR resolution: first try $TMPDIR (honoring meson
-    ** + the user's environment), but fall back to /tmp when $TMPDIR
-    ** is unset, empty, or points at a now-deleted directory (the
-    ** common nix-shell failure mode that bit us during the v0.4.1
-    ** integration). */
-    const char *candidates[3] = {0};
-    int n_cand = 0;
-    const char *tmp = getenv("TMPDIR");
-    if (tmp != NULL && tmp[0] != 0) candidates[n_cand++] = tmp;
-    candidates[n_cand++] = "/tmp";
-
-    for (int i = 0; i < n_cand; i++) {
-        struct stat st;
-        if (stat(candidates[i], &st) != 0 || !S_ISDIR(st.st_mode)) continue;
-        int n = snprintf(g_scratch, sizeof(g_scratch),
-                         "%s/lime_test_dialect.XXXXXX", candidates[i]);
-        if (n < 0 || (size_t)n >= sizeof(g_scratch)) continue;
-        if (mkdtemp(g_scratch) == NULL) {
-            g_scratch[0] = 0;
-            continue;
-        }
-        if (chdir(g_scratch) != 0) {
-            cleanup_scratch();
-            continue;
-        }
-        atexit(cleanup_scratch);
-        return 0;
+    if (test_compat_tmpdir("lime_test_dialect", g_scratch, sizeof(g_scratch)) != 0) {
+        g_scratch[0] = 0;
+        return -1;
     }
-    g_scratch[0] = 0;
-    return -1;
+    if (chdir(g_scratch) != 0) {
+        cleanup_scratch();
+        return -1;
+    }
+    atexit(cleanup_scratch);
+    return 0;
 }
 
 /* Run lime <flags> -d<outdir> <fixture>; return exit status. */
@@ -226,15 +203,15 @@ int main(int argc, char **argv) {
     ** must be PATH_MAX so the fortify-source __realpath_chk doesn't
     ** abort us. */
     char lime_abs[PATH_MAX], limpar_abs[PATH_MAX], fixture_abs[PATH_MAX];
-    if (realpath(lime_bin, lime_abs) == NULL) {
+    if (test_compat_realpath(lime_bin, lime_abs, sizeof(lime_abs)) != 0) {
         fprintf(stderr, "SKIP: realpath(%s) failed\n", lime_bin);
         return 77;
     }
-    if (realpath(limpar, limpar_abs) == NULL) {
+    if (test_compat_realpath(limpar, limpar_abs, sizeof(limpar_abs)) != 0) {
         fprintf(stderr, "SKIP: realpath(%s) failed\n", limpar);
         return 77;
     }
-    if (realpath(fixture, fixture_abs) == NULL) {
+    if (test_compat_realpath(fixture, fixture_abs, sizeof(fixture_abs)) != 0) {
         fprintf(stderr, "SKIP: realpath(%s) failed\n", fixture);
         return 77;
     }

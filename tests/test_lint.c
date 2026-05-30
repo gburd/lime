@@ -27,6 +27,8 @@
 */
 
 #include <assert.h>
+#include "test_compat.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -62,32 +64,22 @@ static char g_scratch[256] = {0};
 
 static void cleanup_scratch(void) {
     if (g_scratch[0] == 0) return;
-    if (chdir("/") != 0) return;
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", g_scratch);
-    int rc = system(cmd);
-    (void)rc;
+    test_compat_chdir_temp();
+    test_compat_rmdir_recursive(g_scratch);
     g_scratch[0] = 0;
 }
 
 static int enter_scratch_dir(void) {
-    const char *candidates[3] = {0};
-    int n = 0;
-    const char *tmp = getenv("TMPDIR");
-    if (tmp != NULL && tmp[0] != 0) candidates[n++] = tmp;
-    candidates[n++] = "/tmp";
-    for (int i = 0; i < n; i++) {
-        struct stat st;
-        if (stat(candidates[i], &st) != 0 || !S_ISDIR(st.st_mode)) continue;
-        snprintf(g_scratch, sizeof(g_scratch),
-                 "%s/lime_test_lint.XXXXXX", candidates[i]);
-        if (mkdtemp(g_scratch) == NULL) { g_scratch[0] = 0; continue; }
-        if (chdir(g_scratch) != 0) { cleanup_scratch(); continue; }
-        atexit(cleanup_scratch);
-        return 0;
+    if (test_compat_tmpdir("lime_test_lint", g_scratch, sizeof(g_scratch)) != 0) {
+        g_scratch[0] = 0;
+        return -1;
     }
-    g_scratch[0] = 0;
-    return -1;
+    if (chdir(g_scratch) != 0) {
+        cleanup_scratch();
+        return -1;
+    }
+    atexit(cleanup_scratch);
+    return 0;
 }
 
 /* Run `lime <flags> <fixture>` capturing stdout, stderr, and exit
@@ -174,8 +166,8 @@ int main(int argc, char **argv) {
     }
 
     char lime_abs[PATH_MAX], fix_abs[PATH_MAX];
-    if (realpath(lime_bin, lime_abs) == NULL) return 77;
-    if (realpath(fixture_dir, fix_abs) == NULL) return 77;
+    if (test_compat_realpath(lime_bin, lime_abs, sizeof(lime_abs)) != 0) return 77;
+    if (test_compat_realpath(fixture_dir, fix_abs, sizeof(fix_abs)) != 0) return 77;
 
     if (enter_scratch_dir() != 0) {
         fprintf(stderr, "FAIL: could not create scratch dir\n");

@@ -178,6 +178,25 @@ static int test_compat_unsetenv(const char *name) {
 #endif
 }
 
+/* Change the current working directory to the OS temp root
+** (POSIX: $TMPDIR or /tmp; Windows: %TEMP%).  Used by tests that
+** need to chdir OUT of a directory before deleting it -- on
+** Windows you can't remove the cwd. */
+static int test_compat_chdir_temp(void) {
+#if defined(_WIN32)
+    char tmp_root[256];
+    DWORD got = GetTempPathA((DWORD)sizeof(tmp_root), tmp_root);
+    if (got == 0 || got >= sizeof(tmp_root)) {
+        strcpy(tmp_root, "C:\\Windows\\Temp\\");
+    }
+    return SetCurrentDirectoryA(tmp_root) ? 0 : -1;
+#else
+    const char *tmp = getenv("TMPDIR");
+    if (tmp == NULL || tmp[0] == '\0') tmp = "/tmp";
+    return chdir(tmp);
+#endif
+}
+
 /* --------------------------------------------------------------- */
 /*  realpath                                                        */
 /* --------------------------------------------------------------- */
@@ -222,6 +241,154 @@ static int test_compat_quote_arg(const char *arg, char *out, size_t cap) {
     return (int)pos;
 }
 #endif
+
+/* --------------------------------------------------------------- */
+/*  copy_file                                                       */
+/* --------------------------------------------------------------- */
+
+static int test_compat_copy_file(const char *src, const char *dst) {
+#if defined(_WIN32)
+    return CopyFileA(src, dst, FALSE) ? 0 : -1;
+#else
+    FILE *fin = fopen(src, "rb");
+    if (fin == NULL) return -1;
+    FILE *fout = fopen(dst, "wb");
+    if (fout == NULL) { fclose(fin); return -1; }
+    char buf[8192];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), fin)) > 0) {
+        if (fwrite(buf, 1, n, fout) != n) {
+            fclose(fin); fclose(fout); return -1;
+        }
+    }
+    fclose(fin);
+    if (fclose(fout) != 0) return -1;
+    return 0;
+#endif
+}
+
+/* --------------------------------------------------------------- */
+/*  Subprocess: run argv[], no output capture                       */
+/* --------------------------------------------------------------- */
+
+/* Spawn argv[0] with argv[1..] arguments and wait for it.  No
+** output capture (child's stdout/stderr go to /dev/null on POSIX,
+** NUL on Windows).  exit_code receives the child's exit status.
+** Returns 0 on success, -1 on spawn failure. */
+static int test_compat_run(char *const argv[], int *exit_code) {
+    if (exit_code) *exit_code = -1;
+#if defined(_WIN32)
+    char cmdline[4096];
+    size_t pos = 0;
+    for (int i = 0; argv[i]; i++) {
+        if (i > 0) {
+            if (pos + 1 >= sizeof(cmdline)) return -1;
+            cmdline[pos++] = ' ';
+        }
+        int n = test_compat_quote_arg(argv[i], cmdline + pos,
+                                      sizeof(cmdline) - pos);
+        if (n < 0) return -1;
+        pos += (size_t)n;
+    }
+    cmdline[pos] = 0;
+    HANDLE nul = CreateFileA("NUL", GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    PROCESS_INFORMATION pi;
+    STARTUPINFOA si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdError  = nul;
+    si.hStdOutput = nul;
+    si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+    SetHandleInformation(nul, HANDLE_FLAG_INHERIT, 1);
+    BOOL ok = CreateProcessA(argv[0], cmdline, NULL, NULL, TRUE,
+                             0, NULL, NULL, &si, &pi);
+    if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
+    if (!ok) return -1;
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    if (exit_code) *exit_code = (int)code;
+    return 0;
+#else
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        int dn = open("/dev/null", O_WRONLY);
+        if (dn >= 0) { dup2(dn, 1); dup2(dn, 2); close(dn); }
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    if (exit_code) *exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    return 0;
+#endif
+}
+
+/* Spawn argv[0] with argv[1..] arguments; redirect child's
+** stdout/stderr to the file `out_path` (created/truncated).
+** Returns 0 on success, -1 on spawn failure; exit_code captures
+** the child's status. */
+static int test_compat_run_to_file(char *const argv[],
+                                   const char *out_path,
+                                   int *exit_code) {
+    if (exit_code) *exit_code = -1;
+#if defined(_WIN32)
+    char cmdline[4096];
+    size_t pos = 0;
+    for (int i = 0; argv[i]; i++) {
+        if (i > 0) {
+            if (pos + 1 >= sizeof(cmdline)) return -1;
+            cmdline[pos++] = ' ';
+        }
+        int n = test_compat_quote_arg(argv[i], cmdline + pos,
+                                      sizeof(cmdline) - pos);
+        if (n < 0) return -1;
+        pos += (size_t)n;
+    }
+    cmdline[pos] = 0;
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
+    HANDLE hout = CreateFileA(out_path, GENERIC_WRITE,
+        FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hout == INVALID_HANDLE_VALUE) return -1;
+    PROCESS_INFORMATION pi;
+    STARTUPINFOA si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdError  = hout;
+    si.hStdOutput = hout;
+    si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+    BOOL ok = CreateProcessA(argv[0], cmdline, NULL, NULL, TRUE,
+                             0, NULL, NULL, &si, &pi);
+    CloseHandle(hout);
+    if (!ok) return -1;
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    if (exit_code) *exit_code = (int)code;
+    return 0;
+#else
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        int fd = open(out_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) { dup2(fd, 1); dup2(fd, 2); close(fd); }
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    if (exit_code) *exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    return 0;
+#endif
+}
 
 /* Spawn argv[0] with argv[1..] arguments; capture stderr to
 ** stderr_buf (NUL-terminated).  exit_code receives the child's

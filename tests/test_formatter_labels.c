@@ -20,6 +20,8 @@
 ** formatter_comments harness shape.
 */
 
+#include "test_compat.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -70,29 +72,27 @@ int main(int argc, char **argv) {
     /* Copy the source grammar to a writable working file -- lime -F
     ** writes alongside the input, and the source tree's grammar
     ** path may be read-only. */
-    char tmpdir[] = "/tmp/lime_labels_XXXXXX";
-    if (mkdtemp(tmpdir) == NULL) {
-        perror("mkdtemp");
+    char tmpdir[256];
+    if (test_compat_tmpdir("lime_labels", tmpdir, sizeof(tmpdir)) != 0) {
+        perror("test_compat_tmpdir");
         return 2;
     }
-    char src_copy[256];
+    char src_copy[512];
     snprintf(src_copy, sizeof(src_copy), "%s/grammar.lime", tmpdir);
 
-    {
-        char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "cp %s %s", grammar, src_copy);
-        if (system(cmd) != 0) {
-            fprintf(stderr, "FAIL: copying grammar to %s\n", src_copy);
-            return 1;
-        }
+    if (test_compat_copy_file(grammar, src_copy) != 0) {
+        fprintf(stderr, "FAIL: copying grammar to %s\n", src_copy);
+        return 1;
     }
 
     /* Pass 1: format the source. */
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "%s -F %s > /dev/null", lime_bin, src_copy);
-    if (system(cmd) != 0) {
-        fprintf(stderr, "FAIL: lime -F (pass 1) returned non-zero\n");
-        return 1;
+    {
+        char *fmt_argv[] = { (char *)lime_bin, "-F", src_copy, NULL };
+        int rc = 0;
+        if (test_compat_run(fmt_argv, &rc) != 0 || rc != 0) {
+            fprintf(stderr, "FAIL: lime -F (pass 1) returned non-zero\n");
+            return 1;
+        }
     }
     char fmt_path[512];
     snprintf(fmt_path, sizeof(fmt_path), "%s.formatted", src_copy);
@@ -174,37 +174,34 @@ int main(int argc, char **argv) {
     total++;
     char src_copy2[512];
     snprintf(src_copy2, sizeof(src_copy2), "%s/grammar2.lime", tmpdir);
+    test_compat_copy_file(fmt_path, src_copy2);
     {
-        char cp_cmd[1024];
-        snprintf(cp_cmd, sizeof(cp_cmd), "cp %s %s", fmt_path, src_copy2);
-        system(cp_cmd);
-    }
-    snprintf(cmd, sizeof(cmd), "%s -F %s > /dev/null", lime_bin, src_copy2);
-    if (system(cmd) != 0) {
-        printf("  [FAIL] idempotence: lime -F (pass 2) returned non-zero\n");
-    } else {
-        char fmt2_path[512];
-        snprintf(fmt2_path, sizeof(fmt2_path), "%s.formatted", src_copy2);
-        char *formatted2 = slurp(fmt2_path);
-        if (formatted2 == NULL) {
-            printf("  [FAIL] idempotence: could not read pass-2 output\n");
-        } else if (strcmp(formatted, formatted2) == 0) {
-            printf("  [PASS] idempotence: format(format(F)) == format(F)\n");
-            pass++;
-            free(formatted2);
+        char *fmt_argv[] = { (char *)lime_bin, "-F", src_copy2, NULL };
+        int rc = 0;
+        if (test_compat_run(fmt_argv, &rc) != 0 || rc != 0) {
+            printf("  [FAIL] idempotence: lime -F (pass 2) returned non-zero\n");
         } else {
-            printf("  [FAIL] idempotence: pass-1 and pass-2 differ\n");
-            free(formatted2);
+            char fmt2_path[512];
+            snprintf(fmt2_path, sizeof(fmt2_path), "%s.formatted", src_copy2);
+            char *formatted2 = slurp(fmt2_path);
+            if (formatted2 == NULL) {
+                printf("  [FAIL] idempotence: could not read pass-2 output\n");
+            } else if (strcmp(formatted, formatted2) == 0) {
+                printf("  [PASS] idempotence: format(format(F)) == format(F)\n");
+                pass++;
+                free(formatted2);
+            } else {
+                printf("  [FAIL] idempotence: pass-1 and pass-2 differ\n");
+                free(formatted2);
+            }
         }
     }
 
     free(source);
     free(formatted);
 
-    /* Cleanup tmpdir.  Best-effort; -rf semantics via shell. */
-    char rm_cmd[512];
-    snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s", tmpdir);
-    (void)system(rm_cmd);
+    /* Cleanup tmpdir. */
+    test_compat_rmdir_recursive(tmpdir);
 
     printf("\n=== Summary === %d/%d sub-tests pass\n", pass, total);
     return pass == total ? 0 : 1;
