@@ -42,14 +42,27 @@
 ** call sites that use `struct timespec ts; clock_gettime(...)`
 ** compile on MSVC without per-site #ifdef branches.  Only the
 ** clock IDs Lime uses are defined; calling with a different
-** clk_id returns -1. */
+** clk_id returns -1.
+**
+** Modern Windows SDKs (UCRT, Win10+) provide a C11 'struct
+** timespec' in <time.h>; we pull it in conditionally on
+** _CRT_NO_TIME_T (MSVC's gate) being absent.  When the CRT
+** already supplies the struct, skip our re-definition. */
+#include <time.h>
+#if !defined(_TIMESPEC_DEFINED) && !defined(__struct_timespec_defined)
 struct timespec {
     long long tv_sec;
     long      tv_nsec;
 };
+#define _TIMESPEC_DEFINED
+#endif
 
+#ifndef CLOCK_MONOTONIC
 #define CLOCK_MONOTONIC 1
+#endif
+#ifndef CLOCK_REALTIME
 #define CLOCK_REALTIME  0
+#endif
 
 static inline int clock_gettime(int clk_id, struct timespec *tp) {
     if (clk_id == CLOCK_MONOTONIC) {
