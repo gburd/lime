@@ -21,7 +21,7 @@
 ** the weak reference and destroy_snapshot skips the dlclose.
 ** Added v0.6.x to fix the documented dlopen-handle leak.
 */
-#if (defined(__GNUC__) || defined(__clang__)) && !defined(_WIN32)
+#if (defined(__GNUC__) || defined(__clang__)) && (!defined(_WIN32) || defined(__MINGW32__))
 __attribute__((weak))
 void snapshot_dlopen_release(ParserSnapshot *snap);
 #else
@@ -93,7 +93,7 @@ static void destroy_snapshot(ParserSnapshot *snap) {
     /* On Windows snapshot_dlopen_release is a static no-op (no
     ** dlopen machinery); on POSIX it's a weak symbol that may
     ** resolve to NULL if snapshot_create.c isn't linked. */
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(__MINGW32__)
     snapshot_dlopen_release(snap);
 #else
     if (snapshot_dlopen_release != NULL) {

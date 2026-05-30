@@ -238,7 +238,7 @@ JITStatus jit_attach_to_snapshot(ParserSnapshot *snap);
 ** synthesised weak def in snapshot.c.obj.  GNU ld dedupes; lld-link
 ** does not.  Make LIME_WEAK a no-op on Windows -- the runtime
 ** doesn't have the dynamic-snapshot .so case there anyway. */
-#if (defined(__GNUC__) || defined(__clang__)) && !defined(_WIN32)
+#if (defined(__GNUC__) || defined(__clang__)) && (!defined(_WIN32) || defined(__MINGW32__))
 #define LIME_WEAK __attribute__((weak))
 #else
 #define LIME_WEAK

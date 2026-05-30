@@ -688,11 +688,13 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
 ** with -DLIME_HAVE_SNAPSHOT_BUILD (the lime_compiler_dep target).
 ** Otherwise it isn't linked into the binary at all.
 **
-** POSIX: declare weak; the linker resolves to NULL when the real
-** symbol isn't present, and the dispatcher checks != NULL.
+** POSIX (and MinGW): declare weak; GNU ld / BSD ld / Apple ld
+** all resolve undefined weak refs to NULL.  The dispatcher checks
+** != NULL.
 **
-** Windows: lld-link doesn't honour __attribute__((weak)) but it
-** does honour the linker's '/alternatename' directive, set via
+** Windows MSVC ABI (clang-cl / clang -target msvc): lld-link does
+** NOT honour __attribute__((weak)) but it DOES honour the linker's
+** '/alternatename' directive, set via
 ** '#pragma comment(linker, "/alternatename:foo=foo_default")'.
 ** This says 'if foo is undefined at final link, alias it to
 ** foo_default'.  Functionally equivalent to weak symbols.  We
@@ -700,7 +702,8 @@ static ParserSnapshot *compile_grammar_file_to_snapshot(const char *grammar_file
 ** not available"); when lime.c IS linked, its real definition
 ** wins and /alternatename is ignored.
 */
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(__MINGW32__)
+/* MSVC ABI: use /alternatename. */
 int lime_compile_grammar_in_process(const char *grammar_text,
                                     size_t len,
                                     ParserSnapshot **out_snapshot,
@@ -717,6 +720,7 @@ int lime_compile_grammar_in_process_default(const char *grammar_text,
     return -1;
 }
 #else
+/* POSIX + MinGW: __attribute__((weak)) declaration. */
 extern int lime_compile_grammar_in_process(const char *grammar_text,
                                            size_t len,
                                            ParserSnapshot **out_snapshot,
