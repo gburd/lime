@@ -11,3 +11,7 @@ json.rs
 json_lex.c
 json_lex.h
 json_lex.rs
+
+# But DO track Cargo bench drivers under src/bin/
+!src/bin/
+!src/bin/*.rs
