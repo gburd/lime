@@ -17,19 +17,63 @@
 #include "lsp_json.h"
 
 #include <errno.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
+
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#  include <io.h>
+#  include <fcntl.h>
+#  include <direct.h>
+#else
+#  include <fcntl.h>
+#  include <sys/types.h>
+#  include <sys/wait.h>
+#  include <unistd.h>
+#endif
 
 static int errno_was_eintr(void) { return errno == EINTR; }
 
 static int write_temp_file(const char *text, size_t text_len,
                            char *out_path, size_t cap) {
+#if defined(_WIN32)
+    char tmp_root[MAX_PATH];
+    DWORD got = GetTempPathA((DWORD)sizeof(tmp_root), tmp_root);
+    if (got == 0 || got >= sizeof(tmp_root))
+        strcpy(tmp_root, "C:\\Windows\\Temp\\");
+    if (GetTempFileNameA(tmp_root, "lif", 0, out_path) == 0) return -1;
+    /* lime -F insists on a .lime suffix; rename in place. */
+    char with_ext[MAX_PATH + 8];
+    if ((size_t)snprintf(with_ext, sizeof(with_ext), "%s.lime", out_path)
+            >= sizeof(with_ext)) {
+        DeleteFileA(out_path);
+        return -1;
+    }
+    if (!MoveFileExA(out_path, with_ext, MOVEFILE_REPLACE_EXISTING)) {
+        DeleteFileA(out_path);
+        return -1;
+    }
+    if (strlen(with_ext) + 1 > cap) {
+        DeleteFileA(with_ext);
+        return -1;
+    }
+    strcpy(out_path, with_ext);
+    HANDLE h = CreateFileA(out_path, GENERIC_WRITE, 0, NULL,
+        TRUNCATE_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return -1;
+    DWORD wrote = 0;
+    if (!WriteFile(h, text, (DWORD)text_len, &wrote, NULL)
+            || wrote != text_len) {
+        CloseHandle(h);
+        DeleteFileA(out_path);
+        return -1;
+    }
+    CloseHandle(h);
+    return 0;
+#else
     const char *tmpdir = getenv("TMPDIR");
     if (!tmpdir || !*tmpdir) tmpdir = "/tmp";
     int n = snprintf(out_path, cap, "%s/lime_lsp_fmt_XXXXXX.lime", tmpdir);
@@ -54,6 +98,7 @@ static int write_temp_file(const char *text, size_t text_len,
     }
     close(fd);
     return 0;
+#endif
 }
 
 static char *slurp_file(const char *path, size_t *out_len) {
@@ -110,13 +155,55 @@ json_value *lsp_format_run(const char *lime_bin,
         return json_make_array();
     }
 
+#if defined(_WIN32)
+    /* Win32 port: CreateProcessA + anonymous pipe replacing
+    ** fork+execlp+pipe.  Spawn 'lime -F tmp_path', drain its
+    ** stderr (we only care about the exit code), then read back
+    ** tmp_path.formatted on success. */
+    HANDLE pipe_r, pipe_w;
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
+    if (!CreatePipe(&pipe_r, &pipe_w, &sa, 0)) {
+        DeleteFileA(tmp_path);
+        return json_make_array();
+    }
+    SetHandleInformation(pipe_r, HANDLE_FLAG_INHERIT, 0);
+    HANDLE devnull = CreateFileA("NUL", GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, NULL);
+    char cmdline[2048];
+    const char *bin = lime_bin && *lime_bin ? lime_bin : "lime";
+    snprintf(cmdline, sizeof(cmdline), "\"%s\" -F \"%s\"", bin, tmp_path);
+    PROCESS_INFORMATION pi;
+    STARTUPINFOA si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdOutput = devnull;
+    si.hStdError  = pipe_w;
+    BOOL ok = CreateProcessA(NULL, cmdline, NULL, NULL, TRUE, 0,
+                             NULL, NULL, &si, &pi);
+    CloseHandle(pipe_w);
+    if (devnull != INVALID_HANDLE_VALUE) CloseHandle(devnull);
+    if (!ok) {
+        CloseHandle(pipe_r);
+        DeleteFileA(tmp_path);
+        return json_make_array();
+    }
+    /* Drain child stderr -- we just want a clean exit. */
+    char drain[4096];
+    DWORD got;
+    while (ReadFile(pipe_r, drain, sizeof(drain), &got, NULL) && got > 0) { }
+    CloseHandle(pipe_r);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    int status = (int)code;       /* status == 0 means clean exit */
+#else
     int err_pipe[2];
     if (pipe(err_pipe) != 0) {
-        #if defined(_WIN32)
-    DeleteFileA(tmp_path);
-#else
-    unlink(tmp_path);
-#endif
+        unlink(tmp_path);
         return json_make_array();
     }
 
@@ -124,11 +211,7 @@ json_value *lsp_format_run(const char *lime_bin,
     if (pid < 0) {
         close(err_pipe[0]);
         close(err_pipe[1]);
-        #if defined(_WIN32)
-    DeleteFileA(tmp_path);
-#else
-    unlink(tmp_path);
-#endif
+        unlink(tmp_path);
         return json_make_array();
     }
     if (pid == 0) {
@@ -153,13 +236,18 @@ json_value *lsp_format_run(const char *lime_bin,
     close(err_pipe[0]);
     int status = 0;
     waitpid(pid, &status, 0);
+#endif
 
     /* Build the .formatted path that `lime -F` writes to. */
     char fmt_path[600];
     int  np = snprintf(fmt_path, sizeof(fmt_path), "%s.formatted", tmp_path);
     json_value *result = json_make_array();
+#if defined(_WIN32)
+    if (np > 0 && (size_t)np < sizeof(fmt_path) && status == 0) {
+#else
     if (np > 0 && (size_t)np < sizeof(fmt_path) &&
         WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+#endif
         size_t out_len = 0;
         char  *formatted = slurp_file(fmt_path, &out_len);
         if (formatted != NULL) {
@@ -189,11 +277,12 @@ json_value *lsp_format_run(const char *lime_bin,
      * Returning an empty edit array is the LSP-clean way to say
      * "no change". */
 
-    #if defined(_WIN32)
+#if defined(_WIN32)
     DeleteFileA(tmp_path);
+    DeleteFileA(fmt_path);
 #else
     unlink(tmp_path);
-#endif
     unlink(fmt_path);
+#endif
     return result;
 }

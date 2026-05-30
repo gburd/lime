@@ -1127,10 +1127,12 @@ int main(int argc, char **argv) {
     const char *fixtures_dir  = argv[3];
 
     /* Don't let a stuck server stall CI -- die after 60s. */
+#if !defined(_WIN32)
     alarm(60);
     /* Don't let SIGPIPE from a crashed server abort us -- read
      * paths handle EOF cleanly. */
     signal(SIGPIPE, SIG_IGN);
+#endif
 
     fprintf(stderr, "test_lsp:\n");
     test_lifecycle(bin, lime_bin);
