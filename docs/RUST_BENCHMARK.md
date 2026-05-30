@@ -90,7 +90,8 @@ deferred until a consumer with a large grammar needs it.
 
 **Pattern B fast path** (scan-while-in-self for small self-sets,
 e.g. whitespace `[ 	
-]`): implemented during v0.8.3
+
+]`): implemented during v0.8.3
 development; the function-call overhead exceeded the savings on
 short self-loop runs (typical JSON whitespace runs are 1-2
 bytes).  Pattern B is gated off in the C emitter behind an
@@ -135,12 +136,47 @@ bottleneck.
 
 v0.8.3 has been tested on:
 
-| Platform | OS | Compiler | Status |
-|---|---|---|---|
-| Linux x86_64 | Linux 6.x | GCC 15.2 + ASan + UBSan | 114 / 0 ok |
-| Linux RISC-V64 | Linux 6.6 | GCC + Clang | (pending; see commit log) |
-| Windows ARM64 | Win11 Pro | gcc (MinGW), clang, clang-cl | (pending; see commit log) |
-| FreeBSD x86_64 | FreeBSD 14 | clang | (offline; previous v0.8.2 passed) |
+| Platform | OS | Compiler | Tests | Notes |
+|---|---|---|---|---|
+| Linux x86_64 | Linux 6.x | GCC 15.2 + ASan + UBSan | 114 / 0 ok | dev box, full matrix |
+| Linux RISC-V64 (Ky X1) | Linux 6.6 | GCC 13.3 | 113 / 1 ok | merkle_overhead pre-existing perf gate |
+| Linux RISC-V64 (Ky X1) | Linux 6.6 | Clang 20.1 | 111 / 1 ok | + 2 timing-sensitive timeouts |
+| Windows ARM64 (under x86_64 emulation) | Win11 Pro | MinGW gcc 13.2 | 85 / 0 ok | POSIX-only tests gated |
+| Windows ARM64 (under x86_64 emulation) | Win11 Pro | Clang 22.1 (MSVC ABI) | 84 / 0 ok | + lld-link via /alternatename |
+| Windows ARM64 (under x86_64 emulation) | Win11 Pro | clang-cl 22.1 | 84 / 0 ok | + lld-link via /alternatename |
+| FreeBSD x86_64 (NUC) | FreeBSD 14 | clang | (host offline) | last pass: v0.8.2, no v0.8.3 changes affect FreeBSD |
+
+The Windows port required the following fixes that landed
+alongside v0.8.3:
+
+  - lime-lsp gated off (POSIX fork+exec)
+  - test_diff_conflicts + 16 other POSIX-test gates
+  - timespec/clock_gettime shim coexists with UCRT
+  - parse_glr.c + snapshot_create.c routed through
+    lime_threads.h (Win32 SRWLOCK + CRITICAL_SECTION shims)
+  - PTHREAD_MUTEX_INITIALIZER on Win32 (SRWLOCK_INIT)
+  - lime.c restructured for the __WIN32__ branch + missing
+    'dup -> _dup' alias
+  - parse-manager and test_lime_compile_in_process gated
+    (getopt + dlopen + unistd-only)
+  - bench/-lm replaced by find_library('m', required: false)
+  - lld-link weak-symbol-equivalent via /alternatename for
+    lime_compile_grammar_in_process
+
+Tokenize throughput on RISC-V64 (Ky X1, GCC 13.3):
+
+  v0.8.2: lime ~32 MB/s, logos ~90 MB/s  (gap 2.81x)
+  v0.8.3: lime ~30 MB/s, logos ~88 MB/s  (gap 2.93x; noise)
+
+The fast-path emit's win is x86-specific -- the byte-class loop
+benefits from x86's high IPC and L1 prefetching.  RISC-V (and
+ARM64 under emulation on santorini) sees the per-state dispatch
+overhead but not the proportional win on string-body scans.
+On the Ky X1 specifically the lime/logos ratio is unchanged
+within run-to-run noise.
+
+Tokens byte-identical to the x86_64 baseline on all platforms
+(verified via dump_tokens.rs).
 
 ## Interpretation
 ## Interpretation
