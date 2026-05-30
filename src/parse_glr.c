@@ -30,7 +30,7 @@
 #include "snapshot.h"
 #include "glr.h"
 
-#include <pthread.h>
+#include "lime_threads.h"
 #include <stdlib.h>
 #include <string.h>
 

@@ -320,7 +320,7 @@ static void compute_basename(const char *grammar_file, char *out, size_t out_sz)
 ** are immutable once built) so we don't need a reader lock.
 */
 
-#include <pthread.h>
+#include "lime_threads.h"
 
 typedef struct dlopen_entry {
     ParserSnapshot     *snap;
