@@ -1,0 +1,47 @@
+[package]
+name = "rust_compare"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+logos        = "0.14"
+nom          = "7"
+chumsky      = "0.10"
+pest         = "2"
+pest_derive  = "2"
+serde_json   = "1"
+
+[dependencies.lalrpop-util]
+version = "0.20"
+
+[build-dependencies]
+lalrpop      = "0.20"
+
+[[bin]]
+name = "bench_lime"
+path = "src/bin/bench_lime.rs"
+[[bin]]
+name = "bench_logos"
+path = "src/bin/bench_logos.rs"
+[[bin]]
+name = "bench_lalrpop"
+path = "src/bin/bench_lalrpop.rs"
+[[bin]]
+name = "bench_nom"
+path = "src/bin/bench_nom.rs"
+[[bin]]
+name = "bench_chumsky"
+path = "src/bin/bench_chumsky.rs"
+[[bin]]
+name = "bench_pest"
+path = "src/bin/bench_pest.rs"
+[[bin]]
+name = "bench_serde"
+path = "src/bin/bench_serde.rs"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = false

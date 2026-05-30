@@ -1,0 +1,54 @@
+use rust_compare::json_tok::Tok;
+
+grammar;
+
+extern {
+    type Location = usize;
+    type Error = ();
+
+    enum Tok {
+        "{" => Tok::LBrace,
+        "}" => Tok::RBrace,
+        "[" => Tok::LBracket,
+        "]" => Tok::RBracket,
+        ":" => Tok::Colon,
+        "," => Tok::Comma,
+        "true" => Tok::True,
+        "false" => Tok::False,
+        "null" => Tok::Null,
+        "Number" => Tok::Number,
+        "String" => Tok::String,
+    }
+}
+
+pub Value: () = {
+    Object,
+    Array,
+    "String" => (),
+    "Number" => (),
+    "true" => (),
+    "false" => (),
+    "null" => (),
+};
+
+Object: () = {
+    "{" "}" => (),
+    "{" Members "}" => (),
+};
+
+Members: () = {
+    Pair => (),
+    <Members> "," <Pair> => (),
+};
+
+Pair: () = "String" ":" Value => ();
+
+Array: () = {
+    "[" "]" => (),
+    "[" Elements "]" => (),
+};
+
+Elements: () = {
+    Value => (),
+    <Elements> "," <Value> => (),
+};

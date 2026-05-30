@@ -1,0 +1,21 @@
+%name JsonParse
+%token LBRACE RBRACE LBRACKET RBRACKET COLON COMMA STRING NUMBER TRUE FALSE NULL.
+%first_token 257
+%start_symbol root
+root ::= value.
+value ::= object.
+value ::= array.
+value ::= STRING.
+value ::= NUMBER.
+value ::= TRUE.
+value ::= FALSE.
+value ::= NULL.
+object ::= LBRACE RBRACE.
+object ::= LBRACE members RBRACE.
+members ::= pair.
+members ::= members COMMA pair.
+pair ::= STRING COLON value.
+array ::= LBRACKET RBRACKET.
+array ::= LBRACKET elements RBRACKET.
+elements ::= value.
+elements ::= elements COMMA value.
