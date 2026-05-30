@@ -237,6 +237,40 @@ int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
 
     int emit_rc = emit_files(c, spec, input_path, output_dir);
 
+    /* v0.8.x feat/rust-output stage 7: also emit a Rust mirror when
+    ** --rustlex is set on the lime CLI.  The flag is exposed via a
+    ** weak global so this translation unit doesn't need to know
+    ** about lime.c's option-parser internals. */
+    extern int g_lime_rustlex_flag;
+    if (g_lime_rustlex_flag && emit_rc == 0) {
+        extern int emit_rust_lex(const LimeLexSpec *spec,
+                                  const LimeLexCompiled *compiled,
+                                  const char *src_path,
+                                  const char *out_path, char **error);
+        /* Derive output path: <stem>_lex.rs alongside the .c/.h. */
+        char *stem = strdup(input_path);
+        if (stem) {
+            char *dot = strrchr(stem, '.');
+            if (dot) *dot = 0;
+            size_t plen = strlen(stem) + strlen("_lex.rs") + 1;
+            char *rust_path = (char *)malloc(plen);
+            if (rust_path) {
+                snprintf(rust_path, plen, "%s_lex.rs", stem);
+                char *err = NULL;
+                if (emit_rust_lex(spec, c, input_path, rust_path, &err) != 0) {
+                    fprintf(stderr, "lime --rustlex: %s\n",
+                            err ? err : "emit failed");
+                    free(err);
+                    emit_rc = 2;
+                } else {
+                    fprintf(stderr, "lime -X --rustlex: wrote %s\n", rust_path);
+                }
+                free(rust_path);
+            }
+            free(stem);
+        }
+    }
+
     lime_lex_compiled_free(c);
     lime_lex_spec_free(spec);
     free(src);

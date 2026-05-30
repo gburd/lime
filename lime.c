@@ -4690,6 +4690,7 @@ int main(int argc, char **argv){
   static int rustNoStdFlag = 0; /* --rust-nostd: parser.rs gets #![no_std] */
   static int rustLexFlag   = 0; /* --rustlex: emit Rust lexer (deferred) */
   extern int g_lime_rust_no_std;
+  extern int g_lime_rustlex_flag;
   static int rustCrateFlag = 0; /* --rust-crate: emit a complete Cargo
                                 ** crate alongside the .rs file
                                 ** (Cargo.toml + src/lib.rs).  Only valid
@@ -4814,6 +4815,9 @@ int main(int argc, char **argv){
     fprintf(stderr,"Exactly one filename argument is required.\n");
     exit(1);
   }
+  /* Latch --rustlex BEFORE the lex compiler dispatch so the lex
+  ** driver can consult it when emitting outputs. */
+  g_lime_rustlex_flag = rustLexFlag;
   if( lexFlag ){
     /* -X: run the .lex compiler frontend instead of the parser
     ** generator.  Reads the input as a .lex source file, runs
@@ -4979,14 +4983,8 @@ int main(int argc, char **argv){
     **
     ** Additive -- ReportTable still runs below to produce the C
     ** output.  Both .c and .rs are written in one lime invocation. */
-    if( rustLexFlag ){
-        fprintf(stderr,
-            "lime --rustlex: Rust lexer output is DEFERRED in v0.8.0.  The\n"
-            "  parser-side --rust path is fully functional; the lex subsystem\n"
-            "  (M0-M5) hasn't been mirrored to Rust yet.  Tracking item in\n"
-            "  docs/RUST_OUTPUT.md.  Exiting without emitting a .lex.rs.\n");
-        /* Continue with C output for the .lex / .y file as normal. */
-    }
+    /* Latch the flag for the .lex compiler driver to consult. */
+    g_lime_rustlex_flag = rustLexFlag;
     if( rustFlag ){
         g_lime_rust_no_std = rustNoStdFlag;
         char rust_path[512];
@@ -13607,3 +13605,4 @@ const char *lime_emit_rust_get_rust_overflow(const struct lime *lemp) {
 }
 
 int g_lime_rust_no_std = 0;
+int g_lime_rustlex_flag = 0;
