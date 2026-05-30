@@ -205,12 +205,12 @@ v0.8.3 has been tested on:
 | Platform | OS | Compiler | Tests | Notes |
 |---|---|---|---|---|
 | Linux x86_64 | Linux 6.x | GCC 15.2 + ASan + UBSan | 114 / 0 ok | dev box, full matrix |
-| Linux RISC-V64 (Ky X1) | Linux 6.6 | GCC 13.3 | 113 / 1 ok | merkle_overhead pre-existing perf gate |
-| Linux RISC-V64 (Ky X1) | Linux 6.6 | Clang 20.1 | 111 / 1 ok | + 2 timing-sensitive timeouts |
-| Windows ARM64 (under x86_64 emulation) | Win11 Pro | MinGW gcc 13.2 | 85 / 0 ok | POSIX-only tests gated |
-| Windows ARM64 (under x86_64 emulation) | Win11 Pro | Clang 22.1 (MSVC ABI) | 84 / 0 ok | + lld-link via /alternatename |
-| Windows ARM64 (under x86_64 emulation) | Win11 Pro | clang-cl 22.1 | 84 / 0 ok | + lld-link via /alternatename |
-| FreeBSD x86_64 (NUC) | FreeBSD 14 | clang | (host offline) | last pass: v0.8.2, no v0.8.3 changes affect FreeBSD |
+| Linux RISC-V64 (Ky X1) | Linux 6.6 | GCC 13.3 | 112 / 1 ok | merkle_overhead pre-existing perf gate |
+| Linux RISC-V64 (Ky X1) | Linux 6.6 | Clang 20.1 | 112 / 1 ok | + timing-sensitive timeouts |
+| Windows ARM64 (x86_64 emul) | Win11 Pro | MinGW gcc 13.2  | **85 / 0 ok** | __attribute__((weak)) via GNU ld |
+| Windows ARM64 (x86_64 emul) | Win11 Pro | Clang 22.1 MSVC | **85 / 0 ok** | /alternatename via lld-link |
+| Windows ARM64 (x86_64 emul) | Win11 Pro | clang-cl 22.1   | **85 / 0 ok** | /alternatename via lld-link |
+| FreeBSD x86_64 (NUC) | FreeBSD 14 | clang | (host offline) | last pass: v0.8.2; v0.8.3+v0.8.4 changes are platform-additive |
 
 The Windows port required the following fixes that landed
 alongside v0.8.3:
