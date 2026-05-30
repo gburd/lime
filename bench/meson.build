@@ -145,14 +145,14 @@ if flex_prog.found() and bison_prog.found()
     'bench_runtime.c',
     bench_grammar_lime_gen,
     c_args : ['-DUSE_LIME', '-DLIME_OUT_H="bench_grammar.h"'],
-    include_directories : include_directories('../src', '.'),
+    include_directories : [inc, include_directories('../src', '.')],
   )
 
   bench_runtime_bison = executable('bench_runtime_bison',
     'bench_runtime.c',
     bench_grammar_bison_gen,
     c_args : ['-DUSE_BISON', '-DBISON_OUT_H="bench_grammar_bison.h"'],
-    include_directories : include_directories('../src', '.'),
+    include_directories : [inc, include_directories('../src', '.')],
   )
 endif
 
