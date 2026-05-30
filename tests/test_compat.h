@@ -49,6 +49,7 @@
 #  include <direct.h>
 #  include <sys/stat.h>
 #  include <process.h>
+#  include <fcntl.h>
 #else
 #  include <unistd.h>
 #  include <sys/stat.h>
@@ -194,6 +195,32 @@ static int test_compat_chdir_temp(void) {
     const char *tmp = getenv("TMPDIR");
     if (tmp == NULL || tmp[0] == '\0') tmp = "/tmp";
     return chdir(tmp);
+#endif
+}
+
+/* Create a unique temp file with the given prefix.  Returns an
+** open file descriptor on success, -1 on failure.  The path is
+** written to out_buf (must be >= 256 bytes).  POSIX: mkstemp.
+** Windows: GetTempFileNameA + open. */
+static int test_compat_mkstemp(const char *prefix, char *out_buf,
+                               size_t out_buf_size) {
+#if defined(_WIN32)
+    char tmp_root[256];
+    DWORD got = GetTempPathA((DWORD)sizeof(tmp_root), tmp_root);
+    if (got == 0 || got >= sizeof(tmp_root)) {
+        strcpy(tmp_root, "C:\\Windows\\Temp\\");
+    }
+    if (GetTempFileNameA(tmp_root, prefix, 0, out_buf) == 0) return -1;
+    if (strlen(out_buf) + 1 > out_buf_size) return -1;
+    /* GetTempFileNameA already creates the file; reopen for write. */
+    int fd = _open(out_buf, _O_RDWR | _O_BINARY | _O_TRUNC, _S_IREAD | _S_IWRITE);
+    return fd;
+#else
+    const char *tmp_root = getenv("TMPDIR");
+    if (tmp_root == NULL || tmp_root[0] == '\0') tmp_root = "/tmp";
+    int n = snprintf(out_buf, out_buf_size, "%s/%s_XXXXXX", tmp_root, prefix);
+    if (n < 0 || (size_t)n >= out_buf_size) return -1;
+    return mkstemp(out_buf);
 #endif
 }
 

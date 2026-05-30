@@ -465,8 +465,8 @@ static void test_parse_parsetext_equivalence(void) {
     struct lime lem_a, lem_b;
 
     /* Materialize the grammar on disk for the file-based path. */
-    char path[] = "/tmp/lime_phase2_parse_XXXXXX";
-    int fd = mkstemp(path);
+    char path[256];
+    int fd = test_compat_mkstemp("lime_phase2_parse", path, sizeof(path));
     CHECK(fd >= 0, "equivalence: mkstemp succeeded");
     size_t n = strlen(k_simple_grammar);
     ssize_t written = write(fd, k_simple_grammar, n);
