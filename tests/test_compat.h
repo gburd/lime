@@ -377,8 +377,9 @@ static int test_compat_run(char *const argv[], int *exit_code) {
         pos += (size_t)n;
     }
     cmdline[pos] = 0;
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
     HANDLE nul = CreateFileA("NUL", GENERIC_WRITE,
-        FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+        FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, NULL);
     PROCESS_INFORMATION pi;
     STARTUPINFOA si;
     ZeroMemory(&si, sizeof(si));
@@ -386,10 +387,18 @@ static int test_compat_run(char *const argv[], int *exit_code) {
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdError  = nul;
     si.hStdOutput = nul;
-    si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+    /* Open NUL for stdin -- the parent's stdin may be closed
+    ** under meson, in which case GetStdHandle returns
+    ** INVALID_HANDLE_VALUE and CreateProcessA fails because
+    ** STARTF_USESTDHANDLES requires all three handles valid. */
+    HANDLE nul_in = CreateFileA("NUL", GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &sa, OPEN_EXISTING, 0, NULL);
+    si.hStdInput  = nul_in;
     SetHandleInformation(nul, HANDLE_FLAG_INHERIT, 1);
     BOOL ok = CreateProcessA(argv[0], cmdline, NULL, NULL, TRUE,
                              0, NULL, NULL, &si, &pi);
+    if (nul_in != INVALID_HANDLE_VALUE) CloseHandle(nul_in);
     if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
     if (!ok) return -1;
     WaitForSingleObject(pi.hProcess, INFINITE);
@@ -448,9 +457,17 @@ static int test_compat_run_to_file(char *const argv[],
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdError  = hout;
     si.hStdOutput = hout;
-    si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+    /* Open NUL for stdin -- the parent's stdin may be closed
+    ** under meson, in which case GetStdHandle returns
+    ** INVALID_HANDLE_VALUE and CreateProcessA fails because
+    ** STARTF_USESTDHANDLES requires all three handles valid. */
+    HANDLE nul_in = CreateFileA("NUL", GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &sa, OPEN_EXISTING, 0, NULL);
+    si.hStdInput  = nul_in;
     BOOL ok = CreateProcessA(argv[0], cmdline, NULL, NULL, TRUE,
                              0, NULL, NULL, &si, &pi);
+    if (nul_in != INVALID_HANDLE_VALUE) CloseHandle(nul_in);
     CloseHandle(hout);
     if (!ok) return -1;
     WaitForSingleObject(pi.hProcess, INFINITE);
@@ -517,6 +534,7 @@ static int test_compat_run_capture_stderr(char *const argv[],
 
     BOOL ok = CreateProcessA(argv[0], cmdline, NULL, NULL, TRUE,
                              0, NULL, NULL, &si, &pi);
+    if (nul_in != INVALID_HANDLE_VALUE) CloseHandle(nul_in);
     CloseHandle(pipe_w);
     if (!ok) {
         CloseHandle(pipe_r);
@@ -643,9 +661,17 @@ static int test_compat_run_to_files(char *const argv[],
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdOutput = hout;
     si.hStdError  = herr;
-    si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+    /* Open NUL for stdin -- the parent's stdin may be closed
+    ** under meson, in which case GetStdHandle returns
+    ** INVALID_HANDLE_VALUE and CreateProcessA fails because
+    ** STARTF_USESTDHANDLES requires all three handles valid. */
+    HANDLE nul_in = CreateFileA("NUL", GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &sa, OPEN_EXISTING, 0, NULL);
+    si.hStdInput  = nul_in;
     BOOL ok = CreateProcessA(argv[0], cmdline, NULL, NULL, TRUE,
                              0, NULL, NULL, &si, &pi);
+    if (nul_in != INVALID_HANDLE_VALUE) CloseHandle(nul_in);
     CloseHandle(hout);
     CloseHandle(herr);
     if (!ok) return -1;

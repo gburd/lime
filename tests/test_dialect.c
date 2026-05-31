@@ -120,7 +120,7 @@ static int run_lime(const char *lime_bin,
     argv[argc++] = (char *)fixture;
     argv[argc] = NULL;
     int rc = 0;
-    if (test_compat_run_to_files(argv, NULL, NULL, &rc) != 0) return -1;
+    if (test_compat_run(argv, &rc) != 0) return -1;
     return rc;
 }
 

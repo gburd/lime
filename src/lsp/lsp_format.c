@@ -177,11 +177,20 @@ json_value *lsp_format_run(const char *lime_bin,
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+    /* Open NUL for stdin -- under some hosts (meson test runners,
+    ** detached editor processes) the parent's stdin can be closed
+    ** and GetStdHandle returns INVALID_HANDLE_VALUE; CreateProcessA
+    ** with STARTF_USESTDHANDLES then fails because all three handles
+    ** must be valid. */
+    HANDLE nul_in = CreateFileA("NUL", GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &sa, OPEN_EXISTING, 0, NULL);
+    si.hStdInput  = nul_in;
     si.hStdOutput = devnull;
     si.hStdError  = pipe_w;
     BOOL ok = CreateProcessA(NULL, cmdline, NULL, NULL, TRUE, 0,
                              NULL, NULL, &si, &pi);
+    if (nul_in != INVALID_HANDLE_VALUE) CloseHandle(nul_in);
     CloseHandle(pipe_w);
     if (devnull != INVALID_HANDLE_VALUE) CloseHandle(devnull);
     if (!ok) {

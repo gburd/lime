@@ -139,7 +139,7 @@ static int run_lime(const char *lime_bin,
             err_out[0] = 0;
         }
     } else {
-        if (test_compat_run_to_files(argv, NULL, NULL, &rc) != 0) return -1;
+        if (test_compat_run(argv, &rc) != 0) return -1;
     }
     return rc;
 }
