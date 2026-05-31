@@ -468,9 +468,14 @@ static void test_parse_parsetext_equivalence(void) {
     int fd = test_compat_mkstemp("lime_phase2_parse", path, sizeof(path));
     CHECK(fd >= 0, "equivalence: mkstemp succeeded");
     size_t n = strlen(k_simple_grammar);
+#if defined(_WIN32)
+    int written = _write(fd, k_simple_grammar, (unsigned)n);
+    _close(fd);
+#else
     ssize_t written = write(fd, k_simple_grammar, n);
-    CHECK((size_t)written == n, "equivalence: wrote full grammar");
     close(fd);
+#endif
+    CHECK((size_t)written == n, "equivalence: wrote full grammar");
 
     /* Path A: file-based Parse(). */
     lime_compiler_context_init(&cc_a);
