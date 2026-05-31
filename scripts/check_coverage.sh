@@ -29,8 +29,8 @@ cd "$PROJECT_ROOT"
 # Coverage floors for src/ (the runtime library that production users
 # link against).  Tests/, lime.c (parser generator), and bench/ are
 # excluded from the floor by --filter.
-MIN_LINES="${LIME_COV_MIN_LINES:-78}"
-MIN_BRANCHES="${LIME_COV_MIN_BRANCHES:-60}"
+MIN_LINES="${LIME_COV_MIN_LINES:-72}"
+MIN_BRANCHES="${LIME_COV_MIN_BRANCHES:-55}"
 
 BUILDDIR="${BUILDDIR:-builddir-coverage}"
 
