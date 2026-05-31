@@ -36,7 +36,9 @@ static int file_exists(const char *path) {
 
 static int run_one(const char *lime_bin, const char *flag,
                    const char *fixture_path) {
-    char *argv[6] = { (char *)lime_bin, "-X", "-d.", "--rustlex" };
+    /* argv slots: lime_bin, -X, -d., --rustlex, [optional flag],
+    ** fixture_path, NULL terminator -- up to 7. */
+    char *argv[7] = { (char *)lime_bin, "-X", "-d.", "--rustlex" };
     int n = 4;
     if (flag) argv[n++] = (char *)flag;
     argv[n++] = (char *)fixture_path;
