@@ -39,7 +39,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <unistd.h>
 
 static const char *fixtures[] = {
     "tests/test_formatter_grammar.lime",
