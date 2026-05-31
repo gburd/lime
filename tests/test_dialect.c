@@ -268,8 +268,11 @@ int main(int argc, char **argv) {
     ensure_dir(d_err);
 
     /* ---- 1. No -D ---- */
-    if (run_lime(lime_bin, limpar, "", d_none, fixture) != 0) {
-        FAIL("none", "lime exited non-zero with no -D");
+    fprintf(stderr, "DBG: running lime_bin=[%s] limpar=[%s] outdir=[%s] fixture=[%s] cwd=", lime_bin, limpar, d_none, fixture); { char cb[256]; if (getcwd(cb, sizeof(cb)) != NULL) fprintf(stderr, "[%s]\n", cb); else fprintf(stderr, "?\n"); }
+    int rc1 = run_lime(lime_bin, limpar, "", d_none, fixture);
+    fprintf(stderr, "DBG: run_lime returned %d\n", rc1);
+    if (rc1 != 0) {
+        FAIL("none", "lime exited non-zero with no -D (rc=%d)", rc1);
     } else {
         if (has_token(d_none, "ROWNUM")) {
             FAIL("none", "ROWNUM should be absent without -Ddialect=oracle");
