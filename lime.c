@@ -66,6 +66,32 @@ int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
 }
 #endif
 
+/*
+** Single-file fallbacks for the Rust output emitters.  meson builds
+** -DLIME_HAS_RUST_OUTPUT and links src/emit_rust.c which provides
+** the real definitions.  Without that flag (the standalone
+** `cc -o lime lime.c` build) these stubs keep the link clean and
+** --rust / --rust-crate report a clear error.
+*/
+struct lime;  /* forward decl; struct itself defined later in this file */
+#ifndef LIME_HAS_RUST_OUTPUT
+int emit_rust_parser(struct lime *lemp, const char *out_path,
+                     const char *grammar_path, char **error) {
+    (void)lemp; (void)out_path; (void)grammar_path;
+    if (error) *error = strdup(
+      "lime: --rust output not available in this build. "
+      "Rebuild with meson (which links src/emit_rust.c) or recompile "
+      "with: cc -o lime lime.c src/emit_rust.c -DLIME_HAS_RUST_OUTPUT");
+    return 1;
+}
+int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
+    (void)lemp; (void)rs_path;
+    if (error) *error = strdup(
+      "lime: --rust-crate not available in this build (see --rust message).");
+    return 1;
+}
+#endif
+
 #define ISSPACE(X) isspace((unsigned char)(X))
 #define ISDIGIT(X) isdigit((unsigned char)(X))
 #define ISALNUM(X) isalnum((unsigned char)(X))
