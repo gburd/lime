@@ -207,10 +207,10 @@ v0.8.3 has been tested on:
 | Linux x86_64 | Linux 6.x | GCC 15.2 + ASan + UBSan | 114 / 0 ok | dev box, full matrix |
 | Linux RISC-V64 (Ky X1) | Linux 6.6 | GCC 13.3 | 112 / 1 ok | merkle_overhead pre-existing perf gate |
 | Linux RISC-V64 (Ky X1) | Linux 6.6 | Clang 20.1 | 112 / 1 ok | + timing-sensitive timeouts |
-| Windows ARM64 (x86_64 emul) | Win11 Pro | MinGW gcc 13.2  | **85 / 0 ok** | __attribute__((weak)) via GNU ld |
-| Windows ARM64 (x86_64 emul) | Win11 Pro | Clang 22.1 MSVC | **85 / 0 ok** | /alternatename via lld-link |
-| Windows ARM64 (x86_64 emul) | Win11 Pro | clang-cl 22.1   | **85 / 0 ok** | /alternatename via lld-link |
-| FreeBSD x86_64 (NUC) | FreeBSD 14 | clang | (host offline) | last pass: v0.8.2; v0.8.3+v0.8.4 changes are platform-additive |
+| Windows ARM64 (x86_64 emul) | Win11 Pro | MinGW gcc 13.2  | **88 / 0 ok** | LSP + 17 POSIX tests now run |
+| Windows ARM64 (x86_64 emul) | Win11 Pro | Clang 22.1 MSVC | **87 / 14** | LSP ok; 14 tests fail on real lime CRLF bugs |
+| Windows ARM64 (x86_64 emul) | Win11 Pro | clang-cl 22.1   | **87 / 14** | LSP ok; same 14 lime CRLF failures |
+| FreeBSD x86_64 (NUC) | FreeBSD 14 | clang | (host offline) | last pass: v0.8.2; v0.8.3+v0.8.4 changes platform-additive |
 
 The Windows port required the following fixes that landed
 alongside v0.8.3:
