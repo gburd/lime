@@ -130,7 +130,7 @@ static int emit_files(LimeLexCompiled *c, const LimeLexSpec *spec, const char *i
     const char *prefix = spec->name_prefix ? spec->name_prefix : "Lex";
 
     /* Header. */
-    FILE *fh = fopen(h_path, "w");
+    FILE *fh = fopen(h_path, "wb");
     if (!fh) {
         fprintf(stderr, "lime: cannot open '%s' for writing: %s\n", h_path, strerror(errno));
         for (int i = 0; i < n_rules; i++)
@@ -160,7 +160,7 @@ static int emit_files(LimeLexCompiled *c, const LimeLexSpec *spec, const char *i
     if (h_basename) {
         sprintf(h_basename, "%s_lex.h", stem);
     }
-    FILE *fc = fopen(c_path, "w");
+    FILE *fc = fopen(c_path, "wb");
     if (!fc) {
         fprintf(stderr, "lime: cannot open '%s' for writing: %s\n", c_path, strerror(errno));
         free(h_basename);

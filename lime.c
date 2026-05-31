@@ -91,6 +91,7 @@ int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
 
 #ifdef __WIN32__
 #include <io.h>
+#include <fcntl.h>     /* _O_BINARY for _setmode */
 #include <process.h>
 #ifdef __cplusplus
 extern "C" {
@@ -3581,7 +3582,7 @@ static int format_grammar(struct lime *lem){
   outfile = (char*)lime_malloc(sz);
   lemon_sprintf(outfile, "%s.formatted", lem->filename);
 
-  out = fopen(outfile, "w");
+  out = fopen(outfile, "wb");
   if( !out ){
     fprintf(stderr, "Cannot open %s for writing\n", outfile);
     lime_free(outfile);
@@ -4672,6 +4673,16 @@ static int run_diff_conflicts(const char *base_path,
 ** the test provides its own driver. */
 #ifndef LIME_TEST_HARNESS
 int main(int argc, char **argv){
+#if defined(_WIN32)
+  /* Disable Windows text-mode \n -> \r\n translation on stdout/stderr.
+  ** lime writes formatted grammar files, JSON-encoded lint output,
+  ** and diagnostics expected to be exactly the bytes the user typed.
+  ** Without this, on Windows everything gets CRLF-translated and
+  ** breaks idempotence (format(format(F)) != format(F)) and JSON
+  ** consumers that count bytes. */
+  _setmode(_fileno(stdout), _O_BINARY);
+  _setmode(_fileno(stderr), _O_BINARY);
+#endif
   static int version = 0;
   static int rpflag = 0;
   static int basisflag = 0;
