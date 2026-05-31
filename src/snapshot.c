@@ -24,6 +24,14 @@
 #if (defined(__GNUC__) || defined(__clang__)) && (!defined(_WIN32) || defined(__MINGW32__))
 __attribute__((weak))
 void snapshot_dlopen_release(ParserSnapshot *snap);
+
+/* Weak stub definition.  Apple's ld errors on unresolved weak
+** undefineds at static-link time; a weak stub keeps consumers that
+** don't link snapshot_create.c (e.g. the dynamically-built .so for
+** snapshot_create's subprocess pipeline) linkable.  When the strong
+** definition in snapshot_create.c IS linked, it wins. */
+__attribute__((weak))
+void snapshot_dlopen_release(ParserSnapshot *snap) { (void)snap; }
 #else
 /* Windows: no .so / dlopen machinery; provide a strong no-op so
 ** destroy_snapshot's call site links cleanly.  When the day comes

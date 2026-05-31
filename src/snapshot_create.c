@@ -720,7 +720,14 @@ int lime_compile_grammar_in_process_default(const char *grammar_text,
     return -1;
 }
 #else
-/* POSIX + MinGW: __attribute__((weak)) declaration. */
+/* POSIX + MinGW: __attribute__((weak)) declaration AND a weak
+** stub definition.  Apple's ld doesn't honour weak undefined
+** references the same way GNU ld does -- it errors at static-link
+** time if the symbol is unresolved.  Providing a weak stub lets
+** the link succeed.  When liblime_compiler is linked, its strong
+** definition overrides this stub; when it isn't, the stub returns
+** -1 ("in-process not available") and the dispatcher falls
+** through to the subprocess fallback. */
 extern int lime_compile_grammar_in_process(const char *grammar_text,
                                            size_t len,
                                            ParserSnapshot **out_snapshot,
@@ -729,6 +736,18 @@ extern int lime_compile_grammar_in_process(const char *grammar_text,
     __attribute__((weak))
 #endif
     ;
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak))
+int lime_compile_grammar_in_process(const char *grammar_text,
+                                    size_t len,
+                                    ParserSnapshot **out_snapshot,
+                                    char **error) {
+    (void)grammar_text; (void)len; (void)out_snapshot;
+    if (error) *error = NULL;
+    return -1;
+}
+#endif
 #endif
 
 ParserSnapshot *lime_compile_grammar_text(const char *grammar_text, size_t len, char **error) {
