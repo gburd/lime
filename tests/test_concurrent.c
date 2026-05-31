@@ -17,6 +17,9 @@
 #include "lime_threads.h"
 #include <stdatomic.h>
 #include <assert.h>
+#if !defined(_WIN32)
+#include <sched.h>
+#endif
 
 #include "snapshot.h"
 #include "token_table.h"
@@ -556,6 +559,7 @@ typedef struct {
 static void *swap_reader_thread(void *arg) {
     SwapTestCtx *ctx = (SwapTestCtx *)arg;
 
+    int loops = 0;
     while (!atomic_load(&ctx->swapper_done)) {
         /* Hold read lock while we load the pointer and acquire a ref.
         ** This guarantees the snapshot isn't freed between load and acquire. */
@@ -578,6 +582,21 @@ static void *swap_reader_thread(void *arg) {
         }
 
         snapshot_release(ref);
+
+        /* Yield periodically so writers (with their slower wrlock
+        ** acquisition) can interleave.  Without this, on slow CPUs
+        ** with rwlock implementations that don't preempt readers in
+        ** favour of waiting writers, the test livelocks: 8 readers
+        ** continuously hold the rdlock and the writer never gets to
+        ** swap.  Yielding every 16 iterations keeps the readers busy
+        ** while letting the writer make forward progress. */
+        if ((++loops & 0xF) == 0) {
+#if defined(_WIN32)
+            SwitchToThread();
+#else
+            sched_yield();
+#endif
+        }
     }
 
     return NULL;
