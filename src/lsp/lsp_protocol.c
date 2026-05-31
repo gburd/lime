@@ -29,7 +29,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
+#if defined(_WIN32)
+#  include <string.h>
+#  define strncasecmp _strnicmp
+#else
+#  include <strings.h>
+#endif
 
 /* ---- framing -------------------------------------------------------- */
 
