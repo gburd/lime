@@ -250,12 +250,14 @@ int main(int argc, char **argv) {
         if (test_compat_copy_file(fixture, fix_local) != 0) {
             FAIL("roundtrip", "could not copy fixture to scratch");
         } else {
-            char fmt_cmd[PATH_MAX * 2];
-            snprintf(fmt_cmd, sizeof(fmt_cmd),
-                     "'%s' -T'%s' -F '%s' >/dev/null 2>&1",
-                     lime_bin, limpar, fix_local);
-            int rc = system(fmt_cmd);
-            (void)rc;
+            {
+                char tflag[1024];
+                snprintf(tflag, sizeof(tflag), "-T%s", limpar);
+                char *fmt_argv[] = { (char *)lime_bin, tflag, "-F", fix_local, NULL };
+                int rc = 0;
+                test_compat_run(fmt_argv, &rc);
+                (void)rc;
+            }
             char fmt_path[PATH_MAX];
             snprintf(fmt_path, sizeof(fmt_path), "%s.formatted", fix_local);
             char *fmt = slurp(fmt_path);
@@ -287,14 +289,12 @@ int main(int argc, char **argv) {
                 char fix_pass2[PATH_MAX];
                 snprintf(fix_pass2, sizeof(fix_pass2),
                          "%s/embed_round2.lime", g_scratch);
-                char cp2[PATH_MAX * 2];
-                /* test_compat_copy_file inline below */ 
-                if (system(cp2) == 0) {
-                    char fmt2_cmd[PATH_MAX * 2];
-                    snprintf(fmt2_cmd, sizeof(fmt2_cmd),
-                             "'%s' -T'%s' -F '%s' >/dev/null 2>&1",
-                             lime_bin, limpar, fix_pass2);
-                    int rc2 = system(fmt2_cmd);
+                if (test_compat_copy_file(fmt_path, fix_pass2) == 0) {
+                    char tflag[1024];
+                    snprintf(tflag, sizeof(tflag), "-T%s", limpar);
+                    char *fmt2_argv[] = { (char *)lime_bin, tflag, "-F", fix_pass2, NULL };
+                    int rc2 = 0;
+                    test_compat_run(fmt2_argv, &rc2);
                     (void)rc2;
                     char fmt2_path[PATH_MAX];
                     snprintf(fmt2_path, sizeof(fmt2_path),

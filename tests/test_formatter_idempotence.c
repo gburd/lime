@@ -86,11 +86,10 @@ static int copy_file(const char *src, const char *dst) {
 /* Run `lime -F <path>` and return 0 on success.  The CLI writes
  * its output to <path>.formatted; we don't redirect stdout. */
 static int run_format(const char *lime_exe, const char *path) {
-    char cmd[8192];
-    int n = snprintf(cmd, sizeof(cmd), "%s -F %s > /dev/null 2>&1",
-                     lime_exe, path);
-    if (n <= 0 || n >= (int)sizeof(cmd)) return -1;
-    return system(cmd);
+    char *fmt_argv[] = { (char *)lime_exe, "-F", (char *)path, NULL };
+    int rc = 0;
+    if (test_compat_run(fmt_argv, &rc) != 0) return -1;
+    return rc;
 }
 
 int main(int argc, char **argv) {

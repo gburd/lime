@@ -69,33 +69,43 @@ static int enter_scratch_dir(void) {
     return 0;
 }
 
-/* Run lime, return stderr-captured output as malloc'd buffer.  Exit
-** code goes into *out_status.  Caller frees the buffer. */
+/* Run lime, return stderr+stdout-captured output as malloc'd
+** buffer.  Exit code goes into *out_status.  Caller frees. */
 static char *run_lime_capture(const char *lime_bin, const char *limpar,
                               const char *flags, const char *fixture,
                               int *out_status) {
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd),
-             "'%s' %s -T'%s' '%s' 2>&1",
-             lime_bin, flags, limpar, fixture);
-    FILE *p = popen(cmd, "r");
-    if (p == NULL) { *out_status = -1; return NULL; }
-    size_t cap = 4096, len = 0;
-    char *buf = (char *)malloc(cap);
-    if (buf == NULL) { pclose(p); *out_status = -1; return NULL; }
-    int c;
-    while ((c = fgetc(p)) != EOF) {
-        if (len + 1 >= cap) {
-            cap *= 2;
-            char *n = (char *)realloc(buf, cap);
-            if (n == NULL) { free(buf); pclose(p); *out_status = -1; return NULL; }
-            buf = n;
-        }
-        buf[len++] = (char)c;
+    /* Tokenize flags into argv elements (space-separated, no quoting). */
+    char flagbuf[256];
+    snprintf(flagbuf, sizeof(flagbuf), "%s", flags ? flags : "");
+    char tflag[1024];
+    snprintf(tflag, sizeof(tflag), "-T%s", limpar);
+    char *argv[20] = { (char *)lime_bin };
+    int argc = 1;
+    char *tok = strtok(flagbuf, " ");
+    while (tok && argc < 16) { argv[argc++] = tok; tok = strtok(NULL, " "); }
+    argv[argc++] = tflag;
+    argv[argc++] = (char *)fixture;
+    argv[argc] = NULL;
+
+    /* Capture stdout + stderr into a single file in the cwd. */
+    const char *combined = "_run_lime_capture.txt";
+    int rc = 0;
+    if (test_compat_run_to_files(argv, combined, combined, &rc) != 0) {
+        *out_status = -1;
+        return NULL;
     }
-    buf[len] = 0;
-    int rc = pclose(p);
     *out_status = rc;
+    FILE *f = fopen(combined, "rb");
+    if (f == NULL) return NULL;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    rewind(f);
+    if (n < 0) { fclose(f); return NULL; }
+    char *buf = (char *)malloc((size_t)n + 1);
+    if (buf == NULL) { fclose(f); return NULL; }
+    size_t got = fread(buf, 1, (size_t)n, f);
+    fclose(f);
+    buf[got] = 0;
     return buf;
 }
 
