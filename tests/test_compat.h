@@ -293,10 +293,17 @@ static int test_compat_realpath(const char *path, char *out_buf,
     DWORD got = GetFullPathNameA(path, (DWORD)out_buf_size, out_buf, NULL);
     return (got == 0 || got >= out_buf_size) ? -1 : 0;
 #else
-    char buf[TEST_COMPAT_PATH_MAX];
-    if (realpath(path, buf) == NULL) return -1;
-    if (strlen(buf) + 1 > out_buf_size) return -1;
-    strcpy(out_buf, buf);
+    /* glibc's __realpath_chk requires the resolved-buffer to be at
+    ** least PATH_MAX bytes when -D_FORTIFY_SOURCE>=2; otherwise
+    ** runtime-aborts.  Pass NULL to let glibc malloc its own buffer. */
+    char *resolved = realpath(path, NULL);
+    if (resolved == NULL) return -1;
+    if (strlen(resolved) + 1 > out_buf_size) {
+        free(resolved);
+        return -1;
+    }
+    strcpy(out_buf, resolved);
+    free(resolved);
     return 0;
 #endif
 }
