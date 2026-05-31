@@ -16,6 +16,16 @@ project('lime-parser', 'c', 'cpp',
 
 cc = meson.get_compiler('c')
 
+# Compiler-warning suppression flags used by lime.c et al.  These are
+# GCC/Clang spellings; MSVC's cl.exe parses them as 'invalid numeric
+# argument /Wno-...' and fails the compile.  Probe for support and
+# fall back to an empty list on MSVC.
+lime_warning_suppress = cc.get_supported_arguments([
+  '-Wno-unused-function',
+  '-Wno-unused-parameter',
+  '-Wno-format-overflow',
+])
+
 # Expose POSIX and GNU extensions (needed for pthread_rwlock_t,
 # strdup, clock_gettime, etc.).  Multiple macros are defined for
 # portability across libc implementations:
@@ -192,9 +202,8 @@ lime_compiler_lib = static_library('lime_compiler',
   'lime.c',
   include_directories : [inc, include_directories('src'),
                          include_directories('src/lex')],
-  c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAVE_SNAPSHOT_BUILD',
-            '-Wno-unused-function', '-Wno-unused-parameter',
-            '-Wno-format-overflow'],
+  c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAVE_SNAPSHOT_BUILD']
+           + lime_warning_suppress,
 )
 
 lime_compiler_dep = declare_dependency(

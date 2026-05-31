@@ -117,8 +117,7 @@ test_compiler_context = executable('test_compiler_context',
   link_with : [lime_lex_compiler_lib],
   include_directories : [inc, include_directories('../src/lex')],
   c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAS_LEX_COMPILER',
-            '-Wno-unused-function', '-Wno-unused-parameter',
-            '-Wno-format-overflow'],
+          ] + lime_warning_suppress,
 )
 
 test('compiler_context', test_compiler_context)
@@ -144,8 +143,7 @@ if host_machine.system() != 'windows'
                            include_directories('../src/lex')],
     c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAVE_SNAPSHOT_BUILD',
               '-DLIME_HAS_LEX_COMPILER',
-              '-Wno-unused-function', '-Wno-unused-parameter',
-              '-Wno-format-overflow'],
+            ] + lime_warning_suppress,
     # Export the executable's runtime symbols so the .so produced
     # by the subprocess path's dlopen (used in the equivalence sub-
     # test) can resolve snapshot_release / parse_token / etc.
@@ -547,9 +545,8 @@ test_formatter_directive_registry = executable(
   'test_formatter_directive_registry.c',
   link_with : [lime_lex_compiler_lib],
   include_directories : [inc, include_directories('../src/lex')],
-  c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAS_LEX_COMPILER',
-            '-Wno-unused-function', '-Wno-unused-parameter',
-            '-Wno-format-overflow', '-Wno-format-truncation'],
+  c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAS_LEX_COMPILER']
+           + lime_warning_suppress,
 )
 
 test('formatter_directive_registry', test_formatter_directive_registry,

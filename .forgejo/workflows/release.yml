@@ -1,0 +1,74 @@
+# Auto-create a Codeberg release when a vX.Y.Z tag is pushed.
+#
+# Reads the annotated-tag message and uses it as the release body.
+# Falls back to "Release X.Y.Z" if the tag is lightweight.
+#
+# Requires repo secret CODEBERG_TOKEN (a personal access token with
+# write:repository scope).  Without it the release step is silently
+# skipped -- no error, no release.  Set the token in:
+#   Settings -> Actions -> Secrets and variables
+# at https://codeberg.org/gregburd/lime/settings/actions
+name: Release on tag push
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  release:
+    runs-on: codeberg-tiny
+    steps:
+      - name: Checkout (full, for tags)
+        uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract release notes from annotated tag
+        id: notes
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          # Annotated tag's message body is everything after the
+          # subject line; for lightweight tags this is empty.
+          body="$(git tag -l --format='%(contents:body)' "$tag")"
+          if [ -z "$body" ]; then
+            body="$(git tag -l --format='%(contents)' "$tag")"
+          fi
+          if [ -z "$body" ]; then
+            body="Release $tag"
+          fi
+          # Stage body in a file -- multiline outputs need EOF markers.
+          {
+            echo "body<<RELEASE_BODY_EOF"
+            echo "$body"
+            echo "RELEASE_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create Codeberg release
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        if: env.CODEBERG_TOKEN != ''
+        run: |
+          set -euo pipefail
+          tag="${{ steps.notes.outputs.tag }}"
+          body=$(cat <<'EOFBODY'
+          ${{ steps.notes.outputs.body }}
+          EOFBODY
+          )
+          # POST the release.  If it already exists (re-run), the API
+          # returns 409 Conflict; treat that as success.
+          status=$(curl -s -o /tmp/resp.json -w '%{http_code}' \
+            -X POST \
+            -H "Authorization: token $CODEBERG_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -n --arg tn "$tag" --arg name "Lime $tag" --arg body "$body" \
+                  '{tag_name: $tn, name: $name, body: $body, draft: false, prerelease: false}')" \
+            "https://codeberg.org/api/v1/repos/${GITHUB_REPOSITORY}/releases")
+          echo "POST returned $status"
+          cat /tmp/resp.json
+          case "$status" in
+            201) echo "release created" ;;
+            409) echo "release already exists; ok" ;;
+            *)   echo "FAIL: HTTP $status"; exit 1 ;;
+          esac

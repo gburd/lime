@@ -22,7 +22,17 @@ if flex_prog.found() and bison_prog.found()
   fres = run_command(flex_prog, '--version', check : false)
   bres = run_command(bison_prog, '--version', check : false)
   if fres.returncode() == 0 and bres.returncode() == 0
-    flex_bison_ok = true
+    # macOS /usr/bin/bison ships GNU Bison 2.3 (GPLv2-licenced; Apple
+    # never updated past it).  Our .y files use '%define api.prefix
+    # {bison_}' which requires Bison >= 3.0.  Probe the version and
+    # disable the bench cleanly on older bisons rather than failing
+    # the build with a syntax error mid-bison.
+    bison_ver_match = bres.stdout().split('\n')[0]
+    if bison_ver_match.contains('3.') or bison_ver_match.contains('4.')
+      flex_bison_ok = true
+    else
+      message('Flex / Bison bench: DISABLED (bison too old: ' + bison_ver_match + ')')
+    endif
   endif
 endif
 
