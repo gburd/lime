@@ -7,7 +7,7 @@
 #include "parser.h"
 
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "0.8.5"
+#define LIME_VERSION_STRING "0.8.6"
 #endif
 
 const char *lime_parser_version(void) {
