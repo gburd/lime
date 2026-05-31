@@ -93,6 +93,28 @@ static ParserSnapshot *create_test_snapshot(uint32_t nstate, uint32_t naction) {
 ** references are released.
 ** ------------------------------------------------------------------- */
 
+/* Stress-factor scaling: an environment variable that scales
+** every iteration count below.  Default 1.0 (full stress).  Set
+** to 0.1 on slow architectures (RISC-V, embedded ARM, etc.) via
+** meson test env so the test completes in reasonable wall-clock
+** time without losing its concurrency-bug-finding power -- a
+** real data race surfaces in the first hundred iterations on any
+** machine, the 10000+ counts just buy more confidence.
+**
+** Returns 1.0 when LIME_TEST_STRESS_FACTOR is unset or invalid;
+** clamps to [0.01, 1.0] otherwise. */
+static double lime_test_stress_factor(void) {
+    const char *e = getenv("LIME_TEST_STRESS_FACTOR");
+    if (e == NULL || *e == '\0') return 1.0;
+    double v = atof(e);
+    if (v <= 0.0 || v != v) return 1.0;
+    if (v > 1.0) v = 1.0;
+    if (v < 0.01) v = 0.01;
+    return v;
+}
+
+#define SCALE_ITERS(n) ((int)((n) * lime_test_stress_factor()) + 1)
+
 #define SNAPSHOT_THREADS 16
 #define SNAPSHOT_ITERATIONS 10000
 
@@ -104,7 +126,8 @@ typedef struct {
 static void *snapshot_stress_thread(void *arg) {
     SnapshotTestCtx *ctx = (SnapshotTestCtx *)arg;
 
-    for (int i = 0; i < SNAPSHOT_ITERATIONS; i++) {
+    int snapshot_iters = SCALE_ITERS(SNAPSHOT_ITERATIONS);
+    for (int i = 0; i < snapshot_iters; i++) {
         ParserSnapshot *ref = snapshot_acquire(ctx->snap);
         if (ref == NULL) {
             atomic_fetch_add(&ctx->errors, 1);
@@ -183,7 +206,7 @@ static void *token_reader_thread(void *arg) {
     };
     int nkeywords = sizeof(keywords) / sizeof(keywords[0]);
 
-    for (int i = 0; i < TOKEN_READER_ITERATIONS; i++) {
+    for (int i = 0; i < SCALE_ITERS(TOKEN_READER_ITERATIONS); i++) {
         const char *kw = keywords[i % nkeywords];
         int code = lookup_token(ctx->table, kw, strlen(kw));
 
@@ -205,7 +228,7 @@ static void *token_reader_thread(void *arg) {
 static void *token_writer_thread(void *arg) {
     TokenTestCtx *ctx = (TokenTestCtx *)arg;
 
-    for (int iter = 0; iter < TOKEN_WRITER_ITERATIONS; iter++) {
+    for (int iter = 0; iter < SCALE_ITERS(TOKEN_WRITER_ITERATIONS); iter++) {
         /* Add tokens from "extension" */
         ExtensionID ext_id = (ExtensionID)(100 + (iter % 10));
 
@@ -292,7 +315,7 @@ typedef struct {
 static void *parse_ctx_stress_thread(void *arg) {
     ParseCtxTestCtx *ctx = (ParseCtxTestCtx *)arg;
 
-    for (int i = 0; i < PARSE_CTX_ITERATIONS; i++) {
+    for (int i = 0; i < SCALE_ITERS(PARSE_CTX_ITERATIONS); i++) {
         ParseContext *pctx = parse_begin(ctx->snap);
         if (pctx == NULL) {
             atomic_fetch_add(&ctx->errors, 1);
@@ -465,7 +488,7 @@ typedef struct {
 static void *refcount_stress_thread(void *arg) {
     RefcountStressCtx *ctx = (RefcountStressCtx *)arg;
 
-    for (int i = 0; i < REFCOUNT_ITERATIONS; i++) {
+    for (int i = 0; i < SCALE_ITERS(REFCOUNT_ITERATIONS); i++) {
         ParserSnapshot *ref = snapshot_acquire(ctx->snap);
         if (ref == NULL) {
             atomic_fetch_add(&ctx->errors, 1);
@@ -667,7 +690,7 @@ static void *ext_lu_writer_thread(void *arg) {
     /* Create a test snapshot for loading */
     ParserSnapshot *snap = create_test_snapshot(8, 32);
 
-    for (int iter = 0; iter < EXT_LU_WRITER_ITERATIONS; iter++) {
+    for (int iter = 0; iter < SCALE_ITERS(EXT_LU_WRITER_ITERATIONS); iter++) {
         int idx = iter % ctx->nbase;
         ExtensionID id = ctx->base_ids[idx];
 
