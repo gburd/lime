@@ -620,7 +620,8 @@ static int test_compat_run_to_files(char *const argv[],
             &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
         if (hout == INVALID_HANDLE_VALUE) return -1;
     } else {
-        hout = CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_READ,
+        hout = CreateFileA("NUL", GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
             &sa, OPEN_EXISTING, 0, NULL);
     }
     if (stderr_path) {
@@ -631,7 +632,8 @@ static int test_compat_run_to_files(char *const argv[],
             return -1;
         }
     } else {
-        herr = CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_READ,
+        herr = CreateFileA("NUL", GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
             &sa, OPEN_EXISTING, 0, NULL);
     }
     PROCESS_INFORMATION pi;
