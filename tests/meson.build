@@ -336,6 +336,23 @@ if host_machine.system() != 'windows'
     timeout : 120)
 endif
 
+# v0.8.4+ rustlex emit coverage: exercises --rustlex's three
+# emit modes (default scalar, --rustlex-memchr, --rustlex-simd)
+# so the SIMD/memchr fast-path emit code in src/lex/emit_rust_lex.c
+# shows up in the coverage report.  The cargo bench drivers in
+# bench/rust_compare exercise these too but aren't part of the
+# meson test suite.
+if host_machine.system() != 'windows'
+  test_emit_rust_lex = executable('test_emit_rust_lex',
+    'test_emit_rust_lex.c',
+  )
+  test('emit_rust_lex', test_emit_rust_lex,
+    args : [lime_exe.full_path()],
+    depends : [lime_exe],
+    is_parallel : false,
+    timeout : 30)
+endif
+
 # v0.6.x: YYFALLBACK AOT codegen regression.  Verifies the JIT
 # trace bakes yy_fallback into the find_shift_action emit path so
 # the runtime path that consults snap->yy_fallback is bypassed.
