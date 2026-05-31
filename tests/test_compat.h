@@ -79,6 +79,13 @@
 #  define pclose _pclose
 #endif
 
+/* S_ISDIR is POSIX (in <sys/stat.h>); Windows MSVC ABI doesn't
+** define it.  Use _S_IFMT mask manually. */
+#if defined(_WIN32) && !defined(__MINGW32__) && !defined(S_ISDIR)
+#  define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
+#  define S_ISREG(m) (((m) & _S_IFMT) == _S_IFREG)
+#endif
+
 #define TEST_COMPAT_PATH_MAX 1024
 
 /* --------------------------------------------------------------- */
