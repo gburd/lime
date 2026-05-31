@@ -530,7 +530,11 @@ static int test_compat_run_capture_stderr(char *const argv[],
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdError = pipe_w;
     si.hStdOutput = pipe_w;
-    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    /* Open NUL for stdin -- see comments in test_compat_run. */
+    HANDLE nul_in = CreateFileA("NUL", GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &sa, OPEN_EXISTING, 0, NULL);
+    si.hStdInput = nul_in;
 
     BOOL ok = CreateProcessA(argv[0], cmdline, NULL, NULL, TRUE,
                              0, NULL, NULL, &si, &pi);
