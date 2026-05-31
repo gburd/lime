@@ -70,6 +70,15 @@
 #  endif
 #endif
 
+/* popen / pclose: POSIX names are unavailable on Windows MSVC ABI
+** (MinGW provides them via the POSIX layer; clang -target msvc and
+** clang-cl don't).  MSVC supplies _popen / _pclose with identical
+** semantics. */
+#if defined(_WIN32) && !defined(__MINGW32__)
+#  define popen  _popen
+#  define pclose _pclose
+#endif
+
 #define TEST_COMPAT_PATH_MAX 1024
 
 /* --------------------------------------------------------------- */
