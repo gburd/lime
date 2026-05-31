@@ -204,10 +204,10 @@ v0.8.3 has been tested on:
 
 | Platform | OS | Compiler | Tests | Notes |
 |---|---|---|---|---|
-| Linux x86_64 | Linux 6.x | GCC 15.2 + ASan + UBSan | **114 / 0** | dev box, full matrix |
-| Linux RISC-V64 (Ky X1) | Linux 6.6 | GCC 13.3 | 112 / 1 | merkle_overhead pre-existing perf gate |
-| Linux RISC-V64 (Ky X1) | Linux 6.6 | Clang 20.1 | 112 / 1 | + timing-sensitive timeouts |
-| Windows ARM64 (x86_64 emul) | Win11 Pro | MinGW gcc 13.2  | **101 / 0 ok** | full pass; binary mode + filename fix |
+| Linux x86_64 | Linux 6.x | GCC 15.2 + ASan + UBSan | **114 / 0 ok** | dev box, full matrix |
+| Linux RISC-V64 (Ky X1) | Linux 6.6 | GCC 13.3 | **114 / 0 ok** | scaled stress + scaled merkle threshold |
+| Linux RISC-V64 (Ky X1) | Linux 6.6 | Clang 20.1 | **114 / 0 ok** | same |
+| Windows ARM64 (x86_64 emul) | Win11 Pro | MinGW gcc 13.2  | **101 / 0 ok** | full pass |
 | Windows ARM64 (x86_64 emul) | Win11 Pro | Clang 22.1 MSVC | **101 / 0 ok** | full pass |
 | Windows ARM64 (x86_64 emul) | Win11 Pro | clang-cl 22.1   | **101 / 0 ok** | full pass |
 | FreeBSD x86_64 (NUC) | FreeBSD 14 | clang | (host offline) | last pass: v0.8.2; subsequent changes are platform-additive |
