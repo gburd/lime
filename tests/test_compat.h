@@ -59,6 +59,17 @@
 #  include <dirent.h>
 #endif
 
+/* PATH_MAX is POSIX (<limits.h>); Windows MSVC ABI uses MAX_PATH
+** in <windows.h> (which we already pulled above on _WIN32).  Tests
+** that use PATH_MAX directly need a portable definition. */
+#if !defined(PATH_MAX)
+#  if defined(_WIN32) && defined(MAX_PATH)
+#    define PATH_MAX MAX_PATH
+#  else
+#    define PATH_MAX 4096
+#  endif
+#endif
+
 #define TEST_COMPAT_PATH_MAX 1024
 
 /* --------------------------------------------------------------- */
