@@ -8706,7 +8706,18 @@ PRIVATE char *file_makename(struct lime *lemp, const char *suffix)
   int sz;
 
   if( outputDir ){
+    /* Strip the directory prefix from filename so the output
+    ** lands in outputDir/<basename> rather than
+    ** outputDir/<full-input-path>.  Look for both POSIX '/'
+    ** and Windows '\' separators -- on Windows lime is often
+    ** invoked with a Win32-style absolute path. */
     cp = strrchr(filename, '/');
+#if defined(_WIN32)
+    {
+      char *cp2 = strrchr(filename, '\\');
+      if( cp2 && (!cp || cp2 > cp) ) cp = cp2;
+    }
+#endif
     if( cp ) filename = cp + 1;
   }
   sz = lemonStrlen(filename);
