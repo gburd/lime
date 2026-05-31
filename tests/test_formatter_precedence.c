@@ -90,7 +90,7 @@ static char *run_lime_capture(const char *lime_bin, const char *limpar,
     /* Capture stdout + stderr into a single file in the cwd. */
     const char *combined = "_run_lime_capture.txt";
     int rc = 0;
-    if (test_compat_run_to_files(argv, combined, combined, &rc) != 0) {
+    if (test_compat_run_to_file(argv, combined, &rc) != 0) {
         *out_status = -1;
         return NULL;
     }
