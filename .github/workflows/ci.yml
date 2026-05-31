@@ -114,7 +114,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-13, macos-14]
+        # macos-13 (Intel) was deprecated by GitHub in 2026; runners
+        # are queued indefinitely.  Only macos-14 (Apple Silicon) is
+        # available now.  Re-add macos-13 if Intel coverage is needed,
+        # but be aware GitHub's runner pool may not have one.
+        os: [macos-14]
     steps:
       - uses: actions/checkout@v4
 
