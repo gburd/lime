@@ -10,10 +10,10 @@
 
 /* Test 1: Format once, verify comments are present */
 static void test_format_preserves_comments(const char *lime_exe, const char *grammar_path){
-  char cmd[1024];
-  snprintf(cmd, sizeof(cmd), "%s -F %s >/dev/null 2>&1", lime_exe, grammar_path);
-  int ret = system(cmd);
-  assert(ret == 0);
+  char *fmt_argv[] = { (char *)lime_exe, "-F", (char *)grammar_path, NULL };
+  int rc = 0;
+  assert(test_compat_run(fmt_argv, &rc) == 0);
+  assert(rc == 0);
   
   /* Check that the formatted file has the comments */
   char formatted_path[512];
@@ -47,7 +47,6 @@ static void test_format_preserves_comments(const char *lime_exe, const char *gra
 
 /* Test 2: Format twice, verify idempotence (byte-identical) */
 static void test_idempotence(const char *lime_exe, const char *grammar_path){
-  char cmd[1024];
   char formatted_path[512];
   char twice_path[512];
   
@@ -55,12 +54,20 @@ static void test_idempotence(const char *lime_exe, const char *grammar_path){
   snprintf(twice_path, sizeof(twice_path), "%s.formatted.formatted", grammar_path);
   
   /* Format once */
-  snprintf(cmd, sizeof(cmd), "%s -F %s >/dev/null 2>&1", lime_exe, grammar_path);
-  assert(system(cmd) == 0);
+  {
+    char *fmt_argv[] = { (char *)lime_exe, "-F", (char *)grammar_path, NULL };
+    int rc = 0;
+    assert(test_compat_run(fmt_argv, &rc) == 0);
+    assert(rc == 0);
+  }
   
   /* Format the formatted output */
-  snprintf(cmd, sizeof(cmd), "%s -F %s >/dev/null 2>&1", lime_exe, formatted_path);
-  assert(system(cmd) == 0);
+  {
+    char *fmt_argv[] = { (char *)lime_exe, "-F", formatted_path, NULL };
+    int rc = 0;
+    assert(test_compat_run(fmt_argv, &rc) == 0);
+    assert(rc == 0);
+  }
   
   /* Compare byte-for-byte */
   FILE *f1 = fopen(formatted_path, "rb");
