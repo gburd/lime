@@ -72,9 +72,7 @@ static void ensure_dir(const char *path) {
     struct stat st;
     if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) return;
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "mkdir -p '%s'", path);
-    int rc = system(cmd);
-    (void)rc;
+    test_compat_mkdir_p(path);
 }
 
 /* Per-test scratch directory infrastructure.  Mirrors the helper

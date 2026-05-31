@@ -143,19 +143,19 @@ int main(int argc, char **argv) {
 
     /* Copy fixture into scratch so lime -F doesn't write into the
     ** source tree. */
-    {
-        char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "cp '%s' grammar.lime", fixture_abs);
-        if (system(cmd) != 0) return 1;
+    if (test_compat_copy_file(fixture_abs, "grammar.lime") != 0) {
+        fprintf(stderr, "FAIL: copy fixture\n");
+        return 1;
     }
 
     /* Format pass 1 */
-    char cmd[2048];
-    snprintf(cmd, sizeof(cmd),
-             "'%s' -F grammar.lime > /dev/null 2>&1", lime_abs);
-    if (system(cmd) != 0) {
-        fprintf(stderr, "FAIL: lime -F (pass 1) returned non-zero\n");
-        return 1;
+    {
+        char *fmt_argv[] = { (char *)lime_abs, "-F", "grammar.lime", NULL };
+        int rc = 0;
+        if (test_compat_run(fmt_argv, &rc) != 0 || rc != 0) {
+            fprintf(stderr, "FAIL: lime -F (pass 1) returned non-zero\n");
+            return 1;
+        }
     }
 
     char *formatted = slurp("grammar.lime.formatted");
@@ -222,18 +222,19 @@ int main(int argc, char **argv) {
 
     /* Sub-test 6: idempotence */
     total++;
-    snprintf(cmd, sizeof(cmd),
-             "cp grammar.lime.formatted grammar2.lime && '%s' -F grammar2.lime > /dev/null 2>&1",
-             lime_abs);
-    if (system(cmd) == 0) {
-        char *fmt2 = slurp("grammar2.lime.formatted");
-        if (fmt2 && strcmp(formatted, fmt2) == 0) {
-            printf("  [PASS] idempotence: format(format(F)) == format(F)\n");
-            pass++;
-        } else {
-            fprintf(stderr, "  [FAIL] idempotence: pass-1 and pass-2 differ\n");
+    if (test_compat_copy_file("grammar.lime.formatted", "grammar2.lime") == 0) {
+        char *fmt_argv[] = { (char *)lime_abs, "-F", "grammar2.lime", NULL };
+        int rc = 0;
+        if (test_compat_run(fmt_argv, &rc) == 0 && rc == 0) {
+            char *fmt2 = slurp("grammar2.lime.formatted");
+            if (fmt2 && strcmp(formatted, fmt2) == 0) {
+                printf("  [PASS] idempotence: format(format(F)) == format(F)\n");
+                pass++;
+            } else {
+                fprintf(stderr, "  [FAIL] idempotence: pass-1 and pass-2 differ\n");
+            }
+            free(fmt2);
         }
-        free(fmt2);
     }
 
     free(formatted);

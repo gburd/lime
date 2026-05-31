@@ -70,9 +70,7 @@ static void ensure_dir(const char *path) {
     struct stat st;
     if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) return;
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "mkdir -p '%s'", path);
-    int rc = system(cmd);
-    (void)rc;
+    test_compat_mkdir_p(path);
 }
 
 static char g_scratch[256] = {0};
@@ -249,8 +247,7 @@ int main(int argc, char **argv) {
         snprintf(fix_local, sizeof(fix_local), "%s/embed_round1.lime",
                  g_scratch);
         char cmd[PATH_MAX * 2];
-        snprintf(cmd, sizeof(cmd), "cp '%s' '%s'", fixture, fix_local);
-        if (system(cmd) != 0) {
+        if (test_compat_copy_file(fixture, fix_local) != 0) {
             FAIL("roundtrip", "could not copy fixture to scratch");
         } else {
             char fmt_cmd[PATH_MAX * 2];
@@ -291,8 +288,7 @@ int main(int argc, char **argv) {
                 snprintf(fix_pass2, sizeof(fix_pass2),
                          "%s/embed_round2.lime", g_scratch);
                 char cp2[PATH_MAX * 2];
-                snprintf(cp2, sizeof(cp2), "cp '%s' '%s'", fmt_path,
-                         fix_pass2);
+                /* test_compat_copy_file inline below */ 
                 if (system(cp2) == 0) {
                     char fmt2_cmd[PATH_MAX * 2];
                     snprintf(fmt2_cmd, sizeof(fmt2_cmd),

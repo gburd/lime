@@ -210,6 +210,38 @@ static int test_compat_unsetenv(const char *name) {
 ** (POSIX: $TMPDIR or /tmp; Windows: %TEMP%).  Used by tests that
 ** need to chdir OUT of a directory before deleting it -- on
 ** Windows you can't remove the cwd. */
+/* Recursive mkdir (portable analog of POSIX mkdir -p).  Components
+** are split on '/' AND '\\' so it works for paths constructed on
+** either platform.  Existing components are tolerated. */
+static int test_compat_mkdir_p(const char *path) {
+    char buf[TEST_COMPAT_PATH_MAX];
+    size_t len = strlen(path);
+    if (len >= sizeof(buf)) return -1;
+    memcpy(buf, path, len + 1);
+    /* Walk components, mkdir-ing each prefix. */
+    for (size_t i = 1; i <= len; i++) {
+        if (buf[i] == '/' || buf[i] == '\\' || buf[i] == 0) {
+            char saved = buf[i];
+            buf[i] = 0;
+#if defined(_WIN32)
+            if (_mkdir(buf) != 0 && errno != EEXIST) {
+                buf[i] = saved;
+                /* Drive-letter root like C: produces ENOENT on _mkdir;
+                ** ignore and continue. */
+                if (errno != ENOENT) return -1;
+            }
+#else
+            if (mkdir(buf, 0755) != 0 && errno != EEXIST) {
+                buf[i] = saved;
+                return -1;
+            }
+#endif
+            buf[i] = saved;
+        }
+    }
+    return 0;
+}
+
 static int test_compat_chdir_temp(void) {
 #if defined(_WIN32)
     char tmp_root[256];

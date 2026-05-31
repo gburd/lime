@@ -76,10 +76,10 @@ static char *slurp(const char *path) {
 static char g_tmpdir[256];
 
 static int run_format(const char *lime_bin, const char *grammar_path) {
-    char cmd[8192];
-    snprintf(cmd, sizeof(cmd), "'%s' -F '%s' > /dev/null 2>&1",
-             lime_bin, grammar_path);
-    return system(cmd);
+    char *fmt_argv[] = { (char *)lime_bin, "-F", (char *)grammar_path, NULL };
+    int rc = 0;
+    if (test_compat_run(fmt_argv, &rc) != 0) return -1;
+    return rc;
 }
 
 /* MD5 of a file via the system's `md5sum` binary.  The test corpus
@@ -236,8 +236,7 @@ static int test_idempotence(const char *lime_bin, const char *src_dir) {
             continue;
         }
         char cmd[8192];
-        snprintf(cmd, sizeof(cmd), "cp '%s' '%s'", src_path, work);
-        if (system(cmd) != 0) {
+        if (test_compat_copy_file(src_path, work) != 0) {
             fprintf(stderr, "FAIL[idem]: cp %s failed\n", fix);
             ok = 0;
             continue;
@@ -304,8 +303,7 @@ static int test_category_placement(const char *lime_bin, const char *src_dir) {
         return 0;
     }
     char cmd[8192];
-    snprintf(cmd, sizeof(cmd), "cp '%s' '%s'", src_path, work);
-    if (system(cmd) != 0) {
+    if (test_compat_copy_file(src_path, work) != 0) {
         fprintf(stderr, "FAIL[cat]: cp failed\n");
         return 0;
     }
@@ -451,8 +449,7 @@ static int test_byte_identity(const char *lime_bin, const char *project_root) {
             continue;
         }
         char cmd[8192];
-        snprintf(cmd, sizeof(cmd), "cp '%s' '%s'", src_path, work);
-        if (system(cmd) != 0) {
+        if (test_compat_copy_file(src_path, work) != 0) {
             fprintf(stderr, "FAIL[md5]: cp %s failed\n", e->basename);
             ok = 0;
             continue;

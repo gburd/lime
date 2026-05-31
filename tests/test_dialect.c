@@ -70,9 +70,7 @@ static void ensure_dir(const char *path) {
     struct stat st;
     if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) return;
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "mkdir -p '%s'", path);
-    int rc = system(cmd);
-    (void)rc;
+    test_compat_mkdir_p(path);
 }
 
 /* Per-test scratch directory cleanup.  Created via mkdtemp + chdir
@@ -351,11 +349,9 @@ int main(int argc, char **argv) {
             char snap_c[1024], snap_h[1024];
             snprintf(snap_c, sizeof(snap_c), "%s/snapshot.c", d_legacy);
             snprintf(snap_h, sizeof(snap_h), "%s/snapshot.h", d_legacy);
-            char cp_cmd[4096];
-            snprintf(cp_cmd, sizeof(cp_cmd),
-                     "cp '%s' '%s' && cp '%s' '%s'",
-                     src_c, snap_c, src_h, snap_h);
-            if (system(cp_cmd) != 0) {
+            int cp_rc = (test_compat_copy_file(src_c, snap_c) == 0
+                       && test_compat_copy_file(src_h, snap_h) == 0) ? 0 : -1;
+            if (cp_rc != 0) {
                 FAIL("shorthand_eq_legacy", "snapshot copy failed");
             } else if (run_lime(lime_bin, limpar,
                                 "-Ddialect_oracle",
@@ -390,11 +386,9 @@ int main(int argc, char **argv) {
         char copy_c[1024], copy_h[1024];
         snprintf(copy_c, sizeof(copy_c), "%s/copy.c", d_idem_b);
         snprintf(copy_h, sizeof(copy_h), "%s/copy.h", d_idem_b);
-        char cp_cmd[4096];
-        snprintf(cp_cmd, sizeof(cp_cmd),
-                 "cp '%s' '%s' && cp '%s' '%s'",
-                 snap_c, copy_c, snap_h, copy_h);
-        if (system(cp_cmd) != 0) {
+        int cp_rc = (test_compat_copy_file(snap_c, copy_c) == 0
+                       && test_compat_copy_file(snap_h, copy_h) == 0) ? 0 : -1;
+            if (cp_rc != 0) {
             FAIL("idempotence", "snapshot copy failed");
         } else {
             run_lime(lime_bin, limpar, "-Ddialect=oracle",
