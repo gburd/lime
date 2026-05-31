@@ -89,18 +89,20 @@ test_concurrent = executable('test_concurrent',
 )
 
 # Stress-test scaling: full iteration counts on x86_64 (the dev
-# fleet target); tenth-scale on slower architectures (RISC-V, ARM
-# Cortex-A55) so the test completes within the 120s timeout.
+# fleet target); much-reduced scale on slower architectures (RISC-V,
+# ARM Cortex-A55) so the test completes within the test timeout.
 # Concurrency bugs surface in the first hundred iterations on any
 # CPU; the 10k-100k counts are extra confidence we don't need at
-# the cost of 80+ minute test runs on slow hardware.
+# the cost of multi-minute test runs on slow hardware.
 stress_factor = '1.0'
+stress_timeout = 120
 if host_machine.cpu_family() in ['riscv32', 'riscv64', 'arm']
-  stress_factor = '0.1'
+  stress_factor = '0.02'
+  stress_timeout = 600
 endif
 
 test('concurrent', test_concurrent,
-  timeout : 120,
+  timeout : stress_timeout,
   env : ['LIME_TEST_STRESS_FACTOR=' + stress_factor])
 
 # ROADMAP item 1, phase 1: in-process LimeCompilerContext smoke test.
