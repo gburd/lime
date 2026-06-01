@@ -16,6 +16,140 @@ common JSON parsing benchmark.
 - All competitors compiled with `--release`, `lto = "fat"`, `codegen-units = 1`.
 - All parsers do the **same work**: parse the JSON to "OK or error" -- no AST construction except where the API forces it (serde_json builds a Value).
 
+## What changed in v0.8.9
+
+### Multiversion-at-tokenize architecture for `--rustlex-simd`
+
+The v0.8.x `--rustlex-simd` emit was architecturally broken: every
+fast-path scan crossed a `#[target_feature(enable = "avx2")]`
+inlining barrier.  The emit chain was
+
+```
+tokenize() (no target_feature)
+  → fast_path_for_state (#[inline(always)])         ✓ inlines
+    → fast_path_INITIAL (#[inline(always)])           ✓ inlines
+      → scan_self_loop_INITIAL_2 (#[inline(always)])    ✓ inlines
+        → scan_simd_2 (#[inline] hint, weak)              ✓ probably under LTO
+          → if is_x86_feature_detected!("avx2") { ... }     ← atomic load
+            → unsafe scan_simd_avx2_2 (#[target_feature("avx2")])  ✗ INLINING BARRIER
+```
+
+The `#[target_feature(enable = "avx2")]` attribute on the AVX2 body
+forbids LLVM from inlining it into a non-AVX2 caller.  Result: every
+fast-path scan in the benchmark resolved to an out-of-line function
+call with a cached-atomic-load dispatch.  The emit was a ~1%
+regression versus the scalar baseline.
+
+v0.8.9 lifts AVX2 detection to the `tokenize()` entry point.  The
+new chain is
+
+```
+tokenize() (public dispatcher)
+  → if is_x86_feature_detected!("avx2") { tokenize_avx2(...) }   ← once per call, cached
+  → tokenize_avx2 (#[target_feature(enable = "avx2,bmi2")])
+    → tokenize_impl::<AvxScanner> (#[inline(always)])
+      → fast_path_for_state_g::<AvxScanner> (#[inline(always)])
+        → fast_path_INITIAL_g::<AvxScanner> (#[inline(always)])
+          → AvxScanner::scan_INITIAL_2 (#[inline(always)])           ← byte literals baked
+            → scan_avx2::scan_until_2 (#[inline(always)])             ← AVX2 intrinsics
+```
+
+`tokenize_avx2` carries `#[target_feature(enable = "avx2,bmi2")]`,
+so AVX2 instructions are emitted directly into its body.  Every
+`#[inline(always)]` step inlines without crossing a target_feature
+boundary because the feature set is monotone-increasing along the
+call chain.  Verified via `objdump`: `vmovdqu`, `vpcmpeqb`, `vpor`,
+`vpmovmskb` instructions appear inline in `tokenize_avx2`'s body
+without an out-of-line scan helper.
+
+The Scanner trait has one method per fast-path DFA state (`scan_<NAME>_<S>`).
+Each `AvxScanner` / `NeonScanner` / `ScalarScanner` impl bakes the
+exit-byte literals into its method body, so LLVM treats them as
+compile-time constants when monomorphising the lexer body through
+the trait dispatch chain.
+
+NEON support (`#[cfg(target_arch = "aarch64")]`) is now wired
+through the same architecture; v0.8.x had AArch64 falling through
+to scalar.
+
+### Honest measured impact on JSON
+
+| Metric | Result |
+|---|---|
+| The new emit verifiably inlines AVX2 into `tokenize_avx2`'s body | ✓ confirmed by `objdump` |
+| AVX2 vs scalar on JSON fixture | **wash within run-to-run noise** |
+| Old broken emit vs scalar | -1% regression (eliminated) |
+| New emit vs logos | still 1.5–1.6× slower (gap unchanged) |
+
+The architectural fix is correct.  The benchmark numbers don't
+move dramatically on JSON because the fixture's average string
+body is **9 bytes** — too short for AVX2's 32-byte chunks to fire
+more than once before hitting the closing `"` or `\`.  Most of
+the SIMD load is wasted when the run is shorter than the chunk.
+
+The fix WILL show measurable improvement on workloads with longer
+self-loop runs:
+
+- HTML / XML body text (long runs of plain text between tags)
+- Multi-line string literals in source code (Python triple-quoted,
+  Rust raw strings, Ruby heredocs)
+- Long comments (block comments, doc comments)
+- Lexers that scan whitespace-only lines / indentation runs
+
+For JSON specifically, the architectural difference is that
+**logos generates a per-token DFA with leading-byte dispatch**:
+byte `{` → emit LBRACE in 1 cycle; byte `[` → emit LBRACKET; byte
+`"` → enter string DFA.  Lime's unified DFA does N step-iterations
+per token where N = average token length (3.27 bytes/token in this
+fixture).  Logos saves ~2 byte-step iterations per token, and that
+is the gap.  Closing it requires per-token DFA emission (deferred,
+~600–1000 LOC of new emit code).
+
+### What was tried and rejected
+
+- **Pattern B (scan-while-in-set) for state 1 (whitespace), states
+  6 / 22 / 24 (digit runs)**: implemented as a hand-rolled prototype.
+  Whitespace runs in JSON average 1 byte (no SIMD chunk to load);
+  digit runs average 1–3 bytes.  Pattern B added ~3% overhead from
+  the extra dispatch checks without firing meaningfully on the JSON
+  fixture.  Will help on workloads with long whitespace/digit runs;
+  not generally applicable to all grammars.
+
+### Why std doesn't auto-vectorise the scan loop
+
+Four reasons, each independently sufficient:
+
+1. **`#[target_feature(enable = "avx2")]` is a hard inlining
+   barrier.** Rust's soundness rule: code with AVX2 instructions
+   in its body would crash on a CPU without AVX2 if it ran there.
+   So the compiler forbids LLVM from inlining the AVX2 body into
+   a function that doesn't also declare `target_feature`.  The
+   v0.8.9 fix lifts the target_feature to the tokenize entry
+   point so the entire chain monomorphises with AVX2 enabled.
+
+2. **`iter().position(|b| b == X || b == Y)` doesn't reliably
+   lower to PCMPEQB + PMOVMSKB.**  LLVM's loop vectorizer needs
+   a recognisable pattern.  `position` returns `Option<usize>`
+   and short-circuits — it's an early-exit loop with a generic
+   closure predicate.  LLVM CAN sometimes vectorize early-exit
+   byte scans with two byte-equality compares, but the pattern
+   matcher is conservative and often emits the scalar form.
+   The `memchr` crate exists precisely because stdlib's
+   `slice::iter::position` doesn't reliably lower to vectorised
+   byte search.
+
+3. **The two-memchr split scans the tail twice.**  The "obvious"
+   stdlib implementation of "find first of `X` or `Y`" runs
+   `memchr` for each byte and takes the min — that's `2*N` byte
+   loads to find the first match.  Stdlib has no `memchr2`
+   primitive that scans for "any of N bytes" in a single pass.
+
+4. **`is_x86_feature_detected!` cached load still costs.**  Each
+   call is one atomic load + one branch.  For per-state
+   fast-path scans hit thousands of times per parse, that's
+   thousands of atomic loads.  Multiversion-at-tokenize pays
+   this cost ONCE per `tokenize()` invocation, not per scan.
+
 ## Headline numbers (v0.8.4)
 
 Median of 5 runs each, after warmup.

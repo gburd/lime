@@ -1,5 +1,5 @@
 project('lime-parser', 'c', 'cpp',
-  version : '0.8.8',
+  version : '0.8.9',
   default_options : [
     'c_std=c11',
     'warning_level=2',

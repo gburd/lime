@@ -262,41 +262,20 @@ static void emit_state_dfa(FILE *out, const char *prefix,
         **   the cost of a runtime crate dependency. */
         if (!has_too_many_exit && self_count >= 240 && n_exit > 0) {
             fp_kind[s] = 1;
+            if (g_lime_rustlex_simd_flag) {
+                /* In --rustlex-simd mode the per-state scan body lives
+                ** as a Scanner trait method (emitted by emit_simd_helpers
+                ** with byte literals baked into each impl).  We don't
+                ** emit a standalone scan_self_loop_*_g function here --
+                ** the dispatcher fast_path_<NAME>_g calls
+                ** S::scan_<NAME>_<S> directly. */
+                continue;
+            }
             fprintf(out,
                     "#[inline(always)]\n"
                     "fn scan_self_loop_%s_%d(bytes: &[u8], p: usize) -> usize {\n",
                     cs->state_name, s);
-            if (g_lime_rustlex_simd_flag) {
-                /* Hand-rolled SIMD via the shared scan_simd_<n>
-                ** dispatcher.  Pad b2/b3 with 0xFF (a byte that
-                ** never appears in valid input as long as the
-                ** grammar's exit set doesn't include 0xFF) for
-                ** unused parameters; we used to pass actual exit
-                ** bytes but that doubled-counted matches when
-                ** the same byte appeared twice in the exit set. */
-                int n = n_exit;
-                int b1 = exit_set[0];
-                int b2 = (n >= 2) ? exit_set[1] : 0xFF;
-                int b3 = (n >= 3) ? exit_set[2] : 0xFF;
-                /* Don't use 0xFF as filler if it appears in actual
-                ** input -- pick another sentinel that's outside
-                ** ASCII and not in the exit set. */
-                if (n < 2 && (b1 == 0xFF)) b2 = 0xFE;
-                if (n < 3 && (b1 == 0xFF || b2 == 0xFF)) b3 = 0xFD;
-                if (n == 1) {
-                    fprintf(out,
-                            "    scan_simd_1(bytes, p, %d, 0, 0)\n",
-                            b1);
-                } else if (n == 2) {
-                    fprintf(out,
-                            "    scan_simd_2(bytes, p, %d, %d, 0)\n",
-                            b1, b2);
-                } else {
-                    fprintf(out,
-                            "    scan_simd_3(bytes, p, %d, %d, %d)\n",
-                            b1, b2, b3);
-                }
-            } else if (g_lime_rustlex_memchr_flag) {
+            if (g_lime_rustlex_memchr_flag) {
                 /* memchr crate: call memchr / memchr2 / memchr3
                 ** as appropriate for the exit-set size. */
                 fprintf(out, "    let tail = &bytes[p..];\n");
@@ -385,18 +364,34 @@ static void emit_state_dfa(FILE *out, const char *prefix,
     }
 
     /* Emit a fast-path dispatcher: state -> scan helper or none.
-    ** Returns the new `p` (unchanged if no fast path). */
-    fprintf(out,
-            "#[inline(always)]\n"
-            "fn fast_path_%s(state: u16, bytes: &[u8], p: usize) -> usize {\n",
-            cs->state_name);
+    ** Returns the new `p` (unchanged if no fast path).  Under
+    ** --rustlex-simd, the dispatcher is generic over the Scanner
+    ** trait so the AVX2/scalar specialisation chosen at the
+    ** tokenize() level monomorphises through to the per-state
+    ** scan_self_loop_*_g body. */
+    if (g_lime_rustlex_simd_flag) {
+        fprintf(out,
+                "#[inline(always)]\n"
+                "fn fast_path_%s_g<S: Scanner>(state: u16, bytes: &[u8], p: usize) -> usize {\n",
+                cs->state_name);
+    } else {
+        fprintf(out,
+                "#[inline(always)]\n"
+                "fn fast_path_%s(state: u16, bytes: &[u8], p: usize) -> usize {\n",
+                cs->state_name);
+    }
     fprintf(out, "    match state {\n");
     int any_fast = 0;
     for (int s = 0; s < nstates; s++) {
         if (fp_kind[s] == 0) continue;
         any_fast = 1;
-        fprintf(out, "        %d => scan_self_loop_%s_%d(bytes, p),\n",
-                s, cs->state_name, s);
+        if (g_lime_rustlex_simd_flag) {
+            fprintf(out, "        %d => S::scan_%s_%d(bytes, p),\n",
+                    s, cs->state_name, s);
+        } else {
+            fprintf(out, "        %d => scan_self_loop_%s_%d(bytes, p),\n",
+                    s, cs->state_name, s);
+        }
     }
     fprintf(out, "        _ => p,\n");
     fprintf(out, "    }\n");
@@ -462,224 +457,349 @@ static void emit_rule_constants(FILE *out, const char *prefix,
 */
 
 /*
-** Emit shared SIMD scan helpers for use by the per-state fast-path
-** functions.  Emitted only when --rustlex-simd is set.
+** Emit the multiversion SIMD modules and Scanner trait.  Emitted only
+** when --rustlex-simd is set.  Replaces the previous broken design
+** which emitted #[target_feature(enable = "avx2")] helpers behind a
+** runtime-detected dispatcher -- that design forced every fast-path
+** scan to cross a target_feature inlining barrier (the AVX2 body
+** could not inline into a non-AVX2 caller), turning each scan into
+** an out-of-line function call with cached-atomic-load dispatch.
 **
-** For each n_exit in {1, 2, 3} we emit four variants:
+** New design (v0.8.9):
 **
-**   scan_simd_avx2_<n>   -- x86_64 + AVX2 (32 bytes / iter)
-**   scan_simd_sse2_<n>   -- x86_64 + SSE2 (16 bytes / iter)
-**   scan_simd_neon_<n>   -- aarch64 + NEON (16 bytes / iter)
-**   scan_simd_scalar_<n> -- portable scalar fallback
+**   - tokenize() detects AVX2 once at entry and dispatches into
+**     tokenize_avx2() (with #[target_feature(enable = "avx2,bmi2")])
+**     or tokenize_scalar().
 **
-** Each helper takes (bytes: &[u8], start: usize, b1, b2, b3) and
-** returns the byte offset of the first matching byte, or bytes.len()
-** if none.  The b2/b3 parameters are unused for n=1; for n=2 b3 is
-** unused.  This keeps the dispatcher's call site uniform.
+**   - Both wrap a generic tokenize_impl<S: Scanner> that contains
+**     the actual lexer body.
 **
-** Performance characteristics:
+**   - The Scanner trait has #[inline(always)] methods that delegate
+**     to scan_avx2::scan_until_<n> (in AvxScanner) or
+**     scan_scalar::scan_until_<n> (in ScalarScanner).
 **
-**   AVX2:  scans 32 bytes / iter, ~10-12 GB/s on Zen 4 / Alder Lake
-**   SSE2:  scans 16 bytes / iter, ~5-6 GB/s
-**   NEON:  scans 16 bytes / iter, ~4-5 GB/s on Apple M-series
-**   scalar: ~1 GB/s
+**   - When tokenize_avx2() is monomorphised with S = AvxScanner,
+**     the AVX2 intrinsics inline directly into the tokenize loop
+**     body -- no target_feature inlining barrier, no atomic load
+**     per scan, no out-of-line call.
 **
-** RISC-V V-extension support is deferred -- the intrinsic API
-** stabilised in nightly Rust 1.75 and the Ky X1 hardware in our
-** test fleet doesn't have V; emit a TODO comment instead and fall
-** through to scalar on RISC-V.
+** This design measured ~+5% over the scalar baseline on the JSON
+** fixture and replaces a -1% regression in the prior emit.  See
+** docs/RUST_BENCHMARK.md for the methodology and numbers.
 */
-static void emit_simd_helpers(FILE *out) {
+static void emit_simd_helpers(FILE *out, const LimeLexCompiled *compiled) {
     fprintf(out,
             "// =====================================================================\n"
-            "// SIMD fast-path helpers (--rustlex-simd)\n"
+            "// SIMD fast-path helpers (--rustlex-simd, multiversion)\n"
             "// =====================================================================\n\n"
-            "// Each helper finds the first byte in `bytes[start..]` that equals\n"
-            "// any of (b1, b2, b3) and returns its index, or bytes.len() if no\n"
-            "// match.  b2 / b3 are unused for n=1 / n=2.\n\n");
+            "// AVX2 module: scan_until_<n>(bytes, start, b1[, b2[, b3]]) finds\n"
+            "// the first byte in bytes[start..] equal to any of (b1, ...) and\n"
+            "// returns its index, or bytes.len() if none.  These are #[inline\n"
+            "// (always)] and carry NO #[target_feature] attribute -- they are\n"
+            "// only ever called from a function that has already declared\n"
+            "// target_feature(enable = \"avx2\"), so the AVX2 intrinsics\n"
+            "// inline into that caller's body without crossing a target_feature\n"
+            "// inlining barrier.  Runtime AVX2 detection happens once per\n"
+            "// tokenize() call, not once per scan.\n\n");
+    fprintf(out,
+            "#[cfg(target_arch = \"x86_64\")]\n"
+            "mod scan_avx2 {\n"
+            "    use std::arch::x86_64::*;\n\n"
+            "    #[inline(always)]\n"
+            "    pub unsafe fn scan_until_1(bytes: &[u8], start: usize, b1: u8) -> usize {\n"
+            "        let n = bytes.len();\n"
+            "        let mut p = start;\n"
+            "        let v1 = _mm256_set1_epi8(b1 as i8);\n"
+            "        while p + 32 <= n {\n"
+            "            let chunk = _mm256_loadu_si256(bytes.as_ptr().add(p) as *const __m256i);\n"
+            "            let cmp = _mm256_cmpeq_epi8(chunk, v1);\n"
+            "            let mask = _mm256_movemask_epi8(cmp) as u32;\n"
+            "            if mask != 0 { return p + (mask.trailing_zeros() as usize); }\n"
+            "            p += 32;\n"
+            "        }\n"
+            "        while p < n {\n"
+            "            if *bytes.get_unchecked(p) == b1 { return p; }\n"
+            "            p += 1;\n"
+            "        }\n"
+            "        n\n"
+            "    }\n\n"
+            "    #[inline(always)]\n"
+            "    pub unsafe fn scan_until_2(bytes: &[u8], start: usize, b1: u8, b2: u8) -> usize {\n"
+            "        let n = bytes.len();\n"
+            "        let mut p = start;\n"
+            "        let v1 = _mm256_set1_epi8(b1 as i8);\n"
+            "        let v2 = _mm256_set1_epi8(b2 as i8);\n"
+            "        while p + 32 <= n {\n"
+            "            let chunk = _mm256_loadu_si256(bytes.as_ptr().add(p) as *const __m256i);\n"
+            "            let cmp1 = _mm256_cmpeq_epi8(chunk, v1);\n"
+            "            let cmp2 = _mm256_cmpeq_epi8(chunk, v2);\n"
+            "            let cmp = _mm256_or_si256(cmp1, cmp2);\n"
+            "            let mask = _mm256_movemask_epi8(cmp) as u32;\n"
+            "            if mask != 0 { return p + (mask.trailing_zeros() as usize); }\n"
+            "            p += 32;\n"
+            "        }\n"
+            "        while p < n {\n"
+            "            let b = *bytes.get_unchecked(p);\n"
+            "            if b == b1 || b == b2 { return p; }\n"
+            "            p += 1;\n"
+            "        }\n"
+            "        n\n"
+            "    }\n\n"
+            "    #[inline(always)]\n"
+            "    pub unsafe fn scan_until_3(bytes: &[u8], start: usize, b1: u8, b2: u8, b3: u8) -> usize {\n"
+            "        let n = bytes.len();\n"
+            "        let mut p = start;\n"
+            "        let v1 = _mm256_set1_epi8(b1 as i8);\n"
+            "        let v2 = _mm256_set1_epi8(b2 as i8);\n"
+            "        let v3 = _mm256_set1_epi8(b3 as i8);\n"
+            "        while p + 32 <= n {\n"
+            "            let chunk = _mm256_loadu_si256(bytes.as_ptr().add(p) as *const __m256i);\n"
+            "            let cmp1 = _mm256_cmpeq_epi8(chunk, v1);\n"
+            "            let cmp2 = _mm256_cmpeq_epi8(chunk, v2);\n"
+            "            let cmp3 = _mm256_cmpeq_epi8(chunk, v3);\n"
+            "            let cmp = _mm256_or_si256(_mm256_or_si256(cmp1, cmp2), cmp3);\n"
+            "            let mask = _mm256_movemask_epi8(cmp) as u32;\n"
+            "            if mask != 0 { return p + (mask.trailing_zeros() as usize); }\n"
+            "            p += 32;\n"
+            "        }\n"
+            "        while p < n {\n"
+            "            let b = *bytes.get_unchecked(p);\n"
+            "            if b == b1 || b == b2 || b == b3 { return p; }\n"
+            "            p += 1;\n"
+            "        }\n"
+            "        n\n"
+            "    }\n"
+            "}\n\n");
+    fprintf(out,
+            "// NEON module (aarch64).  NEON is mandatory on aarch64 so we\n"
+            "// don't need runtime detection -- the multiversion dispatch\n"
+            "// in tokenize() routes all aarch64 callers here directly.\n\n"
+            "#[cfg(target_arch = \"aarch64\")]\n"
+            "mod scan_neon {\n"
+            "    use std::arch::aarch64::*;\n\n"
+            "    #[inline(always)]\n"
+            "    pub unsafe fn scan_until_1(bytes: &[u8], start: usize, b1: u8) -> usize {\n"
+            "        let n = bytes.len();\n"
+            "        let mut p = start;\n"
+            "        let v1 = vdupq_n_u8(b1);\n"
+            "        while p + 16 <= n {\n"
+            "            let chunk = vld1q_u8(bytes.as_ptr().add(p));\n"
+            "            let cmp = vceqq_u8(chunk, v1);\n"
+            "            // Pack 16 lane results into a 64-bit mask: each lane becomes 4 bits.\n"
+            "            let mask = vget_lane_u64(\n"
+            "                vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(cmp), 4)), 0);\n"
+            "            if mask != 0 { return p + (mask.trailing_zeros() as usize / 4); }\n"
+            "            p += 16;\n"
+            "        }\n"
+            "        while p < n {\n"
+            "            if *bytes.get_unchecked(p) == b1 { return p; }\n"
+            "            p += 1;\n"
+            "        }\n"
+            "        n\n"
+            "    }\n\n"
+            "    #[inline(always)]\n"
+            "    pub unsafe fn scan_until_2(bytes: &[u8], start: usize, b1: u8, b2: u8) -> usize {\n"
+            "        let n = bytes.len();\n"
+            "        let mut p = start;\n"
+            "        let v1 = vdupq_n_u8(b1);\n"
+            "        let v2 = vdupq_n_u8(b2);\n"
+            "        while p + 16 <= n {\n"
+            "            let chunk = vld1q_u8(bytes.as_ptr().add(p));\n"
+            "            let any = vorrq_u8(vceqq_u8(chunk, v1), vceqq_u8(chunk, v2));\n"
+            "            let mask = vget_lane_u64(\n"
+            "                vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(any), 4)), 0);\n"
+            "            if mask != 0 { return p + (mask.trailing_zeros() as usize / 4); }\n"
+            "            p += 16;\n"
+            "        }\n"
+            "        while p < n {\n"
+            "            let b = *bytes.get_unchecked(p);\n"
+            "            if b == b1 || b == b2 { return p; }\n"
+            "            p += 1;\n"
+            "        }\n"
+            "        n\n"
+            "    }\n\n"
+            "    #[inline(always)]\n"
+            "    pub unsafe fn scan_until_3(bytes: &[u8], start: usize, b1: u8, b2: u8, b3: u8) -> usize {\n"
+            "        let n = bytes.len();\n"
+            "        let mut p = start;\n"
+            "        let v1 = vdupq_n_u8(b1);\n"
+            "        let v2 = vdupq_n_u8(b2);\n"
+            "        let v3 = vdupq_n_u8(b3);\n"
+            "        while p + 16 <= n {\n"
+            "            let chunk = vld1q_u8(bytes.as_ptr().add(p));\n"
+            "            let any = vorrq_u8(\n"
+            "                vorrq_u8(vceqq_u8(chunk, v1), vceqq_u8(chunk, v2)),\n"
+            "                vceqq_u8(chunk, v3));\n"
+            "            let mask = vget_lane_u64(\n"
+            "                vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(any), 4)), 0);\n"
+            "            if mask != 0 { return p + (mask.trailing_zeros() as usize / 4); }\n"
+            "            p += 16;\n"
+            "        }\n"
+            "        while p < n {\n"
+            "            let b = *bytes.get_unchecked(p);\n"
+            "            if b == b1 || b == b2 || b == b3 { return p; }\n"
+            "            p += 1;\n"
+            "        }\n"
+            "        n\n"
+            "    }\n"
+            "}\n\n");
+    fprintf(out,
+            "// Scalar fallback module: portable Rust, no platform intrinsics.\n"
+            "// Compiled into ScalarScanner; also serves as the fallback for\n"
+            "// non-x86_64 / non-aarch64 architectures (RISC-V no-V, etc).\n\n"
+            "mod scan_scalar {\n"
+            "    #[inline(always)]\n"
+            "    pub fn scan_until_1(bytes: &[u8], start: usize, b1: u8) -> usize {\n"
+            "        let n = bytes.len();\n"
+            "        let mut p = start;\n"
+            "        while p < n {\n"
+            "            let b = unsafe { *bytes.get_unchecked(p) };\n"
+            "            if b == b1 { return p; }\n"
+            "            p += 1;\n"
+            "        }\n"
+            "        n\n"
+            "    }\n\n"
+            "    #[inline(always)]\n"
+            "    pub fn scan_until_2(bytes: &[u8], start: usize, b1: u8, b2: u8) -> usize {\n"
+            "        let n = bytes.len();\n"
+            "        let mut p = start;\n"
+            "        while p < n {\n"
+            "            let b = unsafe { *bytes.get_unchecked(p) };\n"
+            "            if b == b1 || b == b2 { return p; }\n"
+            "            p += 1;\n"
+            "        }\n"
+            "        n\n"
+            "    }\n\n"
+            "    #[inline(always)]\n"
+            "    pub fn scan_until_3(bytes: &[u8], start: usize, b1: u8, b2: u8, b3: u8) -> usize {\n"
+            "        let n = bytes.len();\n"
+            "        let mut p = start;\n"
+            "        while p < n {\n"
+            "            let b = unsafe { *bytes.get_unchecked(p) };\n"
+            "            if b == b1 || b == b2 || b == b3 { return p; }\n"
+            "            p += 1;\n"
+            "        }\n"
+            "        n\n"
+            "    }\n"
+            "}\n\n");
+    /* Walk all DFA states across all state groups; classify each
+    ** for the "scan-until-exit" fast path; emit a per-state trait
+    ** method whose AvxScanner / NeonScanner / ScalarScanner impls
+    ** call the underlying scan_avx2 / scan_neon / scan_scalar
+    ** scan_until_<n> with the byte literals BAKED IN to each impl
+    ** body.  This is the v0.8.9 architectural fix: const-baking
+    ** the exit-byte values inside the impl ensures LLVM sees them
+    ** as compile-time constants when monomorphising tokenize_impl
+    ** through fast_path -> S::scan_<NAME>_<S> -> scan_avx2::scan_until_<n>.
+    ** Without this, the byte values were passed through as runtime
+    ** u8 args and LLVM didn't const-propagate them through the
+    ** indirection chain, costing ~5-7%% on the JSON benchmark. */
+    fprintf(out,
+            "// Scanner trait: per-fast-path-state methods.  Each method's\n"
+            "// AvxScanner / NeonScanner / ScalarScanner impl bakes in the\n"
+            "// exit-byte literals from the DFA, so LLVM treats them as\n"
+            "// compile-time constants when monomorphising the lexer body.\n\n"
+            "trait Scanner {\n");
+    /* Forward declarations of the per-state methods. */
+    for (int g = 0; g < compiled->n_states; g++) {
+        const LimeLexCompiledState *cs = &compiled->states[g];
+        if (!cs->dfa) continue;
+        for (int s = 0; s < cs->dfa->n_states; s++) {
+            const int *tr = cs->dfa->states[s].trans;
+            int self_count = 0;
+            int exit_set[8];
+            int n_exit = 0;
+            int has_too_many_exit = 0;
+            for (int b = 0; b < 256; b++) {
+                int t = tr[b];
+                if (t == s) {
+                    self_count++;
+                } else if (t >= 0) {
+                    int found = 0;
+                    for (int i = 0; i < n_exit; i++)
+                        if (exit_set[i] == b) { found = 1; break; }
+                    if (!found) {
+                        if (n_exit >= 8) has_too_many_exit = 1;
+                        else exit_set[n_exit++] = b;
+                    }
+                }
+            }
+            if (has_too_many_exit || self_count < 240 || n_exit == 0) continue;
+            fprintf(out,
+                    "    fn scan_%s_%d(bytes: &[u8], p: usize) -> usize;\n",
+                    cs->state_name, s);
+        }
+    }
+    fprintf(out, "}\n\n");
 
-    /* Emit n_exit-parameterised helpers via the loop below.  Each
-    ** macro/helper has a fixed shape per architecture; we just
-    ** plug the byte-comparison count into the SIMD instructions. */
-    for (int n = 1; n <= 3; n++) {
-        /* AVX2 (32 bytes / iter) */
-        fprintf(out,
-                "#[cfg(target_arch = \"x86_64\")]\n"
-                "#[target_feature(enable = \"avx2\")]\n"
-                "#[inline]\n"
-                "unsafe fn scan_simd_avx2_%d(bytes: &[u8], start: usize, b1: u8, b2: u8, b3: u8) -> usize {\n"
-                "    use std::arch::x86_64::*;\n"
-                "    let n = bytes.len();\n"
-                "    let mut p = start;\n"
-                "    let v1 = _mm256_set1_epi8(b1 as i8);\n",
-                n);
-        if (n >= 2) fprintf(out, "    let v2 = _mm256_set1_epi8(b2 as i8);\n");
-        if (n >= 3) fprintf(out, "    let v3 = _mm256_set1_epi8(b3 as i8);\n");
-        fprintf(out,
-                "    while p + 32 <= n {\n"
-                "        let chunk = _mm256_loadu_si256(bytes.as_ptr().add(p) as *const __m256i);\n"
-                "        let cmp1 = _mm256_cmpeq_epi8(chunk, v1);\n");
-        if (n == 1) {
-            fprintf(out, "        let cmp = cmp1;\n");
-        } else if (n == 2) {
-            fprintf(out,
-                    "        let cmp2 = _mm256_cmpeq_epi8(chunk, v2);\n"
-                    "        let cmp = _mm256_or_si256(cmp1, cmp2);\n");
-        } else {
-            fprintf(out,
-                    "        let cmp2 = _mm256_cmpeq_epi8(chunk, v2);\n"
-                    "        let cmp3 = _mm256_cmpeq_epi8(chunk, v3);\n"
-                    "        let cmp = _mm256_or_si256(_mm256_or_si256(cmp1, cmp2), cmp3);\n");
+    /* Per-arch impls.  AvxScanner (cfg x86_64), NeonScanner (cfg
+    ** aarch64), ScalarScanner (always).  Each method body has the
+    ** byte literals baked in. */
+    const struct {
+        const char *cfg;
+        const char *struct_name;
+        const char *body_prefix;
+        const char *body_suffix;
+        const char *mod_name;
+    } impls[] = {
+        { "#[cfg(target_arch = \"x86_64\")]\n", "AvxScanner",
+          "        unsafe { scan_avx2::", " }\n", "scan_avx2" },
+        { "#[cfg(target_arch = \"aarch64\")]\n", "NeonScanner",
+          "        unsafe { scan_neon::", " }\n", "scan_neon" },
+        { "", "ScalarScanner",
+          "        scan_scalar::", "\n", "scan_scalar" },
+    };
+    for (int impl_i = 0; impl_i < 3; impl_i++) {
+        if (impls[impl_i].cfg[0]) fprintf(out, "%s", impls[impl_i].cfg);
+        fprintf(out, "struct %s;\n", impls[impl_i].struct_name);
+        if (impls[impl_i].cfg[0]) fprintf(out, "%s", impls[impl_i].cfg);
+        fprintf(out, "impl Scanner for %s {\n", impls[impl_i].struct_name);
+        for (int g = 0; g < compiled->n_states; g++) {
+            const LimeLexCompiledState *cs = &compiled->states[g];
+            if (!cs->dfa) continue;
+            for (int s = 0; s < cs->dfa->n_states; s++) {
+                const int *tr = cs->dfa->states[s].trans;
+                int self_count = 0;
+                int exit_set[8];
+                int n_exit = 0;
+                int has_too_many_exit = 0;
+                for (int b = 0; b < 256; b++) {
+                    int t = tr[b];
+                    if (t == s) {
+                        self_count++;
+                    } else if (t >= 0) {
+                        int found = 0;
+                        for (int i = 0; i < n_exit; i++)
+                            if (exit_set[i] == b) { found = 1; break; }
+                        if (!found) {
+                            if (n_exit >= 8) has_too_many_exit = 1;
+                            else exit_set[n_exit++] = b;
+                        }
+                    }
+                }
+                if (has_too_many_exit || self_count < 240 || n_exit == 0) continue;
+                int n = n_exit;
+                int b1 = exit_set[0];
+                int b2 = (n >= 2) ? exit_set[1] : 0;
+                int b3 = (n >= 3) ? exit_set[2] : 0;
+                fprintf(out,
+                        "    #[inline(always)]\n"
+                        "    fn scan_%s_%d(bytes: &[u8], p: usize) -> usize {\n",
+                        cs->state_name, s);
+                if (n == 1) {
+                    fprintf(out, "%sscan_until_1(bytes, p, %d)%s",
+                            impls[impl_i].body_prefix, b1, impls[impl_i].body_suffix);
+                } else if (n == 2) {
+                    fprintf(out, "%sscan_until_2(bytes, p, %d, %d)%s",
+                            impls[impl_i].body_prefix, b1, b2, impls[impl_i].body_suffix);
+                } else {
+                    fprintf(out, "%sscan_until_3(bytes, p, %d, %d, %d)%s",
+                            impls[impl_i].body_prefix, b1, b2, b3, impls[impl_i].body_suffix);
+                }
+                fprintf(out, "    }\n");
+            }
         }
-        fprintf(out,
-                "        let mask = _mm256_movemask_epi8(cmp) as u32;\n"
-                "        if mask != 0 { return p + (mask.trailing_zeros() as usize); }\n"
-                "        p += 32;\n"
-                "    }\n"
-                "    // Tail: scalar.  Less than 32 bytes left.\n"
-                "    while p < n {\n"
-                "        let b = *bytes.get_unchecked(p);\n"
-                "        if ");
-        for (int i = 0; i < n; i++) {
-            if (i > 0) fprintf(out, " || ");
-            fprintf(out, "b == %s", i == 0 ? "b1" : (i == 1 ? "b2" : "b3"));
-        }
-        fprintf(out, " { return p; }\n        p += 1;\n    }\n    n\n}\n\n");
-
-        /* SSE2 (16 bytes / iter) */
-        fprintf(out,
-                "#[cfg(target_arch = \"x86_64\")]\n"
-                "#[target_feature(enable = \"sse2\")]\n"
-                "#[inline]\n"
-                "unsafe fn scan_simd_sse2_%d(bytes: &[u8], start: usize, b1: u8, b2: u8, b3: u8) -> usize {\n"
-                "    use std::arch::x86_64::*;\n"
-                "    let n = bytes.len();\n"
-                "    let mut p = start;\n"
-                "    let v1 = _mm_set1_epi8(b1 as i8);\n",
-                n);
-        if (n >= 2) fprintf(out, "    let v2 = _mm_set1_epi8(b2 as i8);\n");
-        if (n >= 3) fprintf(out, "    let v3 = _mm_set1_epi8(b3 as i8);\n");
-        fprintf(out,
-                "    while p + 16 <= n {\n"
-                "        let chunk = _mm_loadu_si128(bytes.as_ptr().add(p) as *const __m128i);\n"
-                "        let cmp1 = _mm_cmpeq_epi8(chunk, v1);\n");
-        if (n == 1) {
-            fprintf(out, "        let cmp = cmp1;\n");
-        } else if (n == 2) {
-            fprintf(out,
-                    "        let cmp2 = _mm_cmpeq_epi8(chunk, v2);\n"
-                    "        let cmp = _mm_or_si128(cmp1, cmp2);\n");
-        } else {
-            fprintf(out,
-                    "        let cmp2 = _mm_cmpeq_epi8(chunk, v2);\n"
-                    "        let cmp3 = _mm_cmpeq_epi8(chunk, v3);\n"
-                    "        let cmp = _mm_or_si128(_mm_or_si128(cmp1, cmp2), cmp3);\n");
-        }
-        fprintf(out,
-                "        let mask = _mm_movemask_epi8(cmp) as u32;\n"
-                "        if mask != 0 { return p + (mask.trailing_zeros() as usize); }\n"
-                "        p += 16;\n"
-                "    }\n"
-                "    while p < n {\n"
-                "        let b = *bytes.get_unchecked(p);\n"
-                "        if ");
-        for (int i = 0; i < n; i++) {
-            if (i > 0) fprintf(out, " || ");
-            fprintf(out, "b == %s", i == 0 ? "b1" : (i == 1 ? "b2" : "b3"));
-        }
-        fprintf(out, " { return p; }\n        p += 1;\n    }\n    n\n}\n\n");
-
-        /* AArch64 NEON (16 bytes / iter).  Uses vmaxvq_u8 to get a
-        ** scalar OR of the comparison vector lanes; if non-zero, scan
-        ** the lanes scalarly to find the first match. */
-        fprintf(out,
-                "#[cfg(target_arch = \"aarch64\")]\n"
-                "#[target_feature(enable = \"neon\")]\n"
-                "#[inline]\n"
-                "unsafe fn scan_simd_neon_%d(bytes: &[u8], start: usize, b1: u8, b2: u8, b3: u8) -> usize {\n"
-                "    use std::arch::aarch64::*;\n"
-                "    let n = bytes.len();\n"
-                "    let mut p = start;\n"
-                "    let v1 = vdupq_n_u8(b1);\n",
-                n);
-        if (n >= 2) fprintf(out, "    let v2 = vdupq_n_u8(b2);\n");
-        if (n >= 3) fprintf(out, "    let v3 = vdupq_n_u8(b3);\n");
-        fprintf(out,
-                "    while p + 16 <= n {\n"
-                "        let chunk = vld1q_u8(bytes.as_ptr().add(p));\n"
-                "        let cmp1 = vceqq_u8(chunk, v1);\n");
-        if (n == 1) {
-            fprintf(out, "        let cmp = cmp1;\n");
-        } else if (n == 2) {
-            fprintf(out,
-                    "        let cmp2 = vceqq_u8(chunk, v2);\n"
-                    "        let cmp = vorrq_u8(cmp1, cmp2);\n");
-        } else {
-            fprintf(out,
-                    "        let cmp2 = vceqq_u8(chunk, v2);\n"
-                    "        let cmp3 = vceqq_u8(chunk, v3);\n"
-                    "        let cmp = vorrq_u8(vorrq_u8(cmp1, cmp2), cmp3);\n");
-        }
-        fprintf(out,
-                "        // Pack the 16 lanes into a 64-bit mask using vshrn_n_u16.\n"
-                "        // Each output nibble represents one byte's match status.\n"
-                "        let mask = vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(cmp), 4)), 0);\n"
-                "        if mask != 0 {\n"
-                "            // Each lane is 4 bits; trailing_zeros() / 4 gives byte index.\n"
-                "            return p + (mask.trailing_zeros() as usize / 4);\n"
-                "        }\n"
-                "        p += 16;\n"
-                "    }\n"
-                "    while p < n {\n"
-                "        let b = *bytes.get_unchecked(p);\n"
-                "        if ");
-        for (int i = 0; i < n; i++) {
-            if (i > 0) fprintf(out, " || ");
-            fprintf(out, "b == %s", i == 0 ? "b1" : (i == 1 ? "b2" : "b3"));
-        }
-        fprintf(out, " { return p; }\n        p += 1;\n    }\n    n\n}\n\n");
-
-        /* Scalar fallback for unsupported architectures (RISC-V no-V,
-        ** PowerPC, MIPS, etc.) and for the auto-detect dispatch's
-        ** non-SIMD branch. */
-        fprintf(out,
-                "#[inline]\n"
-                "fn scan_simd_scalar_%d(bytes: &[u8], start: usize, b1: u8, b2: u8, b3: u8) -> usize {\n"
-                "    let n = bytes.len();\n"
-                "    let mut p = start;\n"
-                "    while p < n {\n"
-                "        let b = unsafe { *bytes.get_unchecked(p) };\n"
-                "        if ",
-                n);
-        for (int i = 0; i < n; i++) {
-            if (i > 0) fprintf(out, " || ");
-            fprintf(out, "b == %s", i == 0 ? "b1" : (i == 1 ? "b2" : "b3"));
-        }
-        fprintf(out, " { return p; }\n        p += 1;\n    }\n    n\n}\n\n");
-
-        /* Dispatcher: pick the best implementation at runtime. */
-        fprintf(out,
-                "#[inline]\n"
-                "fn scan_simd_%d(bytes: &[u8], start: usize, b1: u8, b2: u8, b3: u8) -> usize {\n"
-                "    #[cfg(target_arch = \"x86_64\")]\n"
-                "    {\n"
-                "        if std::arch::is_x86_feature_detected!(\"avx2\") {\n"
-                "            return unsafe { scan_simd_avx2_%d(bytes, start, b1, b2, b3) };\n"
-                "        }\n"
-                "        if std::arch::is_x86_feature_detected!(\"sse2\") {\n"
-                "            return unsafe { scan_simd_sse2_%d(bytes, start, b1, b2, b3) };\n"
-                "        }\n"
-                "    }\n"
-                "    #[cfg(target_arch = \"aarch64\")]\n"
-                "    {\n"
-                "        // NEON is mandatory on aarch64; no runtime detect.\n"
-                "        return unsafe { scan_simd_neon_%d(bytes, start, b1, b2, b3) };\n"
-                "    }\n"
-                "    // Scalar fallback (RISC-V no-V, etc.).\n"
-                "    #[allow(unreachable_code)]\n"
-                "    scan_simd_scalar_%d(bytes, start, b1, b2, b3)\n"
-                "}\n\n",
-                n, n, n, n, n);
+        fprintf(out, "}\n\n");
     }
 }
 
@@ -694,7 +814,7 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
                                const LimeLexCompiled *compiled) {
     /* Emit shared SIMD helpers up front when --rustlex-simd is set. */
     if (g_lime_rustlex_simd_flag) {
-        emit_simd_helpers(out);
+        emit_simd_helpers(out, compiled);
     }
     emit_section(out, "Tokenizer runtime");
 
@@ -757,22 +877,42 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
     /* Fast-path dispatcher: routes to the per-state-group
     ** fast_path_<NAME> helper which dispatches further on the
     ** active DFA state.  Returns the (possibly-advanced) byte
-    ** position after a SIMD-friendly scan over self-loop runs. */
+    ** position after a SIMD-friendly scan over self-loop runs.
+    ** Under --rustlex-simd the dispatcher is generic over the
+    ** Scanner trait so AVX2 / scalar specialisation propagates
+    ** from the tokenize() entry point through every fast-path
+    ** call site without an inlining barrier. */
     fprintf(out, "/// Fast-path dispatcher: state group + DFA state\n");
     fprintf(out, "/// -> advanced byte position after SIMD scan.\n");
-    fprintf(out,
-            "#[inline(always)]\n"
-            "fn fast_path_for_state(s: StateId, state: u16, bytes: &[u8], p: usize) -> usize {\n");
-    fprintf(out, "    match s {\n");
-    for (int i = 0; i < compiled->n_states; i++) {
-        const char *sname = compiled->states[i].state_name;
+    if (g_lime_rustlex_simd_flag) {
         fprintf(out,
-                "        %d => fast_path_%s(state, bytes, p),\n",
-                i, sname);
+                "#[inline(always)]\n"
+                "fn fast_path_for_state_g<S: Scanner>(s: StateId, state: u16, bytes: &[u8], p: usize) -> usize {\n");
+        fprintf(out, "    match s {\n");
+        for (int i = 0; i < compiled->n_states; i++) {
+            const char *sname = compiled->states[i].state_name;
+            fprintf(out,
+                    "        %d => fast_path_%s_g::<S>(state, bytes, p),\n",
+                    i, sname);
+        }
+        fprintf(out, "        _ => p,\n");
+        fprintf(out, "    }\n");
+        fprintf(out, "}\n\n");
+    } else {
+        fprintf(out,
+                "#[inline(always)]\n"
+                "fn fast_path_for_state(s: StateId, state: u16, bytes: &[u8], p: usize) -> usize {\n");
+        fprintf(out, "    match s {\n");
+        for (int i = 0; i < compiled->n_states; i++) {
+            const char *sname = compiled->states[i].state_name;
+            fprintf(out,
+                    "        %d => fast_path_%s(state, bytes, p),\n",
+                    i, sname);
+        }
+        fprintf(out, "        _ => p,\n");
+        fprintf(out, "    }\n");
+        fprintf(out, "}\n\n");
     }
-    fprintf(out, "        _ => p,\n");
-    fprintf(out, "    }\n");
-    fprintf(out, "}\n\n");
 
     fprintf(out,
             "#[inline(always)]\n"
@@ -839,7 +979,105 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
             "    ///\n"
             "    /// Performance: O(input.len()) with a small per-byte cost\n"
             "    /// (one DFA transition + bookkeeping).  No allocations\n"
-            "    /// per token beyond the result Vec.\n"
+            "    /// per token beyond the result Vec.\n");
+    if (g_lime_rustlex_simd_flag) {
+        /* Multiversion-at-tokenize wrapper.  Detects AVX2 once at
+        ** entry; the AVX2 dispatch carries #[target_feature(...)] so
+        ** the entire DFA loop monomorphises with AvxScanner whose
+        ** intrinsics inline directly into the body.  ScalarScanner
+        ** is the fallback. */
+        fprintf(out,
+            "    pub fn tokenize(&mut self, input: &str) -> Result<Vec<Token>, LexError> {\n"
+            "        let bytes = input.as_bytes();\n"
+            "        #[cfg(target_arch = \"x86_64\")]\n"
+            "        {\n"
+            "            if std::arch::is_x86_feature_detected!(\"avx2\") {\n"
+            "                return unsafe { self.tokenize_avx2(bytes) };\n"
+            "            }\n"
+            "        }\n"
+            "        #[cfg(target_arch = \"aarch64\")]\n"
+            "        {\n"
+            "            return unsafe { self.tokenize_neon(bytes) };\n"
+            "        }\n"
+            "        #[allow(unreachable_code)]\n"
+            "        self.tokenize_scalar(bytes)\n"
+            "    }\n\n"
+            "    #[cfg(target_arch = \"x86_64\")]\n"
+            "    #[target_feature(enable = \"avx2,bmi2\")]\n"
+            "    unsafe fn tokenize_avx2(&mut self, bytes: &[u8]) -> Result<Vec<Token>, LexError> {\n"
+            "        self.tokenize_impl::<AvxScanner>(bytes)\n"
+            "    }\n\n"
+            "    #[cfg(target_arch = \"aarch64\")]\n"
+            "    unsafe fn tokenize_neon(&mut self, bytes: &[u8]) -> Result<Vec<Token>, LexError> {\n"
+            "        self.tokenize_impl::<NeonScanner>(bytes)\n"
+            "    }\n\n"
+            "    fn tokenize_scalar(&mut self, bytes: &[u8]) -> Result<Vec<Token>, LexError> {\n"
+            "        self.tokenize_impl::<ScalarScanner>(bytes)\n"
+            "    }\n\n"
+            "    #[inline(always)]\n"
+            "    fn tokenize_impl<S: Scanner>(&mut self, bytes: &[u8]) -> Result<Vec<Token>, LexError> {\n"
+            "        let mut out = Vec::new();\n"
+            "        let mut pos: usize = 0;\n"
+            "        let mut line: u32 = 1;\n"
+            "        let mut column: u32 = 1;\n"
+            "        while pos < bytes.len() {\n"
+            "            let accept = dfa_accept_for_state(self.state);\n"
+            "            let mut state: u16 = dfa_start_for_state(self.state);\n"
+            "            let mut last_accept: i16 = -1;\n"
+            "            let mut last_accept_pos: usize = pos;\n"
+            "            let mut p = pos;\n"
+            "            unsafe {\n"
+            "                while p < bytes.len() {\n"
+            "                    let new_p = fast_path_for_state_g::<S>(self.state, state, bytes, p);\n"
+            "                    if new_p > p {\n"
+            "                        let accv = *accept.get_unchecked(state as usize);\n"
+            "                        if accv >= 0 {\n"
+            "                            last_accept = accv;\n"
+            "                            last_accept_pos = new_p;\n"
+            "                        }\n"
+            "                        p = new_p;\n"
+            "                        if p >= bytes.len() { break; }\n"
+            "                    }\n"
+            "                    let b = *bytes.get_unchecked(p);\n"
+            "                    let next = dfa_step_for_state(self.state, state, b);\n"
+            "                    if next < 0 { break; }\n"
+            "                    state = next as u16;\n"
+            "                    let accv = *accept.get_unchecked(state as usize);\n"
+            "                    if accv >= 0 {\n"
+            "                        last_accept = accv;\n"
+            "                        last_accept_pos = p + 1;\n"
+            "                    }\n"
+            "                    p += 1;\n"
+            "                }\n"
+            "            }\n"
+            "            if last_accept < 0 {\n"
+            "                return Err(LexError::NoMatch { offset: pos, byte: bytes[pos] });\n"
+            "            }\n"
+            "            let tok_start = pos;\n"
+            "            let tok_len = last_accept_pos - pos;\n"
+            "            let tok_line = line;\n"
+            "            let tok_col = column;\n"
+            "            for &b in &bytes[pos..last_accept_pos] {\n"
+            "                if b == b\'\\n\' { line += 1; column = 1; }\n"
+            "                else if b != b\'\\r\' { column += 1; }\n"
+            "            }\n"
+            "            out.push(Token {\n"
+            "                rule_id: last_accept as u16,\n"
+            "                start: tok_start,\n"
+            "                len: tok_len,\n"
+            "                line: tok_line,\n"
+            "                column: tok_col,\n"
+            "            });\n"
+            "            pos = last_accept_pos;\n"
+            "        }\n"
+            "        Ok(out)\n"
+            "    }\n"
+            "}\n\n"
+            "impl Default for Lexer {\n"
+            "    fn default() -> Self { Self::new() }\n"
+            "}\n");
+    } else {
+        fprintf(out,
             "    pub fn tokenize(&mut self, input: &str) -> Result<Vec<Token>, LexError> {\n"
             "        let bytes = input.as_bytes();\n"
             "        let mut out = Vec::new();\n"
@@ -898,8 +1136,8 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
             "            let tok_col = column;\n"
             "            // Advance line/column over the matched bytes.\n"
             "            for &b in &bytes[pos..last_accept_pos] {\n"
-            "                if b == b'\\n' { line += 1; column = 1; }\n"
-            "                else if b != b'\\r' { column += 1; }\n"
+            "                if b == b\'\\n\' { line += 1; column = 1; }\n"
+            "                else if b != b\'\\r\' { column += 1; }\n"
             "            }\n"
             "            out.push(Token {\n"
             "                rule_id: last_accept as u16,\n"
@@ -916,6 +1154,7 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
             "impl Default for Lexer {\n"
             "    fn default() -> Self { Self::new() }\n"
             "}\n");
+    }
 
     free(upper_prefix_str);
 }
