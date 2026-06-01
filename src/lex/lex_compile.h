@@ -34,6 +34,16 @@ typedef struct {
     int n_rules;       /* number of rules included in the DFA */
     int *rule_indices; /* original spec-rule indices in compile order;
                                ** index = the accept_rule the DFA reports */
+    /* v0.9 per-token DFA: one minimised DFA per non-EOF rule, in the
+    ** same order as rule_indices[].  NULL entries correspond to EOF
+    ** rules (no DFA, dispatched at LexFeedEOF time).  When non-NULL,
+    ** per_rule_dfas[i] recognises exactly the language of the i-th
+    ** rule -- useful for leading-byte dispatch where a single rule
+    ** is the unambiguous match for a given starting byte.  The
+    ** unified `dfa` above remains for ambiguous-leading-byte
+    ** fallback. */
+    LimeDfa **per_rule_dfas;
+    int n_per_rule_dfas; /* equals n_rules; entries may be NULL for EOF rules */
 } LimeLexCompiledState;
 
 typedef struct {

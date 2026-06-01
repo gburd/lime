@@ -281,6 +281,12 @@ static int compile_one(const LimeLexSpec *spec, const RuleVec *all_rules, const 
         free(s.state_name);
         free(indices);
         if (s.dfa) lime_lex_dfa_free(s.dfa);
+        if (s.per_rule_dfas) {
+            for (int j = 0; j < s.n_per_rule_dfas; j++) {
+                if (s.per_rule_dfas[j]) lime_lex_dfa_free(s.per_rule_dfas[j]);
+            }
+            free(s.per_rule_dfas);
+        }
         return -1;
     }
     return 0;
@@ -328,6 +334,13 @@ void lime_lex_compiled_free(LimeLexCompiled *c) {
             free(c->states[i].state_name);
             free(c->states[i].rule_indices);
             if (c->states[i].dfa) lime_lex_dfa_free(c->states[i].dfa);
+            if (c->states[i].per_rule_dfas) {
+                for (int j = 0; j < c->states[i].n_per_rule_dfas; j++) {
+                    if (c->states[i].per_rule_dfas[j])
+                        lime_lex_dfa_free(c->states[i].per_rule_dfas[j]);
+                }
+                free(c->states[i].per_rule_dfas);
+            }
         }
         free(c->states);
     }
