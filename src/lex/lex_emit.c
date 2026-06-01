@@ -1144,11 +1144,14 @@ static void emit_match_dispatcher(FILE *out, const char *prefix) {
     fprintf(out,
             "int %s_match(int state, const char *bytes, size_t n,\n"
             "             int *out_rule, size_t *out_consumed) {\n"
-            "#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))\n"
-            "    /* Cached AVX2 detection.  The torn-read race here is\n"
-            "    ** benign: every thread computes the same value.  No\n"
-            "    ** explicit memory barrier needed -- on x86_64 the int\n"
-            "    ** loads/stores are atomic at the machine level. */\n"
+            "#if defined(__x86_64__) && defined(__GNUC__) && !defined(__clang__)\n"
+            "    /* gcc only: __builtin_cpu_supports() requires linking\n"
+            "    ** against libgcc's __cpu_model + __cpu_indicator_init.\n"
+            "    ** clang on Windows (clang-cl) doesn't link compiler-rt's\n"
+            "    ** equivalent by default, so guard tighter than just\n"
+            "    ** __GNUC__ || __clang__.  On clang+x86_64 elsewhere\n"
+            "    ** (Linux/macOS) the symbol is provided by libgcc/libcompiler-rt\n"
+            "    ** so we re-enable it via the second branch below. */\n"
             "    static int %s_cpu_avx2 = -1;\n"
             "    int avx2_known = %s_cpu_avx2;\n"
             "    if (avx2_known < 0) {\n"
@@ -1159,13 +1162,31 @@ static void emit_match_dispatcher(FILE *out, const char *prefix) {
             "        return %s_match_avx2(state, bytes, n, out_rule, out_consumed);\n"
             "    }\n"
             "    return %s_match_scalar(state, bytes, n, out_rule, out_consumed);\n"
+            "#elif defined(__x86_64__) && defined(__clang__) && !defined(_MSC_VER)\n"
+            "    /* clang on Linux/macOS: __builtin_cpu_supports works. */\n"
+            "    static int %s_cpu_avx2_cl = -1;\n"
+            "    int avx2_known = %s_cpu_avx2_cl;\n"
+            "    if (avx2_known < 0) {\n"
+            "        avx2_known = __builtin_cpu_supports(\"avx2\") ? 1 : 0;\n"
+            "        %s_cpu_avx2_cl = avx2_known;\n"
+            "    }\n"
+            "    if (avx2_known) {\n"
+            "        return %s_match_avx2(state, bytes, n, out_rule, out_consumed);\n"
+            "    }\n"
+            "    return %s_match_scalar(state, bytes, n, out_rule, out_consumed);\n"
             "#elif defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__))\n"
             "    return %s_match_neon(state, bytes, n, out_rule, out_consumed);\n"
             "#else\n"
+            "    /* clang-cl on Windows lands here: no __builtin_cpu_supports\n"
+            "    ** runtime detection (compiler-rt's __cpu_model isn't linked\n"
+            "    ** by default).  Use scalar fallback; consumers wanting AVX2\n"
+            "    ** can build their own build-time-detected wrapper. */\n"
             "    return %s_match_scalar(state, bytes, n, out_rule, out_consumed);\n"
             "#endif\n"
             "}\n\n",
-            prefix, prefix, prefix, prefix, prefix, prefix, prefix, prefix);
+            prefix, prefix, prefix, prefix, prefix, prefix,
+            prefix, prefix, prefix, prefix, prefix,
+            prefix, prefix);
 }
 
 int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const char *name_prefix,

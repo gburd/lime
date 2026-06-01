@@ -14141,6 +14141,20 @@ int g_lime_rustlex_flag = 0;
 int g_lime_rustlex_memchr_flag = 0;
 int g_lime_rustlex_simd_flag = 0;
 int g_lime_per_token_dfa_flag = 0;
+/* g_lime_lex_vectorize_flag is normally defined in src/lex/lex_emit.c
+** so test programs linking liblime_lex_compiler.a resolve it without
+** needing lime.c.  But the standalone single-file build
+** (`cc -o lime lime.c`) does NOT link lex_emit.c, so we provide a
+** weak fallback here that the linker discards in favour of the
+** strong definition when the lib is linked.  On platforms that
+** don't honour __attribute__((weak)) (MSVC), this becomes the only
+** definition; that's harmless because the standalone build doesn't
+** consult it for emit anyway. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak)) int g_lime_lex_vectorize_flag = 1;
+#elif !defined(LIME_HAS_LEX_EMIT)
+int g_lime_lex_vectorize_flag = 1;
+#endif
 /* g_lime_lex_vectorize_flag is defined in src/lex/lex_emit.c (so
 ** test programs linking liblime_lex_compiler.a resolve it without
 ** needing lime.c).  lime.c's main() reads the CLI value and writes
