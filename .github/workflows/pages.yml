@@ -1,26 +1,10 @@
-name: Build Docs
+name: Deploy GitHub Pages
 
-# This workflow validates that the Doxygen build succeeds on every
-# push.  It does NOT deploy the site -- the canonical site is hosted
-# on Codeberg Pages (.forgejo/workflows/pages.yml).  GitHub is a
-# read-only mirror; if a future operator wants GitHub Pages too,
-# enable Pages in the repo settings (Source: GitHub Actions) and
-# then add back the deploy job:
-#
-#   deploy:
-#     needs: build
-#     runs-on: ubuntu-latest
-#     environment:
-#       name: github-pages
-#       url: ${{ steps.deployment.outputs.page_url }}
-#     steps:
-#       - name: Deploy to GitHub Pages
-#         id: deployment
-#         uses: actions/deploy-pages@v4
-#
-# and grant the workflow `pages: write` permission.  Without Pages
-# enabled in repo settings, that step returns a 404 in 1 second and
-# fails the run.
+# Builds Doxygen + deploys to GitHub Pages.  The canonical site lives
+# at https://gburd.github.io/lime/ (or the custom domain configured
+# in repo settings).  Codeberg Pages is the parallel deployment from
+# .forgejo/workflows/pages.yml; both serve the same Doxygen output
+# from the same `main`-branch sources.
 
 on:
   push:
@@ -34,6 +18,8 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 concurrency:
   group: pages
@@ -71,3 +57,19 @@ jobs:
         test -s docs/api/html/index.html
         grep -q -i 'lime' docs/api/html/index.html
         echo "Doxygen site built ($(find docs/api/html -type f | wc -l) files)"
+
+    - name: Upload Pages artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: docs/api/html
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4
