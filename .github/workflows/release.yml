@@ -9,6 +9,12 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name to release (e.g. v0.8.8)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -25,7 +31,11 @@ jobs:
       - name: Extract release notes from annotated tag
         id: notes
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+          fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           body="$(git tag -l --format='%(contents:body)' "$tag")"
           if [ -z "$body" ]; then
