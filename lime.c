@@ -2402,6 +2402,34 @@ static void handle_T_option(char *z){
   lemon_strcpy(user_templatename, z);
 }
 
+/* v0.8.10 --lex-vectorize / --lex-no-vectorize.  Two OPT_FFLAG
+** entries point here; each handler bridges the parser's v={0,1}
+** (`-flag` -> 1, `+flag` -> 0) to the appropriate polarity for the
+** name.  Default ON: lexVectorizeFlag is initialised to 1.  After
+** OptInit() finishes, main() latches the value into
+** g_lime_lex_vectorize_flag for src/lex/lex_emit.c to consult.
+** File scope rather than main()-local because OPT_FFLAG bypasses
+** struct s_options's pointer-to-int slot in favour of a function
+** pointer the parser invokes from outside any nested scope. */
+/* --lex-vectorize / --lex-no-vectorize -- aliases for
+** --enable=vectorize / --disable=vectorize.  These handlers track
+** in lexVectorizeFlag (used as a "legacy was specified" marker so
+** main()'s g_features.vectorize latch knows not to override).
+** The real lex-emit consultation reads g_lime_lex_vectorize_flag
+** which is defined in src/lex/lex_emit.c. */
+static int lexVectorizeFlag = 1;
+static int lexVectorizeFlagSeen = 0;
+static void handle_lex_vectorize_option(int v){
+    lexVectorizeFlag = v;
+    lexVectorizeFlagSeen = 1;
+}
+static void handle_lex_no_vectorize_option(int v){
+    lexVectorizeFlag = !v;
+    lexVectorizeFlagSeen = 1;
+    fprintf(stderr,
+        "warning: --lex-no-vectorize is deprecated; use --disable=vectorize\n");
+}
+
 static char *prefix_override = NULL;
 static void handle_P_option(char *z){
   prefix_override = (char *) lime_malloc( lemonStrlen(z)+1 );
@@ -5026,6 +5054,16 @@ int main(int argc, char **argv){
                                     ** infrastructure -- benefits BOTH
                                     ** Rust and C emit.  Default off
                                     ** until benched; will flip on. */
+  /* v0.8.10: --lex-vectorize controls whether the C emit ships the
+  ** multiversion-at-tokenize SIMD architecture.  Default ON; opt-out
+  ** via --lex-no-vectorize emits plain scalar C and trusts the
+  ** compiler.  When ON, the emit produces per-state fast-path scan
+  ** helpers in AVX2 / NEON / scalar variants and a multiversion
+  ** <prefix>_match() that dispatches once via __builtin_cpu_supports
+  ** at first call.  Mirrors the Rust --rustlex-simd architecture.
+  ** The flag and its OPT_FFLAG handlers live at file scope (search
+  ** for handle_lex_vectorize_option) because the option parser must
+  ** see them as ordinary external functions. */
   extern int g_lime_rust_no_std;
   extern int g_lime_rustlex_flag;
   extern int g_lime_rustlex_memchr_flag;
@@ -5132,6 +5170,23 @@ int main(int argc, char **argv){
                     "DEPRECATED: use --target=rust --enable=crate.  With "
                     "--target=rust, also emit Cargo.toml + src/lib.rs around "
                     "the parser.rs so the output is a ready-to-build crate."},
+    /* NOTE: --lex-no-vectorize listed BEFORE --lex-vectorize so the
+    ** prefix-match in handleflags() picks the longer label first; the
+    ** option-table walker breaks on first match.  Both are aliases
+    ** for --enable=vectorize / --disable=vectorize and continue to
+    ** work alongside the new flag scheme. */
+    {OPT_FFLAG, "-lex-no-vectorize", (char*)handle_lex_no_vectorize_option,
+                    "Disable the C emit's multiversion-at-tokenize SIMD "
+                    "architecture (alias of --disable=vectorize).  Without "
+                    "this flag (the default), -X emits per-state AVX2/NEON/"
+                    "scalar fast-path scan helpers and a multiversion "
+                    "<prefix>_match() that dispatches via __builtin_cpu_supports. "
+                    "With this flag, emit plain scalar C and trust the compiler."},
+    {OPT_FFLAG, "-lex-vectorize", (char*)handle_lex_vectorize_option,
+                    "(default; explicit form for symmetry with "
+                    "--lex-no-vectorize; alias of --enable=vectorize) "
+                    "Emit the multiversion-at-tokenize SIMD architecture "
+                    "in -X output."},
     {OPT_FFLAG, "-rustcrate", (char*)deprecated_rustcrate,
                     "DEPRECATED: use --target=rust --enable=crate.  Older "
                     "spelling of --rust-crate."},
@@ -5243,7 +5298,13 @@ int main(int argc, char **argv){
     /* Vectorize is the C-side SIMD/intrinsic toggle.  Default ON;
     ** opt-out via --disable=vectorize.  The global is consulted by
     ** the C-side lex emitter once Agent 1's parallel branch lands. */
-    g_lime_lex_vectorize_flag = g_features.vectorize;
+    /* Honor --lex-(no-)vectorize if specified; otherwise use
+    ** g_features.vectorize set by --enable=/--disable=. */
+    if (lexVectorizeFlagSeen) {
+        g_lime_lex_vectorize_flag = lexVectorizeFlag;
+    } else {
+        g_lime_lex_vectorize_flag = g_features.vectorize;
+    }
   }
 
   if( version ){
