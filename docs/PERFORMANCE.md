@@ -9,6 +9,45 @@ All measurements in this document were collected on a Linux x86_64 system
 (`bench/parser_bench.c`). Results are from 5000 iterations with 200 warmup
 iterations. Your numbers will vary by hardware.
 
+## Production build recipe
+
+The meson defaults (`buildtype=debugoptimized`, no LTO, no PGO) are
+optimised for development feedback, not for shipping binaries.  Users
+building lime for production throughput should turn on the perf
+knobs explicitly:
+
+```bash
+# Step 1: build with LTO + release mode (5-15% throughput floor uplift
+# vs the meson default).
+meson setup build-prod \
+    -Dbuildtype=release \
+    -Db_lto=true \
+    -Db_ndebug=true
+meson compile -C build-prod
+
+# Step 2 (optional): profile-guided optimisation.  Adds another
+# 3-10% on the parser hot path on most workloads.
+meson configure build-prod -Dlime_pgo=generate
+meson compile -C build-prod
+
+# Run a representative workload (your own grammar / fixtures, NOT
+# the test suite).  This populates `build-prod/.../*.gcda` profile
+# data files that PGO consumes in the next step.
+./build-prod/lime <your-grammar>
+./build-prod/bench/parser_bench   # or any representative driver
+
+# Step 3: rebuild with the collected profile.
+meson configure build-prod -Dlime_pgo=use
+meson compile -C build-prod
+```
+
+`-march=native` is NOT enabled by default — it ties the binary to
+the build host's CPU.  Add `-Dc_args=-march=native -Dcpp_args=-march=native`
+if you control the deployment target.  The SIMD scan helpers
+emitted by `--enable=simd` (Rust output) and `--enable=vectorize`
+(C output, default ON) already runtime-detect AVX2 / NEON, so
+they work on any CPU without `-march=native`.
+
 ## Tokenizer Throughput
 
 The tokenizer converts raw SQL text into a stream of typed tokens. Performance

@@ -26,6 +26,34 @@ lime_warning_suppress = cc.get_supported_arguments([
   '-Wno-format-overflow',
 ])
 
+# v0.8.x perf hygiene: PGO-instrumentation flags driven by the
+# -Dlime_pgo=<off|generate|use> option.  The audit at
+# .agent/notes/c-perf-audit.md item #1 noted that LTO and PGO are
+# both off in CI and there's no way for users to opt in cleanly.
+# This adds the cleanest possible knob -- PGO via meson option,
+# LTO via the standard -Db_lto=true.  See docs/PERFORMANCE.md
+# for the production-build recipe (the short version: -Dbuildtype=
+# release -Db_lto=true [-Dlime_pgo=use] for shipping; pair with
+# -Dlime_pgo=generate, run benches, then -Dlime_pgo=use for the
+# best codegen).
+lime_pgo_mode = get_option('lime_pgo')
+lime_pgo_args = []
+if lime_pgo_mode == 'generate'
+  lime_pgo_args = cc.get_supported_arguments(['-fprofile-generate'])
+elif lime_pgo_mode == 'use'
+  # -fprofile-use is gcc/clang; on a fresh build the .gcda files
+  # must already exist or the compiler errors out.  Users invoke
+  # 'meson configure -Dlime_pgo=use' AFTER running a 'generate'
+  # round.
+  lime_pgo_args = cc.get_supported_arguments([
+    '-fprofile-use', '-fprofile-correction'
+  ])
+endif
+add_project_arguments(lime_pgo_args, language : 'c')
+add_project_arguments(lime_pgo_args, language : 'cpp')
+add_project_link_arguments(lime_pgo_args, language : 'c')
+add_project_link_arguments(lime_pgo_args, language : 'cpp')
+
 # Expose POSIX and GNU extensions (needed for pthread_rwlock_t,
 # strdup, clock_gettime, etc.).  Multiple macros are defined for
 # portability across libc implementations:

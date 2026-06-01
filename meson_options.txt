@@ -1,5 +1,19 @@
 # Build-time project options for lime-parser.
 
+option('lime_pgo',
+  type        : 'combo',
+  choices     : ['off', 'generate', 'use'],
+  value       : 'off',
+  description : 'Profile-guided optimisation control.  ' +
+                'off (default): no PGO instrumentation. ' +
+                'generate: instrument with -fprofile-generate; run ' +
+                'lime + benchmarks to populate the profile. ' +
+                'use: feed -fprofile-use=<path> back into the build for ' +
+                'optimised codegen.  Use with -Dbuildtype=release ' +
+                '+ -Db_lto=true for production binaries.  See ' +
+                'docs/PERFORMANCE.md for the workflow.',
+)
+
 option('llvm',
   type        : 'feature',
   value       : 'auto',
