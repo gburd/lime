@@ -25,6 +25,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* v0.8.10: --lex-vectorize default ON.  The CLI driver (lime.c)
+** latches its parsed value into this global; src/lex/lex_emit.c
+** reads it to decide whether to emit the multiversion-at-tokenize
+** SIMD architecture.  Defined in lex_emit.c itself so test
+** programs that link against liblime_lex_compiler.a without
+** pulling lex_main.c (which transitively pulls emit_rust_lex.c
+** with its own unresolved externs) still resolve the symbol. */
+
 /* Slurp the entire file into a heap buffer.  Returns 0 on
 ** success; sets *out_buf and *out_len.  Caller frees *out_buf. */
 static int slurp(const char *path, char **out_buf, size_t *out_len) {

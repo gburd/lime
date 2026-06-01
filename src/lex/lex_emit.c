@@ -27,6 +27,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* v0.8.10: --lex-vectorize default ON.  Set by lime.c after the
+** option parser runs.  When non-zero, the C emit ships the
+** multiversion-at-tokenize SIMD architecture (mirror of the Rust
+** --rustlex-simd emit): per-state fast-path scan helpers in AVX2 /
+** NEON / scalar variants and a multiversion <prefix>_match() that
+** runtime-dispatches via __builtin_cpu_supports.  When zero, the
+** legacy single-function scalar emit is used.
+**
+** Defined here (rather than in lex_main.c) so test programs that
+** link against liblime_lex_compiler.a and only reference
+** lime_lex_emit_c can resolve the symbol without dragging in
+** emit_rust_lex.c.o and its further unresolved externs. */
+int g_lime_lex_vectorize_flag = 1;
+
+
 /* ============================================================
 ** Identifier helpers
 ** ============================================================ */
@@ -707,6 +722,448 @@ static void emit_state_tables(const LimeLexCompiledState *cs, int compiled_state
     (void)compiled_state_index; /* reserved for future state-id use */
 }
 
+/* ============================================================
+** v0.8.10: SIMD fast-path emission (--lex-vectorize, default ON)
+**
+** Mirrors src/lex/emit_rust_lex.c's emit_simd_helpers chain:
+**
+**   1. Classify each DFA state for fast-path candidacy.  A
+**      state qualifies (Pattern A in the Rust emit) when:
+**        - >= 240 of 256 bytes self-loop (i.e. stay in the
+**          state); typical of string-body / comment-body /
+**          long-identifier scans.
+**        - <= 3 distinct exit bytes lead to a different state
+**          (n_exit in [1,3]).
+**
+**   2. For each candidate, emit three always_inline helpers:
+**         <prefix>_scan_<NAME>_<S>_avx2(p, n, pos)   (x86_64)
+**         <prefix>_scan_<NAME>_<S>_neon(p, n, pos)   (aarch64)
+**         <prefix>_scan_<NAME>_<S>_scalar(p, n, pos) (always)
+**      Each takes byte literals baked into its body.  AVX2 uses
+**      _mm256_loadu_si256 / _mm256_cmpeq_epi8 / _mm256_movemask_
+**      epi8.  NEON uses vld1q_u8 / vceqq_u8 / vshrn_n_u16.  All
+**      return the byte index of the first exit byte (or n if
+**      none).
+**
+**   3. Per-state-group dispatch helpers <prefix>_fast_path_<NAME>_
+**      <kind>(dfa_state, p, n, pos) switch on dfa_state and call
+**      the per-state scanner.  Three kinds: avx2 / neon / scalar.
+**
+**   4. <prefix>_match_<kind>(state, bytes, n, ...) is the per-kind
+**      version of the public match function.  It is an exact copy
+**      of the legacy match body PLUS a fast-path call inserted at
+**      the top of every iteration of the per-byte loop.
+**
+**   5. <prefix>_match() is the public dispatcher:
+**         x86_64 + gcc/clang: __builtin_cpu_supports("avx2") ?
+**             match_avx2 : match_scalar
+**         aarch64: match_neon (NEON is mandatory on aarch64)
+**         everything else: match_scalar
+**
+**      The detection result is cached in a function-static int.
+**
+** Why this beats stdlib auto-vectorisation:
+**   __attribute__((target("avx2"))) is a hard inlining barrier
+**   in gcc/clang -- a function carrying it cannot be inlined into
+**   a caller that doesn't.  By pushing the AVX2 attribute up to
+**   match_avx2 (the entire match body), every always_inline
+**   helper down the chain inherits the AVX2 target and inlines
+**   without crossing a target_feature barrier.  Verified via
+**   `objdump -d` -- vmovdqu/vpcmpeqb/vpmovmskb appear inline in
+**   match_avx2's body.
+** ============================================================ */
+
+/* Classify one DFA state.  Returns 1 if the state is a Pattern A
+** fast-path candidate, 0 otherwise.  On success, fills exit_set
+** (up to 3 entries) and *n_exit. */
+static int classify_fast_path_state(const LimeLexCompiledState *cs, int s,
+                                    int exit_set[3], int *n_exit) {
+    if (!cs || !cs->dfa) return 0;
+    if (s < 0 || s >= cs->dfa->n_states) return 0;
+    const int *tr = cs->dfa->states[s].trans;
+    int self_count = 0;
+    int exit[8];
+    int ne = 0;
+    int too_many = 0;
+    for (int b = 0; b < 256; b++) {
+        int t = tr[b];
+        if (t == s) {
+            self_count++;
+        } else if (t >= 0) {
+            int found = 0;
+            for (int i = 0; i < ne; i++) {
+                if (exit[i] == b) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                if (ne >= 8) {
+                    too_many = 1;
+                } else {
+                    exit[ne++] = b;
+                }
+            }
+        }
+    }
+    /* Same threshold as Rust emit: >= 240 self-loop, [1,3] exits.
+    ** Rust permits up to 8-byte exit sets via memchr_iter; the C
+    ** emit caps at 3 to keep the AVX2 cmpeq-or chain short and the
+    ** scalar tail's branch-predicate compact.  Grammars with
+    ** larger exit sets fall through to the unified DFA per-byte
+    ** loop, which is still correct (just no SIMD acceleration). */
+    if (too_many) return 0;
+    if (ne < 1 || ne > 3) return 0;
+    if (self_count < 240) return 0;
+    *n_exit = ne;
+    for (int i = 0; i < ne; i++) exit_set[i] = exit[i];
+    return 1;
+}
+
+/* Emit one per-state scanner body for the given kind.  `kind` is
+** "avx2", "neon", or "scalar".  The emitted function is
+** static inline __attribute__((always_inline)).  AVX2 also carries
+** target("avx2").  The caller is responsible for the surrounding
+** #ifdef __x86_64__ / __aarch64__ guard.  byte literals for the
+** exit set are baked into the body. */
+static void emit_scan_helper(FILE *out, const char *prefix, const char *upper_state, int s,
+                             int exit_set[3], int n_exit, const char *kind) {
+    int is_avx2 = strcmp(kind, "avx2") == 0;
+    int is_neon = strcmp(kind, "neon") == 0;
+
+    if (is_avx2) {
+        fprintf(out, "__attribute__((target(\"avx2\"), always_inline))\n");
+        fprintf(out, "static inline size_t %s_scan_%s_%d_avx2(\n", prefix, upper_state, s);
+    } else if (is_neon) {
+        fprintf(out, "__attribute__((always_inline))\n");
+        fprintf(out, "static inline size_t %s_scan_%s_%d_neon(\n", prefix, upper_state, s);
+    } else {
+        fprintf(out, "__attribute__((always_inline))\n");
+        fprintf(out, "static inline size_t %s_scan_%s_%d_scalar(\n", prefix, upper_state, s);
+    }
+    fprintf(out, "        const unsigned char *p, size_t pos, size_t n) {\n");
+
+    /* Bake the exit byte literals into the body. */
+    if (is_avx2) {
+        for (int i = 0; i < n_exit; i++) {
+            fprintf(out, "    const __m256i v%d = _mm256_set1_epi8((char)%d);\n", i + 1,
+                    exit_set[i]);
+        }
+        fprintf(out, "    while (pos + 32 <= n) {\n");
+        fprintf(out, "        __m256i chunk = _mm256_loadu_si256(\n");
+        fprintf(out, "            (const __m256i*)(p + pos));\n");
+        if (n_exit == 1) {
+            fprintf(out, "        __m256i any = _mm256_cmpeq_epi8(chunk, v1);\n");
+        } else if (n_exit == 2) {
+            fprintf(out,
+                    "        __m256i any = _mm256_or_si256(\n"
+                    "            _mm256_cmpeq_epi8(chunk, v1),\n"
+                    "            _mm256_cmpeq_epi8(chunk, v2));\n");
+        } else {
+            fprintf(out,
+                    "        __m256i any = _mm256_or_si256(\n"
+                    "            _mm256_or_si256(\n"
+                    "                _mm256_cmpeq_epi8(chunk, v1),\n"
+                    "                _mm256_cmpeq_epi8(chunk, v2)),\n"
+                    "            _mm256_cmpeq_epi8(chunk, v3));\n");
+        }
+        fprintf(out, "        unsigned mask = (unsigned)_mm256_movemask_epi8(any);\n");
+        fprintf(out, "        if (mask) return pos + (size_t)__builtin_ctz(mask);\n");
+        fprintf(out, "        pos += 32;\n");
+        fprintf(out, "    }\n");
+    } else if (is_neon) {
+        for (int i = 0; i < n_exit; i++) {
+            fprintf(out, "    const uint8x16_t v%d = vdupq_n_u8((uint8_t)%d);\n", i + 1,
+                    exit_set[i]);
+        }
+        fprintf(out, "    while (pos + 16 <= n) {\n");
+        fprintf(out,
+                "        uint8x16_t chunk = vld1q_u8(p + pos);\n");
+        if (n_exit == 1) {
+            fprintf(out, "        uint8x16_t any = vceqq_u8(chunk, v1);\n");
+        } else if (n_exit == 2) {
+            fprintf(out,
+                    "        uint8x16_t any = vorrq_u8(\n"
+                    "            vceqq_u8(chunk, v1),\n"
+                    "            vceqq_u8(chunk, v2));\n");
+        } else {
+            fprintf(out,
+                    "        uint8x16_t any = vorrq_u8(\n"
+                    "            vorrq_u8(vceqq_u8(chunk, v1),\n"
+                    "                     vceqq_u8(chunk, v2)),\n"
+                    "            vceqq_u8(chunk, v3));\n");
+        }
+        /* 16-byte mask -> 64-bit narrow-shift trick: each lane
+        ** becomes 4 bits of mask.  ctz/4 -> match index. */
+        fprintf(out,
+                "        uint64_t mask = vget_lane_u64(\n"
+                "            vreinterpret_u64_u8(\n"
+                "                vshrn_n_u16(vreinterpretq_u16_u8(any), 4)),\n"
+                "            0);\n");
+        fprintf(out, "        if (mask) return pos + (size_t)(__builtin_ctzll(mask) / 4);\n");
+        fprintf(out, "        pos += 16;\n");
+        fprintf(out, "    }\n");
+    }
+
+    /* Scalar tail (or full body in the scalar variant).  Tight
+    ** while-loop with the exit-byte predicate inlined; the
+    ** compiler should auto-vectorise this on platforms without an
+    ** explicit SIMD path. */
+    fprintf(out, "    while (pos < n) {\n");
+    fprintf(out, "        unsigned char b = p[pos];\n");
+    fprintf(out, "        if (");
+    for (int i = 0; i < n_exit; i++) {
+        if (i > 0) fprintf(out, " || ");
+        fprintf(out, "b == %d", exit_set[i]);
+    }
+    fprintf(out, ") return pos;\n");
+    fprintf(out, "        pos++;\n");
+    fprintf(out, "    }\n");
+    fprintf(out, "    return n;\n");
+    fprintf(out, "}\n\n");
+}
+
+/* Emit the per-state-group fast_path dispatcher for one kind.
+** Switches on the active DFA state and calls the per-state scanner
+** for that state, or returns pos unchanged if the state is not a
+** fast-path candidate.  Caller emits #ifdef guards. */
+static void emit_fast_path_dispatcher(FILE *out, const char *prefix,
+                                      const LimeLexCompiledState *cs, const char *kind) {
+    int is_avx2 = strcmp(kind, "avx2") == 0;
+    char *upper_state = upper_dup(cs->state_name);
+    if (!upper_state) return;
+
+    if (is_avx2) {
+        fprintf(out, "__attribute__((target(\"avx2\"), always_inline))\n");
+    } else {
+        fprintf(out, "__attribute__((always_inline))\n");
+    }
+    fprintf(out, "static inline size_t %s_fast_path_%s_%s(\n", prefix, upper_state, kind);
+    fprintf(out, "        int s, const unsigned char *p, size_t pos, size_t n) {\n");
+
+    if (cs->dfa && cs->dfa->n_states > 0) {
+        int any = 0;
+        for (int s = 0; s < cs->dfa->n_states; s++) {
+            int exit_set[3];
+            int n_exit = 0;
+            if (!classify_fast_path_state(cs, s, exit_set, &n_exit)) continue;
+            if (!any) {
+                fprintf(out, "    switch (s) {\n");
+                any = 1;
+            }
+            fprintf(out, "    case %d: return %s_scan_%s_%d_%s(p, pos, n);\n", s, prefix,
+                    upper_state, s, kind);
+        }
+        if (any) {
+            fprintf(out, "    default: break;\n");
+            fprintf(out, "    }\n");
+        }
+    }
+    fprintf(out, "    (void)s; (void)p; (void)n;\n");
+    fprintf(out, "    return pos;\n");
+    fprintf(out, "}\n\n");
+    free(upper_state);
+}
+
+/* Emit per-state scanners + per-state-group dispatcher for one
+** kind.  Wraps the whole block in #ifdef when needed. */
+static void emit_scanners_for_kind(FILE *out, const char *prefix, const LimeLexCompiled *c,
+                                   const char *kind) {
+    int is_avx2 = strcmp(kind, "avx2") == 0;
+    int is_neon = strcmp(kind, "neon") == 0;
+
+    if (is_avx2) {
+        fprintf(out, "#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))\n");
+        fprintf(out, "#include <immintrin.h>\n\n");
+    } else if (is_neon) {
+        fprintf(out, "#if defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__))\n");
+        fprintf(out, "#include <arm_neon.h>\n\n");
+    }
+
+    /* Per-state scanners. */
+    for (int g = 0; g < c->n_states; g++) {
+        const LimeLexCompiledState *cs = &c->states[g];
+        if (!cs->dfa) continue;
+        char *upper_state = upper_dup(cs->state_name);
+        if (!upper_state) continue;
+        for (int s = 0; s < cs->dfa->n_states; s++) {
+            int exit_set[3];
+            int n_exit = 0;
+            if (!classify_fast_path_state(cs, s, exit_set, &n_exit)) continue;
+            emit_scan_helper(out, prefix, upper_state, s, exit_set, n_exit, kind);
+        }
+        free(upper_state);
+    }
+
+    /* Per-state-group fast-path dispatchers. */
+    for (int g = 0; g < c->n_states; g++) {
+        emit_fast_path_dispatcher(out, prefix, &c->states[g], kind);
+    }
+
+    if (is_avx2 || is_neon) {
+        fprintf(out, "#endif /* %s */\n\n", is_avx2 ? "x86_64+gcc/clang" : "aarch64+gcc/clang");
+    }
+}
+
+/* Emit one match function body for the given kind.  Identical to
+** the legacy <prefix>_match body except:
+**   - function name is <prefix>_match_<kind>
+**   - if AVX2: carries __attribute__((target("avx2")))
+**   - the per-byte loop calls <prefix>_fast_path_<NAME>_<kind>
+**     before each byte fetch, and skips ahead when the scanner
+**     advances past pos (with last_accept tracking on the way).
+**
+** When kind == "scalar" the body is identical in shape to the
+** legacy single-function emit minus the public symbol -- the
+** legacy emit is preserved for the --lex-no-vectorize path. */
+static void emit_match_function_for_kind(FILE *out, const LimeLexCompiled *c, const char *prefix,
+                                         const char *kind) {
+    int is_avx2 = strcmp(kind, "avx2") == 0;
+    if (is_avx2) {
+        fprintf(out, "__attribute__((target(\"avx2\")))\n");
+    }
+    fprintf(out, "static int %s_match_%s(int state, const char *bytes, size_t n,\n", prefix,
+            kind);
+    fprintf(out, "        int *out_rule, size_t *out_consumed) {\n");
+    fprintf(out, "    int start;\n");
+    fprintf(out, "    int last_accept_rule = -1;\n");
+    fprintf(out, "    size_t last_accept_pos = 0;\n");
+    fprintf(out, "    size_t i;\n");
+    fprintf(out, "    int s;\n");
+    fprintf(out, "    const unsigned char *p = (const unsigned char *)bytes;\n");
+
+    fprintf(out, "    switch (state) {\n");
+    for (int i = 0; i < c->n_states; i++) {
+        char *upper_state = upper_dup(c->states[i].state_name);
+        fprintf(out, "    case %d: start = %s_dfa_%s_start; break;\n", i, prefix, upper_state);
+        free(upper_state);
+    }
+    fprintf(out, "    default: return 0;\n");
+    fprintf(out, "    }\n");
+    fprintf(out, "    s = start;\n\n");
+
+    /* Immediate-accept (empty match) check. */
+    fprintf(out, "    switch (state) {\n");
+    for (int i = 0; i < c->n_states; i++) {
+        char *upper_state = upper_dup(c->states[i].state_name);
+        fprintf(out, "    case %d: if (%s_dfa_%s_accept[s] >= 0) {\n", i, prefix, upper_state);
+        fprintf(out, "        last_accept_rule = %s_dfa_%s_accept[s];\n", prefix, upper_state);
+        fprintf(out, "        last_accept_pos = 0;\n");
+        fprintf(out, "    } break;\n");
+        free(upper_state);
+    }
+    fprintf(out, "    }\n\n");
+
+    /* Main loop.  i is mutated inside via the fast-path branch. */
+    fprintf(out, "    i = 0;\n");
+    fprintf(out, "    while (i < n) {\n");
+    /* Fast-path scan: route through per-kind dispatcher.  When the
+    ** scanner advances pos, the run is necessarily on a self-loop
+    ** state, so the active DFA state s is unchanged.  If the state
+    ** is accepting, the longest match extends to new_pos. */
+    fprintf(out, "        size_t new_pos;\n");
+    fprintf(out, "        switch (state) {\n");
+    for (int gi = 0; gi < c->n_states; gi++) {
+        char *upper_state = upper_dup(c->states[gi].state_name);
+        fprintf(out, "        case %d:\n", gi);
+        fprintf(out, "            new_pos = %s_fast_path_%s_%s(s, p, i, n);\n", prefix,
+                upper_state, kind);
+        fprintf(out, "            break;\n");
+        free(upper_state);
+    }
+    fprintf(out, "        default: new_pos = i; break;\n");
+    fprintf(out, "        }\n");
+    fprintf(out, "        if (new_pos > i) {\n");
+    fprintf(out, "            switch (state) {\n");
+    for (int gi = 0; gi < c->n_states; gi++) {
+        char *upper_state = upper_dup(c->states[gi].state_name);
+        fprintf(out, "            case %d:\n", gi);
+        fprintf(out, "                if (%s_dfa_%s_accept[s] >= 0) {\n", prefix, upper_state);
+        fprintf(out, "                    last_accept_rule = %s_dfa_%s_accept[s];\n", prefix,
+                upper_state);
+        fprintf(out, "                    last_accept_pos = new_pos;\n");
+        fprintf(out, "                }\n");
+        fprintf(out, "                break;\n");
+        free(upper_state);
+    }
+    fprintf(out, "            default: break;\n");
+    fprintf(out, "            }\n");
+    fprintf(out, "            i = new_pos;\n");
+    fprintf(out, "            if (i >= n) break;\n");
+    fprintf(out, "        }\n");
+
+    /* Standard step. */
+    fprintf(out, "        int next;\n");
+    fprintf(out, "        switch (state) {\n");
+    for (int gi = 0; gi < c->n_states; gi++) {
+        char *upper_state = upper_dup(c->states[gi].state_name);
+        fprintf(out, "        case %d:\n", gi);
+        fprintf(out, "            next = %s_dfa_%s_trans[s][p[i]];\n", prefix, upper_state);
+        fprintf(out, "            break;\n");
+        free(upper_state);
+    }
+    fprintf(out, "        default: return 0;\n");
+    fprintf(out, "        }\n");
+    fprintf(out, "        if (next < 0) break;\n");
+    fprintf(out, "        s = next;\n");
+    fprintf(out, "        switch (state) {\n");
+    for (int gi = 0; gi < c->n_states; gi++) {
+        char *upper_state = upper_dup(c->states[gi].state_name);
+        fprintf(out, "        case %d:\n", gi);
+        fprintf(out, "            if (%s_dfa_%s_accept[s] >= 0) {\n", prefix, upper_state);
+        fprintf(out, "                last_accept_rule = %s_dfa_%s_accept[s];\n", prefix,
+                upper_state);
+        fprintf(out, "                last_accept_pos = i + 1;\n");
+        fprintf(out, "            }\n");
+        fprintf(out, "            break;\n");
+        free(upper_state);
+    }
+    fprintf(out, "        default: break;\n");
+    fprintf(out, "        }\n");
+    fprintf(out, "        i++;\n");
+    fprintf(out, "    }\n\n");
+
+    fprintf(out, "    if (last_accept_rule < 0) return 0;\n");
+    fprintf(out, "    *out_rule = last_accept_rule;\n");
+    fprintf(out, "    *out_consumed = last_accept_pos;\n");
+    fprintf(out, "    return 1;\n");
+    fprintf(out, "}\n\n");
+}
+
+/* Emit the public <prefix>_match() dispatcher.  On x86_64 with
+** gcc/clang, performs a one-time __builtin_cpu_supports("avx2")
+** check (cached in a function-static int) and routes to either
+** match_avx2 or match_scalar.  On aarch64 with gcc/clang, routes
+** unconditionally to match_neon (NEON is mandatory on aarch64).
+** Everything else falls through to match_scalar. */
+static void emit_match_dispatcher(FILE *out, const char *prefix) {
+    fprintf(out,
+            "int %s_match(int state, const char *bytes, size_t n,\n"
+            "             int *out_rule, size_t *out_consumed) {\n"
+            "#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))\n"
+            "    /* Cached AVX2 detection.  The torn-read race here is\n"
+            "    ** benign: every thread computes the same value.  No\n"
+            "    ** explicit memory barrier needed -- on x86_64 the int\n"
+            "    ** loads/stores are atomic at the machine level. */\n"
+            "    static int %s_cpu_avx2 = -1;\n"
+            "    int avx2_known = %s_cpu_avx2;\n"
+            "    if (avx2_known < 0) {\n"
+            "        avx2_known = __builtin_cpu_supports(\"avx2\") ? 1 : 0;\n"
+            "        %s_cpu_avx2 = avx2_known;\n"
+            "    }\n"
+            "    if (avx2_known) {\n"
+            "        return %s_match_avx2(state, bytes, n, out_rule, out_consumed);\n"
+            "    }\n"
+            "    return %s_match_scalar(state, bytes, n, out_rule, out_consumed);\n"
+            "#elif defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__))\n"
+            "    return %s_match_neon(state, bytes, n, out_rule, out_consumed);\n"
+            "#else\n"
+            "    return %s_match_scalar(state, bytes, n, out_rule, out_consumed);\n"
+            "#endif\n"
+            "}\n\n",
+            prefix, prefix, prefix, prefix, prefix, prefix, prefix, prefix);
+}
+
 int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const char *name_prefix,
                     const char *header_basename, const char *const *rule_names, int n_rules,
                     FILE *out) {
@@ -755,74 +1212,103 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
         emit_state_tables(&c->states[i], i, prefix, out);
     }
 
-    /* Match function: longest-match driver. */
-    fprintf(out, "int %s_match(int state, const char *bytes, size_t n,\n", prefix);
-    fprintf(out, "             int *out_rule, size_t *out_consumed) {\n");
-    fprintf(out, "    int start;\n");
-    fprintf(out, "    int last_accept_rule = -1;\n");
-    fprintf(out, "    size_t last_accept_pos = 0;\n");
-    fprintf(out, "    size_t i;\n");
-    fprintf(out, "    int s;\n");
+    /* Match function: longest-match driver.
+    **
+    ** v0.8.10: when --lex-vectorize (default ON), emit the
+    ** multiversion-at-tokenize SIMD architecture: per-state AVX2 /
+    ** NEON / scalar fast-path scan helpers, per-kind match
+    ** functions, and a public dispatcher that runtime-detects AVX2
+    ** via __builtin_cpu_supports.  When --lex-no-vectorize, emit
+    ** the legacy single-function scalar driver. */
+    if (g_lime_lex_vectorize_flag) {
+        /* SIMD scanners + per-kind match functions + dispatcher. */
+        emit_scanners_for_kind(out, prefix, c, "avx2");
+        emit_scanners_for_kind(out, prefix, c, "neon");
+        emit_scanners_for_kind(out, prefix, c, "scalar");
 
-    fprintf(out, "    switch (state) {\n");
-    for (int i = 0; i < c->n_states; i++) {
-        char *upper_state = upper_dup(c->states[i].state_name);
-        fprintf(out, "    case %d: start = %s_dfa_%s_start; break;\n", i, prefix, upper_state);
-        free(upper_state);
-    }
-    fprintf(out, "    default: return 0;\n");
-    fprintf(out, "    }\n");
-    fprintf(out, "    s = start;\n\n");
+        fprintf(out,
+                "#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))\n");
+        emit_match_function_for_kind(out, c, prefix, "avx2");
+        fprintf(out, "#endif\n\n");
 
-    /* Check immediate accept: state's start could itself be
-    ** accepting (e.g. a*  matches empty). */
-    fprintf(out, "    /* Check accept at position 0 (empty match). */\n");
-    fprintf(out, "    switch (state) {\n");
-    for (int i = 0; i < c->n_states; i++) {
-        char *upper_state = upper_dup(c->states[i].state_name);
-        fprintf(out, "    case %d: if (%s_dfa_%s_accept[s] >= 0) {\n", i, prefix, upper_state);
-        fprintf(out, "        last_accept_rule = %s_dfa_%s_accept[s];\n", prefix, upper_state);
-        fprintf(out, "        last_accept_pos = 0;\n");
-        fprintf(out, "    } break;\n");
-        free(upper_state);
-    }
-    fprintf(out, "    }\n\n");
+        fprintf(out,
+                "#if defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__))\n");
+        emit_match_function_for_kind(out, c, prefix, "neon");
+        fprintf(out, "#endif\n\n");
 
-    fprintf(out, "    for (i = 0; i < n; i++) {\n");
-    fprintf(out, "        int next;\n");
-    fprintf(out, "        switch (state) {\n");
-    for (int i = 0; i < c->n_states; i++) {
-        char *upper_state = upper_dup(c->states[i].state_name);
-        fprintf(out, "        case %d:\n", i);
-        fprintf(out, "            next = %s_dfa_%s_trans[s][(unsigned char)bytes[i]];\n", prefix,
-                upper_state);
-        fprintf(out, "            break;\n");
-        free(upper_state);
-    }
-    fprintf(out, "        default: return 0;\n");
-    fprintf(out, "        }\n");
-    fprintf(out, "        if (next < 0) break;\n");
-    fprintf(out, "        s = next;\n");
-    fprintf(out, "        switch (state) {\n");
-    for (int i = 0; i < c->n_states; i++) {
-        char *upper_state = upper_dup(c->states[i].state_name);
-        fprintf(out, "        case %d:\n", i);
-        fprintf(out, "            if (%s_dfa_%s_accept[s] >= 0) {\n", prefix, upper_state);
-        fprintf(out, "                last_accept_rule = %s_dfa_%s_accept[s];\n", prefix,
-                upper_state);
-        fprintf(out, "                last_accept_pos = i + 1;\n");
-        fprintf(out, "            }\n");
-        fprintf(out, "            break;\n");
-        free(upper_state);
-    }
-    fprintf(out, "        }\n");
-    fprintf(out, "    }\n\n");
+        emit_match_function_for_kind(out, c, prefix, "scalar");
+        emit_match_dispatcher(out, prefix);
+    } else {
+        /* Legacy scalar single-function emit (--lex-no-vectorize). */
+        fprintf(out, "int %s_match(int state, const char *bytes, size_t n,\n", prefix);
+        fprintf(out, "             int *out_rule, size_t *out_consumed) {\n");
+        fprintf(out, "    int start;\n");
+        fprintf(out, "    int last_accept_rule = -1;\n");
+        fprintf(out, "    size_t last_accept_pos = 0;\n");
+        fprintf(out, "    size_t i;\n");
+        fprintf(out, "    int s;\n");
 
-    fprintf(out, "    if (last_accept_rule < 0) return 0;\n");
-    fprintf(out, "    *out_rule = last_accept_rule;\n");
-    fprintf(out, "    *out_consumed = last_accept_pos;\n");
-    fprintf(out, "    return 1;\n");
-    fprintf(out, "}\n\n");
+        fprintf(out, "    switch (state) {\n");
+        for (int i = 0; i < c->n_states; i++) {
+            char *upper_state = upper_dup(c->states[i].state_name);
+            fprintf(out, "    case %d: start = %s_dfa_%s_start; break;\n", i, prefix,
+                    upper_state);
+            free(upper_state);
+        }
+        fprintf(out, "    default: return 0;\n");
+        fprintf(out, "    }\n");
+        fprintf(out, "    s = start;\n\n");
+
+        fprintf(out, "    /* Check accept at position 0 (empty match). */\n");
+        fprintf(out, "    switch (state) {\n");
+        for (int i = 0; i < c->n_states; i++) {
+            char *upper_state = upper_dup(c->states[i].state_name);
+            fprintf(out, "    case %d: if (%s_dfa_%s_accept[s] >= 0) {\n", i, prefix,
+                    upper_state);
+            fprintf(out, "        last_accept_rule = %s_dfa_%s_accept[s];\n", prefix,
+                    upper_state);
+            fprintf(out, "        last_accept_pos = 0;\n");
+            fprintf(out, "    } break;\n");
+            free(upper_state);
+        }
+        fprintf(out, "    }\n\n");
+
+        fprintf(out, "    for (i = 0; i < n; i++) {\n");
+        fprintf(out, "        int next;\n");
+        fprintf(out, "        switch (state) {\n");
+        for (int i = 0; i < c->n_states; i++) {
+            char *upper_state = upper_dup(c->states[i].state_name);
+            fprintf(out, "        case %d:\n", i);
+            fprintf(out, "            next = %s_dfa_%s_trans[s][(unsigned char)bytes[i]];\n",
+                    prefix, upper_state);
+            fprintf(out, "            break;\n");
+            free(upper_state);
+        }
+        fprintf(out, "        default: return 0;\n");
+        fprintf(out, "        }\n");
+        fprintf(out, "        if (next < 0) break;\n");
+        fprintf(out, "        s = next;\n");
+        fprintf(out, "        switch (state) {\n");
+        for (int i = 0; i < c->n_states; i++) {
+            char *upper_state = upper_dup(c->states[i].state_name);
+            fprintf(out, "        case %d:\n", i);
+            fprintf(out, "            if (%s_dfa_%s_accept[s] >= 0) {\n", prefix, upper_state);
+            fprintf(out, "                last_accept_rule = %s_dfa_%s_accept[s];\n", prefix,
+                    upper_state);
+            fprintf(out, "                last_accept_pos = i + 1;\n");
+            fprintf(out, "            }\n");
+            fprintf(out, "            break;\n");
+            free(upper_state);
+        }
+        fprintf(out, "        }\n");
+        fprintf(out, "    }\n\n");
+
+        fprintf(out, "    if (last_accept_rule < 0) return 0;\n");
+        fprintf(out, "    *out_rule = last_accept_rule;\n");
+        fprintf(out, "    *out_consumed = last_accept_pos;\n");
+        fprintf(out, "    return 1;\n");
+        fprintf(out, "}\n\n");
+    }
 
     /* ===== M3.3 + M3.5: push-driven runtime ===== */
     fprintf(out, "/* ===== Push-driven runtime (M3.3 + M3.5) ===== */\n\n");

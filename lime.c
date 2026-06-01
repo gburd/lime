@@ -14080,10 +14080,7 @@ int g_lime_rustlex_flag = 0;
 int g_lime_rustlex_memchr_flag = 0;
 int g_lime_rustlex_simd_flag = 0;
 int g_lime_per_token_dfa_flag = 0;
-
-/* v0.8.6 CLI flag redesign: feature toggle for the C-side lex emitter's
-** SIMD/intrinsic fast-path code.  Default ON; user opts out via
-** `--disable=vectorize`.  Definition kept here so the placeholder lands
-** even if Agent 1's parallel C-side SIMD branch hasn't merged yet; once
-** that lands, src/lex/lex_emit.c consults this same global. */
-int g_lime_lex_vectorize_flag = 1;
+/* g_lime_lex_vectorize_flag is defined in src/lex/lex_emit.c (so
+** test programs linking liblime_lex_compiler.a resolve it without
+** needing lime.c).  lime.c's main() reads the CLI value and writes
+** it via the extern decl just below the legacy globals. */
