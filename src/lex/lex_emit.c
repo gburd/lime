@@ -1239,7 +1239,14 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
         emit_match_function_for_kind(out, c, prefix, "scalar");
         emit_match_dispatcher(out, prefix);
     } else {
-        /* Legacy scalar single-function emit (--lex-no-vectorize). */
+        /* Legacy scalar single-function emit (--lex-no-vectorize).
+        ** v0.8.x: per-byte loop hoists the per-state trans + accept
+        ** table pointers ABOVE the loop instead of doing a
+        ** switch(state) twice per byte (once for trans lookup, once
+        ** for accept check).  Per .agent/notes/c-perf-audit.md
+        ** item #2: state is loop-invariant inside the byte loop;
+        ** the prior emit asked the compiler to dispatch on it
+        ** 2*n times per call when once was sufficient. */
         fprintf(out, "int %s_match(int state, const char *bytes, size_t n,\n", prefix);
         fprintf(out, "             int *out_rule, size_t *out_consumed) {\n");
         fprintf(out, "    int start;\n");
@@ -1247,12 +1254,17 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
         fprintf(out, "    size_t last_accept_pos = 0;\n");
         fprintf(out, "    size_t i;\n");
         fprintf(out, "    int s;\n");
-
+        fprintf(out, "    /* Hoisted: pick per-state trans/accept pointers ONCE. */\n");
+        fprintf(out, "    const short (*trans)[256] = NULL;\n");
+        fprintf(out, "    const short *accept = NULL;\n");
         fprintf(out, "    switch (state) {\n");
         for (int i = 0; i < c->n_states; i++) {
             char *upper_state = upper_dup(c->states[i].state_name);
-            fprintf(out, "    case %d: start = %s_dfa_%s_start; break;\n", i, prefix,
-                    upper_state);
+            fprintf(out, "    case %d:\n", i);
+            fprintf(out, "        start  = %s_dfa_%s_start;\n", prefix, upper_state);
+            fprintf(out, "        trans  = %s_dfa_%s_trans;\n", prefix, upper_state);
+            fprintf(out, "        accept = %s_dfa_%s_accept;\n", prefix, upper_state);
+            fprintf(out, "        break;\n");
             free(upper_state);
         }
         fprintf(out, "    default: return 0;\n");
@@ -1260,46 +1272,18 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
         fprintf(out, "    s = start;\n\n");
 
         fprintf(out, "    /* Check accept at position 0 (empty match). */\n");
-        fprintf(out, "    switch (state) {\n");
-        for (int i = 0; i < c->n_states; i++) {
-            char *upper_state = upper_dup(c->states[i].state_name);
-            fprintf(out, "    case %d: if (%s_dfa_%s_accept[s] >= 0) {\n", i, prefix,
-                    upper_state);
-            fprintf(out, "        last_accept_rule = %s_dfa_%s_accept[s];\n", prefix,
-                    upper_state);
-            fprintf(out, "        last_accept_pos = 0;\n");
-            fprintf(out, "    } break;\n");
-            free(upper_state);
-        }
+        fprintf(out, "    if (accept[s] >= 0) {\n");
+        fprintf(out, "        last_accept_rule = accept[s];\n");
+        fprintf(out, "        last_accept_pos = 0;\n");
         fprintf(out, "    }\n\n");
 
         fprintf(out, "    for (i = 0; i < n; i++) {\n");
-        fprintf(out, "        int next;\n");
-        fprintf(out, "        switch (state) {\n");
-        for (int i = 0; i < c->n_states; i++) {
-            char *upper_state = upper_dup(c->states[i].state_name);
-            fprintf(out, "        case %d:\n", i);
-            fprintf(out, "            next = %s_dfa_%s_trans[s][(unsigned char)bytes[i]];\n",
-                    prefix, upper_state);
-            fprintf(out, "            break;\n");
-            free(upper_state);
-        }
-        fprintf(out, "        default: return 0;\n");
-        fprintf(out, "        }\n");
+        fprintf(out, "        int next = trans[s][(unsigned char)bytes[i]];\n");
         fprintf(out, "        if (next < 0) break;\n");
         fprintf(out, "        s = next;\n");
-        fprintf(out, "        switch (state) {\n");
-        for (int i = 0; i < c->n_states; i++) {
-            char *upper_state = upper_dup(c->states[i].state_name);
-            fprintf(out, "        case %d:\n", i);
-            fprintf(out, "            if (%s_dfa_%s_accept[s] >= 0) {\n", prefix, upper_state);
-            fprintf(out, "                last_accept_rule = %s_dfa_%s_accept[s];\n", prefix,
-                    upper_state);
-            fprintf(out, "                last_accept_pos = i + 1;\n");
-            fprintf(out, "            }\n");
-            fprintf(out, "            break;\n");
-            free(upper_state);
-        }
+        fprintf(out, "        if (accept[s] >= 0) {\n");
+        fprintf(out, "            last_accept_rule = accept[s];\n");
+        fprintf(out, "            last_accept_pos = i + 1;\n");
         fprintf(out, "        }\n");
         fprintf(out, "    }\n\n");
 
