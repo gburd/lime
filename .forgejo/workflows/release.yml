@@ -42,11 +42,15 @@ jobs:
             tag="${GITHUB_REF#refs/tags/}"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          # Use %(contents) which includes both the subject line
-          # and the body of the annotated tag -- matches what the
-          # GitHub release workflow emits via softprops/action-gh-release
-          # so both forges show identical release bodies.
-          body="$(git tag -l --format='%(contents)' "$tag")"
+          # Use the tag's commit message body (everything after the
+          # subject line).  This matches what softprops/action-gh-release
+          # uses on the GitHub side, so both forges show identical
+          # release bodies.  Falls back to the tag annotation if the
+          # commit message is empty (lightweight tags etc).
+          body="$(git log -1 --format='%b' "$tag")"
+          if [ -z "$body" ]; then
+            body="$(git tag -l --format='%(contents)' "$tag")"
+          fi
           if [ -z "$body" ]; then
             body="Release $tag"
           fi
