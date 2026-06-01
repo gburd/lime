@@ -1048,11 +1048,23 @@ static void emit_match_function_for_kind(FILE *out, const LimeLexCompiled *c, co
     fprintf(out, "    size_t i;\n");
     fprintf(out, "    int s;\n");
     fprintf(out, "    const unsigned char *p = (const unsigned char *)bytes;\n");
+    /* v0.8.x audit item #2: hoist per-state trans/accept pointers +
+    ** fast-path function pointer ABOVE the byte loop instead of doing
+    ** switch(state) three times per byte (fast-path, trans, accept).
+    ** state is loop-invariant inside the byte loop. */
+    fprintf(out, "    const short (*trans)[256] = NULL;\n");
+    fprintf(out, "    const short *accept = NULL;\n");
+    fprintf(out, "    size_t (*fast_path)(int, const unsigned char *, size_t, size_t) = NULL;\n");
 
     fprintf(out, "    switch (state) {\n");
     for (int i = 0; i < c->n_states; i++) {
         char *upper_state = upper_dup(c->states[i].state_name);
-        fprintf(out, "    case %d: start = %s_dfa_%s_start; break;\n", i, prefix, upper_state);
+        fprintf(out, "    case %d:\n", i);
+        fprintf(out, "        start     = %s_dfa_%s_start;\n", prefix, upper_state);
+        fprintf(out, "        trans     = %s_dfa_%s_trans;\n", prefix, upper_state);
+        fprintf(out, "        accept    = %s_dfa_%s_accept;\n", prefix, upper_state);
+        fprintf(out, "        fast_path = %s_fast_path_%s_%s;\n", prefix, upper_state, kind);
+        fprintf(out, "        break;\n");
         free(upper_state);
     }
     fprintf(out, "    default: return 0;\n");
@@ -1060,82 +1072,30 @@ static void emit_match_function_for_kind(FILE *out, const LimeLexCompiled *c, co
     fprintf(out, "    s = start;\n\n");
 
     /* Immediate-accept (empty match) check. */
-    fprintf(out, "    switch (state) {\n");
-    for (int i = 0; i < c->n_states; i++) {
-        char *upper_state = upper_dup(c->states[i].state_name);
-        fprintf(out, "    case %d: if (%s_dfa_%s_accept[s] >= 0) {\n", i, prefix, upper_state);
-        fprintf(out, "        last_accept_rule = %s_dfa_%s_accept[s];\n", prefix, upper_state);
-        fprintf(out, "        last_accept_pos = 0;\n");
-        fprintf(out, "    } break;\n");
-        free(upper_state);
-    }
+    fprintf(out, "    if (accept[s] >= 0) {\n");
+    fprintf(out, "        last_accept_rule = accept[s];\n");
+    fprintf(out, "        last_accept_pos = 0;\n");
     fprintf(out, "    }\n\n");
 
-    /* Main loop.  i is mutated inside via the fast-path branch. */
+    /* Main loop.  No per-byte switch(state) -- trans/accept/fast_path
+    ** are pointers picked once at function entry. */
     fprintf(out, "    i = 0;\n");
     fprintf(out, "    while (i < n) {\n");
-    /* Fast-path scan: route through per-kind dispatcher.  When the
-    ** scanner advances pos, the run is necessarily on a self-loop
-    ** state, so the active DFA state s is unchanged.  If the state
-    ** is accepting, the longest match extends to new_pos. */
-    fprintf(out, "        size_t new_pos;\n");
-    fprintf(out, "        switch (state) {\n");
-    for (int gi = 0; gi < c->n_states; gi++) {
-        char *upper_state = upper_dup(c->states[gi].state_name);
-        fprintf(out, "        case %d:\n", gi);
-        fprintf(out, "            new_pos = %s_fast_path_%s_%s(s, p, i, n);\n", prefix,
-                upper_state, kind);
-        fprintf(out, "            break;\n");
-        free(upper_state);
-    }
-    fprintf(out, "        default: new_pos = i; break;\n");
-    fprintf(out, "        }\n");
+    fprintf(out, "        size_t new_pos = fast_path(s, p, i, n);\n");
     fprintf(out, "        if (new_pos > i) {\n");
-    fprintf(out, "            switch (state) {\n");
-    for (int gi = 0; gi < c->n_states; gi++) {
-        char *upper_state = upper_dup(c->states[gi].state_name);
-        fprintf(out, "            case %d:\n", gi);
-        fprintf(out, "                if (%s_dfa_%s_accept[s] >= 0) {\n", prefix, upper_state);
-        fprintf(out, "                    last_accept_rule = %s_dfa_%s_accept[s];\n", prefix,
-                upper_state);
-        fprintf(out, "                    last_accept_pos = new_pos;\n");
-        fprintf(out, "                }\n");
-        fprintf(out, "                break;\n");
-        free(upper_state);
-    }
-    fprintf(out, "            default: break;\n");
+    fprintf(out, "            if (accept[s] >= 0) {\n");
+    fprintf(out, "                last_accept_rule = accept[s];\n");
+    fprintf(out, "                last_accept_pos = new_pos;\n");
     fprintf(out, "            }\n");
     fprintf(out, "            i = new_pos;\n");
     fprintf(out, "            if (i >= n) break;\n");
     fprintf(out, "        }\n");
-
-    /* Standard step. */
-    fprintf(out, "        int next;\n");
-    fprintf(out, "        switch (state) {\n");
-    for (int gi = 0; gi < c->n_states; gi++) {
-        char *upper_state = upper_dup(c->states[gi].state_name);
-        fprintf(out, "        case %d:\n", gi);
-        fprintf(out, "            next = %s_dfa_%s_trans[s][p[i]];\n", prefix, upper_state);
-        fprintf(out, "            break;\n");
-        free(upper_state);
-    }
-    fprintf(out, "        default: return 0;\n");
-    fprintf(out, "        }\n");
+    fprintf(out, "        int next = trans[s][p[i]];\n");
     fprintf(out, "        if (next < 0) break;\n");
     fprintf(out, "        s = next;\n");
-    fprintf(out, "        switch (state) {\n");
-    for (int gi = 0; gi < c->n_states; gi++) {
-        char *upper_state = upper_dup(c->states[gi].state_name);
-        fprintf(out, "        case %d:\n", gi);
-        fprintf(out, "            if (%s_dfa_%s_accept[s] >= 0) {\n", prefix, upper_state);
-        fprintf(out, "                last_accept_rule = %s_dfa_%s_accept[s];\n", prefix,
-                upper_state);
-        fprintf(out, "                last_accept_pos = i + 1;\n");
-        fprintf(out, "            }\n");
-        fprintf(out, "            break;\n");
-        free(upper_state);
-    }
-    fprintf(out, "        default: break;\n");
+    fprintf(out, "        if (accept[s] >= 0) {\n");
+    fprintf(out, "            last_accept_rule = accept[s];\n");
+    fprintf(out, "            last_accept_pos = i + 1;\n");
     fprintf(out, "        }\n");
     fprintf(out, "        i++;\n");
     fprintf(out, "    }\n\n");
