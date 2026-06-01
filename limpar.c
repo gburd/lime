@@ -106,6 +106,22 @@
 # define yytestcase(X)
 #endif
 
+/* Branch-prediction hints.  These are no-ops on compilers without
+** __builtin_expect support; the runtime is correct either way.
+** Used in the hot find_shift / find_reduce / dispatch paths to
+** mark statistically-rare branches (collisions, accept, error).
+** Per .agent/notes/c-perf-audit.md item #5: limpar.c was the
+** runtime template every user binary embeds, and had zero hints. */
+#ifndef LIME_LIKELY
+# if defined(__GNUC__) || defined(__clang__)
+#  define LIME_LIKELY(x)   __builtin_expect(!!(x), 1)
+#  define LIME_UNLIKELY(x) __builtin_expect(!!(x), 0)
+# else
+#  define LIME_LIKELY(x)   (x)
+#  define LIME_UNLIKELY(x) (x)
+# endif
+#endif
+
 /* Macro to determine if stack space has the ability to grow using
 ** heap memory.
 */
@@ -656,7 +672,7 @@ static YYACTIONTYPE yy_find_shift_action(
 ){
   int i;
 
-  if( stateno>YY_MAX_SHIFT ) return stateno;
+  if( LIME_UNLIKELY(stateno>YY_MAX_SHIFT) ) return stateno;
 #ifdef YYAOT
   /* Use the AOT-compiled switch-based lookup instead of table-driven */
   return yy_find_shift_action_aot(stateno, (unsigned short)iLookAhead);
@@ -674,7 +690,7 @@ static YYACTIONTYPE yy_find_shift_action(
     assert( iLookAhead < YYNTOKEN );
     i += iLookAhead;
     assert( i<(int)YY_NLOOKAHEAD );
-    if( yy_lookahead[i]!=iLookAhead ){
+    if( LIME_UNLIKELY(yy_lookahead[i]!=iLookAhead) ){
 #ifdef YYFALLBACK
       YYCODETYPE iFallback;            /* Fallback token */
       assert( iLookAhead<sizeof(yyFallback)/sizeof(yyFallback[0]) );
@@ -1462,7 +1478,7 @@ void Parse(
       yypParser->yyerrcnt--;
 #endif
       break;
-    }else if( yyact==YY_ACCEPT_ACTION ){
+    }else if( LIME_UNLIKELY(yyact==YY_ACCEPT_ACTION) ){
       yypParser->yytos--;
       yy_accept(yypParser);
       return;

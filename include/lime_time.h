@@ -171,4 +171,38 @@ static inline uint64_t lime_now_realtime_ns(void) {
 #define LIME_UNLIKELY(x) (x)
 #endif
 
+/*
+** LIME_HOT / LIME_COLD -- function-placement attributes.
+**
+** gcc/clang group LIME_HOT functions into .text.hot and LIME_COLD
+** functions into .text.unlikely, so the linker keeps frequently-
+** called code dense (better icache density) and rarely-called
+** code (error paths, destructors) out of the way.  No-op on MSVC
+** and other compilers.
+**
+** Per .agent/notes/c-perf-audit.md item #4: lime had zero usage
+** of these annotations despite multiple obvious candidates.
+*/
+#if defined(__GNUC__) || defined(__clang__)
+#define LIME_HOT  __attribute__((hot))
+#define LIME_COLD __attribute__((cold))
+#else
+#define LIME_HOT
+#define LIME_COLD
+#endif
+
+/*
+** LIME_RESTRICT -- pointer-aliasing-free attribute.
+**
+** Marks a pointer parameter as not aliasing any other pointer in
+** the same function -- the compiler can promote loads to registers
+** across stores through other pointers.  Trivially mapped to C99
+** `restrict` on gcc/clang/MSVC; no-op elsewhere.
+*/
+#if defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER)
+#define LIME_RESTRICT __restrict__
+#else
+#define LIME_RESTRICT
+#endif
+
 #endif /* LIME_TIME_H */

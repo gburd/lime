@@ -128,7 +128,7 @@ static void stack_pop_n(ParseStack *s, uint32_t n) {
 */
 typedef uint32_t (*lime_jit_shift_fn)(uint32_t state, uint32_t lookahead);
 
-static inline uint16_t find_shift_action(const ParserSnapshot *snap, uint16_t stateno,
+static inline uint16_t find_shift_action(const ParserSnapshot * LIME_RESTRICT snap, uint16_t stateno,
                                          uint16_t lookahead) {
     lime_jit_shift_fn jit_fn = (lime_jit_shift_fn)snap->jit_find_shift_fn;
     if (LIME_UNLIKELY(jit_fn != NULL)) {
@@ -148,7 +148,7 @@ static inline uint16_t find_shift_action(const ParserSnapshot *snap, uint16_t st
     return snap->yy_default[stateno];
 }
 
-static inline uint16_t find_reduce_action(const ParserSnapshot *snap, uint16_t stateno,
+static inline uint16_t find_reduce_action(const ParserSnapshot * LIME_RESTRICT snap, uint16_t stateno,
                                           uint16_t lookahead) {
     if (LIME_UNLIKELY(snap->yy_reduce_ofst == NULL)) return snap->yy_no_action;
 
@@ -171,7 +171,7 @@ static inline uint16_t find_reduce_action(const ParserSnapshot *snap, uint16_t s
 ** on the LHS non-terminal from the new top state.  Mirrors yy_reduce
 ** in limpar.c.
 */
-static int reduce(const ParserSnapshot *snap, ParseStack *stk, uint32_t ruleno) {
+static int reduce(const ParserSnapshot * LIME_RESTRICT snap, ParseStack * LIME_RESTRICT stk, uint32_t ruleno) {
     if (snap->yy_rule_info_nrhs == NULL || snap->yy_rule_info_lhs == NULL) {
         return -1;
     }
@@ -236,6 +236,7 @@ typedef struct ParseEngine {
 } ParseEngine;
 
 /* Hook called from parse_end (in parse_context.c) to free our engine. */
+LIME_COLD
 void parse_engine_drop(struct ParseContext *ctx) {
     if (ctx == NULL || ctx->engine == NULL) return;
     ParseEngine *eng = (ParseEngine *)ctx->engine;
@@ -250,6 +251,7 @@ void parse_engine_drop(struct ParseContext *ctx) {
 **   1  -- end-of-input token (0) accepted, parse complete
 **  -1  -- syntax error / parse failure
 */
+LIME_HOT
 int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_value, int location) {
     (void)token_value; /* The runtime engine is value-free; the */
     (void)location;    /* generator's typed entry handles those. */
