@@ -192,20 +192,9 @@ fn step_INITIAL(state: u16, b: u8) -> i16 {
 /// scanning a run of self-loop bytes.  LLVM
 /// auto-vectorises these tight loops.
 #[inline(always)]
-fn scan_self_loop_INITIAL_2(bytes: &[u8], p: usize) -> usize {
-    let n = bytes.len();
-    let mut p = p;
-    while p < n {
-        let b = unsafe { *bytes.get_unchecked(p) };
-        if b == 34 || b == 92 { break; }
-        p += 1;
-    }
-    p
-}
-#[inline(always)]
-fn fast_path_INITIAL(state: u16, bytes: &[u8], p: usize) -> usize {
+fn fast_path_INITIAL_g<S: Scanner>(state: u16, bytes: &[u8], p: usize) -> usize {
     match state {
-        2 => scan_self_loop_INITIAL_2(bytes, p),
+        2 => S::scan_INITIAL_2(bytes, p),
         _ => p,
     }
 }
@@ -228,6 +217,287 @@ pub const JSON_RULE_STR: u16 = 10;
 pub const JSON_RULE_WS: u16 = 11;
 
 pub const JSON_NRULES: u16 = 12;
+// =====================================================================
+// SIMD fast-path helpers (--rustlex-simd, multiversion)
+// =====================================================================
+
+// AVX2 module: scan_until_<n>(bytes, start, b1[, b2[, b3]]) finds
+// the first byte in bytes[start..] equal to any of (b1, ...) and
+// returns its index, or bytes.len() if none.  These are #[inline
+// (always)] and carry NO #[target_feature] attribute -- they are
+// only ever called from a function that has already declared
+// target_feature(enable = "avx2"), so the AVX2 intrinsics
+// inline into that caller's body without crossing a target_feature
+// inlining barrier.  Runtime AVX2 detection happens once per
+// tokenize() call, not once per scan.
+
+#[cfg(target_arch = "x86_64")]
+mod scan_avx2 {
+    use std::arch::x86_64::*;
+
+    #[inline(always)]
+    pub unsafe fn scan_until_1(bytes: &[u8], start: usize, b1: u8) -> usize {
+        let n = bytes.len();
+        let mut p = start;
+        let v1 = _mm256_set1_epi8(b1 as i8);
+        while p + 32 <= n {
+            let chunk = _mm256_loadu_si256(bytes.as_ptr().add(p) as *const __m256i);
+            let cmp = _mm256_cmpeq_epi8(chunk, v1);
+            let mask = _mm256_movemask_epi8(cmp) as u32;
+            if mask != 0 { return p + (mask.trailing_zeros() as usize); }
+            p += 32;
+        }
+        while p < n {
+            if *bytes.get_unchecked(p) == b1 { return p; }
+            p += 1;
+        }
+        n
+    }
+
+    #[inline(always)]
+    pub unsafe fn scan_until_2(bytes: &[u8], start: usize, b1: u8, b2: u8) -> usize {
+        let n = bytes.len();
+        let mut p = start;
+        let v1 = _mm256_set1_epi8(b1 as i8);
+        let v2 = _mm256_set1_epi8(b2 as i8);
+        while p + 32 <= n {
+            let chunk = _mm256_loadu_si256(bytes.as_ptr().add(p) as *const __m256i);
+            let cmp1 = _mm256_cmpeq_epi8(chunk, v1);
+            let cmp2 = _mm256_cmpeq_epi8(chunk, v2);
+            let cmp = _mm256_or_si256(cmp1, cmp2);
+            let mask = _mm256_movemask_epi8(cmp) as u32;
+            if mask != 0 { return p + (mask.trailing_zeros() as usize); }
+            p += 32;
+        }
+        while p < n {
+            let b = *bytes.get_unchecked(p);
+            if b == b1 || b == b2 { return p; }
+            p += 1;
+        }
+        n
+    }
+
+    #[inline(always)]
+    pub unsafe fn scan_until_3(bytes: &[u8], start: usize, b1: u8, b2: u8, b3: u8) -> usize {
+        let n = bytes.len();
+        let mut p = start;
+        let v1 = _mm256_set1_epi8(b1 as i8);
+        let v2 = _mm256_set1_epi8(b2 as i8);
+        let v3 = _mm256_set1_epi8(b3 as i8);
+        while p + 32 <= n {
+            let chunk = _mm256_loadu_si256(bytes.as_ptr().add(p) as *const __m256i);
+            let cmp1 = _mm256_cmpeq_epi8(chunk, v1);
+            let cmp2 = _mm256_cmpeq_epi8(chunk, v2);
+            let cmp3 = _mm256_cmpeq_epi8(chunk, v3);
+            let cmp = _mm256_or_si256(_mm256_or_si256(cmp1, cmp2), cmp3);
+            let mask = _mm256_movemask_epi8(cmp) as u32;
+            if mask != 0 { return p + (mask.trailing_zeros() as usize); }
+            p += 32;
+        }
+        while p < n {
+            let b = *bytes.get_unchecked(p);
+            if b == b1 || b == b2 || b == b3 { return p; }
+            p += 1;
+        }
+        n
+    }
+}
+
+// NEON module (aarch64).  NEON is mandatory on aarch64 so we
+// don't need runtime detection -- the multiversion dispatch
+// in tokenize() routes all aarch64 callers here directly.
+
+#[cfg(target_arch = "aarch64")]
+mod scan_neon {
+    use std::arch::aarch64::*;
+
+    #[inline(always)]
+    pub unsafe fn scan_until_1(bytes: &[u8], start: usize, b1: u8) -> usize {
+        let n = bytes.len();
+        let mut p = start;
+        let v1 = vdupq_n_u8(b1);
+        while p + 16 <= n {
+            let chunk = vld1q_u8(bytes.as_ptr().add(p));
+            let cmp = vceqq_u8(chunk, v1);
+            // Pack 16 lane results into a 64-bit mask: each lane becomes 4 bits.
+            let mask = vget_lane_u64(
+                vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(cmp), 4)), 0);
+            if mask != 0 { return p + (mask.trailing_zeros() as usize / 4); }
+            p += 16;
+        }
+        while p < n {
+            if *bytes.get_unchecked(p) == b1 { return p; }
+            p += 1;
+        }
+        n
+    }
+
+    #[inline(always)]
+    pub unsafe fn scan_until_2(bytes: &[u8], start: usize, b1: u8, b2: u8) -> usize {
+        let n = bytes.len();
+        let mut p = start;
+        let v1 = vdupq_n_u8(b1);
+        let v2 = vdupq_n_u8(b2);
+        while p + 16 <= n {
+            let chunk = vld1q_u8(bytes.as_ptr().add(p));
+            let any = vorrq_u8(vceqq_u8(chunk, v1), vceqq_u8(chunk, v2));
+            let mask = vget_lane_u64(
+                vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(any), 4)), 0);
+            if mask != 0 { return p + (mask.trailing_zeros() as usize / 4); }
+            p += 16;
+        }
+        while p < n {
+            let b = *bytes.get_unchecked(p);
+            if b == b1 || b == b2 { return p; }
+            p += 1;
+        }
+        n
+    }
+
+    #[inline(always)]
+    pub unsafe fn scan_until_3(bytes: &[u8], start: usize, b1: u8, b2: u8, b3: u8) -> usize {
+        let n = bytes.len();
+        let mut p = start;
+        let v1 = vdupq_n_u8(b1);
+        let v2 = vdupq_n_u8(b2);
+        let v3 = vdupq_n_u8(b3);
+        while p + 16 <= n {
+            let chunk = vld1q_u8(bytes.as_ptr().add(p));
+            let any = vorrq_u8(
+                vorrq_u8(vceqq_u8(chunk, v1), vceqq_u8(chunk, v2)),
+                vceqq_u8(chunk, v3));
+            let mask = vget_lane_u64(
+                vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(any), 4)), 0);
+            if mask != 0 { return p + (mask.trailing_zeros() as usize / 4); }
+            p += 16;
+        }
+        while p < n {
+            let b = *bytes.get_unchecked(p);
+            if b == b1 || b == b2 || b == b3 { return p; }
+            p += 1;
+        }
+        n
+    }
+}
+
+// Scalar fallback module: portable Rust, no platform intrinsics.
+// Compiled into ScalarScanner; also serves as the fallback for
+// non-x86_64 / non-aarch64 architectures (RISC-V no-V, etc).
+
+mod scan_scalar {
+    #[inline(always)]
+    pub fn scan_until_1(bytes: &[u8], start: usize, b1: u8) -> usize {
+        let n = bytes.len();
+        let mut p = start;
+        while p < n {
+            let b = bytes[p];
+            if b == b1 { return p; }
+            p += 1;
+        }
+        n
+    }
+
+    #[inline(always)]
+    pub fn scan_until_2(bytes: &[u8], start: usize, b1: u8, b2: u8) -> usize {
+        let n = bytes.len();
+        let mut p = start;
+        while p < n {
+            let b = bytes[p];
+            if b == b1 || b == b2 { return p; }
+            p += 1;
+        }
+        n
+    }
+
+    #[inline(always)]
+    pub fn scan_until_3(bytes: &[u8], start: usize, b1: u8, b2: u8, b3: u8) -> usize {
+        let n = bytes.len();
+        let mut p = start;
+        while p < n {
+            let b = bytes[p];
+            if b == b1 || b == b2 || b == b3 { return p; }
+            p += 1;
+        }
+        n
+    }
+}
+
+// Scanner trait: per-fast-path-state methods.  Each method's
+// AvxScanner / NeonScanner / ScalarScanner impl bakes in the
+// exit-byte literals from the DFA, so LLVM treats them as
+// compile-time constants when monomorphising the lexer body.
+
+trait Scanner {
+    fn scan_INITIAL_2(bytes: &[u8], p: usize) -> usize;
+    fn scan_until_1(bytes: &[u8], p: usize, b1: u8) -> usize;
+    fn scan_until_2(bytes: &[u8], p: usize, b1: u8, b2: u8) -> usize;
+    fn scan_until_3(bytes: &[u8], p: usize, b1: u8, b2: u8, b3: u8) -> usize;
+}
+
+#[cfg(target_arch = "x86_64")]
+struct AvxScanner;
+#[cfg(target_arch = "x86_64")]
+impl Scanner for AvxScanner {
+    #[inline(always)]
+    fn scan_INITIAL_2(bytes: &[u8], p: usize) -> usize {
+        unsafe { scan_avx2::scan_until_2(bytes, p, 34, 92) }
+    }
+    #[inline(always)]
+    fn scan_until_1(bytes: &[u8], p: usize, b1: u8) -> usize {
+        unsafe { scan_avx2::scan_until_1(bytes, p, b1) }
+    }
+    #[inline(always)]
+    fn scan_until_2(bytes: &[u8], p: usize, b1: u8, b2: u8) -> usize {
+        unsafe { scan_avx2::scan_until_2(bytes, p, b1, b2) }
+    }
+    #[inline(always)]
+    fn scan_until_3(bytes: &[u8], p: usize, b1: u8, b2: u8, b3: u8) -> usize {
+        unsafe { scan_avx2::scan_until_3(bytes, p, b1, b2, b3) }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+struct NeonScanner;
+#[cfg(target_arch = "aarch64")]
+impl Scanner for NeonScanner {
+    #[inline(always)]
+    fn scan_INITIAL_2(bytes: &[u8], p: usize) -> usize {
+        unsafe { scan_neon::scan_until_2(bytes, p, 34, 92) }
+    }
+    #[inline(always)]
+    fn scan_until_1(bytes: &[u8], p: usize, b1: u8) -> usize {
+        unsafe { scan_neon::scan_until_1(bytes, p, b1) }
+    }
+    #[inline(always)]
+    fn scan_until_2(bytes: &[u8], p: usize, b1: u8, b2: u8) -> usize {
+        unsafe { scan_neon::scan_until_2(bytes, p, b1, b2) }
+    }
+    #[inline(always)]
+    fn scan_until_3(bytes: &[u8], p: usize, b1: u8, b2: u8, b3: u8) -> usize {
+        unsafe { scan_neon::scan_until_3(bytes, p, b1, b2, b3) }
+    }
+}
+
+struct ScalarScanner;
+impl Scanner for ScalarScanner {
+    #[inline(always)]
+    fn scan_INITIAL_2(bytes: &[u8], p: usize) -> usize {
+        scan_scalar::scan_until_2(bytes, p, 34, 92)
+    }
+    #[inline(always)]
+    fn scan_until_1(bytes: &[u8], p: usize, b1: u8) -> usize {
+        scan_scalar::scan_until_1(bytes, p, b1)
+    }
+    #[inline(always)]
+    fn scan_until_2(bytes: &[u8], p: usize, b1: u8, b2: u8) -> usize {
+        scan_scalar::scan_until_2(bytes, p, b1, b2)
+    }
+    #[inline(always)]
+    fn scan_until_3(bytes: &[u8], p: usize, b1: u8, b2: u8, b3: u8) -> usize {
+        scan_scalar::scan_until_3(bytes, p, b1, b2, b3)
+    }
+}
+
 
 // ======================================================================
 // Tokenizer runtime
@@ -277,9 +547,9 @@ fn dfa_step_for_state(s: StateId, state: u16, b: u8) -> i16 {
 /// Fast-path dispatcher: state group + DFA state
 /// -> advanced byte position after SIMD scan.
 #[inline(always)]
-fn fast_path_for_state(s: StateId, state: u16, bytes: &[u8], p: usize) -> usize {
+fn fast_path_for_state_g<S: Scanner>(s: StateId, state: u16, bytes: &[u8], p: usize) -> usize {
     match s {
-        0 => fast_path_INITIAL(state, bytes, p),
+        0 => fast_path_INITIAL_g::<S>(state, bytes, p),
         _ => p,
     }
 }
@@ -328,19 +598,41 @@ impl Lexer {
     /// per token beyond the result Vec.
     pub fn tokenize(&mut self, input: &str) -> Result<Vec<Token>, LexError> {
         let bytes = input.as_bytes();
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::arch::is_x86_feature_detected!("avx2") {
+                return unsafe { self.tokenize_avx2(bytes) };
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            return unsafe { self.tokenize_neon(bytes) };
+        }
+        #[allow(unreachable_code)]
+        self.tokenize_scalar(bytes)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2,bmi2")]
+    unsafe fn tokenize_avx2(&mut self, bytes: &[u8]) -> Result<Vec<Token>, LexError> {
+        self.tokenize_impl::<AvxScanner>(bytes)
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    unsafe fn tokenize_neon(&mut self, bytes: &[u8]) -> Result<Vec<Token>, LexError> {
+        self.tokenize_impl::<NeonScanner>(bytes)
+    }
+
+    fn tokenize_scalar(&mut self, bytes: &[u8]) -> Result<Vec<Token>, LexError> {
+        self.tokenize_impl::<ScalarScanner>(bytes)
+    }
+
+    #[inline(always)]
+    fn tokenize_impl<S: Scanner>(&mut self, bytes: &[u8]) -> Result<Vec<Token>, LexError> {
         let mut out = Vec::new();
         let mut pos: usize = 0;
         let mut line: u32 = 1;
         let mut column: u32 = 1;
-        // v0.8.3: step_* match-based dispatch + per-state
-        // SIMD fast path.  Each iteration first calls
-        // fast_path_for_state which scans runs of self-loop
-        // bytes (string body, comment body, identifier
-        // scan).  LLVM auto-vectorises these scans to
-        // memchr-equivalent SIMD on x86 / ARM.  After the
-        // scan we fall through to the standard step
-        // dispatch which handles the byte that broke the
-        // self-loop.
         while pos < bytes.len() {
             let accept = dfa_accept_for_state(self.state);
             let mut state: u16 = dfa_start_for_state(self.state);
@@ -349,12 +641,8 @@ impl Lexer {
             let mut p = pos;
             unsafe {
                 while p < bytes.len() {
-                    // SIMD fast path: scan self-loop run.
-                    let new_p = fast_path_for_state(self.state, state, bytes, p);
+                    let new_p = fast_path_for_state_g::<S>(self.state, state, bytes, p);
                     if new_p > p {
-                        // We advanced via self-loop scan.
-                        // For accepting states the longest
-                        // match extends to new_p.
                         let accv = *accept.get_unchecked(state as usize);
                         if accv >= 0 {
                             last_accept = accv;
@@ -382,7 +670,6 @@ impl Lexer {
             let tok_len = last_accept_pos - pos;
             let tok_line = line;
             let tok_col = column;
-            // Advance line/column over the matched bytes.
             for &b in &bytes[pos..last_accept_pos] {
                 if b == b'\n' { line += 1; column = 1; }
                 else if b != b'\r' { column += 1; }

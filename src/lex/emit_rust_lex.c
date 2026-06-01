@@ -310,7 +310,7 @@ static void emit_state_dfa(FILE *out, const char *prefix,
                 fprintf(out, "    let n = bytes.len();\n");
                 fprintf(out, "    let mut p = p;\n");
                 fprintf(out, "    while p < n {\n");
-                fprintf(out, "        let b = unsafe { *bytes.get_unchecked(p) };\n");
+                fprintf(out, "        let b = bytes[p];\n");
                 fprintf(out, "        if ");
                 for (int i = 0; i < n_exit; i++) {
                     if (i > 0) fprintf(out, " || ");
@@ -654,7 +654,7 @@ static void emit_simd_helpers(FILE *out, const LimeLexCompiled *compiled) {
             "        let n = bytes.len();\n"
             "        let mut p = start;\n"
             "        while p < n {\n"
-            "            let b = unsafe { *bytes.get_unchecked(p) };\n"
+            "            let b = bytes[p];\n"
             "            if b == b1 { return p; }\n"
             "            p += 1;\n"
             "        }\n"
@@ -665,7 +665,7 @@ static void emit_simd_helpers(FILE *out, const LimeLexCompiled *compiled) {
             "        let n = bytes.len();\n"
             "        let mut p = start;\n"
             "        while p < n {\n"
-            "            let b = unsafe { *bytes.get_unchecked(p) };\n"
+            "            let b = bytes[p];\n"
             "            if b == b1 || b == b2 { return p; }\n"
             "            p += 1;\n"
             "        }\n"
@@ -676,7 +676,7 @@ static void emit_simd_helpers(FILE *out, const LimeLexCompiled *compiled) {
             "        let n = bytes.len();\n"
             "        let mut p = start;\n"
             "        while p < n {\n"
-            "            let b = unsafe { *bytes.get_unchecked(p) };\n"
+            "            let b = bytes[p];\n"
             "            if b == b1 || b == b2 || b == b3 { return p; }\n"
             "            p += 1;\n"
             "        }\n"

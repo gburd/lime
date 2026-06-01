@@ -390,7 +390,7 @@ mod scan_scalar {
         let n = bytes.len();
         let mut p = start;
         while p < n {
-            let b = unsafe { *bytes.get_unchecked(p) };
+            let b = bytes[p];
             if b == b1 { return p; }
             p += 1;
         }
@@ -402,7 +402,7 @@ mod scan_scalar {
         let n = bytes.len();
         let mut p = start;
         while p < n {
-            let b = unsafe { *bytes.get_unchecked(p) };
+            let b = bytes[p];
             if b == b1 || b == b2 { return p; }
             p += 1;
         }
@@ -414,7 +414,7 @@ mod scan_scalar {
         let n = bytes.len();
         let mut p = start;
         while p < n {
-            let b = unsafe { *bytes.get_unchecked(p) };
+            let b = bytes[p];
             if b == b1 || b == b2 || b == b3 { return p; }
             p += 1;
         }
@@ -429,6 +429,9 @@ mod scan_scalar {
 
 trait Scanner {
     fn scan_INITIAL_2(bytes: &[u8], p: usize) -> usize;
+    fn scan_until_1(bytes: &[u8], p: usize, b1: u8) -> usize;
+    fn scan_until_2(bytes: &[u8], p: usize, b1: u8, b2: u8) -> usize;
+    fn scan_until_3(bytes: &[u8], p: usize, b1: u8, b2: u8, b3: u8) -> usize;
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -438,6 +441,18 @@ impl Scanner for AvxScanner {
     #[inline(always)]
     fn scan_INITIAL_2(bytes: &[u8], p: usize) -> usize {
         unsafe { scan_avx2::scan_until_2(bytes, p, 34, 92) }
+    }
+    #[inline(always)]
+    fn scan_until_1(bytes: &[u8], p: usize, b1: u8) -> usize {
+        unsafe { scan_avx2::scan_until_1(bytes, p, b1) }
+    }
+    #[inline(always)]
+    fn scan_until_2(bytes: &[u8], p: usize, b1: u8, b2: u8) -> usize {
+        unsafe { scan_avx2::scan_until_2(bytes, p, b1, b2) }
+    }
+    #[inline(always)]
+    fn scan_until_3(bytes: &[u8], p: usize, b1: u8, b2: u8, b3: u8) -> usize {
+        unsafe { scan_avx2::scan_until_3(bytes, p, b1, b2, b3) }
     }
 }
 
@@ -449,6 +464,18 @@ impl Scanner for NeonScanner {
     fn scan_INITIAL_2(bytes: &[u8], p: usize) -> usize {
         unsafe { scan_neon::scan_until_2(bytes, p, 34, 92) }
     }
+    #[inline(always)]
+    fn scan_until_1(bytes: &[u8], p: usize, b1: u8) -> usize {
+        unsafe { scan_neon::scan_until_1(bytes, p, b1) }
+    }
+    #[inline(always)]
+    fn scan_until_2(bytes: &[u8], p: usize, b1: u8, b2: u8) -> usize {
+        unsafe { scan_neon::scan_until_2(bytes, p, b1, b2) }
+    }
+    #[inline(always)]
+    fn scan_until_3(bytes: &[u8], p: usize, b1: u8, b2: u8, b3: u8) -> usize {
+        unsafe { scan_neon::scan_until_3(bytes, p, b1, b2, b3) }
+    }
 }
 
 struct ScalarScanner;
@@ -456,6 +483,18 @@ impl Scanner for ScalarScanner {
     #[inline(always)]
     fn scan_INITIAL_2(bytes: &[u8], p: usize) -> usize {
         scan_scalar::scan_until_2(bytes, p, 34, 92)
+    }
+    #[inline(always)]
+    fn scan_until_1(bytes: &[u8], p: usize, b1: u8) -> usize {
+        scan_scalar::scan_until_1(bytes, p, b1)
+    }
+    #[inline(always)]
+    fn scan_until_2(bytes: &[u8], p: usize, b1: u8, b2: u8) -> usize {
+        scan_scalar::scan_until_2(bytes, p, b1, b2)
+    }
+    #[inline(always)]
+    fn scan_until_3(bytes: &[u8], p: usize, b1: u8, b2: u8, b3: u8) -> usize {
+        scan_scalar::scan_until_3(bytes, p, b1, b2, b3)
     }
 }
 

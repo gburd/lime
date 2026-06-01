@@ -390,7 +390,7 @@ mod scan_scalar {
         let n = bytes.len();
         let mut p = start;
         while p < n {
-            let b = unsafe { *bytes.get_unchecked(p) };
+            let b = bytes[p];
             if b == b1 { return p; }
             p += 1;
         }
@@ -402,7 +402,7 @@ mod scan_scalar {
         let n = bytes.len();
         let mut p = start;
         while p < n {
-            let b = unsafe { *bytes.get_unchecked(p) };
+            let b = bytes[p];
             if b == b1 || b == b2 { return p; }
             p += 1;
         }
@@ -414,7 +414,7 @@ mod scan_scalar {
         let n = bytes.len();
         let mut p = start;
         while p < n {
-            let b = unsafe { *bytes.get_unchecked(p) };
+            let b = bytes[p];
             if b == b1 || b == b2 || b == b3 { return p; }
             p += 1;
         }

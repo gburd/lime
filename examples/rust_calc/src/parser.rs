@@ -405,16 +405,17 @@ impl CalcParser {
         self.rhs_scratch.extend(
             self.stack[split..].iter().map(|f| f.value.clone()));
         let cb = YY_RULE_REDUCE_FN[ruleno as usize];
-        // SAFETY: split-borrow user from rhs_scratch via raw
-        // pointers.  Both are owned by self; we're calling a
-        // user fn that gets disjoint &mut refs to them and
-        // self.stack isn't touched.  This is the same shape
-        // as Vec::split_at_mut but across struct fields.
-        let user_ptr: *mut UserArg = &mut self.user;
+        // Borrow-split: rhs_scratch and user are disjoint named
+        // fields of self.  NLL allows disjoint &mut borrows in
+        // a single struct-literal expression -- each field
+        // expression is an rvalue evaluated independently before
+        // the literal is constructed, and the projections do
+        // not overlap by language definition.  See the
+        // Rustonomicon 'Splitting Borrows' chapter.
         cb(&mut ReduceCtx {
             lhs: &mut lhs_value,
             rhs: &mut self.rhs_scratch,
-            user: unsafe { &mut *user_ptr },
+            user: &mut self.user,
         });
 
         // Pop nrhs frames.
