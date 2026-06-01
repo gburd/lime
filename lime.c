@@ -16,6 +16,7 @@
 #include <stdint.h>
 #include <limits.h>
 #include <errno.h>
+#include <stddef.h>
 
 /* ROADMAP item 1, phase 3 (in-process LALR rebuild library).
 **
@@ -4691,6 +4692,277 @@ static int run_diff_conflicts(const char *base_path,
 }
 #endif
 
+/* ========================================================== */
+/*  v0.8.6 CLI flag redesign -- feature toggle infrastructure.  */
+/* ========================================================== */
+/*
+** New CLI scheme:
+**   -t <target> | --target=<target>     where <target> is `c` or `rust`
+**   -e <list>   | --enable=<list>       comma-separated feature names
+**                 --disable=<list>      comma-separated feature names
+**
+** Recognised feature names: simd, memchr, per-token-dfa, vectorize,
+** crate, nostd.  Defaults: simd=ON, memchr=OFF, per-token-dfa=OFF,
+** vectorize=ON, crate=OFF, nostd=OFF.
+**
+** All the old `--rustlex-*` / `--rust-*` / `--per-token-dfa` flags
+** continue to work as deprecation aliases (one-line stderr warning).
+**
+** Implementation: a single `feature_flag_state` tracks the desired
+** state of each toggle.  After OptInit returns, main() populates
+** the existing g_lime_* globals from the state, so downstream emit
+** code (src/lex/emit_rust_lex.c, src/emit_rust.c, etc.) keeps
+** working unchanged.
+**
+** Short-form flags accept `-tc` / `-trust` (glued, lime convention)
+** and `-eA,B,C` (glued).  We also pre-process argv before OptInit
+** to splice `-t rust` / `-e simd,memchr` (separate args) into glued
+** form so users can write either.
+*/
+
+typedef struct feature_flag_state {
+    int simd;          /* default 1: SIMD-accelerated fast-path scans */
+    int memchr;        /* default 0: memchr crate dispatch (Rust)     */
+    int per_token_dfa; /* default 0: per-rule DFA dispatch            */
+    int vectorize;     /* default 1: C-side SIMD/intrinsic emit       */
+    int crate;         /* default 0: emit Cargo crate (Rust target)   */
+    int nostd;         /* default 0: #![no_std] (Rust target)         */
+} feature_flag_state;
+
+static feature_flag_state g_features = {
+    .simd = 1,
+    .memchr = 0,
+    .per_token_dfa = 0,
+    .vectorize = 1,
+    .crate = 0,
+    .nostd = 0,
+};
+
+/* `c` (default) or `rust`.  Set by --target / -t.  Drives whether
+** rustFlag / rustLexFlag get latched in main(). */
+static int g_target_is_rust = 0;
+
+/* When non-zero, --rust / --rustlex / --rust-crate / --rust-nostd /
+** --rustlex-simd / --rustlex-memchr / --per-token-dfa was seen on
+** the command line.  Used to populate the legacy globals after
+** OptInit returns.  Each old flag's deprecation handler bumps the
+** corresponding bit; main() then routes the side-effects. */
+static int g_legacy_rust_seen = 0;
+static int g_legacy_rustlex_seen = 0;
+static int g_legacy_rust_crate_seen = 0;
+static int g_legacy_rust_nostd_seen = 0;
+
+/* Feature-name table: drives both --enable= / --disable= parsing
+** and the warning emitted when a feature is set but is meaningless
+** for the chosen target.  `rust_only` means "warn if --target=c".
+** Note: simd is marked rust_only=0 because the C-side SIMD/intrinsic
+** path (Agent 1's parallel branch) will consult g_features.simd as
+** well; setting --enable=simd --target=c is harmless until then. */
+static const struct {
+    const char *name;
+    size_t      offset;   /* offset of the int field inside feature_flag_state */
+    int         rust_only;
+} g_feature_table[] = {
+    { "simd",          offsetof(feature_flag_state, simd),          0 },
+    { "memchr",        offsetof(feature_flag_state, memchr),        1 },
+    { "per-token-dfa", offsetof(feature_flag_state, per_token_dfa), 0 },
+    { "vectorize",     offsetof(feature_flag_state, vectorize),     0 },
+    { "crate",         offsetof(feature_flag_state, crate),         1 },
+    { "nostd",         offsetof(feature_flag_state, nostd),         1 },
+    { NULL, 0, 0 },
+};
+
+/* Look up a feature by name; returns the index into g_feature_table
+** or -1 if not found.  Names are matched case-sensitively. */
+static int feature_lookup(const char *name) {
+    for (int i = 0; g_feature_table[i].name; i++) {
+        if (strcmp(name, g_feature_table[i].name) == 0) return i;
+    }
+    return -1;
+}
+
+static int *feature_field(int idx) {
+    return (int *)((char *)&g_features + g_feature_table[idx].offset);
+}
+
+/* Apply a single comma-separated feature list (mutates g_features).
+** `enable` is 1 for --enable=, 0 for --disable=.  Each name is
+** validated; an unknown name is a hard error so users catch typos.
+** A leading/trailing comma or empty token is silently tolerated. */
+static void feature_apply_list(const char *list, int enable) {
+    if (list == NULL) {
+        fprintf(stderr,
+          "lime: --%s requires a comma-separated feature list\n",
+          enable ? "enable" : "disable");
+        exit(1);
+    }
+    char *dup = strdup(list);
+    if (dup == NULL) { fprintf(stderr, "lime: out of memory\n"); exit(1); }
+    /* strtok is non-reentrant, but each call to feature_apply_list runs
+    ** the strtok loop to completion before returning, so there is no
+    ** interleaving.  This avoids the strtok_r (POSIX) vs strtok_s
+    ** (Windows MSVC) portability split. */
+    char *tok;
+    int any = 0;
+    for (tok = strtok(dup, ","); tok; tok = strtok(NULL, ",")) {
+        /* Trim leading/trailing whitespace -- defensive. */
+        while (*tok==' '||*tok=='\t') tok++;
+        size_t n = strlen(tok);
+        while (n>0 && (tok[n-1]==' '||tok[n-1]=='\t')) tok[--n] = 0;
+        if (tok[0] == 0) continue;
+        any = 1;
+        int idx = feature_lookup(tok);
+        if (idx < 0) {
+            fprintf(stderr,
+              "lime: unknown feature name '%s' in --%s list.  "
+              "Valid names: simd, memchr, per-token-dfa, vectorize, "
+              "crate, nostd.\n",
+              tok, enable ? "enable" : "disable");
+            free(dup);
+            exit(1);
+        }
+        *feature_field(idx) = enable ? 1 : 0;
+    }
+    free(dup);
+    if (!any) {
+        fprintf(stderr,
+          "lime: --%s requires at least one feature name\n",
+          enable ? "enable" : "disable");
+        exit(1);
+    }
+}
+
+/* Strip a leading `<flagname>=` from z.  Used to share the OPT_FSTR
+** suffix-handling pattern with --lint-format.  For `--target=rust`
+** the option parser passes `target=rust`; we want `rust`.  For
+** `-trust` it passes `rust` already. */
+static char *opt_strip_prefix_eq(char *z) {
+    if (z == NULL) return NULL;
+    char *eq = strchr(z, '=');
+    return eq ? eq + 1 : z;
+}
+
+static void handle_target_option(char *z) {
+    z = opt_strip_prefix_eq(z);
+    if (z == NULL || z[0] == 0) {
+        fprintf(stderr, "lime: --target requires a value (c|rust)\n");
+        exit(1);
+    }
+    if (strcmp(z, "c") == 0)         g_target_is_rust = 0;
+    else if (strcmp(z, "rust") == 0) g_target_is_rust = 1;
+    else {
+        fprintf(stderr,
+          "lime: --target value must be 'c' or 'rust' (got '%s')\n", z);
+        exit(1);
+    }
+}
+
+static void handle_enable_option(char *z) {
+    feature_apply_list(opt_strip_prefix_eq(z), 1);
+}
+
+static void handle_disable_option(char *z) {
+    feature_apply_list(opt_strip_prefix_eq(z), 0);
+}
+
+/* Deprecation-warning helpers.  Each old flag is OPT_FFLAG so the
+** option parser invokes the handler with v=1 when the flag is set
+** (v=0 with `+` prefix; lime's option parser allows that, so we
+** mirror the value into the legacy state). */
+static void deprecated_rust(int v) {
+    if (v) fprintf(stderr,
+        "warning: --rust is deprecated; use --target=rust\n");
+    g_legacy_rust_seen = v;
+}
+
+static void deprecated_rustlex(int v) {
+    if (v) fprintf(stderr,
+        "warning: --rustlex is deprecated; use -X --target=rust\n");
+    g_legacy_rustlex_seen = v;
+}
+
+static void deprecated_rust_crate(int v) {
+    if (v) fprintf(stderr,
+        "warning: --rust-crate is deprecated; use --target=rust --enable=crate\n");
+    g_legacy_rust_crate_seen = v;
+}
+
+static void deprecated_rustcrate(int v) {
+    if (v) fprintf(stderr,
+        "warning: --rustcrate is deprecated; use --target=rust --enable=crate\n");
+    g_legacy_rust_crate_seen = v;
+}
+
+static void deprecated_rust_nostd(int v) {
+    if (v) fprintf(stderr,
+        "warning: --rust-nostd is deprecated; use --target=rust --enable=nostd\n");
+    g_legacy_rust_nostd_seen = v;
+}
+
+static void deprecated_rustnostd(int v) {
+    if (v) fprintf(stderr,
+        "warning: --rustnostd is deprecated; use --target=rust --enable=nostd\n");
+    g_legacy_rust_nostd_seen = v;
+}
+
+static void deprecated_rustlex_simd(int v) {
+    if (v) fprintf(stderr,
+        "warning: --rustlex-simd is deprecated; use --target=rust --enable=simd "
+        "(default since v0.8.6)\n");
+    if (v) g_features.simd = 1;
+    /* No `else` branch: setting it explicitly never disables.  Users who
+    ** want to opt OUT use --disable=simd. */
+}
+
+static void deprecated_rustlex_memchr(int v) {
+    if (v) fprintf(stderr,
+        "warning: --rustlex-memchr is deprecated; use --target=rust --enable=memchr\n");
+    if (v) g_features.memchr = 1;
+}
+
+static void deprecated_per_token_dfa(int v) {
+    if (v) fprintf(stderr,
+        "warning: --per-token-dfa is deprecated; use --enable=per-token-dfa\n");
+    if (v) g_features.per_token_dfa = 1;
+}
+
+/* Pre-process argv to splice `-t rust` / `-e list` separate-arg
+** forms into glued `-trust` / `-elist` so handleflags' OPT_FSTR
+** suffix handler sees the value.  Mutates argv in place: the spliced
+** argument is allocated on the heap and leaks.  Acceptable -- this
+** runs once at startup, and lime is short-lived.
+**
+** Only `-t` and `-e` are handled (not `-d` -- that name is taken
+** by the existing -d <output-dir> flag, so the short form for
+** --disable is unsupported by design; users use --disable= long form).
+*/
+static void splice_short_value_args(int argc, char **argv) {
+    if (argv == NULL) return;
+    for (int i = 1; i < argc - 1 && argv[i] != NULL; i++) {
+        const char *a = argv[i];
+        if (a == NULL) break;
+        if (a[0] != '-' || a[1] == 0 || a[2] != 0) continue;
+        char c = a[1];
+        if (c != 't' && c != 'e') continue;
+        const char *next = argv[i + 1];
+        if (next == NULL || next[0] == '-') continue;
+        size_t need = 1 + 1 + strlen(next) + 1; /* '-' + flag + value + NUL */
+        char *glued = (char *)malloc(need);
+        if (glued == NULL) {
+            fprintf(stderr, "lime: out of memory splicing short args\n");
+            exit(1);
+        }
+        glued[0] = '-';
+        glued[1] = c;
+        memcpy(glued + 2, next, strlen(next) + 1);
+        argv[i] = glued;
+        /* Shift remaining argv left by one to drop the consumed value. */
+        for (int j = i + 1; j < argc; j++) argv[j] = argv[j + 1];
+        /* argc not adjusted here -- the caller can rely on the NULL
+        ** terminator.  Continue from the spliced slot. */
+    }
+}
+
 /* The main program.  Parse the command line and do it...
 **
 ** ROADMAP item 1, phase 1: when LIME_TEST_HARNESS is defined the
@@ -4759,6 +5031,7 @@ int main(int argc, char **argv){
   extern int g_lime_rustlex_memchr_flag;
   extern int g_lime_rustlex_simd_flag;
   extern int g_lime_per_token_dfa_flag;
+  extern int g_lime_lex_vectorize_flag;
   static int rustCrateFlag = 0; /* --rust-crate: emit a complete Cargo
                                 ** crate alongside the .rs file
                                 ** (Cargo.toml + src/lib.rs).  Only valid
@@ -4825,44 +5098,70 @@ int main(int argc, char **argv){
                     "Verbose conflict diagnostics with derivation paths."},
     {OPT_FLAG, "X", (char*)&lexFlag,
                     "Run as .lex compiler (lexer subsystem M1 frontend)."},
-    /* NOTE: --rust* options ordered LONG-TO-SHORT because handleflags
-    ** does prefix-match and breaks on first hit. */
-    {OPT_FLAG, "-rustnostd", (char*)&rustNoStdFlag,
-                    "Emit #![no_std] on the parser.rs.  Replaces Vec<Frame> "
+    /* NOTE: --rust* / --target / --enable / --disable / --per-token-dfa
+    ** options ordered LONG-TO-SHORT because handleflags does prefix-match
+    ** and breaks on first hit.  Within each family, the longer label
+    ** must come first.  All `--rust*` and `--per-token-dfa` flags below
+    ** are deprecation aliases for the new `--target=rust --enable=...`
+    ** scheme; they continue to work but emit a one-line stderr warning. */
+    {OPT_FFLAG, "-rustlex-memchr", (char*)deprecated_rustlex_memchr,
+                    "DEPRECATED: use --target=rust --enable=memchr.  "
+                    "With -X --target=rust, emit fast-path scans that "
+                    "call into the memchr(2) crate (SIMD-accelerated byte "
+                    "search).  Adds 'memchr = \"2\"' to the generated "
+                    "Cargo.toml when --enable=crate; raw .rs output gains "
+                    "an `extern crate memchr;` so the user must list it."},
+    {OPT_FFLAG, "-rustlex-simd", (char*)deprecated_rustlex_simd,
+                    "DEPRECATED: use --target=rust --enable=simd (default "
+                    "since v0.8.6).  With -X --target=rust, emit hand-rolled "
+                    "SIMD intrinsics (SSE2/AVX2 on x86_64, NEON on AArch64, "
+                    "RVV on RISC-V) inline in fast-path scans."},
+    {OPT_FFLAG, "-rustlex", (char*)deprecated_rustlex,
+                    "DEPRECATED: use -X --target=rust.  With -X, emit a "
+                    "Rust mirror of the .lex tokenizer alongside the C "
+                    "output (DFA tables + Lexer struct + tokenize()).  "
+                    "See docs/RUST_OUTPUT.md."},
+    {OPT_FFLAG, "-rust-nostd", (char*)deprecated_rust_nostd,
+                    "DEPRECATED: use --target=rust --enable=nostd.  Emits "
+                    "#![no_std] on the parser.rs.  Replaces Vec<Frame> "
                     "with alloc::vec::Vec (parser still requires alloc)."},
-    {OPT_FLAG, "-rustlex-simd", (char*)&rustLexSimdFlag,
-                    "With -X --rustlex, emit hand-rolled SIMD intrinsics "
-                    "(SSE2/AVX2 on x86_64, NEON on AArch64, RVV on RISC-V) "
-                    "inline in fast-path scans.  Self-contained: no extra "
-                    "crate dependency, runtime feature detection via "
-                    "std::is_x86_feature_detected etc.  Closes most of "
-                    "the lime-vs-logos gap on supported architectures."},
-    {OPT_FLAG, "-rustlex-memchr", (char*)&rustLexMemchrFlag,
-                    "With -X --rustlex, emit fast-path scans that call "
-                    "into the memchr(2) crate (SIMD-accelerated byte search). "
-                    "Adds 'memchr = \"2\"' to the generated Cargo.toml when "
-                    "used with --rustcrate; raw .rs output gains an "
-                    "`extern crate memchr;` so the user must list it. "
-                    "Closes ~50%% of the lime-vs-logos lexer gap on "
-                    "string-heavy fixtures."},
-    {OPT_FLAG, "-rustlex", (char*)&rustLexFlag,
-                    "With -X, emit a Rust mirror of the .lex tokenizer "
-                    "alongside the C output (DFA tables + Lexer struct + "
-                    "tokenize()).  See docs/RUST_OUTPUT.md."},
-    {OPT_FLAG, "-per-token-dfa", (char*)&perTokenDfaFlag,
-                    "With -X, emit leading-byte dispatch + per-rule DFA "
-                    "tables alongside the unified DFA.  On grammars where "
-                    "each leading byte uniquely identifies a token rule "
-                    "(JSON, most structured-data formats), the runtime "
-                    "skips the unified DFA entirely and walks a per-rule "
-                    "DFA from the dispatched start.  Lifts both C and "
-                    "Rust output."},
-    {OPT_FLAG, "-rustcrate", (char*)&rustCrateFlag,
-                    "With --rust, also emit Cargo.toml + src/lib.rs around "
+    {OPT_FFLAG, "-rustnostd", (char*)deprecated_rustnostd,
+                    "DEPRECATED: use --target=rust --enable=nostd.  "
+                    "Older spelling of --rust-nostd."},
+    {OPT_FFLAG, "-rust-crate", (char*)deprecated_rust_crate,
+                    "DEPRECATED: use --target=rust --enable=crate.  With "
+                    "--target=rust, also emit Cargo.toml + src/lib.rs around "
                     "the parser.rs so the output is a ready-to-build crate."},
-    {OPT_FLAG, "-rust", (char*)&rustFlag,
-                    "Emit Rust output alongside the C output.  Additive: "
-                    "C output is unaffected.  See docs/RUST_OUTPUT.md."},
+    {OPT_FFLAG, "-rustcrate", (char*)deprecated_rustcrate,
+                    "DEPRECATED: use --target=rust --enable=crate.  Older "
+                    "spelling of --rust-crate."},
+    {OPT_FFLAG, "-rust", (char*)deprecated_rust,
+                    "DEPRECATED: use --target=rust.  Emit Rust output "
+                    "alongside the C output (additive).  See "
+                    "docs/RUST_OUTPUT.md."},
+    {OPT_FFLAG, "-per-token-dfa", (char*)deprecated_per_token_dfa,
+                    "DEPRECATED: use --enable=per-token-dfa.  With -X, emit "
+                    "leading-byte dispatch + per-rule DFA tables alongside "
+                    "the unified DFA.  Default OFF; opt-in."},
+    /* New flag scheme (v0.8.6).  Long forms with `=value`: handleflags'
+    ** prefix-match catches them.  Short forms `-tc/-trust` are glued "
+    ** (lime convention); we also splice `-t rust`/`-e simd,memchr`
+    ** separate-arg forms via splice_short_value_args() before OptInit
+    ** runs, so users can write either.  No short form for --disable
+    ** because `-d` is taken by the existing -d <output-dir> flag. */
+    {OPT_FSTR, "-target", (char*)handle_target_option,
+                    "Output target language: c (default) | rust."},
+    {OPT_FSTR, "t", (char*)handle_target_option,
+                    "Short form of --target=<c|rust>."},
+    {OPT_FSTR, "-enable", (char*)handle_enable_option,
+                    "Enable a comma-separated list of features.  "
+                    "Names: simd, memchr, per-token-dfa, vectorize, "
+                    "crate, nostd.  Defaults: simd+vectorize ON."},
+    {OPT_FSTR, "e", (char*)handle_enable_option,
+                    "Short form of --enable=<list>."},
+    {OPT_FSTR, "-disable", (char*)handle_disable_option,
+                    "Disable a comma-separated list of features.  "
+                    "Same name set as --enable."},
     {OPT_FSTR, "W", 0, "Ignored.  (Placeholder for '-W' compiler options.)"},
     {OPT_FLAG, "-diff-conflicts", (char*)&diffConflictsFlag,
      "Diff LALR conflicts between two grammars (base.lime ext.lime)."},
@@ -4882,7 +5181,71 @@ int main(int argc, char **argv){
   LimeCompilerContext compiler_ctx;
   lime_compiler_context_init(&compiler_ctx);
 
+  /* v0.8.6 CLI flag redesign: splice -t/-e separate-arg forms into
+  ** glued form before OptInit's prefix matcher sees them.  Allows
+  ** `-t rust` and `-e simd,memchr` syntax in addition to lime's
+  ** traditional `-trust` / `-esimd,memchr` glued form. */
+  splice_short_value_args(argc, argv);
+
   OptInit(argv,options,stderr);
+
+  /* v0.8.6 CLI flag redesign: resolve the new --target / --enable /
+  ** --disable inputs (and any deprecated alias side-effects) into
+  ** the legacy local flags + globals that the rest of the pipeline
+  ** still consults.  This keeps src/emit_rust.c, src/lex/emit_rust_lex.c,
+  ** etc. untouched. */
+  {
+    /* Any deprecated --rust* alias implies the user wants Rust
+    ** output even though they didn't write --target=rust.  This is
+    ** strictly a widening of the old behaviour: previously
+    ** `--rustcrate` alone (without --rust) was a silent no-op. */
+    int rust_target = g_target_is_rust
+                    || g_legacy_rust_seen
+                    || g_legacy_rustlex_seen
+                    || g_legacy_rust_crate_seen
+                    || g_legacy_rust_nostd_seen;
+
+    /* Warn on rust-only features mixed with --target=c.  We only
+    ** warn when the user explicitly disabled the rust target via
+    ** --target=c (i.e. g_target_is_rust==0) AND no legacy alias
+    ** flipped rust_target on.  Otherwise the feature is harmless
+    ** because the chosen target uses it. */
+    if (!rust_target) {
+        for (int fi = 0; g_feature_table[fi].name; fi++) {
+            if (!g_feature_table[fi].rust_only) continue;
+            int *fp = (int *)((char *)&g_features
+                              + g_feature_table[fi].offset);
+            /* Only warn when the user OPT'd in (value 1).  Defaults
+            ** are off for all rust_only features so this never
+            ** fires absent an explicit --enable. */
+            if (*fp) {
+                fprintf(stderr,
+                  "warning: --enable=%s has no effect without --target=rust\n",
+                  g_feature_table[fi].name);
+            }
+        }
+    }
+
+    rustFlag         = rust_target ? 1 : 0;
+    rustLexFlag      = g_legacy_rustlex_seen
+                     || (lexFlag && g_target_is_rust);
+    rustNoStdFlag    = g_legacy_rust_nostd_seen
+                     || (rust_target && g_features.nostd);
+    rustCrateFlag    = g_legacy_rust_crate_seen
+                     || (rust_target && g_features.crate);
+    /* simd / memchr / per-token-dfa pass through unchanged: the
+    ** legacy deprecation handlers already mutated g_features when
+    ** seen, and explicit --enable / --disable also did. */
+    rustLexSimdFlag  = g_features.simd;
+    rustLexMemchrFlag= g_features.memchr;
+    perTokenDfaFlag  = g_features.per_token_dfa;
+
+    /* Vectorize is the C-side SIMD/intrinsic toggle.  Default ON;
+    ** opt-out via --disable=vectorize.  The global is consulted by
+    ** the C-side lex emitter once Agent 1's parallel branch lands. */
+    g_lime_lex_vectorize_flag = g_features.vectorize;
+  }
+
   if( version ){
      printf("lime %s\n", LIME_VERSION_STRING);
      exit(0);
@@ -13717,3 +14080,10 @@ int g_lime_rustlex_flag = 0;
 int g_lime_rustlex_memchr_flag = 0;
 int g_lime_rustlex_simd_flag = 0;
 int g_lime_per_token_dfa_flag = 0;
+
+/* v0.8.6 CLI flag redesign: feature toggle for the C-side lex emitter's
+** SIMD/intrinsic fast-path code.  Default ON; user opts out via
+** `--disable=vectorize`.  Definition kept here so the placeholder lands
+** even if Agent 1's parallel C-side SIMD branch hasn't merged yet; once
+** that lands, src/lex/lex_emit.c consults this same global. */
+int g_lime_lex_vectorize_flag = 1;
