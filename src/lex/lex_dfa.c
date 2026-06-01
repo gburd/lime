@@ -306,3 +306,81 @@ int lime_lex_dfa_match(const LimeDfa *dfa, const char *bytes, size_t n) {
 int lime_lex_dfa_state_count(const LimeDfa *dfa) {
     return dfa ? dfa->n_states : 0;
 }
+
+void lime_lex_dfa_leading_bytes(const LimeDfa *dfa, unsigned char byte_set[256]) {
+    for (int i = 0; i < 256; i++) byte_set[i] = 0;
+    if (!dfa || dfa->n_states <= 0) return;
+    /* Anchor handling: lime's NFA-to-DFA construction encodes
+    ** ANCHOR_START / ANCHOR_END as edges keyed on synthetic byte
+    ** values; those don't appear in the trans[256] table.  So
+    ** scanning trans[0..255] gives the actual reachable input
+    ** bytes correctly even for anchored rules.
+    **
+    ** A rule with `^` only fires at start-of-input -- the leading
+    ** byte set still describes which BYTES advance the DFA, but
+    ** the runtime must additionally verify the input position is
+    ** 0 before treating this rule as a candidate.  That's a
+    ** runtime concern; we only compute the byte set here. */
+    const int s = dfa->start;
+    if (s < 0 || s >= dfa->n_states) return;
+    const int *tr = dfa->states[s].trans;
+    for (int b = 0; b < 256; b++) {
+        if (tr[b] >= 0) byte_set[b] = 1;
+    }
+}
+
+int lime_lex_dfa_single_byte(const LimeDfa *dfa) {
+    if (!dfa || dfa->n_states < 2) return -1;
+    const LimeDfaState *start = &dfa->states[dfa->start];
+    if (start->is_accept) return -1;  /* empty match = not single-byte */
+    int found = -1;
+    for (int b = 0; b < 256; b++) {
+        if (start->trans[b] < 0) continue;
+        const LimeDfaState *next = &dfa->states[start->trans[b]];
+        /* Must transition to an accepting state with no further
+        ** transitions out (so the DFA accepts EXACTLY this byte). */
+        if (!next->is_accept) return -1;
+        for (int b2 = 0; b2 < 256; b2++) {
+            if (next->trans[b2] >= 0) return -1;
+        }
+        if (found != -1) return -1;  /* multiple bytes accepted */
+        found = b;
+    }
+    return found;
+}
+
+int lime_lex_dfa_fixed_string(const LimeDfa *dfa, unsigned char out_str[256], int *out_len) {
+    if (!dfa || dfa->n_states < 2) return 0;
+    if (out_len) *out_len = 0;
+    int s = dfa->start;
+    int len = 0;
+    while (1) {
+        const LimeDfaState *st = &dfa->states[s];
+        if (st->is_accept) {
+            /* Accepting -- if this state ALSO has outgoing transitions,
+            ** the DFA accepts a prefix and a longer extension, which
+            ** is not a fixed-string. */
+            for (int b = 0; b < 256; b++) {
+                if (st->trans[b] >= 0) return 0;
+            }
+            if (out_len) *out_len = len;
+            return len > 0 ? 1 : 0;
+        }
+        /* Non-accept: must have exactly ONE outgoing transition for
+        ** a fixed-string DFA.  Multiple transitions = alternation. */
+        int b_found = -1;
+        int t_found = -1;
+        for (int b = 0; b < 256; b++) {
+            if (st->trans[b] < 0) continue;
+            if (b_found != -1) return 0;  /* multiple outgoing */
+            b_found = b;
+            t_found = st->trans[b];
+        }
+        if (b_found < 0) return 0;
+        if (len >= 255) return 0;  /* string too long for our buffer */
+        if (out_str) out_str[len] = (unsigned char)b_found;
+        len++;
+        if (t_found == s) return 0;  /* self-loop = not fixed */
+        s = t_found;
+    }
+}

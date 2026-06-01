@@ -53,6 +53,27 @@ void lime_lex_dfa_free(LimeDfa *dfa);
 ** drive the table directly. */
 int lime_lex_dfa_match(const LimeDfa *dfa, const char *bytes, size_t n);
 
+/* v0.9 per-token DFA: compute the set of input bytes that have a
+** non-error transition from the DFA's start state.  byte_set[256]
+** is overwritten with 1 (byte b can start a match) or 0 (cannot).
+** Used by per-token leading-byte dispatch tables. */
+void lime_lex_dfa_leading_bytes(const LimeDfa *dfa, unsigned char byte_set[256]);
+
+/* Returns the unique byte that triggers a single-byte match, or -1
+** if the DFA is not a single-byte acceptor.  A single-byte acceptor
+** has exactly one byte b with trans[start][b] -> accept-state.
+** Used to emit direct-dispatch arms for trivial structural tokens
+** like '{', '}', '[', ']', ',', ':' which need no DFA walk. */
+int lime_lex_dfa_single_byte(const LimeDfa *dfa);
+
+/* If the DFA accepts exactly one fixed-length string, populates
+** out_str (caller-provided buffer of >= 256 bytes) and *out_len
+** with the string and its length, then returns 1.  Returns 0 if
+** the DFA is not a fixed-string acceptor (has alternatives, repeats,
+** or a self-loop).  Used to emit direct byte-comparison arms for
+** keyword tokens like "true", "false", "null". */
+int lime_lex_dfa_fixed_string(const LimeDfa *dfa, unsigned char out_str[256], int *out_len);
+
 /* Number of DFA states.  Useful for testing and audit checks. */
 int lime_lex_dfa_state_count(const LimeDfa *dfa);
 

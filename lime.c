@@ -4744,10 +4744,21 @@ int main(int argc, char **argv){
                                     ** ifdef-free output for ~2x extra
                                     ** tokenize speed on supported
                                     ** architectures. */
+  static int perTokenDfaFlag = 0;   /* --per-token-dfa: emit leading-byte
+                                    ** dispatch + per-rule DFA tables
+                                    ** alongside the unified DFA.  Cuts
+                                    ** the per-token DFA-walk depth on
+                                    ** grammars where most leading bytes
+                                    ** are unambiguous (JSON, most
+                                    ** structured-data formats).  Shared
+                                    ** infrastructure -- benefits BOTH
+                                    ** Rust and C emit.  Default off
+                                    ** until benched; will flip on. */
   extern int g_lime_rust_no_std;
   extern int g_lime_rustlex_flag;
   extern int g_lime_rustlex_memchr_flag;
   extern int g_lime_rustlex_simd_flag;
+  extern int g_lime_per_token_dfa_flag;
   static int rustCrateFlag = 0; /* --rust-crate: emit a complete Cargo
                                 ** crate alongside the .rs file
                                 ** (Cargo.toml + src/lib.rs).  Only valid
@@ -4838,6 +4849,14 @@ int main(int argc, char **argv){
                     "With -X, emit a Rust mirror of the .lex tokenizer "
                     "alongside the C output (DFA tables + Lexer struct + "
                     "tokenize()).  See docs/RUST_OUTPUT.md."},
+    {OPT_FLAG, "-per-token-dfa", (char*)&perTokenDfaFlag,
+                    "With -X, emit leading-byte dispatch + per-rule DFA "
+                    "tables alongside the unified DFA.  On grammars where "
+                    "each leading byte uniquely identifies a token rule "
+                    "(JSON, most structured-data formats), the runtime "
+                    "skips the unified DFA entirely and walks a per-rule "
+                    "DFA from the dispatched start.  Lifts both C and "
+                    "Rust output."},
     {OPT_FLAG, "-rustcrate", (char*)&rustCrateFlag,
                     "With --rust, also emit Cargo.toml + src/lib.rs around "
                     "the parser.rs so the output is a ready-to-build crate."},
@@ -4892,6 +4911,7 @@ int main(int argc, char **argv){
   g_lime_rustlex_flag = rustLexFlag;
   g_lime_rustlex_memchr_flag = rustLexMemchrFlag;
   g_lime_rustlex_simd_flag = rustLexSimdFlag;
+  g_lime_per_token_dfa_flag = perTokenDfaFlag;
   if( lexFlag ){
     /* -X: run the .lex compiler frontend instead of the parser
     ** generator.  Reads the input as a .lex source file, runs
@@ -5061,6 +5081,7 @@ int main(int argc, char **argv){
     g_lime_rustlex_flag = rustLexFlag;
     g_lime_rustlex_memchr_flag = rustLexMemchrFlag;
   g_lime_rustlex_simd_flag = rustLexSimdFlag;
+  g_lime_per_token_dfa_flag = perTokenDfaFlag;
     if( rustFlag ){
         g_lime_rust_no_std = rustNoStdFlag;
         char rust_path[512];
@@ -13695,3 +13716,4 @@ int g_lime_rust_no_std = 0;
 int g_lime_rustlex_flag = 0;
 int g_lime_rustlex_memchr_flag = 0;
 int g_lime_rustlex_simd_flag = 0;
+int g_lime_per_token_dfa_flag = 0;

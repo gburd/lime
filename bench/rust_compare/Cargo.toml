@@ -32,6 +32,9 @@ path = "src/bin/bench_lime_memchr.rs"
 name = "bench_lime_simd"
 path = "src/bin/bench_lime_simd.rs"
 [[bin]]
+name = "bench_lime_pdfa"
+path = "src/bin/bench_lime_pdfa.rs"
+[[bin]]
 name = "dump_tokens_simd"
 path = "src/bin/dump_tokens_simd.rs"
 [[bin]]

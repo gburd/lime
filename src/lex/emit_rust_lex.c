@@ -41,6 +41,7 @@
 extern int g_lime_rust_no_std;
 extern int g_lime_rustlex_memchr_flag;
 extern int g_lime_rustlex_simd_flag;
+extern int g_lime_per_token_dfa_flag;
 
 static char *upper_dup_local(const char *s) {
     if (!s) return NULL;
@@ -804,6 +805,227 @@ static void emit_simd_helpers(FILE *out, const LimeLexCompiled *compiled) {
 }
 
 /*
+** Per-token DFA emission (--per-token-dfa).  For each non-EOF rule
+** in each state group, emits the per-rule minimised DFA tables and
+** a walker function that runs the per-rule DFA from start.  Also
+** emits a 256-entry leading-byte dispatch table per state group:
+**
+**   dispatch[byte] >= 0  -> unique rule index in state group
+**   dispatch[byte] < 0   -> ambiguous OR no rule; fall back to
+**                           unified DFA (or report error if no rule)
+**
+** Runtime tokenize() in --per-token-dfa mode peeks the leading
+** byte, dispatches to the per-rule walker if unambiguous, falls
+** through to the unified DFA path otherwise.  Per-rule DFAs are
+** typically 2-10 states (vs 30-100 for the unified DFA) so the
+** common-case walk is much faster.
+*/
+static void emit_per_token_tables(FILE *out, const char *prefix,
+                                  const LimeLexCompiled *compiled) {
+    fprintf(out,
+            "// =====================================================================\n"
+            "// Per-token DFA dispatch (--per-token-dfa)\n"
+            "// =====================================================================\n\n"
+            "// Smart leading-byte dispatch.  For each unambiguous leading byte:\n"
+            "//\n"
+            "//   single-byte rule (e.g. JSON '{', '}'): direct emit, no DFA walk\n"
+            "//   fixed-string rule (e.g. \"true\", \"false\"): byte-compare\n"
+            "//   general DFA rule (e.g. STR, NUM): walk per-rule DFA inline\n"
+            "//\n"
+            "// For ambiguous leading bytes or no-rule bytes the dispatcher\n"
+            "// returns (0, -1) and the caller falls back to the unified DFA.\n\n");
+    /* Emit per-rule DFA tables ONLY for general (non-single-byte,
+    ** non-fixed-string) rules.  Single-byte and fixed-string rules
+    ** emit direct dispatch without DFA tables. */
+    for (int g = 0; g < compiled->n_states; g++) {
+        const LimeLexCompiledState *cs = &compiled->states[g];
+        if (!cs->per_rule_dfas) continue;
+        for (int r = 0; r < cs->n_per_rule_dfas; r++) {
+            const LimeDfa *dfa = cs->per_rule_dfas[r];
+            if (!dfa) continue;
+            if (lime_lex_dfa_single_byte(dfa) >= 0) continue;
+            unsigned char fs[256]; int fs_len = 0;
+            if (lime_lex_dfa_fixed_string(dfa, fs, &fs_len)) continue;
+            /* General rule: emit DFA tables. */
+            fprintf(out, "static %s_R%d_TRANS_%s: &[i16] = &[\n",
+                    prefix, r, cs->state_name);
+            for (int s = 0; s < dfa->n_states; s++) {
+                fprintf(out, "    ");
+                for (int b = 0; b < 256; b++) {
+                    fprintf(out, "%d,", dfa->states[s].trans[b]);
+                    if ((b & 31) == 31) fprintf(out, "\n    ");
+                }
+                fprintf(out, "\n");
+            }
+            fprintf(out, "];\n\n");
+            fprintf(out, "static %s_R%d_ACCEPT_%s: &[u8] = &[",
+                    prefix, r, cs->state_name);
+            for (int s = 0; s < dfa->n_states; s++) {
+                fprintf(out, "%d,", dfa->states[s].is_accept ? 1 : 0);
+            }
+            fprintf(out, "];\n\n");
+            fprintf(out, "const %s_R%d_START_%s: u16 = %d;\n\n",
+                    prefix, r, cs->state_name, dfa->start);
+        }
+    }
+
+    /* For each state group, emit a match_<NAME>(bytes, p) function:
+    ** giant match-on-leading-byte.  Each arm contains the inline
+    ** dispatch logic for whichever rule the byte uniquely starts.
+    ** Returns (consumed_bytes, global_rule_id_or_minus_one). */
+    for (int g = 0; g < compiled->n_states; g++) {
+        const LimeLexCompiledState *cs = &compiled->states[g];
+        if (!cs->per_rule_dfas) continue;
+        /* Build per-byte assignment: byte -> (rule_idx_in_state, kind).
+        ** kind: 0=single-byte 1=fixed-string 2=general -1=ambig/none */
+        int byte_rule[256];
+        for (int b = 0; b < 256; b++) byte_rule[b] = -1;
+        int *kind = calloc(cs->n_per_rule_dfas, sizeof(int));
+        unsigned char (*fixed_str)[256] = calloc(cs->n_per_rule_dfas, sizeof(*fixed_str));
+        int *fixed_len = calloc(cs->n_per_rule_dfas, sizeof(int));
+        for (int r = 0; r < cs->n_per_rule_dfas; r++) {
+            const LimeDfa *dfa = cs->per_rule_dfas[r];
+            if (!dfa) { kind[r] = -1; continue; }
+            int sb = lime_lex_dfa_single_byte(dfa);
+            if (sb >= 0) {
+                kind[r] = 0;
+                if (byte_rule[sb] == -1) byte_rule[sb] = r;
+                else byte_rule[sb] = -2;
+                continue;
+            }
+            int fs_l = 0;
+            if (lime_lex_dfa_fixed_string(dfa, fixed_str[r], &fs_l)) {
+                kind[r] = 1;
+                fixed_len[r] = fs_l;
+                int b = fixed_str[r][0];
+                if (byte_rule[b] == -1) byte_rule[b] = r;
+                else byte_rule[b] = -2;
+                continue;
+            }
+            kind[r] = 2;
+            unsigned char bs[256];
+            lime_lex_dfa_leading_bytes(dfa, bs);
+            for (int b = 0; b < 256; b++) {
+                if (!bs[b]) continue;
+                if (byte_rule[b] == -1) byte_rule[b] = r;
+                else byte_rule[b] = -2;
+            }
+        }
+        /* Emit the match function. */
+        fprintf(out,
+                "/// Per-token match for state group %s.  Returns\n"
+                "/// (consumed_bytes, global_rule_id) on match, (0, -1) on\n"
+                "/// fallback (caller runs the unified DFA).\n"
+                "#[inline(always)]\n"
+                "fn per_token_match_%s(bytes: &[u8], p: usize) -> (usize, i16) {\n",
+                cs->state_name, cs->state_name);
+        fprintf(out, "    if p >= bytes.len() { return (0, -1); }\n");
+        fprintf(out, "    let lead = unsafe { *bytes.get_unchecked(p) };\n");
+        fprintf(out, "    match lead {\n");
+        /* Group bytes by rule for cleaner emit (e.g. b'0'..=b'9' all
+        ** go to one arm).  We emit per-rule arms. */
+        char emitted_for_rule[1024] = {0};
+        for (int b = 0; b < 256; b++) {
+            int r = byte_rule[b];
+            if (r < 0) continue;
+            if (r >= 1024 || emitted_for_rule[r]) continue;
+            emitted_for_rule[r] = 1;
+            int gid = cs->rule_indices ? cs->rule_indices[r] : r;
+            if (kind[r] == 0) {
+                /* Single-byte rule: collect all bytes that map here
+                ** (usually 1, but a single-byte DFA accepts only one
+                ** byte so byte_rule has only one entry per single-byte
+                ** rule).  Emit `b'X' => (1, gid)`. */
+                fprintf(out, "        %d => (1, %d),\n", b, gid);
+            } else if (kind[r] == 1) {
+                /* Fixed-string rule: byte-compare. */
+                fprintf(out, "        %d => {\n", (int)fixed_str[r][0]);
+                fprintf(out, "            if p + %d <= bytes.len() && &bytes[p..p+%d] == b\"",
+                        fixed_len[r], fixed_len[r]);
+                for (int j = 0; j < fixed_len[r]; j++) {
+                    unsigned char c = fixed_str[r][j];
+                    if (c == '\\') fprintf(out, "\\\\");
+                    else if (c == '"') fprintf(out, "\\\"");
+                    else if (c >= 32 && c < 127) fputc(c, out);
+                    else fprintf(out, "\\x%02x", c);
+                }
+                fprintf(out, "\" {\n");
+                fprintf(out, "                (%d, %d)\n", fixed_len[r], gid);
+                fprintf(out, "            } else { (0, -1) }\n");
+                fprintf(out, "        },\n");
+            } else {
+                /* General DFA rule: collect all leading bytes, emit
+                ** one arm with a pattern OR-ing them, then walk the
+                ** per-rule DFA inline. */
+                unsigned char bs[256];
+                lime_lex_dfa_leading_bytes(cs->per_rule_dfas[r], bs);
+                int first = 1;
+                fprintf(out, "        ");
+                for (int b2 = 0; b2 < 256; b2++) {
+                    if (!bs[b2]) continue;
+                    if (byte_rule[b2] != r) continue;  /* not unique to r */
+                    if (!first) fprintf(out, " | ");
+                    fprintf(out, "%d", b2);
+                    first = 0;
+                }
+                fprintf(out, " => {\n");
+                fprintf(out,
+                        "            let trans = %s_R%d_TRANS_%s;\n"
+                        "            let accept = %s_R%d_ACCEPT_%s;\n"
+                        "            let mut state: u16 = %s_R%d_START_%s;\n"
+                        "            let mut last_accept_pos: usize = 0;\n"
+                        "            let n = bytes.len();\n"
+                        "            let mut q = p;\n"
+                        "            unsafe {\n"
+                        "                if *accept.get_unchecked(state as usize) != 0 {\n"
+                        "                    last_accept_pos = q;\n"
+                        "                }\n"
+                        "                while q < n {\n"
+                        "                    let b = *bytes.get_unchecked(q);\n"
+                        "                    let off = (state as usize) * 256 + b as usize;\n"
+                        "                    let next = *trans.get_unchecked(off);\n"
+                        "                    if next < 0 { break; }\n"
+                        "                    state = next as u16;\n"
+                        "                    q += 1;\n"
+                        "                    if *accept.get_unchecked(state as usize) != 0 {\n"
+                        "                        last_accept_pos = q;\n"
+                        "                    }\n"
+                        "                }\n"
+                        "            }\n"
+                        "            if last_accept_pos > p {\n"
+                        "                (last_accept_pos - p, %d)\n"
+                        "            } else { (0, -1) }\n"
+                        "        },\n",
+                        prefix, r, cs->state_name,
+                        prefix, r, cs->state_name,
+                        prefix, r, cs->state_name,
+                        gid);
+            }
+        }
+        fprintf(out, "        _ => (0, -1),\n");
+        fprintf(out, "    }\n}\n\n");
+        free(kind);
+        free(fixed_str);
+        free(fixed_len);
+    }
+
+    /* Per-state-group dispatcher: routes self.state to the right
+    ** per_token_match_<NAME>. */
+    fprintf(out,
+            "#[inline(always)]\n"
+            "fn per_token_match(s: StateId, bytes: &[u8], p: usize) -> (usize, i16) {\n"
+            "    match s {\n");
+    for (int g = 0; g < compiled->n_states; g++) {
+        const LimeLexCompiledState *cs = &compiled->states[g];
+        if (!cs->per_rule_dfas) continue;
+        fprintf(out, "        %d => per_token_match_%s(bytes, p),\n", g, cs->state_name);
+    }
+    fprintf(out, "        _ => (0, -1),\n");
+    fprintf(out, "    }\n}\n\n");
+}
+
+
+/*
 ** Emit the public Token type + Lexer struct + tokenize() runtime.
 **
 ** The runtime is a longest-match DFA simulator: walks states for
@@ -815,6 +1037,9 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
     /* Emit shared SIMD helpers up front when --rustlex-simd is set. */
     if (g_lime_rustlex_simd_flag) {
         emit_simd_helpers(out, compiled);
+    }
+    if (g_lime_per_token_dfa_flag) {
+        emit_per_token_tables(out, prefix, compiled);
     }
     emit_section(out, "Tokenizer runtime");
 
@@ -1020,7 +1245,34 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
             "        let mut pos: usize = 0;\n"
             "        let mut line: u32 = 1;\n"
             "        let mut column: u32 = 1;\n"
-            "        while pos < bytes.len() {\n"
+            "        while pos < bytes.len() {\n");
+        if (g_lime_per_token_dfa_flag) {
+            fprintf(out,
+                "            // Per-token DFA dispatch (--per-token-dfa).\n"
+                "            // No unified-DFA fallback emitted; this build\n"
+                "            // assumes unambiguous-leading-byte grammar.\n"
+                "            let (consumed, rid) = per_token_match(self.state, bytes, pos);\n"
+                "            if consumed == 0 || rid < 0 {\n"
+                "                return Err(LexError::NoMatch { offset: pos, byte: bytes[pos] });\n"
+                "            }\n"
+                "            let tok_line = line;\n"
+                "            let tok_col = column;\n"
+                "            for &b in &bytes[pos..pos + consumed] {\n"
+                "                if b == b'\\n' { line += 1; column = 1; }\n"
+                "                else if b != b'\\r' { column += 1; }\n"
+                "            }\n"
+                "            out.push(Token { rule_id: rid as u16, start: pos, len: consumed,\n"
+                "                             line: tok_line, column: tok_col });\n"
+                "            pos += consumed;\n"
+                "        }\n"
+                "        Ok(out)\n"
+                "    }\n"
+                "}\n\n"
+                "impl Default for Lexer {\n"
+                "    fn default() -> Self { Self::new() }\n"
+                "}\n");
+        } else {
+        fprintf(out,
             "            let accept = dfa_accept_for_state(self.state);\n"
             "            let mut state: u16 = dfa_start_for_state(self.state);\n"
             "            let mut last_accept: i16 = -1;\n"
@@ -1076,6 +1328,7 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
             "impl Default for Lexer {\n"
             "    fn default() -> Self { Self::new() }\n"
             "}\n");
+        } /* end else for !per-token-dfa (simd branch) */
     } else {
         fprintf(out,
             "    pub fn tokenize(&mut self, input: &str) -> Result<Vec<Token>, LexError> {\n"
@@ -1093,7 +1346,32 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
             "        // scan we fall through to the standard step\n"
             "        // dispatch which handles the byte that broke the\n"
             "        // self-loop.\n"
-            "        while pos < bytes.len() {\n"
+            "        while pos < bytes.len() {\n");
+        if (g_lime_per_token_dfa_flag) {
+            fprintf(out,
+                "            // Per-token DFA dispatch (--per-token-dfa).\n"
+                "            let (consumed, rid) = per_token_match(self.state, bytes, pos);\n"
+                "            if consumed == 0 || rid < 0 {\n"
+                "                return Err(LexError::NoMatch { offset: pos, byte: bytes[pos] });\n"
+                "            }\n"
+                "            let tok_line = line;\n"
+                "            let tok_col = column;\n"
+                "            for &b in &bytes[pos..pos + consumed] {\n"
+                "                if b == b'\\n' { line += 1; column = 1; }\n"
+                "                else if b != b'\\r' { column += 1; }\n"
+                "            }\n"
+                "            out.push(Token { rule_id: rid as u16, start: pos, len: consumed,\n"
+                "                             line: tok_line, column: tok_col });\n"
+                "            pos += consumed;\n"
+                "        }\n"
+                "        Ok(out)\n"
+                "    }\n"
+                "}\n\n"
+                "impl Default for Lexer {\n"
+                "    fn default() -> Self { Self::new() }\n"
+                "}\n");
+        } else {
+        fprintf(out,
             "            let accept = dfa_accept_for_state(self.state);\n"
             "            let mut state: u16 = dfa_start_for_state(self.state);\n"
             "            let mut last_accept: i16 = -1;\n"
@@ -1154,6 +1432,7 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
             "impl Default for Lexer {\n"
             "    fn default() -> Self { Self::new() }\n"
             "}\n");
+        } /* end else for !per-token-dfa (classic branch) */
     }
 
     /* Streaming iterator API.  Yields one Token per next() call;

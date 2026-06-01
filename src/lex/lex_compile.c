@@ -130,7 +130,8 @@ static int rule_applies(const LimeLexRule *r, const char *state_name, int state_
 ** applicable rules (caller represents this as an empty
 ** LimeLexCompiledState rather than calling here). */
 static LimeDfa *compile_state_rules(const LimeLexSpec *spec, const LimeLexRule **rules, int n_rules,
-                                    int *err_count_out) {
+                                    int *err_count_out,
+                                    LimeDfa ***per_rule_dfas_out, int *n_per_rule_out) {
     if (n_rules == 0) return NULL;
 
     /* Build per-rule NFAs.  The accept_rule is the rule's
@@ -205,6 +206,46 @@ static LimeDfa *compile_state_rules(const LimeLexSpec *spec, const LimeLexRule *
         return NULL;
     }
 
+    /* v0.9 per-token DFA: build a DFA for each rule INDEPENDENTLY
+    ** before we combine them.  Each per-rule DFA accepts only that
+    ** rule's language; useful for leading-byte dispatch.  The
+    ** combined DFA below remains the ambiguity fallback. */
+    if (per_rule_dfas_out) {
+        LimeDfa **per_rule_dfas = calloc(n_rules, sizeof(*per_rule_dfas));
+        if (!per_rule_dfas) {
+            for (int i = 0; i < n_non_eof; i++) lime_lex_nfa_free(non_eof[i]);
+            free(non_eof);
+            return NULL;
+        }
+        for (int i = 0; i < n_rules; i++) {
+            const LimeLexRule *r = rules[i];
+            if (r->is_eof) {
+                per_rule_dfas[i] = NULL;
+                continue;
+            }
+            const char *src_pat = r->expanded_pattern ? r->expanded_pattern : r->pattern;
+            if (!src_pat) {
+                per_rule_dfas[i] = NULL;
+                continue;
+            }
+            char *err = NULL;
+            LimeReNode *re = lime_lex_regex_parse(src_pat, &err);
+            if (!re) { free(err); per_rule_dfas[i] = NULL; continue; }
+            LimeNfa *nfa = lime_lex_nfa_from_regex(re);
+            lime_lex_regex_free(re);
+            if (!nfa) { per_rule_dfas[i] = NULL; continue; }
+            nfa->states[nfa->accept].accept_rule = i;
+            LimeDfa *raw = lime_lex_nfa_to_dfa(nfa);
+            lime_lex_nfa_free(nfa);
+            if (!raw) { per_rule_dfas[i] = NULL; continue; }
+            LimeDfa *minimized = lime_lex_dfa_minimize(raw);
+            lime_lex_dfa_free(raw);
+            per_rule_dfas[i] = minimized;
+        }
+        *per_rule_dfas_out = per_rule_dfas;
+        if (n_per_rule_out) *n_per_rule_out = n_rules;
+    }
+
     LimeNfa *combined = lime_lex_nfa_combine(non_eof, n_non_eof);
     free(non_eof);
     if (!combined) {
@@ -270,7 +311,8 @@ static int compile_one(const LimeLexSpec *spec, const RuleVec *all_rules, const 
     s.n_rules = n_sel;
     s.rule_indices = indices;
     if (n_sel > 0) {
-        s.dfa = compile_state_rules(spec, selected, n_sel, &out->error_count);
+        s.dfa = compile_state_rules(spec, selected, n_sel, &out->error_count,
+                                    &s.per_rule_dfas, &s.n_per_rule_dfas);
     }
     free(selected);
     if (!s.state_name) {
