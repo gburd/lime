@@ -731,6 +731,12 @@ static void emit_simd_helpers(FILE *out, const LimeLexCompiled *compiled) {
                     cs->state_name, s);
         }
     }
+    /* Generic scan_until_<n> trait methods for use by per-token DFA's
+    ** per-rule fast-path scans (when --per-token-dfa is also on). */
+    fprintf(out,
+            "    fn scan_until_1(bytes: &[u8], p: usize, b1: u8) -> usize;\n"
+            "    fn scan_until_2(bytes: &[u8], p: usize, b1: u8, b2: u8) -> usize;\n"
+            "    fn scan_until_3(bytes: &[u8], p: usize, b1: u8, b2: u8, b3: u8) -> usize;\n");
     fprintf(out, "}\n\n");
 
     /* Per-arch impls.  AvxScanner (cfg x86_64), NeonScanner (cfg
@@ -800,6 +806,24 @@ static void emit_simd_helpers(FILE *out, const LimeLexCompiled *compiled) {
                 fprintf(out, "    }\n");
             }
         }
+        /* Emit generic scan_until_<n> trait methods, delegating to
+        ** the underlying scan module (avx2/neon/scalar). */
+        fprintf(out,
+                "    #[inline(always)]\n"
+                "    fn scan_until_1(bytes: &[u8], p: usize, b1: u8) -> usize {\n"
+                "%sscan_until_1(bytes, p, b1)%s"
+                "    }\n"
+                "    #[inline(always)]\n"
+                "    fn scan_until_2(bytes: &[u8], p: usize, b1: u8, b2: u8) -> usize {\n"
+                "%sscan_until_2(bytes, p, b1, b2)%s"
+                "    }\n"
+                "    #[inline(always)]\n"
+                "    fn scan_until_3(bytes: &[u8], p: usize, b1: u8, b2: u8, b3: u8) -> usize {\n"
+                "%sscan_until_3(bytes, p, b1, b2, b3)%s"
+                "    }\n",
+                impls[impl_i].body_prefix, impls[impl_i].body_suffix,
+                impls[impl_i].body_prefix, impls[impl_i].body_suffix,
+                impls[impl_i].body_prefix, impls[impl_i].body_suffix);
         fprintf(out, "}\n\n");
     }
 }
@@ -911,14 +935,28 @@ static void emit_per_token_tables(FILE *out, const char *prefix,
                 else byte_rule[b] = -2;
             }
         }
-        /* Emit the match function. */
-        fprintf(out,
-                "/// Per-token match for state group %s.  Returns\n"
-                "/// (consumed_bytes, global_rule_id) on match, (0, -1) on\n"
-                "/// fallback (caller runs the unified DFA).\n"
-                "#[inline(always)]\n"
-                "fn per_token_match_%s(bytes: &[u8], p: usize) -> (usize, i16) {\n",
-                cs->state_name, cs->state_name);
+        /* Emit the match function.  When --rustlex-simd is also
+        ** on, make per_token_match generic over Scanner so the
+        ** per-rule fast-path scans can use the AVX2/NEON helpers
+        ** instead of the scalar while loop.  Without --rustlex-simd,
+        ** scalar tight loops still get auto-vectorised by LLVM. */
+        if (g_lime_rustlex_simd_flag) {
+            fprintf(out,
+                    "/// Per-token match for state group %s.  Returns\n"
+                    "/// (consumed_bytes, global_rule_id) on match, (0, -1) on\n"
+                    "/// fallback (caller runs the unified DFA).\n"
+                    "#[inline(always)]\n"
+                    "fn per_token_match_%s<S: Scanner>(bytes: &[u8], p: usize) -> (usize, i16) {\n",
+                    cs->state_name, cs->state_name);
+        } else {
+            fprintf(out,
+                    "/// Per-token match for state group %s.  Returns\n"
+                    "/// (consumed_bytes, global_rule_id) on match, (0, -1) on\n"
+                    "/// fallback (caller runs the unified DFA).\n"
+                    "#[inline(always)]\n"
+                    "fn per_token_match_%s(bytes: &[u8], p: usize) -> (usize, i16) {\n",
+                    cs->state_name, cs->state_name);
+        }
         fprintf(out, "    if p >= bytes.len() { return (0, -1); }\n");
         fprintf(out, "    let lead = unsafe { *bytes.get_unchecked(p) };\n");
         fprintf(out, "    match lead {\n");
@@ -956,7 +994,57 @@ static void emit_per_token_tables(FILE *out, const char *prefix,
             } else {
                 /* General DFA rule: collect all leading bytes, emit
                 ** one arm with a pattern OR-ing them, then walk the
-                ** per-rule DFA inline. */
+                ** per-rule DFA inline.  When a per-rule DFA state is
+                ** self-loop-dominant (>=240/256 self-loop bytes, exit
+                ** set <=3 distinct bytes -- same threshold as the
+                ** unified-DFA fast path), emit an inline scan-until-
+                ** exit helper that LLVM auto-vectorises into PCMPEQB
+                ** + PMOVMSKB.  Without this, per-rule DFA walks lack
+                ** the SIMD treatment the unified DFA gets and lose
+                ** ~70%% throughput on prose-heavy content.  This is
+                ** Experiment 3 of the per-token DFA work. */
+                const LimeDfa *rdfa = cs->per_rule_dfas[r];
+                /* Pre-emit per-state fast-path scan helpers as
+                ** standalone functions.  These are called from the
+                ** walk loop below.  We use simple scalar tight
+                ** loops; LLVM auto-vectorises them. */
+                int *fp_kind = (int *)calloc(rdfa->n_states, sizeof(int));
+                int (*fp_exit)[3] = (int (*)[3])calloc(rdfa->n_states, sizeof(*fp_exit));
+                int *fp_nexit = (int *)calloc(rdfa->n_states, sizeof(int));
+                if (fp_kind && fp_exit && fp_nexit) {
+                    for (int s = 0; s < rdfa->n_states; s++) {
+                        const int *tr = rdfa->states[s].trans;
+                        int self_count = 0;
+                        int exit_set[8]; int n_exit = 0; int too_many = 0;
+                        for (int b = 0; b < 256; b++) {
+                            int t = tr[b];
+                            if (t == s) self_count++;
+                            else if (t >= 0) {
+                                int found = 0;
+                                for (int j = 0; j < n_exit; j++)
+                                    if (exit_set[j] == b) { found = 1; break; }
+                                if (!found) {
+                                    if (n_exit >= 3) too_many = 1;
+                                    else exit_set[n_exit++] = b;
+                                }
+                            }
+                        }
+                        if (!too_many && self_count >= 240 && n_exit > 0) {
+                            fp_kind[s] = 1;
+                            fp_nexit[s] = n_exit;
+                            for (int j = 0; j < n_exit; j++) fp_exit[s][j] = exit_set[j];
+                        }
+                    }
+                }
+                /* Emit one scan helper per fast-path state. */
+                for (int s = 0; s < rdfa->n_states; s++) {
+                    if (!fp_kind || fp_kind[s] != 1) continue;
+                    fprintf(out,
+                            "// (per-rule fast-path helper hoisted to module scope)\n");
+                    /* Helper definitions are emitted at module scope
+                    ** in a separate pass; the walk below references
+                    ** them by name as scan_self_loop_R<r>_S<s>. */
+                }
                 unsigned char bs[256];
                 lime_lex_dfa_leading_bytes(cs->per_rule_dfas[r], bs);
                 int first = 1;
@@ -980,7 +1068,67 @@ static void emit_per_token_tables(FILE *out, const char *prefix,
                         "                if *accept.get_unchecked(state as usize) != 0 {\n"
                         "                    last_accept_pos = q;\n"
                         "                }\n"
-                        "                while q < n {\n"
+                        "                while q < n {\n",
+                        prefix, r, cs->state_name,
+                        prefix, r, cs->state_name,
+                        prefix, r, cs->state_name);
+                /* Inline fast-path scan dispatch by state. */
+                int any_fp = 0;
+                for (int s = 0; s < rdfa->n_states; s++) {
+                    if (fp_kind && fp_kind[s] == 1) { any_fp = 1; break; }
+                }
+                if (any_fp) {
+                    fprintf(out,
+                            "                    // Per-rule fast-path scan-until-exit.\n"
+                            "                    let new_q = match state {\n");
+                    for (int s = 0; s < rdfa->n_states; s++) {
+                        if (!fp_kind || fp_kind[s] != 1) continue;
+                        int n = fp_nexit[s];
+                        if (g_lime_rustlex_simd_flag) {
+                            /* Use Scanner trait helpers (AVX2/NEON/scalar
+                            ** picked by the caller's monomorphization). */
+                            if (n == 1) {
+                                fprintf(out,
+                                        "                        %d => S::scan_until_1(bytes, q, %d),\n",
+                                        s, fp_exit[s][0]);
+                            } else if (n == 2) {
+                                fprintf(out,
+                                        "                        %d => S::scan_until_2(bytes, q, %d, %d),\n",
+                                        s, fp_exit[s][0], fp_exit[s][1]);
+                            } else {
+                                fprintf(out,
+                                        "                        %d => S::scan_until_3(bytes, q, %d, %d, %d),\n",
+                                        s, fp_exit[s][0], fp_exit[s][1], fp_exit[s][2]);
+                            }
+                        } else {
+                            /* Scalar tight loop -- LLVM auto-vectorises. */
+                            if (n == 1) {
+                                fprintf(out,
+                                        "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb == %d { break; } x += 1; } x },\n",
+                                        s, fp_exit[s][0]);
+                            } else if (n == 2) {
+                                fprintf(out,
+                                        "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb == %d || bb == %d { break; } x += 1; } x },\n",
+                                        s, fp_exit[s][0], fp_exit[s][1]);
+                            } else {
+                                fprintf(out,
+                                        "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb == %d || bb == %d || bb == %d { break; } x += 1; } x },\n",
+                                        s, fp_exit[s][0], fp_exit[s][1], fp_exit[s][2]);
+                            }
+                        }
+                    }
+                    fprintf(out,
+                            "                        _ => q,\n"
+                            "                    };\n"
+                            "                    if new_q > q {\n"
+                            "                        if *accept.get_unchecked(state as usize) != 0 {\n"
+                            "                            last_accept_pos = new_q;\n"
+                            "                        }\n"
+                            "                        q = new_q;\n"
+                            "                        if q >= n { break; }\n"
+                            "                    }\n");
+                }
+                fprintf(out,
                         "                    let b = *bytes.get_unchecked(q);\n"
                         "                    let off = (state as usize) * 256 + b as usize;\n"
                         "                    let next = *trans.get_unchecked(off);\n"
@@ -996,10 +1144,10 @@ static void emit_per_token_tables(FILE *out, const char *prefix,
                         "                (last_accept_pos - p, %d)\n"
                         "            } else { (0, -1) }\n"
                         "        },\n",
-                        prefix, r, cs->state_name,
-                        prefix, r, cs->state_name,
-                        prefix, r, cs->state_name,
                         gid);
+                free(fp_kind);
+                free(fp_exit);
+                free(fp_nexit);
             }
         }
         fprintf(out, "        _ => (0, -1),\n");
@@ -1010,15 +1158,28 @@ static void emit_per_token_tables(FILE *out, const char *prefix,
     }
 
     /* Per-state-group dispatcher: routes self.state to the right
-    ** per_token_match_<NAME>. */
-    fprintf(out,
-            "#[inline(always)]\n"
-            "fn per_token_match(s: StateId, bytes: &[u8], p: usize) -> (usize, i16) {\n"
-            "    match s {\n");
-    for (int g = 0; g < compiled->n_states; g++) {
-        const LimeLexCompiledState *cs = &compiled->states[g];
-        if (!cs->per_rule_dfas) continue;
-        fprintf(out, "        %d => per_token_match_%s(bytes, p),\n", g, cs->state_name);
+    ** per_token_match_<NAME>.  Generic over Scanner when --rustlex-simd
+    ** is on (so the per-rule fast-path scans use AVX2/NEON). */
+    if (g_lime_rustlex_simd_flag) {
+        fprintf(out,
+                "#[inline(always)]\n"
+                "fn per_token_match<S: Scanner>(s: StateId, bytes: &[u8], p: usize) -> (usize, i16) {\n"
+                "    match s {\n");
+        for (int g = 0; g < compiled->n_states; g++) {
+            const LimeLexCompiledState *cs = &compiled->states[g];
+            if (!cs->per_rule_dfas) continue;
+            fprintf(out, "        %d => per_token_match_%s::<S>(bytes, p),\n", g, cs->state_name);
+        }
+    } else {
+        fprintf(out,
+                "#[inline(always)]\n"
+                "fn per_token_match(s: StateId, bytes: &[u8], p: usize) -> (usize, i16) {\n"
+                "    match s {\n");
+        for (int g = 0; g < compiled->n_states; g++) {
+            const LimeLexCompiledState *cs = &compiled->states[g];
+            if (!cs->per_rule_dfas) continue;
+            fprintf(out, "        %d => per_token_match_%s(bytes, p),\n", g, cs->state_name);
+        }
     }
     fprintf(out, "        _ => (0, -1),\n");
     fprintf(out, "    }\n}\n\n");
@@ -1251,7 +1412,7 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
                 "            // Per-token DFA dispatch (--per-token-dfa).\n"
                 "            // No unified-DFA fallback emitted; this build\n"
                 "            // assumes unambiguous-leading-byte grammar.\n"
-                "            let (consumed, rid) = per_token_match(self.state, bytes, pos);\n"
+                "            let (consumed, rid) = per_token_match::<S>(self.state, bytes, pos);\n"
                 "            if consumed == 0 || rid < 0 {\n"
                 "                return Err(LexError::NoMatch { offset: pos, byte: bytes[pos] });\n"
                 "            }\n"
