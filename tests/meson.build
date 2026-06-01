@@ -351,6 +351,26 @@ if host_machine.system() != 'windows'
     timeout : 30)
 endif
 
+# v0.8.6 CLI flag redesign: regression for --target / --enable /
+# --disable plus the deprecation aliases for --rust*, --rustlex*,
+# and --per-token-dfa.  Locks down the user-facing flag surface so
+# the deprecation aliases keep working AND the new scheme produces
+# the expected outputs.  Skipped at runtime when LIME_BIN unset.
+if host_machine.system() != 'windows'
+  test_flag_scheme = executable('test_flag_scheme',
+    'test_flag_scheme.c',
+  )
+  test('flag_scheme', test_flag_scheme,
+    args : [lime_exe.full_path()],
+    env : [
+      'LIME_BIN=' + lime_exe.full_path(),
+      'LIME_PROJECT_ROOT=' + meson.project_source_root(),
+    ],
+    depends : [lime_exe],
+    is_parallel : false,
+    timeout : 30)
+endif
+
 # v0.6.x: YYFALLBACK AOT codegen regression.  Verifies the JIT
 # trace bakes yy_fallback into the find_shift_action emit path so
 # the runtime path that consults snap->yy_fallback is bypassed.
