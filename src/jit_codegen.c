@@ -48,150 +48,10 @@ static uint64_t now_ns(void) {
 /* ------------------------------------------------------------------ */
 
 /*
-** Determine whether a rule's action body can be safely inlined into a
-** JIT-compiled trace versus dispatching through yy_rule_reduce_fn[].
-**
-** Inlining simple rules (empty actions, passthrough `$$ = $1`, single
-** arithmetic expressions) avoids indirect call overhead. Complex actions
-** (function calls, allocations, control flow) are left as indirect calls
-** to keep trace code size bounded and maintain correctness.
-**
-** Algorithm: scan the action code string for blacklist tokens:
-**   - '(' followed by ')' or identifier → function call
-**   - 'goto', 'setjmp', 'longjmp', 'return' keywords
-**   - 'malloc', 'free', 'realloc', 'calloc'
-**   - 'Parse_*' identifiers (generated parser callbacks)
-**   - '{' or ';' followed by control-flow keywords (if/while/for)
-**
-** Conservative: when in doubt, returns false to maintain correctness.
-** Null or empty code strings are considered inlinable (no-op reduces).
+** The plain-data classifier `jit_can_inline_rule_text(code, noCode)`
+** lives in src/jit_inline.c so it is available even in LIME_NO_JIT
+** builds (the Rust output emitter consumes it without LLVM).
 */
-bool jit_can_inline_rule_text(const char *code, int no_code) {
-    /* Empty actions or explicitly marked noCode are inlinable (no-ops) */
-    if (no_code || code == NULL || code[0] == '\0') {
-        return true;
-    }
-    size_t len = strlen(code);
-    
-    /* Simple passthrough: $$ = $N; (where N is a single RHS index)
-    ** Matches patterns like "A = B;" with optional whitespace */
-    bool looks_like_passthrough = false;
-    {
-        const char *p = code;
-        /* Skip leading whitespace */
-        while (*p && isspace((unsigned char)*p)) p++;
-        /* Expect 'A' or similar single-char LHS identifier */
-        if (*p && (isalpha((unsigned char)*p) || *p == '_')) {
-            p++;
-            while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
-            while (*p && isspace((unsigned char)*p)) p++;
-            if (*p == '=') {
-                p++;
-                while (*p && isspace((unsigned char)*p)) p++;
-                /* Expect 'B' or similar single-char RHS identifier */
-                if (*p && (isalpha((unsigned char)*p) || *p == '_')) {
-                    const char *id_start = p;
-                    p++;
-                    while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
-                    size_t id_len = (size_t)(p - id_start);
-                    while (*p && isspace((unsigned char)*p)) p++;
-                    if (*p == ';') {
-                        p++;
-                        while (*p && isspace((unsigned char)*p)) p++;
-                        /* If we've consumed the entire string, it's a passthrough */
-                        if (*p == '\0' && id_len <= 3) {
-                            looks_like_passthrough = true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    if (looks_like_passthrough) return true;
-    
-    /* Single-line arithmetic expressions: no semicolons except trailing,
-    ** no curly braces, no function calls (no '(' before '=') */
-    bool has_semicolon_mid = false;
-    bool has_braces = false;
-    bool has_function_call = false;
-    
-    for (size_t i = 0; i < len; i++) {
-        char c = code[i];
-        
-        /* Check for mid-statement semicolons (not trailing) */
-        if (c == ';') {
-            /* Trailing semicolon is OK; mid-statement is not */
-            size_t j = i + 1;
-            while (j < len && isspace((unsigned char)code[j])) j++;
-            if (j < len) {
-                has_semicolon_mid = true;
-            }
-        }
-        
-        /* Check for curly braces (block statements) */
-        if (c == '{' || c == '}') {
-            has_braces = true;
-        }
-        
-        /* Check for function calls: '(' that isn't inside a $(...) reference */
-        if (c == '(') {
-            /* Scan backwards to see if this is a function name */
-            if (i > 0) {
-                int j = (int)i - 1;
-                while (j >= 0 && isspace((unsigned char)code[j])) j--;
-                if (j >= 0 && (isalnum((unsigned char)code[j]) || code[j] == '_')) {
-                    /* Looks like identifier(...) → function call */
-                    has_function_call = true;
-                }
-            }
-        }
-    }
-    
-    /* Scan for blacklist keywords */
-    static const char *blacklist[] = {
-        "goto", "setjmp", "longjmp", "return",
-        "malloc", "free", "realloc", "calloc",
-        "Parse_", "if", "while", "for", "switch",
-        NULL
-    };
-    
-    for (const char **kw = blacklist; *kw != NULL; kw++) {
-        const char *found = strstr(code, *kw);
-        if (found != NULL) {
-            /* Verify it's a standalone keyword, not part of an identifier */
-            size_t kwlen = strlen(*kw);
-            bool is_keyword = true;
-            
-            /* Check preceding character */
-            if (found > code) {
-                char prev = *(found - 1);
-                if (isalnum((unsigned char)prev) || prev == '_') {
-                    is_keyword = false;
-                }
-            }
-            
-            /* Check following character */
-            if (is_keyword && found[kwlen] != '\0') {
-                char next = found[kwlen];
-                if (isalnum((unsigned char)next) || next == '_') {
-                    is_keyword = false;
-                }
-            }
-            
-            if (is_keyword) {
-                return false; /* Blacklisted keyword found */
-            }
-        }
-    }
-    
-    /* If we found complex constructs, don't inline */
-    if (has_semicolon_mid || has_braces || has_function_call) {
-        return false;
-    }
-    
-    /* Simple expression or single statement: safe to inline */
-    return len < 200; /* Cap at 200 chars to keep trace size reasonable */
-}
 
 /*
 ** Retrieve current inline/dispatch counters.
@@ -850,12 +710,6 @@ JITStatus jit_codegen_generate_into(LLVMContextRef llvm_ctx, LLVMModuleRef modul
 }
 
 #else /* LIME_NO_JIT -- stub implementations */
-
-bool jit_can_inline_rule_text(const char *code, int no_code) {
-    (void)code;
-    (void)no_code;
-    return false;  /* No JIT = no inlining */
-}
 
 void jit_get_inline_stats(uint32_t *inline_count, uint32_t *dispatch_count) {
     if (inline_count != NULL) *inline_count = 0;

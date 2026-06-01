@@ -2,6 +2,7 @@
 lib_sources = files(
   'version.c',
   'snapshot.c',
+  'jit_inline.c',
   'snapshot_build.c',
   'snapshot_create.c',
   'snapshot_diff.c',
