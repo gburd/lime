@@ -391,6 +391,24 @@ if host_machine.system() != 'windows'
     timeout : 30)
 endif
 
+# v0.8.10 lex-vectorize emit coverage: drives `lime -X` with no
+# flag (default ON), --lex-vectorize (explicit ON), and
+# --lex-no-vectorize, then asserts the emitted .c file shape
+# matches each mode's contract.  Uses test_compat for its
+# subprocess harness so it runs on Windows, but the same
+# host_machine.system() != 'windows' guard as the Rust test is
+# kept for symmetry.
+if host_machine.system() != 'windows'
+  test_lex_vectorize = executable('test_lex_vectorize',
+    'test_lex_vectorize.c',
+  )
+  test('lex_vectorize', test_lex_vectorize,
+    args : [lime_exe.full_path()],
+    depends : [lime_exe],
+    is_parallel : false,
+    timeout : 30)
+endif
+
 # v0.6.x: YYFALLBACK AOT codegen regression.  Verifies the JIT
 # trace bakes yy_fallback into the find_shift_action emit path so
 # the runtime path that consults snap->yy_fallback is bypassed.
