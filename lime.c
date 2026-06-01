@@ -4770,6 +4770,13 @@ static feature_flag_state g_features = {
 ** rustFlag / rustLexFlag get latched in main(). */
 static int g_target_is_rust = 0;
 
+/* C-output skins: `bison` and `flex` activated by --target=c:bison,
+** --target=c:flex, or --target=c:bison,flex.  When set, lime ALSO
+** emits <basename>_<skin>.c/.h alongside the standard output.
+** See docs/SKINS.md for the API surface each skin exposes. */
+static int g_skin_bison = 0;
+static int g_skin_flex  = 0;
+
 /* When non-zero, --rust / --rustlex / --rust-crate / --rust-nostd /
 ** --rustlex-simd / --rustlex-memchr / --per-token-dfa was seen on
 ** the command line.  Used to populate the legacy globals after
@@ -4873,15 +4880,74 @@ static char *opt_strip_prefix_eq(char *z) {
 static void handle_target_option(char *z) {
     z = opt_strip_prefix_eq(z);
     if (z == NULL || z[0] == 0) {
-        fprintf(stderr, "lime: --target requires a value (c|rust)\n");
+        fprintf(stderr, "lime: --target requires a value (c|rust, optionally with :skin,skin)\n");
         exit(1);
     }
-    if (strcmp(z, "c") == 0)         g_target_is_rust = 0;
-    else if (strcmp(z, "rust") == 0) g_target_is_rust = 1;
-    else {
+    /* Split target from optional skin list.  Accepted forms:
+    **   --target=c
+    **   --target=rust
+    **   --target=c:bison
+    **   --target=c:flex
+    **   --target=c:bison,flex
+    **   --target=rust:nom        (parsed and rejected; reserved for
+    **                              future Rust-skin work, see open-items.md
+    **                              section 2)
+    ** The skin list is comma-separated; each token must be a known
+    ** skin name for the chosen target. */
+    char *colon = strchr(z, ':');
+    char *target = z;
+    char *skins = NULL;
+    if (colon) {
+        *colon = 0;
+        skins = colon + 1;
+    }
+    if (strcmp(target, "c") == 0) {
+        g_target_is_rust = 0;
+    } else if (strcmp(target, "rust") == 0) {
+        g_target_is_rust = 1;
+    } else {
         fprintf(stderr,
-          "lime: --target value must be 'c' or 'rust' (got '%s')\n", z);
+          "lime: --target value must be 'c' or 'rust' (got '%s')\n", target);
         exit(1);
+    }
+    if (skins == NULL || skins[0] == 0) return;
+    /* Parse the skin list.  We mutate `skins` via strtok; safe
+    ** because handle_target_option runs once during option parsing
+    ** and no other strtok loop interleaves. */
+    for (char *tok = strtok(skins, ","); tok; tok = strtok(NULL, ",")) {
+        while (*tok == ' ' || *tok == '\t') tok++;
+        size_t n = strlen(tok);
+        while (n > 0 && (tok[n-1] == ' ' || tok[n-1] == '\t')) tok[--n] = 0;
+        if (tok[0] == 0) continue;
+        if (g_target_is_rust) {
+            /* Rust-side skins are documented in open-items.md but not
+            ** yet implemented.  Emit a clear error so users know the
+            ** flag form is recognised but the back-end is pending. */
+            if (strcmp(tok, "nom") == 0
+             || strcmp(tok, "pest") == 0
+             || strcmp(tok, "lalrpop") == 0
+             || strcmp(tok, "logos") == 0
+             || strcmp(tok, "chumsky") == 0) {
+                fprintf(stderr,
+                  "lime: --target=rust:%s is reserved for future work; "
+                  "not yet implemented.  See docs/SKINS.md.\n", tok);
+                exit(1);
+            }
+            fprintf(stderr,
+              "lime: unknown rust-target skin '%s'.  Valid (future): "
+              "nom, pest, lalrpop, logos, chumsky.\n", tok);
+            exit(1);
+        }
+        if (strcmp(tok, "bison") == 0) {
+            g_skin_bison = 1;
+        } else if (strcmp(tok, "flex") == 0) {
+            g_skin_flex = 1;
+        } else {
+            fprintf(stderr,
+              "lime: unknown c-target skin '%s'.  Valid: bison, flex.\n",
+              tok);
+            exit(1);
+        }
     }
 }
 
@@ -5205,9 +5271,12 @@ int main(int argc, char **argv){
     ** runs, so users can write either.  No short form for --disable
     ** because `-d` is taken by the existing -d <output-dir> flag. */
     {OPT_FSTR, "-target", (char*)handle_target_option,
-                    "Output target language: c (default) | rust."},
+                    "Output target language: c (default) | rust.  "
+                    "Append `:<skin>[,<skin>...]` to also emit API-"
+                    "compatibility skins, e.g. --target=c:bison or "
+                    "--target=c:bison,flex.  See docs/SKINS.md."},
     {OPT_FSTR, "t", (char*)handle_target_option,
-                    "Short form of --target=<c|rust>."},
+                    "Short form of --target=<c|rust>[:<skin>...]."},
     {OPT_FSTR, "-enable", (char*)handle_enable_option,
                     "Enable a comma-separated list of features.  "
                     "Names: simd, memchr, per-token-dfa, vectorize, "
@@ -5561,6 +5630,61 @@ int main(int argc, char **argv){
     ** omitted if the "-m" option is used because makeheaders will
     ** generate the file for us.) */
     if( !mhflag ) ReportHeader(&lem);
+
+    /* C-output skins (--target=c:bison / c:flex).  Each skin emits
+    ** an additional pair of files NEXT TO the standard output, so
+    ** the standard <basename>.c/.h are unchanged whether or not a
+    ** skin is requested.  Skin paths are derived from `lemp->filename`
+    ** the same way `file_makename(".c")` derives the standard output
+    ** path; we strip the path with the same rules so `-d <dir>` lands
+    ** the skin files in the same directory as the standard output. */
+    if( !rustFlag && (g_skin_bison || g_skin_flex) ){
+      extern int lime_emit_c_skin_bison(struct lime *lemp,
+                                        const char *out_h_path,
+                                        const char *out_c_path,
+                                        const char *base_id);
+      /* Forward decl: file_makename is PRIVATE (static) and defined
+      ** later in this translation unit; declare it locally so the
+      ** call site type-checks. */
+      extern char *file_makename(struct lime *lemp, const char *suffix);
+      char *base_h = file_makename(&lem, "_bison.h");
+      char *base_c = file_makename(&lem, "_bison.c");
+      /* Compute the bare basename (without directory or extension)
+      ** for the include guard / inter-file include in the skin. */
+      const char *raw = lem.filename;
+      const char *slash = strrchr(raw, '/');
+#if defined(_WIN32)
+      const char *bsl = strrchr(raw, '\\');
+      if( bsl && (!slash || bsl > slash) ) slash = bsl;
+#endif
+      const char *bare = slash ? slash + 1 : raw;
+      size_t bare_len = strlen(bare);
+      const char *dot = strrchr(bare, '.');
+      if( dot ) bare_len = (size_t)(dot - bare);
+      char *base_id = (char*)lime_malloc(bare_len + 1);
+      if( base_id ){
+        memcpy(base_id, bare, bare_len);
+        base_id[bare_len] = 0;
+      }
+      if( g_skin_bison && base_h && base_c && base_id ){
+        if( lime_emit_c_skin_bison(&lem, base_h, base_c, base_id) != 0 ){
+          lem.errorcnt++;
+        }else if( !quiet ){
+          fprintf(stderr, "Wrote bison skin to %s + %s\n", base_h, base_c);
+        }
+      }
+      if( g_skin_flex && !quiet ){
+        /* Flex skin generation is queued; warn loudly so the user
+        ** does not silently miss output.  See open-items.md item 3. */
+        fprintf(stderr,
+          "warning: --target=c:flex is recognised but not yet "
+          "implemented; only the bison skin emits files in this "
+          "release.  See docs/SKINS.md.\n");
+      }
+      lime_free(base_h);
+      lime_free(base_c);
+      lime_free(base_id);
+    }
   }
   if( statistics ){
     printf("Parser statistics:\n");
@@ -14134,6 +14258,29 @@ const char *lime_emit_rust_get_rust_failure(const struct lime *lemp) {
 }
 const char *lime_emit_rust_get_rust_overflow(const struct lime *lemp) {
     return lemp ? lemp->rust_overflow : 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Bridge accessors for src/emit_c_skin_bison.c                        */
+/*                                                                      */
+/*  The bison API skin is a separate translation unit; expose the      */
+/*  small subset of `struct lime` it reads via these accessors so the  */
+/*  skin source can stay free of internal struct definitions.          */
+/* ------------------------------------------------------------------ */
+const char *lime_emit_c_skin_get_arg(const struct lime *lemp) {
+    return lemp ? lemp->arg : 0;
+}
+const char *lime_emit_c_skin_get_tokentype(const struct lime *lemp) {
+    return lemp ? lemp->tokentype : 0;
+}
+const char *lime_emit_c_skin_get_tokenprefix(const struct lime *lemp) {
+    return lemp ? lemp->tokenprefix : 0;
+}
+int lime_emit_c_skin_get_first_token(const struct lime *lemp) {
+    return lemp ? lemp->first_token : 0;
+}
+int lime_emit_c_skin_has_locations(const struct lime *lemp) {
+    return lemp ? lemp->has_locations : 0;
 }
 
 int g_lime_rust_no_std = 0;

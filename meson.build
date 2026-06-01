@@ -189,6 +189,7 @@ subdir('src')
 lime_exe = executable('lime',
   'lime.c',
   'src/emit_rust.c',
+  'src/emit_c_skin_bison.c',
   'src/jit_inline.c',
   link_with : [lime_lex_compiler_lib],
   include_directories : [inc, include_directories('src/lex')],
