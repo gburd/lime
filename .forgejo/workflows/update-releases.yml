@@ -1,4 +1,4 @@
-# One-shot: update existing v0.8.x Codeberg releases to use the
+# One-shot (re-run): update existing v0.8.x Codeberg releases to use the
 # full annotated-tag content (subject line + body) so they match
 # the GitHub release bodies which already include the subject line.
 #
