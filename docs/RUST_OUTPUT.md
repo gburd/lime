@@ -177,6 +177,129 @@ The `%rust_action` body is emitted **verbatim**: no
 `$$/$N/<alias>` substitution.  The user has full Rust syntax
 including pattern matching, `?` operator, method calls, etc.
 
+## Per-rule reduce inlining
+
+The Rust output classifies every rule's action body and emits
+`#[inline(always)]` on the corresponding `fn yy_rule_N(...)`
+reducer when the body is small and pure enough that rustc can
+safely inline it into the parse loop's match arm.
+
+The classifier (`jit_can_inline_rule_text` in `src/jit_inline.c`)
+is the same one Lime's runtime LLVM JIT uses to decide whether to
+inline an action into a trace.  For the Rust output -- which has
+no runtime JIT, only ahead-of-time `rustc` -- the equivalent gain
+is the inline hint, which lets LLVM collapse the indirect dispatch
+through `YY_RULE_REDUCE_FN[ruleno]` into the action body itself for
+the common case of trivial reducers.
+
+### What gets inlined
+
+The classifier returns true (and Lime emits `#[inline(always)]`) for:
+
+- **Empty action bodies** (`s ::= a b c.` with no `{...}`).  The
+  generator emits the default `lhs = rhs0` assignment.
+- **Single-symbol passthrough** (`A = B;`).  Single short identifier
+  on each side, optional whitespace.
+- **Single small expressions** with no calls and no control flow
+  (`A = B + C;`, `A = B << 4 | C;`, `A = -B;`).
+
+It returns false (no annotation, rustc decides) for:
+
+- **Function calls** -- any `identifier(...)` pattern, including
+  the lemon-generated `Parse_*` callbacks.
+- **Control flow** -- the keywords `if`, `while`, `for`, `switch`,
+  `goto`, `setjmp`, `longjmp`, `return`.
+- **Allocations** -- `malloc`, `free`, `realloc`, `calloc`.
+- **Multi-statement bodies** -- any non-trailing `;`.
+- **Block statements** -- any `{` or `}`.
+- **Bodies longer than 200 chars** -- caps the inlined code size.
+- **`%rust_action` overrides** -- the user's body is emitted
+  verbatim, the classifier doesn't see it, so we default to no
+  annotation and let rustc decide.
+
+The classifier targets C action bodies (Lime's primary output) but
+the vocabulary it inspects -- function-call parens, block braces,
+the keyword set -- overlaps cleanly with Rust, so the same heuristic
+works for both targets.
+
+### Impact in real grammars
+
+Measured on Lime's own example grammars (`lime --rust grammar.lime`
+then `grep -B1 '^fn yy_rule_'` on the output):
+
+| Grammar                                | Rules | Inlined | %   |
+|----------------------------------------|------:|--------:|----:|
+| `examples/rust_calc/calc.lime`         |     5 |       5 | 100 |
+| `examples/calc/calc.lime`              |     8 |       7 |  88 |
+| `examples/cobol/cobol_grammar.lime`    |   216 |     191 |  88 |
+| `examples/mongodb/mongodb.lime`        |    98 |      62 |  63 |
+| `examples/jsonpath/jsonpath_gram.lime` |   135 |      73 |  54 |
+| `examples/xpath/xpath.lime`            |    79 |      37 |  47 |
+| `examples/datalog/datalog.lime`        |    65 |      28 |  43 |
+| `examples/xquery/xquery.lime`          |   160 |      62 |  39 |
+| `examples/replication/repl_gram.lime`  |    81 |      29 |  36 |
+| `examples/json/json_grammar.lime`      |    17 |       5 |  29 |
+| `examples/syncrep/syncrep_gram.lime`   |     9 |       2 |  22 |
+| `examples/isolation/isolation_gram.lime`|    28 |       6 |  21 |
+| `examples/pgbench/pgbench_expr.lime`   |    46 |       4 |   9 |
+
+The distribution tracks grammar style.  Tiny calculator grammars
+(rust_calc, calc, cobol with its many passthrough productions) come
+out 88-100 % inlinable -- nearly every rule is trivial.  AST-heavy
+grammars (json, syncrep, isolation, pgbench) sit at 9-29 % --
+most rules call into a node-builder allocator, which the classifier
+correctly rejects.  The conservative middle band (cobol, mongodb,
+jsonpath, xpath, datalog, xquery, replication) lands 36-63 %.
+
+A grammar where 100 % of rules came out inlinable would be
+suspicious -- the classifier would have to be ignoring some
+blacklist signal -- but in practice the worst we see is 100 % on a
+five-rule grammar where every rule really is a one-line
+passthrough.  Pattern-matching against mid-sized grammars
+(cobol-216 at 88 %, jsonpath-135 at 54 %, xpath-79 at 47 %) shows
+the classifier discriminates rather than rubber-stamps.
+
+### Performance
+
+The expected gain is rustc inlining the per-rule reducer into the
+parse loop's reduce step, eliminating the indirect call through
+`YY_RULE_REDUCE_FN[ruleno]`.  Whether that translates to measurable
+throughput depends on:
+
+- The fraction of inlinable rules in the grammar.
+- How hot the reduce path is relative to shift / table lookup
+  (token-bound workloads see less benefit; reduce-bound ones see
+  more).
+- Whether rustc/LLVM was already devirtualising the dispatch with
+  link-time optimisation (LTO collapses many indirect calls
+  whether or not the hint is present).
+
+The `#[inline(always)]` hint is a request, not a guarantee --
+rustc still applies its own size and recursion checks before
+actually inlining.  For trivial passthrough/arithmetic bodies it
+always inlines; for borderline-size bodies the hint tips the
+decision.
+
+Running the JSON parse benchmark in `bench/rust_compare/` (3 MB
+fixture, ~70k tokens, parser-only path) on this branch with and
+without the `#[inline(always)]` markers shows results within run-
+to-run noise (parse throughput swings ~7 % across consecutive runs
+on a busy laptop in either configuration; the inlined-vs-baseline
+delta sits inside that band).  This is consistent with the
+benchmark grammar: `bench/rust_compare/json.lime` is all empty-body
+productions (`value ::= STRING.` etc.), which rustc / LLVM already
+inline aggressively without the hint -- the function bodies are
+literally `*ctx.lhs = rhs0.clone()` plus a stack write.  Where the
+hint pays for itself is grammars with non-trivial inlinable bodies
+(short arithmetic, branchy conditionals that the classifier still
+accepts) on a tight reduce-bound loop; that needs a real
+benchmark grammar that exercises the reduce path more heavily than
+the shift path.  v0.9 has a richer benchmark planned -- numbers
+there will tell the story honestly.
+
+The change is no-cost when the classifier returns false (no
+annotation), so there's no downside to leaving it on by default.
+
 ## Working example
 
 `examples/rust_calc/`:

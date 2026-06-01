@@ -334,6 +334,26 @@ if host_machine.system() != 'windows'
     timeout : 120)
 endif
 
+# Per-rule reducer inlining: verifies the Rust output emitter wires
+# jit_can_inline_rule_text() into yy_rule_N emission so action
+# bodies classified as inlinable get #[inline(always)] (rustc
+# inlines them into the parse loop) while bodies with function
+# calls or control flow are left for rustc to decide.
+if host_machine.system() != 'windows'
+  test_emit_rust_inline = executable('test_emit_rust_inline',
+    'test_emit_rust_inline.c',
+  )
+  test('emit_rust_inline', test_emit_rust_inline,
+    env : [
+      'LIME_BIN=' + lime_exe.full_path(),
+      'LIME_PROJECT_ROOT=' + meson.project_source_root(),
+    ],
+    depends : [lime_exe],
+    workdir : meson.project_source_root(),
+    is_parallel : false,
+    timeout : 30)
+endif
+
 # v0.8.4+ rustlex emit coverage: exercises --rustlex's three
 # emit modes (default scalar, --rustlex-memchr, --rustlex-simd)
 # so the SIMD/memchr fast-path emit code in src/lex/emit_rust_lex.c

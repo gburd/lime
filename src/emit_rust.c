@@ -33,6 +33,7 @@
 */
 
 #include "snapshot.h"
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -102,6 +103,18 @@ extern const char *lime_emit_rust_get_rust_error(const struct lime *lemp);
 extern const char *lime_emit_rust_get_rust_accept(const struct lime *lemp);
 extern const char *lime_emit_rust_get_rust_failure(const struct lime *lemp);
 extern const char *lime_emit_rust_get_rust_overflow(const struct lime *lemp);
+
+/* Per-rule action body classifier (see src/jit_inline.c).  Returns
+** true when the action body is small/pure enough that the host
+** compiler can safely inline it; returns false for bodies that
+** contain function calls, control flow, or are otherwise too large
+** to inline.
+**
+** For the Rust output we use this to emit `#[inline(always)]` on
+** the corresponding yy_rule_N reducer so rustc inlines it into the
+** parse loop.  The classifier itself has no LLVM dependency, so it
+** is available even when LIME_NO_JIT is set. */
+extern bool jit_can_inline_rule_text(const char *code, int no_code);
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -375,8 +388,29 @@ static void emit_reduce_callbacks(FILE *out, struct lime *lemp,
                                      &lhs_alias, &line, &no_code) != 0) {
             continue;
         }
+        /* Mark the reducer #[inline(always)] when the action body
+        ** is classified as inlinable -- empty, passthrough, or a
+        ** single small expression with no calls/control flow.
+        ** Rustc honours the hint aggressively, which lets the
+        ** parse loop's match arm collapse into the action body
+        ** for trivial reducers (the common case in lemon-style
+        ** grammars).  See docs/RUST_OUTPUT.md for the impact on
+        ** typical grammars.
+        **
+        ** When the user supplies a per-rule %rust_action override,
+        ** trust the user's body verbatim: we don't see what's in
+        ** it (no $-substitution, no classification), so default to
+        ** not annotating and let rustc decide. */
+        const char *rust_override_for_inline =
+            lime_emit_rust_rule_rust_code(lemp, r);
+        bool inlinable =
+            (rust_override_for_inline == NULL || rust_override_for_inline[0] == '\0')
+            && jit_can_inline_rule_text(code, no_code);
         fprintf(out, "/// Rule %d: nrhs=%d, lhs symbol index=%d (line %d)\n",
                 r, nrhs, lhs_index, line);
+        if (inlinable) {
+            fprintf(out, "#[inline(always)]\n");
+        }
         fprintf(out, "fn yy_rule_%d(ctx: &mut ReduceCtx) {\n", r);
         /* Rebind RHS slots to local mutable refs for the action body. */
         /* Bind slots by alias when the grammar declared one
