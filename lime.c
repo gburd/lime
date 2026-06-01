@@ -106,7 +106,7 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "0.8.9"
+#define LIME_VERSION_STRING "0.9.1"
 #endif
 
 
