@@ -196,11 +196,14 @@ static inline uint64_t lime_now_realtime_ns(void) {
 **
 ** Marks a pointer parameter as not aliasing any other pointer in
 ** the same function -- the compiler can promote loads to registers
-** across stores through other pointers.  Trivially mapped to C99
-** `restrict` on gcc/clang/MSVC; no-op elsewhere.
+** across stores through other pointers.  C99 has the `restrict`
+** keyword; gcc/clang accept both `restrict` and `__restrict__`.
+** MSVC has `__restrict` (single underscore).  No-op elsewhere.
 */
-#if defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER)
+#if defined(__GNUC__) || defined(__clang__)
 #define LIME_RESTRICT __restrict__
+#elif defined(_MSC_VER)
+#define LIME_RESTRICT __restrict
 #else
 #define LIME_RESTRICT
 #endif
