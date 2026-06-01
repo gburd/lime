@@ -1,4 +1,4 @@
-# One-shot release backfill for tags (re-run 1) whose tagged commits predate
+# One-shot release backfill for tags (re-run 2) whose tagged commits predate
 # the release.yml workflow.  Iterates through v0.8.0..v0.8.8 and
 # POSTs each missing release to the Codeberg /releases API.  Safe
 # to re-run -- the API returns 409 Conflict on duplicates which
