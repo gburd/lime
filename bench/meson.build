@@ -85,6 +85,14 @@ subdir('bench_flex_bison_compare')
 # is not on the system).
 subdir('bench_simdjson_compare')
 
+# v0.8.10: C-emit --lex-vectorize SIMD throughput comparison.
+# Two binaries (bench_lex_vec / bench_lex_novec) run the same
+# tokenize-loop-over-fixture harness against the lexer that lime
+# emits with the default flag set vs --lex-no-vectorize.  Used
+# for ad-hoc throughput investigation; not wired as a meson test
+# (numbers are inherently host-dependent).
+subdir('lex_vectorize')
+
 # Microbenchmark proving the SIMD character-classification path
 # delivers measurable speedup over the scalar fallback.  This is
 # the load-bearing measurement that the README's SIMD-acceleration
