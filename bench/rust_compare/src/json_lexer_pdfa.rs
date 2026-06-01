@@ -715,7 +715,7 @@ fn per_token_match_INITIAL<S: Scanner>(bytes: &[u8], p: usize) -> (usize, i16) {
                     last_accept_pos = q;
                 }
                 while q < n {
-                    // Per-rule fast-path scan-until-exit.
+                    // Per-rule fast-path scan (Pattern A: until-exit, Pattern B: while-in-range).
                     let new_q = match state {
                         1 => S::scan_until_2(bytes, q, 34, 92),
                         _ => q,
@@ -755,6 +755,19 @@ fn per_token_match_INITIAL<S: Scanner>(bytes: &[u8], p: usize) -> (usize, i16) {
                     last_accept_pos = q;
                 }
                 while q < n {
+                    // Per-rule fast-path scan (Pattern A: until-exit, Pattern B: while-in-range).
+                    let new_q = match state {
+                        3 => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb < 48 || bb > 57 { break; } x += 1; } x },
+                        6 => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb < 48 || bb > 57 { break; } x += 1; } x },
+                        _ => q,
+                    };
+                    if new_q > q {
+                        if *accept.get_unchecked(state as usize) != 0 {
+                            last_accept_pos = new_q;
+                        }
+                        q = new_q;
+                        if q >= n { break; }
+                    }
                     let b = *bytes.get_unchecked(q);
                     let off = (state as usize) * 256 + b as usize;
                     let next = *trans.get_unchecked(off);

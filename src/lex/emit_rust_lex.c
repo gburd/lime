@@ -1011,7 +1011,20 @@ static void emit_per_token_tables(FILE *out, const char *prefix,
                 int *fp_kind = (int *)calloc(rdfa->n_states, sizeof(int));
                 int (*fp_exit)[3] = (int (*)[3])calloc(rdfa->n_states, sizeof(*fp_exit));
                 int *fp_nexit = (int *)calloc(rdfa->n_states, sizeof(int));
-                if (fp_kind && fp_exit && fp_nexit) {
+                /* Pattern B (scan-while-in-range): for states whose
+                ** self-loop set is a small contiguous byte range
+                ** (e.g. digits '0'..'9' = 10 bytes), emit
+                ** while bytes[q] in [lo,hi].  Helps number-heavy
+                ** workloads (telemetry, JSON metric values) where
+                ** Pattern A's self_count >= 240 threshold doesn't
+                ** fire.  v0.8.4 tried this and reverted because
+                ** typical short whitespace runs (1-2 bytes) didn't
+                ** repay the per-call overhead; the per-rule DFA
+                ** architecture lets us apply Pattern B surgically
+                ** only to states where it pays. */
+                int *fp_lo = (int *)calloc(rdfa->n_states, sizeof(int));
+                int *fp_hi = (int *)calloc(rdfa->n_states, sizeof(int));
+                if (fp_kind && fp_exit && fp_nexit && fp_lo && fp_hi) {
                     for (int s = 0; s < rdfa->n_states; s++) {
                         const int *tr = rdfa->states[s].trans;
                         int self_count = 0;
@@ -1033,6 +1046,25 @@ static void emit_per_token_tables(FILE *out, const char *prefix,
                             fp_kind[s] = 1;
                             fp_nexit[s] = n_exit;
                             for (int j = 0; j < n_exit; j++) fp_exit[s][j] = exit_set[j];
+                        } else if (n_exit > 0 && self_count >= 4 && self_count <= 16) {
+                            /* Pattern B candidate: check the self-loop
+                            ** set forms a contiguous byte range. */
+                            int self_lo = -1, self_hi = -1;
+                            int contiguous = 1;
+                            int seen = 0;
+                            for (int b = 0; b < 256; b++) {
+                                if (tr[b] == s) {
+                                    if (self_lo < 0) self_lo = b;
+                                    if (seen && b != self_hi + 1) { contiguous = 0; break; }
+                                    self_hi = b;
+                                    seen = 1;
+                                }
+                            }
+                            if (contiguous && self_lo >= 0 && self_hi - self_lo + 1 == self_count) {
+                                fp_kind[s] = 2;
+                                fp_lo[s] = self_lo;
+                                fp_hi[s] = self_hi;
+                            }
                         }
                     }
                 }
@@ -1075,46 +1107,56 @@ static void emit_per_token_tables(FILE *out, const char *prefix,
                 /* Inline fast-path scan dispatch by state. */
                 int any_fp = 0;
                 for (int s = 0; s < rdfa->n_states; s++) {
-                    if (fp_kind && fp_kind[s] == 1) { any_fp = 1; break; }
+                    if (fp_kind && (fp_kind[s] == 1 || fp_kind[s] == 2)) { any_fp = 1; break; }
                 }
                 if (any_fp) {
                     fprintf(out,
-                            "                    // Per-rule fast-path scan-until-exit.\n"
+                            "                    // Per-rule fast-path scan (Pattern A: until-exit, Pattern B: while-in-range).\n"
                             "                    let new_q = match state {\n");
                     for (int s = 0; s < rdfa->n_states; s++) {
-                        if (!fp_kind || fp_kind[s] != 1) continue;
-                        int n = fp_nexit[s];
-                        if (g_lime_rustlex_simd_flag) {
-                            /* Use Scanner trait helpers (AVX2/NEON/scalar
-                            ** picked by the caller's monomorphization). */
-                            if (n == 1) {
-                                fprintf(out,
-                                        "                        %d => S::scan_until_1(bytes, q, %d),\n",
-                                        s, fp_exit[s][0]);
-                            } else if (n == 2) {
-                                fprintf(out,
-                                        "                        %d => S::scan_until_2(bytes, q, %d, %d),\n",
-                                        s, fp_exit[s][0], fp_exit[s][1]);
+                        if (!fp_kind) continue;
+                        if (fp_kind[s] == 1) {
+                            int n = fp_nexit[s];
+                            if (g_lime_rustlex_simd_flag) {
+                                if (n == 1) {
+                                    fprintf(out,
+                                            "                        %d => S::scan_until_1(bytes, q, %d),\n",
+                                            s, fp_exit[s][0]);
+                                } else if (n == 2) {
+                                    fprintf(out,
+                                            "                        %d => S::scan_until_2(bytes, q, %d, %d),\n",
+                                            s, fp_exit[s][0], fp_exit[s][1]);
+                                } else {
+                                    fprintf(out,
+                                            "                        %d => S::scan_until_3(bytes, q, %d, %d, %d),\n",
+                                            s, fp_exit[s][0], fp_exit[s][1], fp_exit[s][2]);
+                                }
                             } else {
-                                fprintf(out,
-                                        "                        %d => S::scan_until_3(bytes, q, %d, %d, %d),\n",
-                                        s, fp_exit[s][0], fp_exit[s][1], fp_exit[s][2]);
+                                if (n == 1) {
+                                    fprintf(out,
+                                            "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb == %d { break; } x += 1; } x },\n",
+                                            s, fp_exit[s][0]);
+                                } else if (n == 2) {
+                                    fprintf(out,
+                                            "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb == %d || bb == %d { break; } x += 1; } x },\n",
+                                            s, fp_exit[s][0], fp_exit[s][1]);
+                                } else {
+                                    fprintf(out,
+                                            "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb == %d || bb == %d || bb == %d { break; } x += 1; } x },\n",
+                                            s, fp_exit[s][0], fp_exit[s][1], fp_exit[s][2]);
+                                }
                             }
-                        } else {
-                            /* Scalar tight loop -- LLVM auto-vectorises. */
-                            if (n == 1) {
-                                fprintf(out,
-                                        "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb == %d { break; } x += 1; } x },\n",
-                                        s, fp_exit[s][0]);
-                            } else if (n == 2) {
-                                fprintf(out,
-                                        "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb == %d || bb == %d { break; } x += 1; } x },\n",
-                                        s, fp_exit[s][0], fp_exit[s][1]);
-                            } else {
-                                fprintf(out,
-                                        "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb == %d || bb == %d || bb == %d { break; } x += 1; } x },\n",
-                                        s, fp_exit[s][0], fp_exit[s][1], fp_exit[s][2]);
-                            }
+                        } else if (fp_kind[s] == 2) {
+                            /* Pattern B: scan-while-in-range.  LLVM
+                            ** auto-vectorises this tight loop into
+                            ** two vector compares + and + movemask
+                            ** on x86_64 / ARM64 with the standard
+                            ** loop-vectoriser pass.  Used for digit
+                            ** runs in number tokens, identifier
+                            ** continuations, etc. */
+                            fprintf(out,
+                                    "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb < %d || bb > %d { break; } x += 1; } x },\n",
+                                    s, fp_lo[s], fp_hi[s]);
                         }
                     }
                     fprintf(out,
@@ -1148,6 +1190,8 @@ static void emit_per_token_tables(FILE *out, const char *prefix,
                 free(fp_kind);
                 free(fp_exit);
                 free(fp_nexit);
+                free(fp_lo);
+                free(fp_hi);
             }
         }
         fprintf(out, "        _ => (0, -1),\n");
