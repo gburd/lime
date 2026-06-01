@@ -5,6 +5,14 @@ This guide walks through the process of converting a Bison grammar file
 syntax differences, and common pitfalls, with a worked example based on the
 PostgreSQL bootstrap parser in `examples/bootstrap/`.
 
+> **Tip: keep your existing `yyparse()` driver code.**  If you don't
+> want to rewrite the calling code that drives `yyparse()` /
+> `yylex()` / `yyerror()` / `yylval`, generate Lime with
+> `--target=c:bison` to also emit a bison-API skin alongside the
+> standard Lime parser.  Your driver compiles unchanged; only the
+> grammar file moves from `.y` to `.lime`.  See [SKINS.md](SKINS.md)
+> for the full API and example.
+
 ## Directive Mapping
 
 | Bison Directive | Lime Equivalent | Notes |

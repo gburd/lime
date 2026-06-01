@@ -268,5 +268,7 @@ generator:
 - [GLR](GLR.md) — Generalized-LR engine, when to use, performance
 - [Lint](LINT.md) — `lime -L` linter rule catalog and CI integration
 - [Diff Conflicts](DIFF_CONFLICTS.md) — `lime --diff-conflicts` for overlays
+- [Skins](SKINS.md) — `--target=c:bison` and friends: drop-in API
+  compatibility for bison/flex/nom/pest/lalrpop/logos
 - [LSP](LSP.md) — `lime-lsp` Language Server
 - [Algorithm](ALGORITHM.md) — LALR(1) theory and Lime's implementation
