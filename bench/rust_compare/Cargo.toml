@@ -23,6 +23,9 @@ lalrpop      = "0.20"
 name = "bench_lime"
 path = "src/bin/bench_lime.rs"
 [[bin]]
+name = "bench_lime_iter"
+path = "src/bin/bench_lime_iter.rs"
+[[bin]]
 name = "bench_lime_memchr"
 path = "src/bin/bench_lime_memchr.rs"
 [[bin]]
