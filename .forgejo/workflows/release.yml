@@ -42,14 +42,20 @@ jobs:
             tag="${GITHUB_REF#refs/tags/}"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          # Use the tag's commit message body (everything after the
-          # subject line).  This matches what softprops/action-gh-release
-          # uses on the GitHub side, so both forges show identical
-          # release bodies.  Falls back to the tag annotation if the
-          # commit message is empty (lightweight tags etc).
-          body="$(git log -1 --format='%b' "$tag")"
-          if [ -z "$body" ]; then
-            body="$(git tag -l --format='%(contents)' "$tag")"
+          # Pick the longer of commit-message-body and tag-annotation
+          # as the release body.  Some tags carry rich release notes
+          # in the annotation (e.g. v0.8.4 where the release commit
+          # is just a docs update); others put the long body in the
+          # release commit message.  Whichever is longer is the
+          # "real" release notes.  Both workflows (forgejo + github)
+          # use the same selection so both forges produce identical
+          # release bodies.
+          commit_body="$(git log -1 --format='%b' "$tag")"
+          tag_body="$(git tag -l --format='%(contents)' "$tag")"
+          if [ "${#commit_body}" -ge "${#tag_body}" ]; then
+            body="$commit_body"
+          else
+            body="$tag_body"
           fi
           if [ -z "$body" ]; then
             body="Release $tag"

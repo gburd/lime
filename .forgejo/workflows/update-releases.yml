@@ -36,9 +36,12 @@ jobs:
               echo "  $tag: no release found"
               continue
             fi
-            body="$(git log -1 --format='%b' "$tag")"
-            if [ -z "$body" ]; then
-              body="$(git tag -l --format='%(contents)' "$tag")"
+            commit_body="$(git log -1 --format='%b' "$tag")"
+            tag_body="$(git tag -l --format='%(contents)' "$tag")"
+            if [ "${#commit_body}" -ge "${#tag_body}" ]; then
+              body="$commit_body"
+            else
+              body="$tag_body"
             fi
             if [ -z "$body" ]; then
               body="Release $tag"

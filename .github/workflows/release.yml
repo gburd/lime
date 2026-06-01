@@ -37,11 +37,15 @@ jobs:
             tag="${GITHUB_REF#refs/tags/}"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          # Use the tag's commit message body (matches the Codeberg
-          # workflow so both forges produce identical release bodies).
-          body="$(git log -1 --format='%b' "$tag")"
-          if [ -z "$body" ]; then
-            body="$(git tag -l --format='%(contents)' "$tag")"
+          # Pick the longer of commit-message-body and tag-annotation
+          # (matches the Codeberg workflow's selection so both forges
+          # produce identical release bodies).
+          commit_body="$(git log -1 --format='%b' "$tag")"
+          tag_body="$(git tag -l --format='%(contents)' "$tag")"
+          if [ "${#commit_body}" -ge "${#tag_body}" ]; then
+            body="$commit_body"
+          else
+            body="$tag_body"
           fi
           if [ -z "$body" ]; then
             body="Release $tag"
