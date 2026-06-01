@@ -2,40 +2,88 @@
 
 Lime can emit Rust as well as C.  Non-replacing addition: `lime
 grammar.y` continues to produce `grammar.c` + `grammar.h`; `lime
---rust grammar.y` *additionally* produces `grammar.rs`.  Use
-both flags together for dual output.
+--target=rust grammar.y` *additionally* produces `grammar.rs`.
+Use both flags together for dual output.
 
 **Status:** five substantive commits on `feat/rust-output`.  The
 parser side is feature-complete for arithmetic-style grammars
 plus extensions covering user-arg threading, custom value types,
 parse hooks, no_std, Cargo crate emission, and per-rule Rust body
-overrides.  The lexer subsystem (`--rustlex`) is the one piece
-deferred for a future commit.
+overrides.  The lexer subsystem (`-X --target=rust`) is the one
+piece deferred for a future commit.
 
 ## Quick start
 
 ```bash
-$ lime --rust grammar.lime              # emits grammar.rs
+$ lime --target=rust grammar.lime              # emits grammar.rs
 $ rustc --crate-type lib --edition=2021 grammar.rs
 
-$ lime --rust --rustcrate grammar.lime  # emits grammar_crate/
-$ cd grammar_crate && cargo build       # crate-style consumption
+$ lime --target=rust --enable=crate grammar.lime  # emits grammar_crate/
+$ cd grammar_crate && cargo build                 # crate-style consumption
 ```
 
 For a worked example, see `examples/rust_calc/`.
 
 ## CLI flags
 
+v0.8.6 introduced a unified `--target` / `--enable` / `--disable`
+flag scheme.  The old `--rust*` and `--per-token-dfa` flags continue
+to work as deprecation aliases; see the *Deprecated flags* section
+below.
+
 | Flag | Effect |
 |---|---|
-| `--rust` | Emit `grammar.rs` alongside C output. |
-| `--rustcrate` | + Cargo.toml + src/lib.rs around the .rs (ready-to-build crate). |
-| `--rustnostd` | Use `alloc::vec::Vec` instead of std's prelude Vec.  When combined with `--rustcrate`, lib.rs gets `#![no_std]` + `extern crate alloc;` at the crate root. |
-| `--rustlex` | Lexer Rust output.  **DEFERRED in v0.8.0** — prints a notice. |
+| `-t c` / `--target=c` | Emit C output (default). |
+| `-t rust` / `--target=rust` | Emit `grammar.rs` alongside C output. |
+| `-e <list>` / `--enable=<list>` | Enable a comma-separated set of features. |
+| `--disable=<list>` | Disable a comma-separated set of features. |
+
+Feature names recognised by `--enable=` / `--disable=`:
+
+| Feature | Default | Effect |
+|---|---|---|
+| `simd` | ON | SIMD-accelerated fast-path scans (Rust side; C side once `g_lime_lex_vectorize_flag` consumer lands). |
+| `memchr` | OFF | memchr crate dispatch (Rust side, fast byte search). |
+| `per-token-dfa` | OFF | Per-rule DFA dispatch (lifts both C and Rust output; default OFF until benched). |
+| `vectorize` | ON | C-side SIMD/intrinsic emit (opt-out via `--disable=vectorize`). |
+| `crate` | OFF | Emit Cargo crate skeleton (Rust target only). |
+| `nostd` | OFF | Emit `#![no_std]` (Rust target only). |
+
+`--enable=feat` and `--disable=feat` later on the command line
+overrides earlier ones.  An unknown feature name is a hard error.
+`--enable=<rust-only-feature>` without `--target=rust` prints a
+warning and the flag has no effect.
+
+Short-form flags accept both glued (`-trust`, `-esimd,memchr`) and
+separate-arg (`-t rust`, `-e simd,memchr`) syntax.  No short form
+for `--disable` exists because `-d` is already taken by the
+existing `-d <output-dir>` flag.
+
+## Deprecated flags
+
+The old `--rust*` and `--per-token-dfa` flags are still recognised
+for backward compatibility but each prints a one-line stderr
+warning suggesting the canonical replacement.  Existing user
+scripts continue to work; the warnings are harmless on stdout-
+focused pipelines.
+
+| Old flag | New canonical form |
+|---|---|
+| `--rust` | `--target=rust` |
+| `--rustlex` | `-X --target=rust` |
+| `--rust-crate` | `--target=rust --enable=crate` |
+| `--rustcrate` (older spelling) | `--target=rust --enable=crate` |
+| `--rust-nostd` | `--target=rust --enable=nostd` |
+| `--rustnostd` (older spelling) | `--target=rust --enable=nostd` |
+| `--rustlex-simd` | `--target=rust --enable=simd` (default since v0.8.6) |
+| `--rustlex-memchr` | `--target=rust --enable=memchr` |
+| `--per-token-dfa` | `--enable=per-token-dfa` |
 
 Flag ordering matters in the lime CLI: `handleflags()` does
-prefix-match.  `--rustlex` must precede `--rust` in the options
-table; we maintain that invariant.
+prefix-match.  Long deprecation aliases are listed long-to-short
+in `s_options[]` so `--rustlex-simd` is checked before `--rustlex`,
+and `--rust-crate` is checked before `--rust`.  We maintain that
+invariant.
 
 ## Grammar directives
 
@@ -230,15 +278,15 @@ which is the more idiomatic Rust pattern anyway.
 ## Verification
 
 ```
-$ meson test -C build    # 114 / 0 ok stock + ASan/UBSan
+$ meson test -C build    # 117 / 0 ok stock + ASan/UBSan
 $ ninja -C build lime
-$ ./build/lime --help | grep -i rust    # 4 flags advertised
+$ ./build/lime --help | grep -E '(target|enable|disable|rust)'
 
 $ # End-to-end smoke
-$ ./build/lime --rust /tmp/grammar.lime && rustc --crate-type lib /tmp/grammar.rs
-$ ./build/lime --rust --rustcrate /tmp/g.lime
+$ ./build/lime --target=rust /tmp/grammar.lime && rustc --crate-type lib /tmp/grammar.rs
+$ ./build/lime --target=rust --enable=crate /tmp/g.lime
 $ cd /tmp/g_crate && cargo build
-$ ./build/lime --rust --rustnostd --rustcrate /tmp/g.lime
+$ ./build/lime --target=rust --enable=crate,nostd /tmp/g.lime
 $ cd /tmp/g_crate && cargo build      # no_std build clean
 ```
 

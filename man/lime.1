@@ -377,8 +377,14 @@ for the
 .B .lex
 syntax.
 .TP
-.B \-\-rust
-Emit a self-contained Rust parser
+.BI \-t " " target " | " \-\-target= target
+Output target language: either
+.B c
+(the default) or
+.BR rust .
+With
+.BR \-\-target=rust ,
+Lime emits a self-contained Rust parser
 .RI ( <stem>.rs )
 alongside the C
 .B .c
@@ -390,48 +396,107 @@ file is a standalone module: no Lime runtime dependency, no Cargo
 crate dependency, compiles with
 .B "rustc \-\-crate-type lib"
 in isolation.  The Rust parser supports
-.BR %fallback ", " %first_token ", " "%left / %right / %nonassoc" ", "
-.BR %name ", and " %start_symbol
+.BR %fallback ,
+.BR %first_token ,
+.BR "%left / %right / %nonassoc" ,
+.BR %name ,
+and
+.B %start_symbol
 transparently.  Rust-specific grammar directives
-.RB ( %rust_action ", " %rust_extra_argument ", " %rust_value_type ,
+.RB ( %rust_action ,
+.BR %rust_extra_argument ,
+.BR %rust_value_type ,
 parse hooks) let action bodies and types diverge from the C
 side; see
 .B docs/RUST_OUTPUT.md
-for the full directive set and worked examples.  Available since
-v0.8.0.
+for the full directive set and worked examples.  Short form
+.B "\-trust"
+(glued, lime convention) is equivalent to
+.BR \-\-target=rust ;
+separate-arg form
+.B "\-t rust"
+is also accepted.  Available since v0.8.6.
 .TP
+.BI \-e " " list " | " \-\-enable= list
+Enable a comma-separated list of feature toggles.  Recognised
+feature names:
+.B simd
+(SIMD-accelerated fast-path scans, default ON),
+.B memchr
+(memchr crate dispatch on the Rust side, default OFF),
+.B per-token-dfa
+(per-rule DFA dispatch \(em lifts both C and Rust output, default
+OFF until benched),
+.B vectorize
+(C-side SIMD/intrinsic emit, default ON),
+.B crate
+(emit a Cargo crate skeleton next to the parser \(em Rust target
+only, default OFF), and
+.B nostd
+(emit
+.B "#![no_std]"
+on the
+.BR .rs ,
+Rust target only, default OFF).  Multiple
+.B \-\-enable=
+or
+.B \-\-disable=
+options may be repeated; later flags override earlier ones.
+Unknown feature names are a hard error.  Rust-only features
+specified without
+.B \-\-target=rust
+print a stderr warning and have no effect.
+Short form
+.B "\-esimd,memchr"
+(glued) and
+.B "\-e simd,memchr"
+(separated) both work.  Available since v0.8.6.
+.TP
+.BI \-\-disable= list
+Disable a comma-separated list of feature toggles.  Same set of
+names as
+.BR \-\-enable= .
+No short form (
+.B \-d
+is taken by the existing
+.B \-d <output-dir>
+flag).  Available since v0.8.6.
+.SS Deprecated flags
+The pre-v0.8.6 spellings continue to function but each prints a
+one-line stderr warning suggesting the canonical replacement.
+Existing user scripts keep working unchanged; the deprecation
+messages are harmless on stdout-focused pipelines.
+.TP
+.B \-\-rust
+Deprecated alias for
+.BR \-\-target=rust .
+.TP
+.B \-\-rust-crate
+Deprecated alias for
+.BR "\-\-target=rust \-\-enable=crate" .
+The older spelling
 .B \-\-rustcrate
-With
-.BR \-\-rust ,
-also emit a Cargo crate skeleton next to the
-.B .rs
-file:
-.IR <stem>_crate/Cargo.toml " + " <stem>_crate/src/lib.rs " + " <stem>_crate/src/parser.rs
-ready to
-.B "cargo build"
-without further setup.
-.B src/parser.rs
-is overwritten on regeneration;
-.B Cargo.toml
-and
-.B src/lib.rs
-are preserved across regenerations once the user adds custom
-code.
+(no hyphen) is also accepted with the same warning.
 .TP
+.B \-\-rust-nostd
+Deprecated alias for
+.BR "\-\-target=rust \-\-enable=nostd" .
+The older spelling
 .B \-\-rustnostd
+(no hyphen) is also accepted with the same warning.
 With
-.BR \-\-rust ,
-emit
-.B "extern crate alloc; use alloc::vec::Vec;"
-in the parser
+.BR \-\-enable=nostd ,
+the parser
 .B .rs
+emits
+.B "extern crate alloc; use alloc::vec::Vec;"
 instead of relying on
 .BR std .
 The parser still requires the
 .B alloc
 crate (Vec for the LALR stack); for true no-std with no allocator
 the user supplies a no-Vec stack.  When combined with
-.BR \-\-rustcrate ,
+.BR \-\-enable=crate ,
 the generated
 .B lib.rs
 gets
@@ -441,6 +506,8 @@ gets
 at its top.
 .TP
 .B \-\-rustlex
+Deprecated alias for
+.BR "\-X \-\-target=rust" .
 With
 .BR \-X ,
 emit a Rust mirror of the
@@ -461,6 +528,42 @@ for the API surface and
 .B docs/RUST_BENCHMARK.md
 for performance numbers vs logos / lalrpop / nom / pest /
 serde_json.
+.TP
+.B \-\-rustlex-simd
+Deprecated alias for
+.BR "\-\-target=rust \-\-enable=simd"
+(default since v0.8.6).  With the
+.B simd
+feature enabled, the lex emitter inlines hand-rolled SIMD
+intrinsics (SSE2/AVX2 on x86_64, NEON on AArch64, RVV on RISC-V)
+in fast-path scans.
+.TP
+.B \-\-rustlex-memchr
+Deprecated alias for
+.BR "\-\-target=rust \-\-enable=memchr" .
+With the
+.B memchr
+feature, fast-path scans dispatch into the memchr(2) crate.  Adds
+.B "memchr = \"2\""
+to the generated
+.B Cargo.toml
+when used with
+.BR \-\-enable=crate ;
+raw
+.B .rs
+output gains an
+.B "extern crate memchr;"
+so the user must list it.
+.TP
+.B \-\-per-token-dfa
+Deprecated alias for
+.BR \-\-enable=per-token-dfa .
+With
+.B \-X
+and
+.BR \-\-enable=per-token-dfa ,
+emit leading-byte dispatch + per-rule DFA tables alongside the
+unified DFA.  Default OFF until benched.
 .SH GRAMMAR FILE FORMAT
 A grammar file consists of a sequence of production rules and
 directives.

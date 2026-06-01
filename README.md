@@ -100,17 +100,31 @@ Reference docs:
 
 ## Rust output
 
-Since v0.8.0 Lime can emit Rust as well as C.  The `--rust` flag
-adds a self-contained `.rs` parser alongside the existing
-`.c` / `.h` output; `--rustlex` does the same for `.lex` lexers.
-Both outputs are additive -- the C path is unchanged.
+Since v0.8.0 Lime can emit Rust as well as C.  The `--target=rust`
+flag adds a self-contained `.rs` parser alongside the existing
+`.c` / `.h` output.  The `.lex` lexer side gets a Rust mirror with
+`-X --target=rust`.  Both outputs are additive -- the C path is
+unchanged.
 
 ```sh
-lime --rust grammar.lime                # writes grammar.rs
-lime --rust --rustcrate grammar.lime    # also a Cargo crate skeleton
-lime --rust --rustnostd grammar.lime    # use alloc::vec::Vec; no std
-lime -X --rustlex tokenizer.lex         # writes tokenizer_lex.rs
+lime --target=rust grammar.lime                       # writes grammar.rs
+lime --target=rust --enable=crate grammar.lime        # also a Cargo crate skeleton
+lime --target=rust --enable=nostd grammar.lime        # use alloc::vec::Vec; no std
+lime --target=rust --enable=crate,nostd grammar.lime  # both at once
+lime -X --target=rust tokenizer.lex                   # writes tokenizer_lex.rs
 ```
+
+Short-form short flag also works: `lime -t rust grammar.lime` or
+`-trust grammar.lime` (lime's traditional glued-short convention).
+Features recognised by `--enable=` / `--disable=`: `simd` (default
+ON), `memchr`, `per-token-dfa`, `vectorize` (default ON, C-side
+SIMD/intrinsic emit), `crate`, `nostd`.  See
+[docs/RUST_OUTPUT.md](docs/RUST_OUTPUT.md) for full semantics.
+
+The pre-v0.8.6 flag spellings (`--rust`, `--rustcrate`,
+`--rustnostd`, `--rustlex`, `--rustlex-simd`, `--rustlex-memchr`,
+`--per-token-dfa`) continue to work as deprecation aliases that
+print a one-line stderr warning suggesting the new form.
 
 The Rust output is a single self-contained `.rs` module.  No Lime
 runtime dependency: the file compiles with `rustc --crate-type lib`
@@ -130,9 +144,9 @@ transparently.  Rust-specific directives:
   %rust_stack_overflow { ... }` -- Rust-side parse hooks.
 
 Performance on a 226 KB JSON fixture (i9-12900H, --release fat
-LTO):  Lime's `--rust` parse hits ~327 MB/s, ~1.71x slower than
-lalrpop and ~1.19x faster than serde_json's AST build.  The
-`--rustlex` lexer hits ~295 MB/s, ~1.63x slower than logos
+LTO):  Lime's `--target=rust` parse hits ~327 MB/s, ~1.71x slower
+than lalrpop and ~1.19x faster than serde_json's AST build.  The
+`-X --target=rust` lexer hits ~295 MB/s, ~1.63x slower than logos
 (progressively closed from 1.88x in v0.8.1 via the v0.8.2 flat-
 layout rewrite and v0.8.3's per-state SIMD-friendly fast-path
 scans on self-loop-dominant DFA states).  Lime's table-driven
