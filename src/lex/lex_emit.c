@@ -43,10 +43,13 @@
 ** Also defined in lime.c (with the same weak/selectany pragma)
 ** so the standalone single-file `cc -o lime lime.c` build resolves
 ** the extern reference without needing lex_emit.c. */
-#if defined(__GNUC__) || defined(__clang__)
-__attribute__((weak)) int g_lime_lex_vectorize_flag = 1;
-#elif defined(_MSC_VER)
+/* Order matters: clang-cl defines BOTH __clang__ and _MSC_VER but
+** uses lld-link (which doesn't honour ELF-style weak symbols).
+** Test _MSC_VER first to catch clang-cl in the selectany branch. */
+#if defined(_MSC_VER)
 __declspec(selectany) int g_lime_lex_vectorize_flag = 1;
+#elif defined(__GNUC__) || defined(__clang__)
+__attribute__((weak)) int g_lime_lex_vectorize_flag = 1;
 #else
 int g_lime_lex_vectorize_flag = 1;
 #endif
