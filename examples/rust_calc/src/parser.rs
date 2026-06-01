@@ -99,6 +99,7 @@ pub struct ReduceCtx<'a> {
 pub type Value = i64;
 
 /// Rule 0: nrhs=3, lhs symbol index=6 (line 12)
+#[inline(always)]
 fn yy_rule_0(ctx: &mut ReduceCtx) {
     let mut A: Value = Value::default();
     let B: Value = ctx.rhs[0].clone();
@@ -110,6 +111,7 @@ fn yy_rule_0(ctx: &mut ReduceCtx) {
 }
 
 /// Rule 1: nrhs=3, lhs symbol index=6 (line 13)
+#[inline(always)]
 fn yy_rule_1(ctx: &mut ReduceCtx) {
     let mut A: Value = Value::default();
     let B: Value = ctx.rhs[0].clone();
@@ -121,6 +123,7 @@ fn yy_rule_1(ctx: &mut ReduceCtx) {
 }
 
 /// Rule 2: nrhs=3, lhs symbol index=6 (line 14)
+#[inline(always)]
 fn yy_rule_2(ctx: &mut ReduceCtx) {
     let mut A: Value = Value::default();
     let B: Value = ctx.rhs[0].clone();
@@ -132,6 +135,7 @@ fn yy_rule_2(ctx: &mut ReduceCtx) {
 }
 
 /// Rule 3: nrhs=1, lhs symbol index=6 (line 15)
+#[inline(always)]
 fn yy_rule_3(ctx: &mut ReduceCtx) {
     let mut A: Value = Value::default();
     let B: Value = ctx.rhs[0].clone();
@@ -141,6 +145,7 @@ fn yy_rule_3(ctx: &mut ReduceCtx) {
 }
 
 /// Rule 4: nrhs=1, lhs symbol index=5 (line 0)
+#[inline(always)]
 fn yy_rule_4(ctx: &mut ReduceCtx) {
     let mut lhs: Value = Value::default();
     let rhs0: Value = ctx.rhs[0].clone();
