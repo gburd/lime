@@ -14141,18 +14141,21 @@ int g_lime_rustlex_flag = 0;
 int g_lime_rustlex_memchr_flag = 0;
 int g_lime_rustlex_simd_flag = 0;
 int g_lime_per_token_dfa_flag = 0;
-/* g_lime_lex_vectorize_flag is normally defined in src/lex/lex_emit.c
-** so test programs linking liblime_lex_compiler.a resolve it without
-** needing lime.c.  But the standalone single-file build
-** (`cc -o lime lime.c`) does NOT link lex_emit.c, so we provide a
-** weak fallback here that the linker discards in favour of the
-** strong definition when the lib is linked.  On platforms that
-** don't honour __attribute__((weak)) (MSVC), this becomes the only
-** definition; that's harmless because the standalone build doesn't
-** consult it for emit anyway. */
+/* g_lime_lex_vectorize_flag has two definition sites:
+**   1. src/lex/lex_emit.c (where it's actually used by emit code)
+**   2. lime.c (here -- so the standalone single-file `cc -o lime lime.c`
+**      build still resolves the extern reference in main()'s flag latch).
+**
+** Both definitions are marked __attribute__((weak)) on gcc/clang
+** and __declspec(selectany) on MSVC; the linker picks one and
+** discards the other.  Without weak/selectany, MSVC errors on
+** duplicate-symbol when both lime.c.obj and liblime_lex_compiler.a
+** participate in the same link. */
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((weak)) int g_lime_lex_vectorize_flag = 1;
-#elif !defined(LIME_HAS_LEX_EMIT)
+#elif defined(_MSC_VER)
+__declspec(selectany) int g_lime_lex_vectorize_flag = 1;
+#else
 int g_lime_lex_vectorize_flag = 1;
 #endif
 /* g_lime_lex_vectorize_flag is defined in src/lex/lex_emit.c (so

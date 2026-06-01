@@ -38,8 +38,18 @@
 ** Defined here (rather than in lex_main.c) so test programs that
 ** link against liblime_lex_compiler.a and only reference
 ** lime_lex_emit_c can resolve the symbol without dragging in
-** emit_rust_lex.c.o and its further unresolved externs. */
+** emit_rust_lex.c.o and its further unresolved externs.
+**
+** Also defined in lime.c (with the same weak/selectany pragma)
+** so the standalone single-file `cc -o lime lime.c` build resolves
+** the extern reference without needing lex_emit.c. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak)) int g_lime_lex_vectorize_flag = 1;
+#elif defined(_MSC_VER)
+__declspec(selectany) int g_lime_lex_vectorize_flag = 1;
+#else
 int g_lime_lex_vectorize_flag = 1;
+#endif
 
 
 /* ============================================================
