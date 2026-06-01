@@ -1284,6 +1284,36 @@ test_action_string_literal = executable('test_action_string_literal',
 
 test('action_string_literal', test_action_string_literal)
 
+# Round-trip test for --target=c:bison.  Generates the standard
+# Lime parser AND the bison-API skin, then compiles a single
+# binary that drives both surfaces and asserts equivalence.  See
+# docs/SKINS.md and tests/test_skin_bison.c.
+test_skin_bison_gen = custom_target('test_skin_bison_parser',
+  input   : ['test_skin_bison_grammar.y'],
+  output  : [
+    'test_skin_bison_grammar.c',
+    'test_skin_bison_grammar.h',
+    'test_skin_bison_grammar_bison.c',
+    'test_skin_bison_grammar_bison.h',
+  ],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '--target=c:bison',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_skin_bison = executable('test_skin_bison',
+  'test_skin_bison.c',
+  test_skin_bison_gen,
+  dependencies : lime_parser_dep,
+  c_args : nounusedparam,
+)
+
+test('skin_bison', test_skin_bison)
+
 # M1 phase 1 of the lexer subsystem: .lex source-language
 # tokenizer.  No DFA, no parser yet -- just the byte-level
 # token stream that the M1 parser will consume.
