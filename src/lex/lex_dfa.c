@@ -21,6 +21,7 @@
 #include "lex_dfa.h"
 #include "lex_nfa.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -47,6 +48,8 @@ static int bmap_has(const unsigned char *b, int i) {
 ** Used for deduplication. */
 typedef struct {
     unsigned char *set; /* bitmap, length = nfa_bytes */
+    uint32_t hash;      /* FNV-1a hash of `set` */
+    int next;           /* next record index in same bucket, or -1 */
 } DfaSetRec;
 
 typedef struct {
@@ -57,6 +60,15 @@ typedef struct {
     /* Set-record table parallel to dfa->states. */
     DfaSetRec *records;
     int rec_cap;
+
+    /* Hash table for dedup.  Keyed on FNV-1a of the bitmap;
+    ** buckets[h] is the head of a singly-linked list through
+    ** records[].next.  Per .agent/notes/c-perf-audit.md item
+    ** #3: replaces an O(n_states) memcmp linear scan with a
+    ** O(1)-on-average hash bucket scan.  Doubles for power-of-2
+    ** efficiency when load factor exceeds 4. */
+    int *buckets;
+    int n_buckets; /* always power of 2 */
 
     /* Worklist queue (DFA state ids to process). */
     int *worklist;
@@ -142,10 +154,44 @@ static int recs_grow(Build *bld, int needed) {
         newcap *= 2;
     DfaSetRec *nr = realloc(bld->records, newcap * sizeof(*nr));
     if (!nr) return -1;
-    for (int i = bld->rec_cap; i < newcap; i++)
+    for (int i = bld->rec_cap; i < newcap; i++) {
         nr[i].set = NULL;
+        nr[i].hash = 0;
+        nr[i].next = -1;
+    }
     bld->records = nr;
     bld->rec_cap = newcap;
+    return 0;
+}
+
+/* FNV-1a 32-bit hash of a bitmap.  Cheap, decent distribution
+** for set-bit patterns; collisions resolved via memcmp. */
+static uint32_t fnv1a_hash(const unsigned char *p, size_t n) {
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < n; i++) {
+        h ^= (uint32_t)p[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+/* Initialise / grow the bucket table to at least `min` slots.
+** Always rounds up to a power of 2 so we can mask instead of
+** mod.  Rehashes existing records into the new buckets. */
+static int buckets_ensure(Build *bld, int min) {
+    if (bld->buckets && bld->n_buckets >= min) return 0;
+    int newcap = bld->n_buckets ? bld->n_buckets : 64;
+    while (newcap < min) newcap *= 2;
+    int *nb = realloc(bld->buckets, newcap * sizeof(*nb));
+    if (!nb) return -1;
+    for (int i = 0; i < newcap; i++) nb[i] = -1;
+    /* Rehash existing records. */
+    for (int i = 0; i < bld->dfa->n_states; i++) {
+        bld->records[i].next = nb[bld->records[i].hash & (uint32_t)(newcap - 1)];
+        nb[bld->records[i].hash & (uint32_t)(newcap - 1)] = i;
+    }
+    bld->buckets = nb;
+    bld->n_buckets = newcap;
     return 0;
 }
 
@@ -168,11 +214,20 @@ static int worklist_pop(Build *bld, int *out) {
 }
 
 /* Find an existing DFA state matching the NFA set, or create
-** one.  Returns the DFA state id, or -1 on alloc failure. */
+** one.  Returns the DFA state id, or -1 on alloc failure.
+** Uses the bucket-keyed hash table (Build.buckets) to avoid the
+** former O(n_states) linear memcmp scan. */
 static int intern_state(Build *bld, const unsigned char *set, int *created_out) {
     if (created_out) *created_out = 0;
-    /* Linear scan for dedup.  Fine for the corpus size. */
-    for (int i = 0; i < bld->dfa->n_states; i++) {
+    /* Make sure the bucket table is sized for the current
+    ** record count plus the new candidate (load factor <= 4). */
+    if (buckets_ensure(bld, (bld->dfa->n_states + 1) * 2) < 0) return -1;
+    uint32_t h = fnv1a_hash(set, bld->nfa_bytes);
+    uint32_t mask = (uint32_t)(bld->n_buckets - 1);
+    int b = (int)(h & mask);
+    /* Walk the bucket chain; only memcmp on hash collision. */
+    for (int i = bld->buckets[b]; i >= 0; i = bld->records[i].next) {
+        if (bld->records[i].hash != h) continue;
         if (memcmp(bld->records[i].set, set, bld->nfa_bytes) == 0) {
             return i;
         }
@@ -186,6 +241,13 @@ static int intern_state(Build *bld, const unsigned char *set, int *created_out) 
     bld->records[id].set = malloc(bld->nfa_bytes);
     if (!bld->records[id].set) return -1;
     memcpy(bld->records[id].set, set, bld->nfa_bytes);
+    bld->records[id].hash = h;
+    /* Re-fetch bucket index in case buckets grew through buckets_ensure
+    ** above (it didn't here since we already passed buckets_ensure --
+    ** but defensive in case future edits move things). */
+    b = (int)(h & (uint32_t)(bld->n_buckets - 1));
+    bld->records[id].next = bld->buckets[b];
+    bld->buckets[b] = id;
     /* Determine accept status: a DFA state is accepting iff any
     ** NFA state in its set is accepting.  Among accepting NFA
     ** states, pick the LOWEST rule id (declaration order =
@@ -273,6 +335,7 @@ LimeDfa *lime_lex_nfa_to_dfa(const LimeNfa *nfa) {
     for (int i = 0; i < bld.dfa->n_states; i++)
         free(bld.records[i].set);
     free(bld.records);
+    free(bld.buckets);
     free(bld.worklist);
     return dfa;
 
@@ -282,6 +345,7 @@ fail:
             free(bld.records[i].set);
         free(bld.records);
     }
+    free(bld.buckets);
     free(bld.worklist);
     lime_lex_dfa_free(dfa);
     return NULL;
