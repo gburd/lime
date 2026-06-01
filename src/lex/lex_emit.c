@@ -832,14 +832,16 @@ static void emit_scan_helper(FILE *out, const char *prefix, const char *upper_st
     int is_neon = strcmp(kind, "neon") == 0;
 
     if (is_avx2) {
+        /* AVX2 path is gcc/clang-only (already #ifdef-guarded by the
+        ** caller).  target("avx2") propagates through always_inline. */
         fprintf(out, "__attribute__((target(\"avx2\"), always_inline))\n");
         fprintf(out, "static inline size_t %s_scan_%s_%d_avx2(\n", prefix, upper_state, s);
     } else if (is_neon) {
-        fprintf(out, "__attribute__((always_inline))\n");
-        fprintf(out, "static inline size_t %s_scan_%s_%d_neon(\n", prefix, upper_state, s);
+        fprintf(out, "static LIME_LEX_ALWAYS_INLINE size_t %s_scan_%s_%d_neon(\n",
+                prefix, upper_state, s);
     } else {
-        fprintf(out, "__attribute__((always_inline))\n");
-        fprintf(out, "static inline size_t %s_scan_%s_%d_scalar(\n", prefix, upper_state, s);
+        fprintf(out, "static LIME_LEX_ALWAYS_INLINE size_t %s_scan_%s_%d_scalar(\n",
+                prefix, upper_state, s);
     }
     fprintf(out, "        const unsigned char *p, size_t pos, size_t n) {\n");
 
@@ -935,10 +937,12 @@ static void emit_fast_path_dispatcher(FILE *out, const char *prefix,
 
     if (is_avx2) {
         fprintf(out, "__attribute__((target(\"avx2\"), always_inline))\n");
+        fprintf(out, "static inline size_t %s_fast_path_%s_%s(\n",
+                prefix, upper_state, kind);
     } else {
-        fprintf(out, "__attribute__((always_inline))\n");
+        fprintf(out, "static LIME_LEX_ALWAYS_INLINE size_t %s_fast_path_%s_%s(\n",
+                prefix, upper_state, kind);
     }
-    fprintf(out, "static inline size_t %s_fast_path_%s_%s(\n", prefix, upper_state, kind);
     fprintf(out, "        int s, const unsigned char *p, size_t pos, size_t n) {\n");
 
     if (cs->dfa && cs->dfa->n_states > 0) {
@@ -1180,6 +1184,21 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
     /* M3.7: LEX_BUF_APPEND uses memcpy().  String.h is also a
     ** harmless include for grammars without literal buffers. */
     fprintf(out, "#include <string.h>\n\n");
+
+    /* v0.8.10 portability macros for the SIMD/multiversion emit.
+    ** gcc/clang have __attribute__((always_inline)); MSVC has
+    ** __forceinline; everything else gets plain `inline`.  The
+    ** target_feature path is gcc/clang-only (already guarded by
+    ** #if defined(__GNUC__) || defined(__clang__) at the call
+    ** sites), so no MSVC stub needed for that. */
+    fprintf(out,
+            "#if defined(__GNUC__) || defined(__clang__)\n"
+            "# define LIME_LEX_ALWAYS_INLINE __attribute__((always_inline)) inline\n"
+            "#elif defined(_MSC_VER)\n"
+            "# define LIME_LEX_ALWAYS_INLINE __forceinline\n"
+            "#else\n"
+            "# define LIME_LEX_ALWAYS_INLINE inline\n"
+            "#endif\n\n");
 
     /* P0-NEW-9: %include { ... } body emitted verbatim BEFORE
     ** any generated declarations so user typedefs / static
