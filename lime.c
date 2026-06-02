@@ -4804,6 +4804,12 @@ typedef struct feature_flag_state {
     int vectorize;     /* default 1: C-side SIMD/intrinsic emit       */
     int crate;         /* default 0: emit Cargo crate (Rust target)   */
     int nostd;         /* default 0: #![no_std] (Rust target)         */
+    int safe;          /* default 1 (Rust target): drop unsafe { } in
+                       ** scalar DFA dispatch loops; replace
+                       ** get_unchecked indexing with safe [].  Categories
+                       ** 2 (SIMD intrinsics) and 3 (#[target_feature]
+                       ** callsites) are unaffected.  Opt OUT for ~<2%%
+                       ** perf via --target=rust,unsafe or --disable=safe. */
 } feature_flag_state;
 
 static feature_flag_state g_features = {
@@ -4813,6 +4819,7 @@ static feature_flag_state g_features = {
     .vectorize = 1,
     .crate = 0,
     .nostd = 0,
+    .safe = 1,
 };
 
 /* `c` (default) or `rust`.  Set by --target / -t.  Drives whether
@@ -4859,6 +4866,7 @@ static const struct {
     { "vectorize",     offsetof(feature_flag_state, vectorize),     0 },
     { "crate",         offsetof(feature_flag_state, crate),         1 },
     { "nostd",         offsetof(feature_flag_state, nostd),         1 },
+    { "safe",          offsetof(feature_flag_state, safe),          1 },
     { NULL, 0, 0 },
 };
 
@@ -4906,7 +4914,7 @@ static void feature_apply_list(const char *list, int enable) {
             fprintf(stderr,
               "lime: unknown feature name '%s' in --%s list.  "
               "Valid names: simd, memchr, per-token-dfa, vectorize, "
-              "crate, nostd.\n",
+              "crate, nostd, safe.\n",
               tok, enable ? "enable" : "disable");
             free(dup);
             exit(1);
@@ -4935,26 +4943,42 @@ static char *opt_strip_prefix_eq(char *z) {
 static void handle_target_option(char *z) {
     z = opt_strip_prefix_eq(z);
     if (z == NULL || z[0] == 0) {
-        fprintf(stderr, "lime: --target requires a value (c|rust, optionally with :skin,skin)\n");
+        fprintf(stderr, "lime: --target requires a value (c|rust, optionally with :skin,skin or ,modifier)\n");
         exit(1);
     }
-    /* Split target from optional skin list.  Accepted forms:
+    /* Split target from optional skin list and optional modifier list.
+    ** Accepted forms:
     **   --target=c
     **   --target=rust
     **   --target=c:bison
     **   --target=c:flex
     **   --target=c:bison,flex
-    **   --target=rust:nom        (parsed and rejected; reserved for
-    **                              future Rust-skin work, see open-items.md
-    **                              section 2)
-    ** The skin list is comma-separated; each token must be a known
-    ** skin name for the chosen target. */
+    **   --target=rust,unsafe         (modifier: opt OUT of safe-Rust
+    **                                 default; equivalent to --disable=safe)
+    **   --target=rust:nom            (parsed and rejected; reserved for
+    **                                 future Rust-skin work, see open-items.md
+    **                                 section 2)
+    ** Order of parsing: split on `:` first to separate target+modifiers
+    ** from skin list (so `c:bison,flex` keeps `bison,flex` intact as
+    ** skins). Then split the target+modifiers half on `,` to extract
+    ** the core target name plus any modifiers. The skin list is
+    ** comma-separated; each token must be a known skin name for the
+    ** chosen target. */
     char *colon = strchr(z, ':');
-    char *target = z;
+    char *target_and_mods = z;
     char *skins = NULL;
     if (colon) {
         *colon = 0;
         skins = colon + 1;
+    }
+    /* Split target_and_mods on `,` to separate core target from
+    ** modifier list.  `rust,unsafe` -> target=`rust`, mods=`unsafe`. */
+    char *comma = strchr(target_and_mods, ',');
+    char *target = target_and_mods;
+    char *mods = NULL;
+    if (comma) {
+        *comma = 0;
+        mods = comma + 1;
     }
     if (strcmp(target, "c") == 0) {
         g_target_is_rust = 0;
@@ -4964,6 +4988,32 @@ static void handle_target_option(char *z) {
         fprintf(stderr,
           "lime: --target value must be 'c' or 'rust' (got '%s')\n", target);
         exit(1);
+    }
+    /* Apply modifiers (rust-only for now: `unsafe` opts out of safe). */
+    if (mods && mods[0]) {
+        if (!g_target_is_rust) {
+            fprintf(stderr,
+              "lime: target modifiers (after `,`) are valid only for --target=rust; "
+              "got '%s'\n", mods);
+            exit(1);
+        }
+        for (char *tok = strtok(mods, ","); tok; tok = strtok(NULL, ",")) {
+            while (*tok == ' ' || *tok == '\t') tok++;
+            size_t n = strlen(tok);
+            while (n > 0 && (tok[n-1] == ' ' || tok[n-1] == '\t')) tok[--n] = 0;
+            if (tok[0] == 0) continue;
+            if (strcmp(tok, "unsafe") == 0) {
+                /* Opt OUT of the safe-Rust default: emit unsafe { ... }
+                ** wrappers + get_unchecked indexing in the scalar DFA
+                ** dispatch loops.  Equivalent to --disable=safe. */
+                g_features.safe = 0;
+            } else {
+                fprintf(stderr,
+                  "lime: unknown rust-target modifier '%s'.  Valid: unsafe.\n",
+                  tok);
+                exit(1);
+            }
+        }
     }
     if (skins == NULL || skins[0] == 0) return;
     /* Parse the skin list.  We mutate `skins` via strtok; safe
@@ -5194,6 +5244,7 @@ int main(int argc, char **argv){
   extern int g_lime_rustlex_simd_flag;
   extern int g_lime_per_token_dfa_flag;
   extern int g_lime_lex_vectorize_flag;
+  extern int g_lime_lex_safe_flag;
   static int rustCrateFlag = 0; /* --rust-crate: emit a complete Cargo
                                 ** crate alongside the .rs file
                                 ** (Cargo.toml + src/lib.rs).  Only valid
@@ -5421,6 +5472,12 @@ int main(int argc, char **argv){
     rustLexSimdFlag  = g_features.simd;
     rustLexMemchrFlag= g_features.memchr;
     perTokenDfaFlag  = g_features.per_token_dfa;
+    /* g_features.safe defaults ON for Rust target; --target=rust,unsafe
+    ** or --disable=safe sets it 0.  Drives the scalar DFA dispatch
+    ** loop emit (src/lex/emit_rust_lex.c) -- safe=1 drops the
+    ** `unsafe { ... }` wrappers and uses [] indexing.  Categories 2
+    ** (SIMD intrinsics) and 3 (#[target_feature]) are unaffected. */
+    g_lime_lex_safe_flag = g_features.safe;
 
     /* Vectorize is the C-side SIMD/intrinsic toggle.  Default ON;
     ** opt-out via --disable=vectorize.  The global is consulted by
@@ -5478,6 +5535,8 @@ int main(int argc, char **argv){
     extern int g_lime_skin_flex_flag;
     g_lime_skin_flex_flag = g_skin_flex;
   }
+  /* Re-affirm safe flag for the lex-compiler driver path. */
+  g_lime_lex_safe_flag = g_features.safe;
   if( lexFlag ){
     /* -X: run the .lex compiler frontend instead of the parser
     ** generator.  Reads the input as a .lex source file, runs
@@ -5648,6 +5707,7 @@ int main(int argc, char **argv){
     g_lime_rustlex_memchr_flag = rustLexMemchrFlag;
   g_lime_rustlex_simd_flag = rustLexSimdFlag;
   g_lime_per_token_dfa_flag = perTokenDfaFlag;
+  g_lime_lex_safe_flag = g_features.safe;
     if( rustFlag ){
         g_lime_rust_no_std = rustNoStdFlag;
         char rust_path[512];
@@ -14486,6 +14546,11 @@ int g_lime_per_token_dfa_flag = 0;
 ** consults this after emit_rust_lex() succeeds and emits a sibling
 ** <stem>_lex_logos.rs.  Set in main() from g_skin_logos. */
 int g_lime_skin_logos_flag = 0;
+/* Default 1: safe-Rust emit (no unsafe { ... } wrappers in scalar
+** DFA dispatch loops).  --target=rust,unsafe or --disable=safe
+** sets this to 0 and reverts to the v0.9.2 unsafe+get_unchecked
+** emit.  Has no effect when the C target is selected. */
+int g_lime_lex_safe_flag = 1;
 /* g_lime_lex_vectorize_flag has two definition sites:
 **   1. src/lex/lex_emit.c (where it's actually used by emit code)
 **   2. lime.c (here -- so the standalone single-file `cc -o lime lime.c`
