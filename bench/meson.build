@@ -112,6 +112,7 @@ subdir('bench_simdjson_compare')
 # for ad-hoc throughput investigation; not wired as a meson test
 # (numbers are inherently host-dependent).
 subdir('lex_vectorize')
+subdir('lex_state_count')
 
 # Microbenchmark proving the SIMD character-classification path
 # delivers measurable speedup over the scalar fallback.  This is
