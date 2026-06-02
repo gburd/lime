@@ -331,16 +331,12 @@ static void emit_source(FILE *out, const char *base_id, const char *prefix) {
     ** that case).  v0.9.3 keeps the override story simple. */
     fprintf(out,
         "/* Default yywrap: returns 1, signalling no more input.       */\n"
-        "/* Override by linking a strong definition.                    */\n"
-        "#if defined(__GNUC__) || defined(__clang__)\n"
-        "__attribute__((weak)) int yywrap(void) { return 1; }\n"
-        "#elif defined(_MSC_VER)\n"
-        "/* MSVC: link-time override via /alternatename.  Default stub\n"
-        "** lives next to the lexer; consumers can supply their own\n"
-        "** yywrap() and tell the linker to alias it. */\n"
-        "static int yy_default_yywrap(void) { return 1; }\n"
-        "__pragma(comment(linker, \"/alternatename:yywrap=yy_default_yywrap\"))\n"
-        "#else\n"
+        "/* Override by defining YY_USER_YYWRAP before including this  */\n"
+        "/* TU; consumer then provides their own strong yywrap().      */\n"
+        "#ifndef YY_USER_YYWRAP\n"
+        "# if defined(__GNUC__) || defined(__clang__)\n"
+        "__attribute__((weak))\n"
+        "# endif\n"
         "int yywrap(void) { return 1; }\n"
         "#endif\n"
         "\n");
