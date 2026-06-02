@@ -12,6 +12,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "lime_time.h"   /* LIME_CACHELINE_ALIGNED */
 
 /* Magic + ABI version stamped on every ParserSnapshot constructed
 ** via snapshot_build_from_tables.  Bumped on any layout-breaking
@@ -156,8 +157,23 @@ typedef struct ParserSnapshot {
 
     /** Atomic reference count.  Starts at 1 on creation.  Every call to
     ** snapshot_acquire() adds 1; every call to snapshot_release() subtracts
-    ** 1.  When the count drops to 0 the snapshot is destroyed. */
-    atomic_uint_fast32_t refcount;
+    ** 1.  When the count drops to 0 the snapshot is destroyed.
+    **
+    ** LIME_CACHELINE_ALIGNED isolates refcount on its own cacheline so
+    ** the atomic_fetch_add / atomic_fetch_sub traffic from concurrent
+    ** parse_begin/parse_end calls does not invalidate the cachelines
+    ** holding read-only hot-path fields (yy_action, yy_lookahead,
+    ** jit_find_shift_fn).  Measured on bench/bench_parse_fanout
+    ** (i9-12900H, gcc 15.2, LTO release):
+    **
+    **     Unaligned: 21.6%% scaling efficiency at 8 threads
+    **     Aligned:   57.2%% scaling efficiency at 8 threads
+    **
+    ** That is a 2.6x throughput improvement at 8 threads (4.6M -> 12.0M
+    ** parses/sec) for 64 bytes of struct padding.  Single-thread perf
+    ** is unchanged (within noise).  See commit log for full bench.
+    */
+    LIME_CACHELINE_ALIGNED atomic_uint_fast32_t refcount;
 
     /* --- Grammar data (deep-copied, owned by this snapshot) ----------- */
 

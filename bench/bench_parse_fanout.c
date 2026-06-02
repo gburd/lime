@@ -3,37 +3,37 @@
 **
 ** Goal: measure parse throughput as the number of parallel parser
 ** threads scales from 1 to N.  All threads share a single
-** ParserSnapshot (read-only, refcounted by the API).  Each thread
-** has its own ParseContext / ParseStack; the only shared mutable
-** state is the snapshot's atomic_uint refcount.
+** ParserSnapshot via the parse_begin / parse_token / parse_end API
+** -- the surface that exercises ParserSnapshot.refcount via
+** snapshot_acquire / snapshot_release in parse_context_create /
+** parse_context_destroy.
 **
 ** Why this matters
 ** ----------------
 ** ParserSnapshot.refcount is the canonical false-sharing hazard for
-** server workloads:
-**
-**   * 256-byte snapshot struct, refcount near the start;
-**   * every parse_begin / parse_end on the same snapshot does an
-**     atomic_fetch_add / fetch_sub on that one cacheline;
-**   * read-only fields in the same cacheline (yy_action,
-**     yy_lookahead, jit_find_shift_fn) get their cache line
-**     invalidated on every parse_begin from any thread.
+** server workloads.  Every parse_begin issues an atomic_fetch_add
+** on it; every parse_end issues an atomic_fetch_sub.  At 8 threads
+** doing 50000 parses each, that's 800,000 atomic RMW ops on a
+** single cacheline -- the LOCK-prefixed instructions serialize
+** through the L3 cache coherence directory, and any read traffic
+** on the same cacheline (yy_action, yy_lookahead, jit_find_shift_fn)
+** competes for that ownership.
 **
 ** If we measure ops/sec as thread count grows, perfect scaling is
 ** linear (8 threads = 8x throughput).  Any sub-linear scaling is
 ** the false-sharing tax.
 **
 ** This benchmark is the measurement infrastructure for evaluating
-** cacheline-alignment + field-reordering changes to ParserSnapshot.
-** Without it, "audit said cacheline align refcount" is a theoretical
-** improvement; with it, we can prove the win or prove there's no
-** measurable win on this hardware.
+** cacheline-alignment + field-reordering changes to the snapshot
+** struct.  Without it, "audit said cacheline align refcount" is a
+** theoretical improvement; with it, we can prove the win or prove
+** there's no measurable win on this hardware.
 **
 ** Output
 ** ------
 ** CSV-formatted rows per (threads, repeat) pair.  Run multiple
 ** trials and a Python harness (or jq+awk) can compute medians and
-** scaling factors.  Also prints a verdict line summarizing the
+** scaling factors.  Also prints a verdict line summarising the
 ** scaling efficiency at the highest tested thread count.
 **
 ** Usage
@@ -50,26 +50,21 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdatomic.h>
-#include <assert.h>
+#include <pthread.h>
+#include <time.h>
 
 #include "lime_time.h"
-#include "lime_threads.h"
 
-#include "parser.h"
+#include "parser.h"          /* parse_begin / parse_token / parse_end */
 #include "parse_context.h"
 #include "snapshot.h"
 
 #include "bench_arith_grammar.h"
 
 /* ------------------------------------------------------------------ */
-/*  Generated parser API (filled in by Lime)                           */
+/*  Generated-snapshot accessor (emitted by `lime -n`)                 */
 /* ------------------------------------------------------------------ */
 
-extern void *ArithAlloc(void *(*mallocProc)(size_t));
-extern void ArithFree(void *p, void (*freeProc)(void *));
-extern void Arith(void *yyp, int yymajor, int yyminor, int *result_out);
-
-/* Static snapshot accessor emitted by `lime -n`. */
 extern ParserSnapshot *ArithBuildSnapshot(void);
 
 /* ------------------------------------------------------------------ */
@@ -138,18 +133,26 @@ static void *parse_worker(void *arg) {
     uint64_t t0 = lime_now_ns();
 
     for (uint32_t p = 0; p < a->parses_per_thread; p++) {
-        int result = -1;
-        void *parser = ArithAlloc(malloc);
-        if (!parser) { a->error = 1; return NULL; }
+        /* Snapshot-API path: parse_begin -> parse_token loop -> parse_end.
+        ** parse_begin internally calls snapshot_acquire (atomic_fetch_add
+        ** on snap->refcount); parse_end internally calls snapshot_release
+        ** (atomic_fetch_sub).  Per parse: 2 atomic RMW ops on a shared
+        ** cacheline -- the very thing this bench is here to measure. */
+        ParseContext *ctx = parse_begin(a->snap);
+        if (!ctx) { a->error = 1; return NULL; }
 
+        /* parse_token returns:  0 = continue feeding,  1 = accept,
+        ** negative = error.  EOF (token 0) drives the parser to accept. */
+        int rc = 0;
         for (uint32_t i = 0; i < a->ntoken; i++) {
-            Arith(parser, a->tokens[i].code, a->tokens[i].value, &result);
+            rc = parse_token(ctx, a->tokens[i].code, NULL, -1);
+            if (rc != 0) break;
         }
-        Arith(parser, 0, 0, &result);  /* EOF */
+        if (rc == 0) rc = parse_token(ctx, 0, NULL, -1);  /* EOF */
 
-        ArithFree(parser, free);
+        parse_end(ctx);
 
-        if (result != 8) { a->error = 2; return NULL; }
+        if (rc < 0) { a->error = 2; return NULL; }
         a->parses_done++;
     }
 
