@@ -14544,8 +14544,57 @@ int g_lime_rustlex_simd_flag = 0;
 int g_lime_per_token_dfa_flag = 0;
 /* When non-zero, --target=rust:logos was on the CLI; lex_main.c
 ** consults this after emit_rust_lex() succeeds and emits a sibling
-** <stem>_lex_logos.rs.  Set in main() from g_skin_logos. */
+** <stem>_lex_logos.rs.  Set in main() from g_skin_logos.
+** Standalone build (`cc -o lime lime.c`) doesn't link the lex
+** lib so use a weak fallback. */
+#if defined(_MSC_VER)
+__declspec(selectany) int g_lime_skin_logos_flag = 0;
+#elif defined(__GNUC__) || defined(__clang__)
+__attribute__((weak)) int g_lime_skin_logos_flag = 0;
+#else
 int g_lime_skin_logos_flag = 0;
+#endif
+/* g_lime_skin_flex_flag is defined in src/lex/emit_c_skin_flex.c.
+** Standalone build needs a weak fallback so the extern reference
+** in main()'s flag-latch block resolves. */
+#if defined(_MSC_VER)
+__declspec(selectany) int g_lime_skin_flex_flag = 0;
+#elif defined(__GNUC__) || defined(__clang__)
+__attribute__((weak)) int g_lime_skin_flex_flag = 0;
+#else
+int g_lime_skin_flex_flag = 0;
+#endif
+/* lime_emit_c_skin_bison is defined in src/emit_c_skin_bison.c.
+** Standalone build doesn't link it; provide a weak stub that
+** returns 0 (no-op) so the standalone lime binary builds.  When
+** the lib is linked, the strong definition wins.  Standalone
+** build doesn't actually need bison-skin emission to work --
+** users running the single-file build only care about the core
+** parser/lexer; skins require the full meson build. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak))
+int lime_emit_c_skin_bison(struct lime *lemp,
+                           const char *out_h_path,
+                           const char *out_c_path,
+                           const char *base_id) {
+    (void)lemp; (void)out_h_path; (void)out_c_path; (void)base_id;
+    fprintf(stderr, "lime: bison skin not available in standalone build\n");
+    return 1;
+}
+#elif defined(_MSC_VER)
+/* MSVC selectany on functions: requires inline.  Use a function
+** pointer trick via __declspec(selectany) on a global. */
+static int lime_emit_c_skin_bison_stub(struct lime *lemp,
+                                       const char *out_h_path,
+                                       const char *out_c_path,
+                                       const char *base_id) {
+    (void)lemp; (void)out_h_path; (void)out_c_path; (void)base_id;
+    fprintf(stderr, "lime: bison skin not available in standalone build\n");
+    return 1;
+}
+__pragma(comment(linker, "/alternatename:lime_emit_c_skin_bison=lime_emit_c_skin_bison_stub"))
+#endif
+int g_lime_skin_logos_flag_unused_anchor = 0;
 /* Default 1: safe-Rust emit (no unsafe { ... } wrappers in scalar
 ** DFA dispatch loops).  --target=rust,unsafe or --disable=safe
 ** sets this to 0 and reverts to the v0.9.2 unsafe+get_unchecked
