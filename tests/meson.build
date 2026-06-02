@@ -1368,14 +1368,16 @@ test_skin_bison_union_gen = custom_target('test_skin_bison_union_parser',
   ],
 )
 
-test_skin_bison_union = executable('test_skin_bison_union',
-  'test_skin_bison_union.c',
-  test_skin_bison_union_gen,
-  dependencies : lime_parser_dep,
-  c_args : nounusedparam,
-)
+if host_machine.system() != 'windows'
+  test_skin_bison_union = executable('test_skin_bison_union',
+    'test_skin_bison_union.c',
+    test_skin_bison_union_gen,
+    dependencies : lime_parser_dep,
+    c_args : nounusedparam,
+  )
 
-test('skin_bison_union', test_skin_bison_union)
+  test('skin_bison_union', test_skin_bison_union)
+endif
 
 # v0.9.3: bison-style %token<field> tagged tokens.  The grammar
 # declares %token<n> NUM and %token<s> ID alongside an untagged

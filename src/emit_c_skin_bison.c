@@ -612,7 +612,7 @@ static void emit_source(FILE *out, const struct lime *lemp,
             "        %s(parser, lime, yylval, %s);\n"
             "    }\n"
             "    /* EOF sentinel -- runs %%accept / %%syntax_error / etc. */\n"
-            "    %s(parser, 0, (YYSTYPE)0, %s);\n"
+            "    %s(parser, 0, (YYSTYPE){0}, %s);\n"
             "    %sFree(parser, free);\n"
             "    return errors;\n"
             "}\n\n",
@@ -680,7 +680,7 @@ static void emit_source(FILE *out, const struct lime *lemp,
             "        %s(parser, lime, yylval);\n"
             "    }\n"
             "    /* EOF sentinel -- runs %%accept / %%syntax_error / etc. */\n"
-            "    %s(parser, 0, (YYSTYPE)0);\n"
+            "    %s(parser, 0, (YYSTYPE){0});\n"
             "    %sFree(parser, free);\n"
             "    return errors;\n"
             "}\n",
