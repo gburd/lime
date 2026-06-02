@@ -11,15 +11,111 @@
 
 #include <stdlib.h>
 
+/* Reset hook implemented in parse_engine.c -- preserves the engine's
+** stack buffer while clearing per-parse state, so the thread-local
+** pool can recycle a ParseContext without paying malloc/free on the
+** stack region. */
+extern void parse_engine_reset(ParseContext *ctx);
+
+/*
+** Thread-local ParseContext pool.
+**
+** Every parse_begin / parse_end pair previously did:
+**
+**   parse_begin:  malloc(ParseContext)              [24 bytes]
+**                 snapshot_acquire (atomic_fetch_add)
+**                 -- first parse_token --
+**                 calloc(ParseEngine)                 [~50 bytes]
+**                 malloc(ParseStack base buffer)      [~512 bytes]
+**
+**   parse_end:    free(ParseStack base buffer)
+**                 free(ParseEngine)
+**                 snapshot_release (atomic_fetch_sub)
+**                 free(ParseContext)
+**
+** That is 3 malloc + 3 free + 2 atomics PER PARSE.  At ~50 ns per
+** alloc/free and ~30 ns per atomic on x86_64, allocator+atomic overhead
+** dominates short-parse workloads -- bench/bench_parse_fanout shows
+** ~380 ns/parse single-threaded for a 21-token input where the actual
+** parser-engine loop is ~120 ns.
+**
+** The pool is one ParseContext slot per OS thread.  The first parse on
+** a thread allocates fresh; subsequent parses reuse the pooled context.
+** Engine stack buffer grows monotonically -- the reset path preserves
+** the largest-seen capacity so deep grammars don't pay realloc churn.
+**
+** Cleanup: pthread_key_t with a destructor frees the pool on thread
+** exit (ASAN/leak-clean), without requiring callers to call
+** parse_context_pool_drain() explicitly.  The pthread_key is
+** lazily initialised on the first parse_begin via pthread_once().
+*/
+#include <pthread.h>
+
+static pthread_key_t g_pool_key;
+static pthread_once_t g_pool_key_once = PTHREAD_ONCE_INIT;
+
+static void pool_slot_destructor(void *p) {
+    ParseContext *ctx = (ParseContext *)p;
+    if (ctx == NULL) return;
+    extern void parse_engine_drop(ParseContext *);
+    parse_engine_drop(ctx);
+    if (ctx->snapshot != NULL) {
+        snapshot_release(ctx->snapshot);
+    }
+    free(ctx);
+}
+
+static void pool_key_init(void) {
+    pthread_key_create(&g_pool_key, pool_slot_destructor);
+}
+
+/*
+** Public: drop the calling thread's pooled ParseContext.
+*/
+void parse_context_pool_drain(void) {
+    pthread_once(&g_pool_key_once, pool_key_init);
+    ParseContext *ctx = (ParseContext *)pthread_getspecific(g_pool_key);
+    if (ctx != NULL) {
+        pool_slot_destructor(ctx);
+        pthread_setspecific(g_pool_key, NULL);
+    }
+}
+
 /*
 ** Create a new parse context, acquiring a reference to the given snapshot.
+**
+** Hot path: pop a recycled context from the thread-local pool, replace
+** its snapshot ref, return.  Cold path (first call on this thread, or
+** after a drain): malloc fresh.
 */
 ParseContext *parse_context_create(ParserSnapshot *snap) {
     if (snap == NULL) {
         return NULL;
     }
 
-    ParseContext *ctx = malloc(sizeof(ParseContext));
+    ParseContext *ctx = NULL;
+    pthread_once(&g_pool_key_once, pool_key_init);
+    ctx = (ParseContext *)pthread_getspecific(g_pool_key);
+    if (ctx != NULL) {
+        /* Hot path: reuse the pooled context.  Engine + stack are
+        ** already allocated; reset them to a fresh-parse state. */
+        pthread_setspecific(g_pool_key, NULL);
+        ctx->snapshot = snapshot_acquire(snap);
+        if (ctx->snapshot == NULL) {
+            /* Snapshot acquire failed (NULL passed in earlier path,
+            ** but defensive).  Free and bail. */
+            extern void parse_engine_drop(ParseContext *);
+            parse_engine_drop(ctx);
+            free(ctx);
+            return NULL;
+        }
+        ctx->context_stack = NULL;
+        parse_engine_reset(ctx);
+        return ctx;
+    }
+
+    /* Cold path: first parse on this thread.  Allocate fresh. */
+    ctx = malloc(sizeof(ParseContext));
     if (ctx == NULL) {
         return NULL;
     }
@@ -37,20 +133,36 @@ ParseContext *parse_context_create(ParserSnapshot *snap) {
 
 /*
 ** Destroy a parse context, releasing its snapshot reference.
+**
+** Hot path: release the snapshot, push the context back to the
+** thread-local pool (preserving its engine + stack buffer for the
+** next parse_begin).  Cold path: if the pool slot is occupied,
+** actually free this context.
 */
 void parse_context_destroy(ParseContext *ctx) {
     if (ctx == NULL) {
         return;
     }
 
-    /* Drop any parse-engine state attached to this context. */
-    extern void parse_engine_drop(ParseContext *);
-    parse_engine_drop(ctx);
-
     if (ctx->snapshot != NULL) {
         snapshot_release(ctx->snapshot);
+        ctx->snapshot = NULL;
     }
 
+    /* Don't free attached grammar-context stack -- it's borrowed.
+    ** Just drop our pointer so the pool slot doesn't leak it. */
+    ctx->context_stack = NULL;
+
+    if (pthread_getspecific(g_pool_key) == NULL) {
+        /* Hot path: hand off to the pool for reuse. */
+        pthread_setspecific(g_pool_key, ctx);
+        return;
+    }
+
+    /* Cold path: pool slot already filled (rare -- only happens if
+    ** caller nests parse_begin/end somehow).  Actually free this one. */
+    extern void parse_engine_drop(ParseContext *);
+    parse_engine_drop(ctx);
     free(ctx);
 }
 

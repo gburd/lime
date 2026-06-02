@@ -246,6 +246,50 @@ void parse_engine_drop(struct ParseContext *ctx) {
 }
 
 /*
+** parse_engine_reset -- drop per-parse state but keep the engine
+** allocation and stack buffer for reuse.
+**
+** Used by the thread-local ParseContext pool in parse_context.c to
+** recycle ParseContexts across many parse_begin / parse_end pairs
+** without paying malloc/free + stack alloc/destroy on every parse.
+** Saves ~3 mallocs + 3 frees per parse on bench/bench_parse_fanout.
+**
+** Important: do NOT clear `initialised` or call stack_init -- the
+** stack buffer is reused.  Just rewind the stack pointer, push the
+** initial state 0, and clear the accept/error flags.  The engine
+** is then in the same observable state as right after the first
+** parse_token call's lazy init block, ready to consume tokens.
+**
+** If the previous parse grew the stack to its capacity limit,
+** that capacity is preserved on reset -- subsequent parses skip
+** the realloc churn entirely.
+*/
+void parse_engine_reset(struct ParseContext *ctx) {
+    if (ctx == NULL || ctx->engine == NULL) return;
+    ParseEngine *eng = (ParseEngine *)ctx->engine;
+    /* Engine never made it past lazy init -- treat as cold path. */
+    if (!eng->initialised || eng->stack.base == NULL) {
+        eng->initialised = false;
+        eng->accepted = false;
+        eng->errored = false;
+        return;
+    }
+    /* Rewind stack and push state 0 so the next parse_engine_step
+    ** finds the same shape stack_init + stack_push would have left. */
+    eng->stack.top = eng->stack.base;
+    if (!stack_push(&eng->stack, 0, 0)) {
+        /* Should never happen -- capacity is unchanged from the
+        ** previous successful init.  Defensive: mark errored so the
+        ** next parse fails cleanly rather than silently misbehaving. */
+        eng->errored = true;
+        return;
+    }
+    eng->accepted = false;
+    eng->errored = false;
+    /* eng->initialised stays true -- stack is logically initialised. */
+}
+
+/*
 ** parse_token implementation.  Returns:
 **   0  -- token consumed, parse continues
 **   1  -- end-of-input token (0) accepted, parse complete

@@ -57,6 +57,22 @@ ParseContext *parse_context_create(ParserSnapshot *snap);
 */
 void parse_context_destroy(ParseContext *ctx);
 
+/*
+** Drop the calling thread's pooled ParseContext (if any).
+**
+** Lime maintains a thread-local single-slot pool of recycled
+** ParseContexts so that parse_begin / parse_end can avoid
+** malloc/free + stack alloc/destroy on every parse.  The pool
+** memory is reclaimed at process exit by default; this function
+** is for callers who want to drop the cached context explicitly
+** before joining a parser thread (test harnesses, leak hunters).
+**
+** Safe to call from a thread that has never called parse_begin
+** (no-op).  Not thread-safe across threads -- each thread drains
+** its own slot.
+*/
+void parse_context_pool_drain(void);
+
 /* ------------------------------------------------------------------ */
 /*  parser.h wrappers                                                  */
 /* ------------------------------------------------------------------ */
