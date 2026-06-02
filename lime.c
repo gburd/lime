@@ -14542,28 +14542,13 @@ int g_lime_rustlex_flag = 0;
 int g_lime_rustlex_memchr_flag = 0;
 int g_lime_rustlex_simd_flag = 0;
 int g_lime_per_token_dfa_flag = 0;
-/* When non-zero, --target=rust:logos was on the CLI; lex_main.c
-** consults this after emit_rust_lex() succeeds and emits a sibling
-** <stem>_lex_logos.rs.  Set in main() from g_skin_logos.
-** Standalone build (`cc -o lime lime.c`) doesn't link the lex
-** lib so use a weak fallback. */
-#if defined(_MSC_VER)
-__declspec(selectany) int g_lime_skin_logos_flag = 0;
-#elif defined(__GNUC__) || defined(__clang__)
-__attribute__((weak)) int g_lime_skin_logos_flag = 0;
-#else
+/* When non-zero, --target=rust:logos was on the CLI.  lime.c is
+** the single source of truth for these skin globals (the lib's
+** lex_main.c uses extern references); ensures both standalone
+** (`cc -o lime lime.c`) and lib-linked builds resolve cleanly
+** with no duplicate-symbol issues on MSVC / mingw. */
 int g_lime_skin_logos_flag = 0;
-#endif
-/* g_lime_skin_flex_flag is defined in src/lex/emit_c_skin_flex.c.
-** Standalone build needs a weak fallback so the extern reference
-** in main()'s flag-latch block resolves. */
-#if defined(_MSC_VER)
-__declspec(selectany) int g_lime_skin_flex_flag = 0;
-#elif defined(__GNUC__) || defined(__clang__)
-__attribute__((weak)) int g_lime_skin_flex_flag = 0;
-#else
 int g_lime_skin_flex_flag = 0;
-#endif
 /* lime_emit_c_skin_bison is defined in src/emit_c_skin_bison.c.
 ** Standalone build doesn't link it; provide a weak stub that
 ** returns 0 (no-op) so the standalone lime binary builds.  When

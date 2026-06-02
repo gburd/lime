@@ -92,13 +92,10 @@
 ** it without producing a duplicate-symbol error.  src/lex/lex_main.c
 ** consults this global to decide whether to invoke the skin emit
 ** after the standard lexer output is written. */
-#if defined(_MSC_VER)
-__declspec(selectany) int g_lime_skin_flex_flag = 0;
-#elif defined(__GNUC__) || defined(__clang__)
-__attribute__((weak)) int g_lime_skin_flex_flag = 0;
-#else
-int g_lime_skin_flex_flag = 0;
-#endif
+/* Defined in lime.c as the single source of truth.  Test
+** programs that link liblime_lex_compiler.a directly (without
+** lime.c) would need to provide their own definition. */
+extern int g_lime_skin_flex_flag;
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
