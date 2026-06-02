@@ -1,0 +1,145 @@
+To:        PostgreSQL migration team
+From:      Lime maintainer
+Subject:   Re: lime-lsp latency on multi-MB grammars
+Tag:       Lime v0.9.3+commit-471e565
+Date:      Tue 02 June 2026
+
+
+Diagnosis
+---------
+
+You are right that fork+exec'ing `lime -L` per LSP request is the
+wrong shape for interactive editing on big grammars.  lime-lsp
+v0.5.0 was designed for the small-grammar case (syncrep_gram.lime,
+~5 KB) and the per-request fork was an acceptable simplification.
+On gram.lime (21 KLoC, 0.5 MB) it is not.
+
+Three things are slow.  This commit fixes one of them; the other
+two are queued.
+
+
+Fix in this commit (471e565): in-process diagnostics
+----------------------------------------------------
+
+lime-lsp now links liblime_compiler.a by default and calls a new
+public API `lime_lint_grammar_in_process(text, len, &diags)` that
+runs the same parse + FindActions + lint_grammar pipeline `lime -L`
+runs, but in-process: no fork, no exec, no temp file, no
+re-tokenization of stderr.
+
+End-to-end LSP didOpen -> publishDiagnostics measurement on
+examples/pg/gram.lime (20.6K lines, 0.5 MB, 5923 diagnostics in
+the result), i9-12900H, 3 trials each:
+
+  Subprocess path (LIME_LSP_FORCE_SUBPROCESS=1):  2.07-2.10 s
+  In-process path (default):                      1.88-1.94 s
+
+Honest delta: ~10%, ~200 ms saved per request.  The fork+exec
+plus temp-file write was that much of the per-request budget.
+
+
+What's NOT fixed by this commit
+-------------------------------
+
+The bulk of the remaining ~1.9 s is the LALR(1) construction
+work itself (FindStates / FindFollowSets / FindActions on a
+~20K-rule grammar).  That work happens regardless of whether
+the LSP server forks `lime -L` or calls `lime_lint_grammar_in_
+process` directly.  Eliminating the IPC overhead does not make
+the analysis any faster.
+
+For your "10 LSP requests per typed character" workload on
+gram.lime, this commit takes you from ~20 s of fork+lime+
+analysis per character to ~19 s of in-process analysis per
+character.  Not the fix you need.
+
+
+What WOULD fix interactive latency on gram.lime
+-----------------------------------------------
+
+Two things, in priority order:
+
+1. **Background diagnostics (asynchronous publish).**  Today the
+   LSP server runs lsp_diagnostics_run() synchronously on the
+   didOpen / didChange handler thread, blocking the editor on
+   the 2 s of analysis.  Standard LSP servers (rust-analyzer,
+   gopls, clangd) push diagnostics asynchronously: the handler
+   returns immediately, the analysis runs on a worker thread,
+   the publishDiagnostics notification fires when the result
+   is ready.  Subsequent didChange requests can cancel-and-
+   restart the in-flight analysis.
+
+   This is the higher-leverage fix.  The 2 s of analysis still
+   happens, but the editor stays responsive throughout, and
+   subsequent typing immediately starts a new analysis (with
+   the previous one cancelled).  Effective latency for the
+   user becomes "you typed; in 2 s you got fresh diagnostics
+   without ever blocking on a request".
+
+2. **Parse-only fast lint mode.**  `lime -L` runs the FULL
+   LALR pipeline because the linter wants conflict information
+   for some W-class warnings (W005 missing-expect specifically).
+   But the E-class errors (E001-E005, the things you actually
+   need on every keystroke) require only ParseText.
+
+   A `lime_lint_fast_grammar_in_process()` that skips
+   FindStates/FindActions and runs only the parse-phase
+   checks would drop the 2 s to ~150 ms on gram.lime.  Full
+   lint would still run on save (or every N seconds in the
+   background, per #1).
+
+Both are real refactors, not annotations.  v0.9.3+ ships #0
+(in-process IPC); v0.10.x targets #1 + #2.
+
+
+Side-effect: the LSP test fixture caught one more bug
+-----------------------------------------------------
+
+While wiring the in-process path I found that
+`lime_lint_grammar_in_process` initially exited(1) inside
+FindStates() with "Internal error - no start rule".  The
+in-process compile path (lime_compile_grammar_in_process)
+had been silently doing the same setup `main()` does after
+ParseText -- assigning sequential rule numbers, sorting the
+rule list, computing nterminal -- but as embedded code, not
+exposed.  My new function had to mirror it.
+
+This is a maintenance hazard for any future "in-process X"
+function: there's a setup sequence between ParseText and
+FindStates that's currently duplicated in three places.
+Worth refactoring into a single `lime_post_parse_setup(lem)`
+helper.  Filed as a v0.9.x cleanup TODO; not blocking
+correctness today (all existing tests pass).
+
+
+For the immediate PG editing experience
+---------------------------------------
+
+Today's fix (in-process diagnostics) gets you ~10% faster
+LSP refresh on gram.lime.  Not the order-of-magnitude you
+need for keystroke responsiveness.
+
+Two short-term workarounds you can try while #1+#2 land:
+
+  a. **Editor-side debounce.**  Most LSP-aware editors expose
+     a `lsp.diagnostics.delay` config (vscode's setting names
+     vary).  Setting it to 1500-2000 ms means the editor only
+     refreshes diagnostics 1.5-2 s after the user stops typing,
+     so the analysis happens on idle keystrokes only.  Not
+     ideal, but functional.
+
+  b. **Open via `file://` to skip didOpen-time analysis.**  If
+     the editor opens gram.lime in read-only / view mode,
+     diagnostics often don't refresh on every keystroke.  Useful
+     for quick navigation; not for editing.
+
+  c. **Run lime-lsp against the SCANNER file instead.**
+     scan.lime / pl_scanner.lime are typically <1 KLoC and lint
+     in <50 ms.  If your interactive edits are on the scanner
+     not the parser, lime-lsp is fine today.
+
+For the parser file itself (gram.lime), the honest answer
+remains: editor-side debounce until v0.10's background
+diagnostics land.
+
+End of letter.
