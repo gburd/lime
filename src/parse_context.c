@@ -44,12 +44,24 @@ extern void parse_engine_reset(ParseContext *ctx);
 ** Engine stack buffer grows monotonically -- the reset path preserves
 ** the largest-seen capacity so deep grammars don't pay realloc churn.
 **
-** Cleanup: pthread_key_t with a destructor frees the pool on thread
-** exit (ASAN/leak-clean), without requiring callers to call
-** parse_context_pool_drain() explicitly.  The pthread_key is
-** lazily initialised on the first parse_begin via pthread_once().
+** Cleanup:
+**   POSIX: pthread_key_t with a destructor frees the pool on thread
+**          exit (ASAN/leak-clean) without requiring callers to call
+**          parse_context_pool_drain() explicitly.
+**   Windows: lime_threads.h does not shim pthread_key_t today; the
+**          pool is disabled on Windows so the existing malloc/free
+**          path is exercised.  Adding TlsAlloc/FlsAlloc machinery
+**          would unlock the same single-thread win there but is
+**          deferred until a Windows-side perf request lands.
 */
+#if !defined(_WIN32) || defined(__MINGW32__)
 #include <pthread.h>
+#define LIME_PARSE_CONTEXT_POOL 1
+#else
+#define LIME_PARSE_CONTEXT_POOL 0
+#endif
+
+#if LIME_PARSE_CONTEXT_POOL
 
 static pthread_key_t g_pool_key;
 static pthread_once_t g_pool_key_once = PTHREAD_ONCE_INIT;
@@ -69,16 +81,21 @@ static void pool_key_init(void) {
     pthread_key_create(&g_pool_key, pool_slot_destructor);
 }
 
+#endif /* LIME_PARSE_CONTEXT_POOL */
+
 /*
-** Public: drop the calling thread's pooled ParseContext.
+** Public: drop the calling thread's pooled ParseContext.  No-op when
+** the pool is disabled (Windows).
 */
 void parse_context_pool_drain(void) {
+#if LIME_PARSE_CONTEXT_POOL
     pthread_once(&g_pool_key_once, pool_key_init);
     ParseContext *ctx = (ParseContext *)pthread_getspecific(g_pool_key);
     if (ctx != NULL) {
         pool_slot_destructor(ctx);
         pthread_setspecific(g_pool_key, NULL);
     }
+#endif
 }
 
 /*
@@ -94,6 +111,7 @@ ParseContext *parse_context_create(ParserSnapshot *snap) {
     }
 
     ParseContext *ctx = NULL;
+#if LIME_PARSE_CONTEXT_POOL
     pthread_once(&g_pool_key_once, pool_key_init);
     ctx = (ParseContext *)pthread_getspecific(g_pool_key);
     if (ctx != NULL) {
@@ -113,8 +131,10 @@ ParseContext *parse_context_create(ParserSnapshot *snap) {
         parse_engine_reset(ctx);
         return ctx;
     }
+#endif /* LIME_PARSE_CONTEXT_POOL */
 
-    /* Cold path: first parse on this thread.  Allocate fresh. */
+    /* Cold path: first parse on this thread, OR pool disabled.
+    ** Allocate fresh. */
     ctx = malloc(sizeof(ParseContext));
     if (ctx == NULL) {
         return NULL;
@@ -153,14 +173,15 @@ void parse_context_destroy(ParseContext *ctx) {
     ** Just drop our pointer so the pool slot doesn't leak it. */
     ctx->context_stack = NULL;
 
+#if LIME_PARSE_CONTEXT_POOL
     if (pthread_getspecific(g_pool_key) == NULL) {
         /* Hot path: hand off to the pool for reuse. */
         pthread_setspecific(g_pool_key, ctx);
         return;
     }
-
     /* Cold path: pool slot already filled (rare -- only happens if
     ** caller nests parse_begin/end somehow).  Actually free this one. */
+#endif
     extern void parse_engine_drop(ParseContext *);
     parse_engine_drop(ctx);
     free(ctx);
