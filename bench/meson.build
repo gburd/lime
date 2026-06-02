@@ -80,12 +80,19 @@ bench_jit_real_parser = executable('bench_jit_real_parser',
 # line alignment and field-reordering changes to the snapshot
 # struct (false-sharing on refcount + hot read-only fields).  See
 # the top-of-file comment in bench_parse_fanout.c.
-bench_parse_fanout = executable('bench_parse_fanout',
-  'bench_parse_fanout.c',
-  bench_arith_gen,
-  include_directories : include_directories('../src'),
-  dependencies : [lime_parser_dep, math_dep, thread_dep],
-)
+#
+# POSIX-only: uses pthread_create + nanosleep directly.  We could
+# port to lime_threads.h's Windows shim, but the bench is local-
+# perf-evaluation tooling, not a portable test.  Add Windows
+# support if and when someone wants to compare scaling there.
+if host_machine.system() != 'windows'
+  bench_parse_fanout = executable('bench_parse_fanout',
+    'bench_parse_fanout.c',
+    bench_arith_gen,
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, math_dep, thread_dep],
+  )
+endif
 
 
 # Optional Flex/Bison comparison harness (skipped at configure time

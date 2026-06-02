@@ -1,5 +1,13 @@
 /*
 ** Test mid-RHS comment preservation in `lime -F`
+**
+** Note: this test originally relied on assert() for error handling,
+** which compiled out under -DNDEBUG (release builds), causing
+** silent NULL-deref crashes when lime -F failed for any reason.
+** Replaced asserts that GUARD subsequent operations with explicit
+** if (cond) { fprintf; abort } so failures are loud regardless of
+** NDEBUG.  Pure-correctness asserts (e.g. "comment foo was found")
+** stay as asserts since their failure is the intended test signal.
 */
 #include "test_compat.h"
 
@@ -8,19 +16,32 @@
 #include <string.h>
 #include <assert.h>
 
+static void die(const char *what, const char *detail) {
+    fprintf(stderr, "FATAL: %s: %s\n", what, detail ? detail : "(none)");
+    fflush(stderr);
+    abort();
+}
+
 /* Test 1: Format once, verify comments are present */
 static void test_format_preserves_comments(const char *lime_exe, const char *grammar_path){
   char *fmt_argv[] = { (char *)lime_exe, "-F", (char *)grammar_path, NULL };
   int rc = 0;
-  assert(test_compat_run(fmt_argv, &rc) == 0);
-  assert(rc == 0);
-  
+  if (test_compat_run(fmt_argv, &rc) != 0) {
+    die("test_compat_run failed to spawn lime", grammar_path);
+  }
+  if (rc != 0) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "lime -F exit=%d", rc);
+    die("lime -F returned non-zero", buf);
+  }
+
   /* Check that the formatted file has the comments */
   char formatted_path[512];
   snprintf(formatted_path, sizeof(formatted_path), "%s.formatted", grammar_path);
-  
+
   FILE *f = fopen(formatted_path, "r");
-  assert(f != NULL);
+  if (!f) die("fopen failed on .formatted (lime -F did not create it?)",
+              formatted_path);
   
   char line[512];
   int found_prelude = 0;
@@ -57,22 +78,23 @@ static void test_idempotence(const char *lime_exe, const char *grammar_path){
   {
     char *fmt_argv[] = { (char *)lime_exe, "-F", (char *)grammar_path, NULL };
     int rc = 0;
-    assert(test_compat_run(fmt_argv, &rc) == 0);
-    assert(rc == 0);
+    if (test_compat_run(fmt_argv, &rc) != 0) die("test_compat_run failed", grammar_path);
+    if (rc != 0) die("lime -F first pass returned non-zero", grammar_path);
   }
-  
+
   /* Format the formatted output */
   {
     char *fmt_argv[] = { (char *)lime_exe, "-F", formatted_path, NULL };
     int rc = 0;
-    assert(test_compat_run(fmt_argv, &rc) == 0);
-    assert(rc == 0);
+    if (test_compat_run(fmt_argv, &rc) != 0) die("test_compat_run failed", formatted_path);
+    if (rc != 0) die("lime -F second pass returned non-zero", formatted_path);
   }
-  
+
   /* Compare byte-for-byte */
   FILE *f1 = fopen(formatted_path, "rb");
   FILE *f2 = fopen(twice_path, "rb");
-  assert(f1 != NULL && f2 != NULL);
+  if (!f1) die("fopen failed on .formatted", formatted_path);
+  if (!f2) die("fopen failed on .formatted.formatted", twice_path);
   
   int match = 1;
   int c1, c2;

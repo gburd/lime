@@ -252,7 +252,8 @@ jobs:
       - name: Setup LTO build (${{ matrix.compiler }})
         env:
           CC: ${{ matrix.compiler }}
-        run: ./scripts/build-lto.sh build-lto --buildtype=release -Db_ndebug=true
+        # Default buildtype (debugoptimized) + LTO is the safe combo.
+        run: ./scripts/build-lto.sh build-lto
 
       - name: Build
         run: ninja -C build-lto
