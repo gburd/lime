@@ -1314,6 +1314,38 @@ test_skin_bison = executable('test_skin_bison',
 
 test('skin_bison', test_skin_bison)
 
+# %union + yydebug coverage for --target=c:bison.  Generates a
+# grammar with %union { int n; char *s; } so the bison skin's
+# YYSTYPE typedef carries both arms; the test compiles a single
+# binary that drives native and skin paths through the same input
+# and asserts equivalence.  Also exercises the yydebug runtime
+# trace flag.  See docs/SKINS.md.
+test_skin_bison_union_gen = custom_target('test_skin_bison_union_parser',
+  input   : ['test_skin_bison_union_grammar.y'],
+  output  : [
+    'test_skin_bison_union_grammar.c',
+    'test_skin_bison_union_grammar.h',
+    'test_skin_bison_union_grammar_bison.c',
+    'test_skin_bison_union_grammar_bison.h',
+  ],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '--target=c:bison',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_skin_bison_union = executable('test_skin_bison_union',
+  'test_skin_bison_union.c',
+  test_skin_bison_union_gen,
+  dependencies : lime_parser_dep,
+  c_args : nounusedparam,
+)
+
+test('skin_bison_union', test_skin_bison_union)
+
 # M1 phase 1 of the lexer subsystem: .lex source-language
 # tokenizer.  No DFA, no parser yet -- just the byte-level
 # token stream that the M1 parser will consume.
