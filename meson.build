@@ -234,6 +234,7 @@ lime_compiler_lib = static_library('lime_compiler',
                          include_directories('src/lex')],
   c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAVE_SNAPSHOT_BUILD']
            + lime_warning_suppress,
+  install : true,
 )
 
 lime_compiler_dep = declare_dependency(
@@ -281,6 +282,52 @@ pkgconfig_mod.generate(
   # other libraries' similarly-named headers (extension.h is a common
   # name).  Cflags resolves to -I${prefix}/include and our headers
   # all live in include/lime/ inside that.
+  extra_cflags      : ['-pthread'],
+  libraries_private : ['-ldl'],
+)
+
+# Second pkg-config file `lime-compiler` for the in-process compile API.
+#
+# Lime ships TWO archives:
+#
+#   liblime_parser.a      - runtime LALR(1) push parser, ~200 KB.
+#                            Includes parse_begin / parse_token /
+#                            parse_end + ParserSnapshot owners.
+#                            Use `pkg-config --cflags --libs lime`.
+#
+#   liblime_compiler.a    - in-process LALR(1) construction, ~1.2 MB.
+#                            Provides lime_compile_grammar_in_process()
+#                            so callers can build a ParserSnapshot from
+#                            grammar text WITHOUT forking the lime
+#                            binary or invoking cc + dlopen.
+#                            Use `pkg-config --cflags --libs lime-compiler`.
+#
+# The compiler archive is the strong-definition home of the weak
+# reference declared in src/snapshot_create.c.  Consumers that want
+# the documented ~1800x cold-rebuild speedup (vs the subprocess
+# pipeline) MUST link both libraries.  Linking only `lime` falls
+# through to fork+exec+cc+dlopen at runtime -- the same path PG's
+# parser_extension.c uses today.
+#
+# Why two pkg-config files instead of one .pc that pulls in both?
+# Most consumers want only the runtime parser; the compiler
+# (1.2 MB) is dead weight for them.  Splitting the .pc files lets
+# downstream packagers ship `lime-runtime` (just the parser) and
+# `lime-compiler` (the full thing) as separate package variants
+# while sharing the headers.
+pkgconfig_mod.generate(
+  lime_compiler_lib,
+  name              : 'lime-compiler',
+  filebase          : 'lime-compiler',
+  description       : 'Lime in-process LALR(1) compiler API '
+                      + '(lime_compile_grammar_in_process)',
+  version           : meson.project_version(),
+  url               : 'https://codeberg.org/gregburd/lime',
+  # The compiler archive depends on the runtime parser at link time
+  # (snapshot_release, parse_engine_step, etc.); express that via
+  # Requires.private so consumers automatically pull in -llime when
+  # they ask for -llime-compiler.
+  requires_private  : 'lime',
   extra_cflags      : ['-pthread'],
   libraries_private : ['-ldl'],
 )

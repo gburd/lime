@@ -45,3 +45,8 @@ option('pg_grammar',
                 'guards against int16/int32 overflow and JIT codegen ' +
                 'scaling regressions.',
 )
+option('lime_lsp_in_process',
+  type        : 'feature',
+  value       : 'enabled',
+  description : 'Link lime-lsp against liblime_compiler.a so the diagnostics path runs in-process (Lime-Letter-27 fix). Default: enabled. Disable to keep the v0.5.0 fork+exec subprocess path (smaller binary, ~6-20s/request on large grammars).',
+)

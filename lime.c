@@ -13420,6 +13420,172 @@ done:
   free(err_buf);
   return rc;
 }
+
+/*
+** lime_lint_grammar_in_process -- run the lint pipeline (parse +
+** FindActions + lint_grammar) on grammar text without forking.
+**
+** This is the in-process equivalent of `lime -L`, intended for
+** lime-lsp's diagnostic refresh path.  Unlike
+** lime_compile_grammar_in_process(), this does NOT build a
+** ParserSnapshot -- the goal is purely diagnostics.  It runs
+** through FindActions (so conflicts are visible to the linter)
+** and then lint_grammar (which emits W-class warnings the
+** compile-only path skips).
+**
+** Captures everything the lint pipeline writes to stderr (errors
+** from ParseText, conflict messages from FindActions, lint
+** diagnostics from lint_grammar) into a heap-allocated buffer.
+** Caller frees with free().
+**
+** Returns:
+**   0 on clean lint (errors=0, warnings=0)
+**   non-zero when errors or warnings were emitted (caller parses
+**     *out_diags to know what)
+**   -1 when the in-process compiler context could not be set up
+**     (NULL grammar text, OOM, etc.)
+**
+** Output format matches `lime -L`'s default human format -- the
+** LSP's parse_output() in lsp_diagnostics.c handles it directly.
+**
+** Linked into liblime_compiler.a (gated on LIME_HAVE_SNAPSHOT_BUILD
+** like lime_compile_grammar_in_process).  Lime-lsp links the same
+** lib as a weak dependency; when not linked, this symbol is the
+** weak no-op stub that returns -1 and the LSP falls back to the
+** subprocess pipeline.
+*/
+int lime_lint_grammar_in_process(const char *grammar_text,
+                                 size_t len,
+                                 char **out_diags) {
+  if( out_diags ) *out_diags = NULL;
+  if( !grammar_text || len==0 ) return -1;
+
+  /* Capture stderr around the entire pipeline.  Same trick as
+  ** lime_compile_grammar_in_process(): tmpfile + dup2. */
+  FILE *err_stream = tmpfile();
+  int saved_stderr = -1;
+  if( err_stream ){
+    fflush(stderr);
+    saved_stderr = dup(fileno(stderr));
+    if( saved_stderr>=0 ) dup2(fileno(err_stream), fileno(stderr));
+  }
+
+  LimeCompilerContext  cc;
+  LimeCompilerContext *prev_active = lime_active_ctx;
+  lime_compiler_context_init(&cc);
+
+  struct lime lem;
+  memset(&lem, 0, sizeof(lem));
+  lem.errorcnt = 0;
+  lem.nexpect = -1;
+  lem.first_token = 0;
+  lem.filename = (char*)"<grammar text>";
+  lem.argv = NULL;
+  lem.argc = 0;
+
+  Strsafe_init();
+  Symbol_init();
+  State_init();
+  Symbol_new("$");
+
+  ParseText(&lem, grammar_text, len);
+
+  int lint_rc = -1;
+  int k;
+  if( lem.errorcnt > 0 ){
+    /* Parse failed; lint can't run.  ParseText already wrote
+    ** error messages to stderr (now captured below). */
+    lint_rc = 1;
+    goto done;
+  }
+  if( lem.nrule == 0 ){
+    fprintf(stderr, "<grammar text>:1:1: error: empty grammar\n");
+    lint_rc = 1;
+    goto done;
+  }
+  lem.errsym = Symbol_find("error");
+
+  /* Index symbols mirror compile path. */
+  Symbol_new("{default}");
+  lem.nsymbol = Symbol_count();
+  lem.symbols = Symbol_arrayof();
+  for(k=0; k<lem.nsymbol; k++) lem.symbols[k]->index = k;
+  qsort(lem.symbols, lem.nsymbol, sizeof(struct symbol*), Symbolcmpp);
+  for(k=0; k<lem.nsymbol; k++) lem.symbols[k]->index = k;
+  while( k>0 && lem.symbols[k-1]->type==MULTITERMINAL ){ k--; }
+  if( k<=0 || strcmp(lem.symbols[k-1]->name, "{default}")!=0 ){
+    fprintf(stderr, "<grammar text>:1:1: error: symbol-table corruption\n");
+    lint_rc = 1;
+    goto done;
+  }
+  lem.nsymbol = k - 1;
+
+  /* Set nterminal: terminals are the symbols starting with an uppercase
+  ** letter at the start of the sorted symbol array.  lime_compile_
+  ** grammar_in_process does the same setup before SetSize(); without
+  ** it, FindFirstSets / FindStates compute against nterminal=0 and
+  ** corrupt set-allocation arenas, leaving the next call wedged. */
+  for(k=1; k<lem.nsymbol && ISUPPER(lem.symbols[k]->name[0]); k++){}
+  lem.nterminal = k;
+
+  /* Mirror main()'s post-Parse setup that FindStates depends on:
+  ** assign rule numbers, set startRule, sort the rule list.  Without
+  ** this FindStates() exits via "Internal error - no start rule". */
+  {
+    int i = 0;
+    struct rule *rp;
+    for( rp=lem.rule; rp; rp=rp->next ){
+      rp->iRule = rp->code ? i++ : -1;
+    }
+    lem.nruleWithAction = i;
+    for( rp=lem.rule; rp; rp=rp->next ){
+      if( rp->iRule<0 ) rp->iRule = i++;
+    }
+    lem.startRule = lem.rule;
+    lem.rule = Rule_sort(lem.rule);
+  }
+
+  /* Run the same analysis pipeline `lime -L` does. */
+  SetSize(lem.nterminal+1);
+  FindRulePrecedences(&lem);
+  FindFirstSets(&lem);
+  lem.nstate = 0;
+  FindStates(&lem);
+  lem.sorted = State_arrayof();
+  FindLinks(&lem);
+  FindFollowSets(&lem);
+  FindActions(&lem);
+
+  /* Run the linter.  Output goes to stderr (captured below). */
+  lint_rc = lint_grammar(&lem);
+
+done:
+  lime_compiler_context_destroy(&cc);
+  lime_active_ctx = prev_active;
+
+  /* Drain captured stderr into out_diags. */
+  if( err_stream ){
+    fflush(stderr);
+    if( saved_stderr>=0 ){
+      dup2(saved_stderr, fileno(stderr));
+      close(saved_stderr);
+    }
+    if( out_diags && fseek(err_stream, 0, SEEK_END)==0 ){
+      long sz = ftell(err_stream);
+      if( sz>0 ){
+        char *buf = (char*)malloc((size_t)sz + 1);
+        if( buf ){
+          rewind(err_stream);
+          size_t got = fread(buf, 1, (size_t)sz, err_stream);
+          buf[got] = '\0';
+          *out_diags = buf;
+        }
+      }
+    }
+    fclose(err_stream);
+  }
+  return lint_rc;
+}
 #endif /* LIME_HAVE_SNAPSHOT_BUILD */
 
 

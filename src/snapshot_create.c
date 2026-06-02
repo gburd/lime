@@ -44,6 +44,7 @@
 #include "snapshot.h"
 #include "snapshot_build.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -783,6 +784,24 @@ ParserSnapshot *lime_compile_grammar_text(const char *grammar_text, size_t len, 
             ** snapshot.  Release it before falling through so we do
             ** not leak the partial result. */
             snapshot_release(snap);
+        }
+    } else if (!force_subprocess) {
+        /* In-process compiler not linked.  Emit a one-shot warning to
+        ** stderr the first time we hit this -- silent fallback to the
+        ** subprocess path is exactly what the PG team flagged in
+        ** Lime-Letter-26 ("in-process advertised in the docstring is
+        ** misleading") because the slow path runs and the caller
+        ** never finds out. */
+        static atomic_int warned = 0;
+        int expected = 0;
+        if (atomic_compare_exchange_strong(&warned, &expected, 1)) {
+            fprintf(stderr,
+                "lime: lime_compile_grammar_text falling back to the subprocess\n"
+                "lime:   pipeline (fork + lime + cc + dlopen) because the in-\n"
+                "lime:   process compile API is not linked.  To get the documented\n"
+                "lime:   ~1800x speedup, link liblime_compiler.a alongside\n"
+                "lime:   liblime_parser.a (pkg-config: -llime-compiler -llime).\n"
+                "lime:   Set LIME_FORCE_SUBPROCESS=1 to suppress this warning.\n");
         }
     }
 

@@ -315,10 +315,75 @@ static void parse_output(const char *buf, size_t buf_len, json_value *arr) {
     }
 }
 
+/* Forward decl for the in-process lint API.  Weak so the LSP
+** binary can be built without linking liblime_compiler.a (a 1.2 MB
+** dependency).  When the compiler lib IS linked, the strong
+** definition in lime.c wins and we get the in-process diagnostics
+** fast path; when it isn't, the function returns -1 and we fall
+** through to the subprocess pipeline.  Same pattern as
+** src/snapshot_create.c uses for lime_compile_grammar_in_process. */
+extern int lime_lint_grammar_in_process(const char *grammar_text,
+                                        size_t len,
+                                        char **out_diags)
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((weak))
+#endif
+    ;
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak))
+int lime_lint_grammar_in_process(const char *grammar_text,
+                                 size_t len,
+                                 char **out_diags) {
+    (void)grammar_text; (void)len;
+    if (out_diags) *out_diags = NULL;
+    return -1;
+}
+#endif
+
 json_value *lsp_diagnostics_run(const char *lime_bin,
                                 const char *text, size_t text_len) {
     json_value *arr = json_make_array();
     if (!arr) return NULL;
+
+    /* In-process fast path (v0.9.x, Lime-Letter-27).  When this
+    ** binary was linked with liblime_compiler.a the in-process
+    ** lint API is available and we can run a parse + FindActions
+    ** + lint_grammar pipeline WITHOUT the per-request fork+exec+
+    ** temp-file + lime+cc cycle.  Big win on large grammars: PG's
+    ** gram.lime (~21 KLoC, 0.5 MB) drops from 6-20 s to ~150 ms
+    ** per request.
+    **
+    ** Same diagnostic surface as `lime -L`: emits human-format
+    ** stderr that parse_output() understands.  Captures both
+    ** errors (from ParseText) and warnings (from lint_grammar).
+    **
+    ** Falls through to the subprocess path when:
+    **   - in-process lint not linked (weak stub returns -1)
+    **
+    ** Disable via LIME_LSP_FORCE_SUBPROCESS=1 for testing the
+    ** subprocess path explicitly.
+    */
+    {
+        const char *force_sub = getenv("LIME_LSP_FORCE_SUBPROCESS");
+        int skip_in_process = (force_sub && force_sub[0] && force_sub[0] != '0');
+        if (!skip_in_process) {
+            char *diag_buf = NULL;
+            int rc = lime_lint_grammar_in_process(text, text_len, &diag_buf);
+            if (rc != -1) {
+                /* In-process pipeline ran (rc 0 = clean, >0 = had
+                ** issues).  Either way, parse what it wrote. */
+                if (diag_buf) {
+                    parse_output(diag_buf, strlen(diag_buf), arr);
+                    free(diag_buf);
+                }
+                return arr;
+            }
+            /* rc == -1 means the weak stub fired (compiler lib not
+            ** linked).  Fall through to the subprocess path below. */
+            free(diag_buf);
+        }
+    }
 
     char tmp_path[512];
     if (write_temp_file(text, text_len, tmp_path, sizeof(tmp_path)) != 0) {

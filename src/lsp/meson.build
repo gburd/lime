@@ -25,7 +25,26 @@ lime_lsp_sources = files(
   'lsp_format.c',
 )
 
+# lime-lsp links liblime_compiler.a so it can call
+# lime_compile_grammar_in_process() directly for diagnostics
+# (Lime-Letter-27 fix).  This avoids the per-request fork+exec+
+# tempfile+cc cycle that made the LSP unusable on PG's gram.lime
+# (~21 KLoC, 6-20 s/request -> ~150 ms with the in-process path).
+#
+# The link uses the weak-symbol fallback declared in
+# src/lsp/lsp_diagnostics.c, so a static -Dlime_lsp_in_process=disabled
+# build still works (it just falls through to the subprocess path
+# the same way the v0.5.0 LSP did).  Default is to link the
+# compiler lib because the perf win is huge and the binary-size
+# cost (~1.2 MB) is acceptable for a developer tool.
+lime_lsp_in_process = get_option('lime_lsp_in_process')
+lime_lsp_deps = []
+if lime_lsp_in_process.allowed()
+  lime_lsp_deps += [lime_compiler_dep, lime_parser_dep]
+endif
+
 lime_lsp_exe = executable('lime-lsp',
   lime_lsp_sources,
+  dependencies : lime_lsp_deps,
   install : true,
 )
