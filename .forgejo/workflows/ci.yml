@@ -202,3 +202,60 @@ jobs:
               test "$refs" -eq 0 || { echo "${{ matrix.config.name }} expected 0 libLLVM, got $refs"; exit 1; } ;;
           esac
           echo "OK: ${{ matrix.config.name }} has $refs libLLVM dependencies"
+
+  # =====================================================================
+  # LTO (Link-Time Optimization) build verification.
+  #
+  # Mirrors .github/workflows/ci.yml's lto-build job.  Validates that
+  # scripts/build-lto.sh produces a working build; catches regressions
+  # in the LTO + static-archive link path (gcc-ar / llvm-ar plugin
+  # loading).  See the sibling GitHub workflow for the full rationale.
+  # =====================================================================
+  lto-build:
+    runs-on: codeberg-medium
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - name: Install dependencies (gcc)
+        if: matrix.compiler == 'gcc'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config \
+                                  gcc binutils \
+                                  llvm-dev libllvm18 zlib1g-dev \
+                                  libxml2-dev libffi-dev libtinfo-dev
+
+      - name: Install dependencies (clang)
+        if: matrix.compiler == 'clang'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config \
+                                  clang lld llvm \
+                                  llvm-dev libllvm18 zlib1g-dev \
+                                  libxml2-dev libffi-dev libtinfo-dev
+
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Verify plugin-aware archiver wrappers exist
+        run: |
+          if [ "${{ matrix.compiler }}" = "gcc" ]; then
+            which gcc-ar gcc-ranlib gcc-nm
+            gcc-ar --version | head -1
+          else
+            which llvm-ar llvm-ranlib llvm-nm ld.lld
+            llvm-ar --version | head -1
+          fi
+
+      - name: Setup LTO build (${{ matrix.compiler }})
+        env:
+          CC: ${{ matrix.compiler }}
+        run: ./scripts/build-lto.sh build-lto --buildtype=release -Db_ndebug=true
+
+      - name: Build
+        run: ninja -C build-lto
+
+      - name: Test
+        run: meson test -C build-lto --print-errorlogs

@@ -418,3 +418,83 @@ jobs:
               test "$refs" -eq 0 || { echo "${{ matrix.config.name }} expected 0 libLLVM, got $refs"; exit 1; } ;;
           esac
           echo "OK: ${{ matrix.config.name }} has $refs libLLVM dependencies"
+
+  # =====================================================================
+  # LTO (Link-Time Optimization) build verification.
+  #
+  # Validates that scripts/build-lto.sh produces a working build with
+  # both GCC and Clang.  Catches regressions in the LTO + static-archive
+  # link path (gcc-ar / llvm-ar plugin loading), which is fragile and
+  # easy to break by adding new translation units to a static library.
+  #
+  # Not run with sanitizers because b_lto + b_sanitize don't compose
+  # reliably across compiler versions.  Sanitizer coverage is provided
+  # by the sanitizers-linux job above.
+  #
+  # We test BOTH compilers because gcc-ar and llvm-ar have separate
+  # plugin code paths -- a fix for one doesn't necessarily fix the
+  # other.  The wrapper script picks the right tooling based on $CC.
+  # =====================================================================
+  lto-build:
+    name: lto (ubuntu-24.04, ${{ matrix.compiler }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (gcc)
+        if: matrix.compiler == 'gcc'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config \
+                                  gcc binutils \
+                                  llvm-dev libllvm18 zlib1g-dev \
+                                  libxml2-dev libffi-dev libtinfo-dev
+
+      - name: Install dependencies (clang)
+        if: matrix.compiler == 'clang'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config \
+                                  clang lld llvm \
+                                  llvm-dev libllvm18 zlib1g-dev \
+                                  libxml2-dev libffi-dev libtinfo-dev
+
+      - name: Verify plugin-aware archiver wrappers exist
+        run: |
+          if [ "${{ matrix.compiler }}" = "gcc" ]; then
+            which gcc-ar gcc-ranlib gcc-nm
+            gcc-ar --version | head -1
+          else
+            which llvm-ar llvm-ranlib llvm-nm ld.lld
+            llvm-ar --version | head -1
+          fi
+
+      - name: Setup LTO build (${{ matrix.compiler }})
+        env:
+          CC: ${{ matrix.compiler }}
+        run: ./scripts/build-lto.sh build-lto --buildtype=release -Db_ndebug=true
+
+      - name: Build
+        run: ninja -C build-lto
+
+      - name: Test
+        run: meson test -C build-lto --print-errorlogs
+
+      - name: Report binary size delta vs no-LTO
+        run: |
+          meson setup build-nolto --buildtype=release -Db_ndebug=true -Dllvm=disabled
+          ninja -C build-nolto bench/bench_jit_real_parser
+          CC=${{ matrix.compiler }} ./scripts/build-lto.sh build-lto-cmp \
+              --buildtype=release -Db_ndebug=true -Dllvm=disabled
+          ninja -C build-lto-cmp bench/bench_jit_real_parser
+          nolto_size=$(stat -c%s build-nolto/bench/bench_jit_real_parser)
+          lto_size=$(stat -c%s build-lto-cmp/bench/bench_jit_real_parser)
+          echo "no-LTO binary: $nolto_size bytes"
+          echo "LTO binary:    $lto_size bytes"
+          delta=$((nolto_size - lto_size))
+          pct=$(awk "BEGIN { printf \"%.1f\", ($delta / $nolto_size) * 100 }")
+          echo "delta:         $delta bytes (-$pct%)"
