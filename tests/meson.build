@@ -1600,6 +1600,36 @@ test_lex_actions = executable('test_lex_actions',
 
 test('lex_actions', test_lex_actions)
 
+# v0.9.3 of the lexer subsystem: --target=c:flex skin.  Same
+# end-to-end pipeline shape as the bison-skin test above: lime
+# emits the standard <stem>_lex.{c,h} AND the new flex-API skin
+# <stem>_flex.{c,h}.  The driver compiles all four sources and
+# asserts the skin's pull-driven yylex() emits the same rule
+# sequence as Lime's native push-driven LexFeedBytes() over the
+# same input.  See docs/SKINS.md and tests/test_skin_flex.c.
+test_skin_flex_gen = custom_target('test_skin_flex_lex',
+  input   : ['test_skin_flex_grammar.lex'],
+  output  : ['test_skin_flex_grammar_lex.c',
+             'test_skin_flex_grammar_lex.h',
+             'test_skin_flex_grammar_flex.c',
+             'test_skin_flex_grammar_flex.h'],
+  command : [
+    lime_exe,
+    '-X',
+    '--target=c:flex',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_skin_flex = executable('test_skin_flex',
+  'test_skin_flex.c',
+  test_skin_flex_gen,
+  c_args : nounusedparam,
+)
+
+test('skin_flex', test_skin_flex)
+
 # M3.5 of the lexer subsystem: LexInclude buffer-stack +
 # LexPushback runtime support.  Mirrors the M3.3 wiring: lime -X
 # generates the lexer .c+.h pair, the test driver compiles
