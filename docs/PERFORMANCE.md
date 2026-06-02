@@ -42,14 +42,36 @@ meson compile -C build-prod
 # also need LDFLAGS=-fuse-ld=lld unless your binutils ld has the
 # LLVMgold.so plugin installed.)
 
-# Step 2 (optional): profile-guided optimisation.  Adds another
-# 3-10% on the parser hot path on most workloads.
+# Step 2 (optional): profile-guided optimisation.  Workload-dependent;
+# measured on lime v0.9.x (i9-12900H, gcc 15.2):
+#
+#   bench_lsc_small (32-state lexer):    +51%% throughput
+#   bench_lsc_medium (32-state lexer):   +46%% throughput
+#   bench_lsc_large (122-state lexer):   +26%% throughput
+#   bench_parse_fanout (8 thr borrowed): +14%% throughput
+#   bench_jit_real_parser hot path:      -7%%   (regression!)
+#
+# Lex-heavy workloads see substantial wins (training data is
+# representative; gcc's PGO chooses good inlining + branch ordering).
+# The parser-engine hot path can regress when PGO's profile-driven
+# code layout doesn't match the test invocation pattern -- if you
+# care most about parse_token throughput, run the bench-jit-real-
+# parser-style workload to populate the profile, then measure.
+#
+# CAVEAT: PGO + LTO together do not currently compose with our static
+# library setup (gcc-ar plugin can't handle the dual bytecode).  Use
+# one or the other.  PGO alone is the safer choice for lex-heavy
+# workloads; LTO alone is the safer choice for general code-size
+# reduction and modest hot-path wins.
 meson configure build-prod -Dlime_pgo=generate
 meson compile -C build-prod
 
 # Run a representative workload (your own grammar / fixtures, NOT
 # the test suite).  This populates `build-prod/.../*.gcda` profile
-# data files that PGO consumes in the next step.
+# data files that PGO consumes in the next step.  More diverse
+# workloads = better profile = better codegen.  Recommended minimum:
+# at least one full lex pass over a representative input AND one
+# full parse session.
 ./build-prod/lime <your-grammar>
 ./build-prod/bench/parser_bench   # or any representative driver
 
