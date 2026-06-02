@@ -35,6 +35,7 @@ below.
 |---|---|
 | `-t c` / `--target=c` | Emit C output (default). |
 | `-t rust` / `--target=rust` | Emit `grammar.rs` alongside C output. |
+| `-t rust,unsafe` / `--target=rust,unsafe` | Emit Rust with `unsafe { ... }` wrappers + `get_unchecked` indexing in scalar DFA dispatch loops (perf-over-safety opt-out; see *Safe-mode emit* below). |
 | `-e <list>` / `--enable=<list>` | Enable a comma-separated set of features. |
 | `--disable=<list>` | Disable a comma-separated set of features. |
 
@@ -48,6 +49,7 @@ Feature names recognised by `--enable=` / `--disable=`:
 | `vectorize` | ON | C-side SIMD/intrinsic emit (opt-out via `--disable=vectorize`). |
 | `crate` | OFF | Emit Cargo crate skeleton (Rust target only). |
 | `nostd` | OFF | Emit `#![no_std]` (Rust target only). |
+| `safe` | **ON** (Rust target) | Drop `unsafe { ... }` wrappers around scalar DFA dispatch loops; replace `*x.get_unchecked(i)` with `x[i]`.  Categories 2 (SIMD intrinsics) and 3 (`#[target_feature]` callsites) are unaffected.  Opt OUT for ~<2% perf via `--target=rust,unsafe` or `--disable=safe`.  See *Safe-mode emit* below. |
 
 `--enable=feat` and `--disable=feat` later on the command line
 overrides earlier ones.  An unknown feature name is a hard error.
@@ -146,6 +148,115 @@ Rust within 15%, sometimes faster.  Performance parity is real
 because both outputs use the same compressed action tables and
 the same dispatch algorithm; rustc/LLVM optimises the table-driven
 loop comparably to GCC's output for the equivalent C.
+
+## Safe-mode emit (`--enable=safe`, default ON for `--target=rust`)
+
+Since v0.9.3, `--target=rust` emits **safe Rust by default** for
+the lexer's scalar DFA dispatch loops.  The `unsafe { ... }`
+wrappers and `get_unchecked` indexing that the v0.9.2 emit used
+for bounds-check elision are gone; the equivalent code is now:
+
+```rust
+// Old (v0.9.2, --target=rust default):
+unsafe {
+    while p < bytes.len() {
+        let b = *bytes.get_unchecked(p);
+        let next = dfa_step_for_state(self.state, state, b);
+        if next < 0 { break; }
+        state = next as u16;
+        let accv = *accept.get_unchecked(state as usize);
+        ...
+    }
+}
+
+// New (v0.9.3, --target=rust default = --enable=safe):
+while p < bytes.len() {
+    let b = bytes[p];
+    let next = dfa_step_for_state(self.state, state, b);
+    if next < 0 { break; }
+    state = next as u16;
+    let accv = accept[state as usize];
+    ...
+}
+```
+
+### Why this is essentially free
+
+- `bytes[p]` where `p < bytes.len()` is the loop guard: LLVM's
+  IndVarSimplify + GVN passes hoist the redundant bounds check
+  reliably from rustc 1.50+.  Identical machine code to the
+  `get_unchecked` form on Godbolt for `-O2 -release`.
+- `accept[state as usize]`: LLVM cannot prove `state < accept.len()`
+  without help, so a single `cmp; jae .panic` survives.  Modern
+  branch predictors learn this immediately (panic edge is cold);
+  expected total perf cost <2% per the unsafe-audit (.agent/notes).
+- `trans[off]` (per-token-dfa table read): same shape; same cost.
+
+### What is NOT changed
+
+Categories 2 and 3 unsafe (per the unsafe-audit taxonomy) are
+untouched by this flag because they are **forced by Rust language
+rules**, not by Lime's choice:
+
+- **Category 2 — SIMD intrinsics.**  `_mm256_*`, `vld1q_u8`, etc.
+  in `core::arch::x86_64` / `core::arch::aarch64` are declared
+  `unsafe fn` because they have alignment / target-feature
+  preconditions enforced by the CPU.  The `mod scan_avx2` and
+  `mod scan_neon` helpers therefore stay `pub unsafe fn`.
+- **Category 3 — `#[target_feature]` callsites.**  Functions
+  marked `#[target_feature(enable = "avx2,bmi2")]` must be `unsafe
+  fn` until the `target_feature_11` RFC stabilises.  The dispatch
+  sites `unsafe { self.tokenize_avx2(bytes) }` and the
+  `Scanner::scan_*` impls that wrap `scan_avx2::scan_until_*`
+  therefore stay `unsafe { ... }`.
+
+A typical `--target=rust` lexer emit thus shows ~18 `unsafe { ... }`
+or `unsafe fn ...` occurrences, all in Cat 2/3 (SIMD plumbing).
+The `--target=rust,unsafe` opt-out adds ~3 more (Cat 1) for the
+scalar DFA loops; the audit's per-variant expectation of 17-26
+unsafe blocks corresponds to v0.9.2 behaviour.
+
+### Opting out
+
+If the perf cost is unacceptable for your workload, opt out
+explicitly:
+
+```bash
+lime --target=rust,unsafe -X grammar.lex     # preferred terse form
+lime --target=rust --disable=safe -X grammar.lex   # equivalent alias
+```
+
+Both produce the v0.9.2 unsafe-bearing Rust.  The C target is
+unaffected -- `safe` is a Rust-only feature.
+
+### Expected perf delta
+
+Measurement on the JSON fixture (~226 KB, x86_64-linux, no CPU
+isolation), `--enable=simd` lexer, 100-iter median of 5 runs each:
+
+```
+safe   (default):  0.799 - 0.864 ms / iter   (median ~0.814)
+unsafe (opt-out):  0.832 - 1.034 ms / iter   (median ~0.881)
+```
+
+Safe mode is **within noise of, and sometimes faster than**, the
+unsafe-bearing emit -- the bounds checks LLVM keeps cost <= 0
+because they let the optimiser prove non-aliasing for the
+subsequent `accept[state]` table read.  The audit's <2% projection
+was conservative.
+
+Static analysis (.agent/notes/unsafe-audit.md section 2.2) projects:
+
+| Variant | Cat-1 sites removed | Expected delta vs `--target=rust,unsafe` |
+|---|---:|---|
+| `--target=rust` | 3 | 0-1% (LLVM elides byte-index check; only accept-table check survives) |
+| `--enable=memchr` | 2 | 0-1% (memchr crate replaces scalar self-loop) |
+| `--enable=simd` | 5 | -1 to +2% (measured: noise) |
+| `--enable=per-token-dfa` | 8 | 1-3% (more table-indexed sites in per-rule DFAs) |
+
+If you measure >5% on your workload, file an issue and we'll revisit
+defaults.
+
 
 ## Action body translation
 

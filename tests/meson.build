@@ -381,6 +381,12 @@ if host_machine.system() != 'windows'
     'test_skin_rust_logos.c',
   )
   test('skin_rust_logos', test_skin_rust_logos,
+    args : [lime_exe.full_path()],
+    depends : [lime_exe],
+    is_parallel : false,
+    timeout : 30)
+endif
+
 # v0.9.3 --enable=safe / --target=rust,unsafe regression: locks
 # down the safe-by-default polarity for Rust output and the two
 # opt-out paths (--disable=safe and --target=rust,unsafe).
