@@ -106,6 +106,7 @@ extern const char     *lime_emit_rust_symbol_name(const struct symbol *sp);
 extern const char *lime_emit_c_skin_get_arg(const struct lime *lemp);
 extern const char *lime_emit_c_skin_get_tokentype(const struct lime *lemp);
 extern const char *lime_emit_c_skin_get_union(const struct lime *lemp);
+extern const char *lime_emit_c_skin_symbol_union_field(const struct symbol *sp);
 extern const char *lime_emit_c_skin_get_tokenprefix(const struct lime *lemp);
 extern int         lime_emit_c_skin_get_first_token(const struct lime *lemp);
 extern int         lime_emit_c_skin_has_locations(const struct lime *lemp);
@@ -293,17 +294,37 @@ static void emit_header(FILE *out, const struct lime *lemp,
         "    YYEOF = 0,\n"
         "    YYerror = 256,\n"
         "    YYUNDEF = 257");
-    /* Emit one enum constant per terminal symbol (skip index 0 = $). */
+    /* Emit one enum constant per terminal symbol (skip index 0 = $).
+    ** v0.9.3: tagged tokens (%token<field> NAME) get a trailing
+    ** /yylval.<field>/ block-comment in the emitted output so the
+    ** user's yylex() and reduce-action code have the union arm
+    ** documented at the point of use.  Untagged tokens emit no
+    ** comment.  See docs/SKINS.md "Tagged tokens". */
+    int any_tagged = 0;
     for (int i = 1; i < nterminal; i++) {
         struct symbol *sp = lime_emit_rust_symbol_at(lemp, i);
         const char *nm = lime_emit_rust_symbol_name(sp);
+        const char *uf = lime_emit_c_skin_symbol_union_field(sp);
         fprintf(out, ",\n    %s%s = %d", tokenprefix, nm, 257 + i);
+        if (uf && uf[0]) {
+            fprintf(out, "  /* yylval.%s */", uf);
+            any_tagged = 1;
+        }
     }
     fprintf(out,
         "\n};\n"
         "typedef enum yytokentype yytoken_kind_t;\n"
         "#endif /* !YYTOKENTYPE */\n"
         "\n");
+    if (any_tagged) {
+        fprintf(out,
+            "/* Tagged tokens (above): each `yylval.<field>` comment\n"
+            "** marks the YYSTYPE union arm carrying the token's\n"
+            "** semantic value.  The user's yylex() should write the\n"
+            "** named arm before returning the token code; the user's\n"
+            "** reduce action accesses `K.<field>` to read it back.\n"
+            "** See docs/SKINS.md \"Tagged tokens\". */\n\n");
+    }
 
     /* YYSTYPE typedef.  Three cases:
     **   1. %union { body } -- emit `typedef union { body } YYSTYPE;`,

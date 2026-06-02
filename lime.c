@@ -3728,7 +3728,17 @@ static int format_grammar(struct lime *lem){
       for( i = 0; i < g->n_symbols; i++ ){
         sp = g->symbols[i];
         if( sp->type == TERMINAL && strcmp(sp->name, "$") != 0 ){
-          fprintf(out, "%%token %s", sp->name);
+          /* v0.9.3: round-trip `%token<field> NAME.` when the
+          ** symbol carries a tag.  One directive per name keeps
+          ** the formatter trivially correct in the face of mixed
+          ** tagged/untagged tokens within a single source group;
+          ** an earlier-pass run-length emitter would clobber the
+          ** tag whenever an untagged sibling appeared. */
+          if( sp->union_field ){
+            fprintf(out, "%%token<%s> %s", sp->union_field, sp->name);
+          }else{
+            fprintf(out, "%%token %s", sp->name);
+          }
           if( sp->datatype ){
             fprintf(out, " {%s}", sp->datatype);
           }
@@ -3744,7 +3754,11 @@ static int format_grammar(struct lime *lem){
         sp = lem->symbols[i];
         if( !emitted[i] && sp->type == TERMINAL
             && strcmp(sp->name, "$") != 0 ){
-          fprintf(out, "%%token %s", sp->name);
+          if( sp->union_field ){
+            fprintf(out, "%%token<%s> %s", sp->union_field, sp->name);
+          }else{
+            fprintf(out, "%%token %s", sp->name);
+          }
           if( sp->datatype ){
             fprintf(out, " {%s}", sp->datatype);
           }
@@ -3757,7 +3771,11 @@ static int format_grammar(struct lime *lem){
     for(i = 1; i < lem->nterminal; i++){
       sp = lem->symbols[i];
       if( sp->type == TERMINAL && strcmp(sp->name, "$") != 0 ){
-        fprintf(out, "%%token %s", sp->name);
+        if( sp->union_field ){
+          fprintf(out, "%%token<%s> %s", sp->union_field, sp->name);
+        }else{
+          fprintf(out, "%%token %s", sp->name);
+        }
         if( sp->datatype ){
           fprintf(out, " {%s}", sp->datatype);
         }
@@ -14434,6 +14452,13 @@ const char *lime_emit_c_skin_get_tokentype(const struct lime *lemp) {
 }
 const char *lime_emit_c_skin_get_union(const struct lime *lemp) {
     return lemp ? lemp->union_body : 0;
+}
+/* v0.9.3: per-token union arm tag.  Returns the identifier from
+** `%token<field> NAME` (interned, do not free) or NULL when the
+** token was declared without a tag.  Consumed by the bison skin
+** (annotates per-token enum lines) and the formatter. */
+const char *lime_emit_c_skin_symbol_union_field(const struct symbol *sp) {
+    return sp ? sp->union_field : 0;
 }
 const char *lime_emit_c_skin_get_tokenprefix(const struct lime *lemp) {
     return lemp ? lemp->tokenprefix : 0;
