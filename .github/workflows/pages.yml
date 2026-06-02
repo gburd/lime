@@ -29,7 +29,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Install doxygen
       run: sudo apt-get update && sudo apt-get install -y doxygen
@@ -59,7 +59,7 @@ jobs:
         echo "Doxygen site built ($(find docs/api/html -type f | wc -l) files)"
 
     - name: Upload Pages artifact
-      uses: actions/upload-pages-artifact@v3
+      uses: actions/upload-pages-artifact@v5
       with:
         path: docs/api/html
 
@@ -72,4 +72,4 @@ jobs:
     steps:
     - name: Deploy to GitHub Pages
       id: deployment
-      uses: actions/deploy-pages@v4
+      uses: actions/deploy-pages@v5
