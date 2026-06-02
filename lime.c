@@ -988,6 +988,19 @@ struct lime {
                            ** and the C side has %extra_argument, the Rust
                            ** emitter falls back to () (no user arg). */
   char *tokentype;         /* Type of terminal symbols in the parser stack */
+  /* %union { body } -- bison-style union declaration for the
+  ** semantic-value type.  When set, Lime emits
+  **
+  **     typedef union { body } YYSTYPE;
+  **
+  ** before the per-symbol stack union, and uses YYSTYPE as the
+  ** terminal slot type (overriding %token_type if present and
+  ** replacing the default void* otherwise).  The bison skin
+  ** (--target=c:bison) reads this field and emits the matching
+  ** `extern YYSTYPE yylval;` so a bison-port consumer can write
+  ** `yylval.<field> = ...` from yylex().  NULL when no %union
+  ** directive was seen.  See docs/SKINS.md. */
+  char *union_body;
   char *vartype;           /* The default type of non-terminal symbols */
   char *start;             /* Name of the start symbol for the grammar */
   char *stacksize;         /* Size of the parser stack */
@@ -1095,6 +1108,7 @@ struct lime {
   ** v0.3.2 should carry. */
   char *name_comment;
   char *tokentype_comment;
+  char *union_body_comment;   /* `union` */
   char *arg_comment;          /* `extra_argument` */
   char *ctx_comment;          /* `extra_context`  */
   char *vartype_comment;      /* `default_type`   */
@@ -3451,6 +3465,12 @@ static void dir_emit_token_type(FILE *out, const struct lime *gp){
   fprintf(out, "%%token_type {%s}\n", gp->tokentype);
 }
 
+static int  dir_has_union(const struct lime *gp){ return gp->union_body != 0; }
+static void dir_emit_union(FILE *out, const struct lime *gp){
+  if( gp->union_body_comment ) fprintf(out, "%s\n", gp->union_body_comment);
+  fprintf(out, "%%union {%s}\n", gp->union_body);
+}
+
 static int  dir_has_extra_argument(const struct lime *gp){ return gp->arg != 0; }
 static void dir_emit_extra_argument(FILE *out, const struct lime *gp){
   if( gp->arg_comment ) fprintf(out, "%s\n", gp->arg_comment);
@@ -3574,6 +3594,7 @@ static const LimeDirectiveDescriptor lime_directives[] = {
   /* HEADER_VALUE block (after MODULE, before HEADER_BRACE) */
   { "name",               LIME_DIR_HEADER_VALUE,  dir_has_name,               dir_emit_name               },
   { "token_type",         LIME_DIR_HEADER_VALUE,  dir_has_token_type,         dir_emit_token_type         },
+  { "union",              LIME_DIR_HEADER_VALUE,  dir_has_union,              dir_emit_union              },
   { "extra_argument",     LIME_DIR_HEADER_VALUE,  dir_has_extra_argument,     dir_emit_extra_argument     },
   { "extra_context",      LIME_DIR_HEADER_VALUE,  dir_has_extra_context,      dir_emit_extra_context      },
   { "default_type",       LIME_DIR_HEADER_VALUE,  dir_has_default_type,       dir_emit_default_type       },
@@ -7233,6 +7254,17 @@ static void parseonetoken(struct pstate *psp)
           psp->declargslot = &(psp->gp->tokentype);
           psp->insertLineMacro = 0;
           attach_directive_comment(psp, &psp->gp->tokentype_comment);
+        }else if( strcmp(x,"union")==0 ){
+          /* Bison-compat: %union { body } declares the YYSTYPE union
+          ** for the bison API skin.  Mechanically identical to
+          ** %token_type -- WAITING_FOR_DECL_ARG slurps the
+          ** brace-delimited body verbatim, including nested braces,
+          ** comments, and quoted strings -- then stores it in
+          ** lemp->union_body.  See docs/SKINS.md and
+          ** print_stack_union() for the emitted YYSTYPE typedef. */
+          psp->declargslot = &(psp->gp->union_body);
+          psp->insertLineMacro = 0;
+          attach_directive_comment(psp, &psp->gp->union_body_comment);
         }else if( strcmp(x,"location_type")==0 ){
           /* Override of the default LimeLocation YYLOCATIONTYPE.
           ** Reuses the same brace-content state as %token_type:
@@ -10590,9 +10622,34 @@ void print_stack_union(
   /* Print out the definition of YYTOKENTYPE and YYMINORTYPE */
   name = lemp->name ? lemp->name : "Parse";
   lineno = *plineno;
+  /* %union {body} -- emit `typedef union { body } YYSTYPE;` so that
+  ** both Lime's parser stack and the bison API skin's `yylval`
+  ** share the same type.  The typedef goes BEFORE the TOKENTYPE
+  ** macro so the macro can reference YYSTYPE.  When %token_type is
+  ** also set, the user's tokentype wins (the typedef is still
+  ** emitted, since the bison skin's %union -> YYSTYPE contract may
+  ** need it for documentation or external use), but the parser
+  ** stack uses %token_type.  When %union alone is set, YYSTYPE
+  ** becomes the effective tokentype. */
+  if( lemp->union_body ){
+    if( mhflag ){ fprintf(out,"#if INTERFACE\n"); lineno++; }
+    fprintf(out,"#ifndef YYSTYPE_IS_DECLARED\n"); lineno++;
+    fprintf(out,"typedef union {%s} YYSTYPE;\n", lemp->union_body); lineno++;
+    fprintf(out,"#define YYSTYPE_IS_DECLARED 1\n"); lineno++;
+    fprintf(out,"#define YYSTYPE_IS_TRIVIAL 1\n"); lineno++;
+    fprintf(out,"#endif\n"); lineno++;
+    if( mhflag ){ fprintf(out,"#endif\n"); lineno++; }
+  }
   if( mhflag ){ fprintf(out,"#if INTERFACE\n"); lineno++; }
-  fprintf(out,"#define %sTOKENTYPE %s\n",name,
-    lemp->tokentype?lemp->tokentype:"void*");  lineno++;
+  {
+    /* When %union is set without %token_type, YYSTYPE is the
+    ** effective per-symbol slot type. */
+    const char *tt = lemp->tokentype
+        ? lemp->tokentype
+        : (lemp->union_body ? "YYSTYPE" : "void*");
+    fprintf(out,"#define %sTOKENTYPE %s\n",name, tt);
+    lineno++;
+  }
   if( mhflag ){ fprintf(out,"#endif\n"); lineno++; }
   fprintf(out,"typedef union {\n"); lineno++;
   fprintf(out,"  int yyinit;\n"); lineno++;
@@ -14272,6 +14329,9 @@ const char *lime_emit_c_skin_get_arg(const struct lime *lemp) {
 }
 const char *lime_emit_c_skin_get_tokentype(const struct lime *lemp) {
     return lemp ? lemp->tokentype : 0;
+}
+const char *lime_emit_c_skin_get_union(const struct lime *lemp) {
+    return lemp ? lemp->union_body : 0;
 }
 const char *lime_emit_c_skin_get_tokenprefix(const struct lime *lemp) {
     return lemp ? lemp->tokenprefix : 0;
