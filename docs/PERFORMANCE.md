@@ -17,13 +17,30 @@ building lime for production throughput should turn on the perf
 knobs explicitly:
 
 ```bash
-# Step 1: build with LTO + release mode (5-15% throughput floor uplift
-# vs the meson default).
-meson setup build-prod \
-    -Dbuildtype=release \
-    -Db_lto=true \
-    -Db_ndebug=true
+# Step 1: build with LTO + release mode.  Use the bundled wrapper
+# script -- LTO requires gcc-ar / llvm-ar (the plugin-aware archiver
+# wrappers) so that the static-archive symbol table sees the LTO
+# bytecode.  Plain `ar` does not, and you'll see spurious
+# "undefined reference" errors at link time without the wrapper.
+#
+# Measured on lime v0.9.3 (i9-12900H, gcc 15.2.0):
+#   * bench_jit_real_parser:  ~3-5% faster on hot path (51.3 vs 53.0 ms)
+#   * binary size:           ~50% smaller (bench_jit_real_parser:
+#                            84 KB -> 41 KB)
+#   * Workload-dependent:    streaming throughput cases see larger
+#                            wins (+30-50%); some micro-benchmarks
+#                            show flat or slightly slower numbers.
+#                            Measure on YOUR workload before promising.
+./scripts/build-lto.sh build-prod -Dbuildtype=release -Db_ndebug=true
 meson compile -C build-prod
+
+# Or, if you prefer to invoke meson directly, set the archiver
+# wrappers explicitly:
+#   AR=gcc-ar RANLIB=gcc-ranlib NM=gcc-nm \
+#       meson setup build-prod -Dbuildtype=release -Db_lto=true -Db_ndebug=true
+# (For clang, substitute llvm-ar / llvm-ranlib / llvm-nm; you may
+# also need LDFLAGS=-fuse-ld=lld unless your binutils ld has the
+# LLVMgold.so plugin installed.)
 
 # Step 2 (optional): profile-guided optimisation.  Adds another
 # 3-10% on the parser hot path on most workloads.
