@@ -30,11 +30,23 @@
 **     The .c file embeds a translation table built at emit time.
 **
 **   * YYSTYPE: Lime exposes `<Name>TOKENTYPE` (the type of the
-**     terminal slot in the value stack) as the user-defined type
-**     from %token_type.  We typedef YYSTYPE to that type.  When
-**     %token_type is absent, YYSTYPE is `void *` (matching Lime's
-**     default).  %union (true bison-style) is not yet supported --
-**     see SKINS.md for the supported subset.
+**     terminal slot in the value stack).  The skin picks YYSTYPE
+**     in this priority order:
+**
+**       1. `%token_type {T}`     ->  typedef T YYSTYPE;
+**       2. `%union { body }`     ->  typedef union { body } YYSTYPE;
+**       3. (neither)             ->  typedef void * YYSTYPE;
+**
+**     The standard parser's print_stack_union() emits the same
+**     YYSTYPE typedef under YYSTYPE_IS_DECLARED guards when %union
+**     is set, so the bison adapter and the standard parser stack
+**     agree on the type byte-for-byte.
+**
+**   * yydebug: bison-style global trace flag.  The skin emits
+**     `int yydebug = 0;` at file scope; yyparse_extra() consults it
+**     on entry and routes to Lime's `<Name>Trace(stderr, ">> ")`
+**     when set.  Compiled out under -DNDEBUG (matching Lime's own
+**     Trace gating).
 **
 **   * yyparse(): allocates a Lime parser, drives it from yylex() in
 **     a loop, returns 0 on success / 1 on syntax error (detected by
@@ -54,13 +66,12 @@
 ** What is NOT supported (yet)
 ** --------------------------
 **
-**   * %union { ... }   -- not parsed by Lime (only %token_type /
-**                         %type are accepted).  Workaround: define
-**                         a single union typedef, point %token_type
-**                         and the relevant %type at it.  See
-**                         docs/SKINS.md.
-**   * yydebug / YYDEBUG -- not wired up yet.  Enable Lime's
-**                          ParseTrace() call directly until done.
+**   * Tagged tokens (`%token<field> NAME`).  Bison's %union
+**     pairs with `%token<field>` so the parser can pick the
+**     correct union arm per token; Lime does not parse the angle-
+**     bracketed tag.  Workaround: the user's yylex() writes
+**     `yylval.<field> = ...` directly before returning, exactly
+**     as in early-bison style.  See docs/SKINS.md.
 **   * yychar / yynerrs  -- bison globals; not provided.  Lime's
 **                          parser does not expose lookahead state
 **                          via globals.
@@ -94,6 +105,7 @@ extern const char     *lime_emit_rust_symbol_name(const struct symbol *sp);
 ** Rust bridge helpers). */
 extern const char *lime_emit_c_skin_get_arg(const struct lime *lemp);
 extern const char *lime_emit_c_skin_get_tokentype(const struct lime *lemp);
+extern const char *lime_emit_c_skin_get_union(const struct lime *lemp);
 extern const char *lime_emit_c_skin_get_tokenprefix(const struct lime *lemp);
 extern int         lime_emit_c_skin_get_first_token(const struct lime *lemp);
 extern int         lime_emit_c_skin_has_locations(const struct lime *lemp);
@@ -171,9 +183,67 @@ static char *extract_arg_type(const char *decl) {
     return out;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Header emission: <basename>_bison.h                                */
-/* ------------------------------------------------------------------ */
+/* Effective YYSTYPE / per-symbol slot type for the bison skin.  The
+** lookup order matches print_stack_union() in lime.c so the standard
+** parser and the bison adapter agree byte-for-byte on the type that
+** Lime's parse stack stores per terminal:
+**
+**     1. %token_type {T}        -> T            (user override wins)
+**     2. %union { body }        -> YYSTYPE      (typedef'd from body)
+**     3. neither                -> void *       (Lime default)
+**
+** Returns a pointer to a static string; callers must not free. */
+static const char *effective_value_type(const struct lime *lemp) {
+    const char *tt = lime_emit_c_skin_get_tokentype(lemp);
+    if (tt && tt[0]) return tt;
+    if (lime_emit_c_skin_get_union(lemp) != NULL) return "YYSTYPE";
+    return "void *";
+}
+
+/* Forward-declare any struct / union / enum tags that appear in the
+** %extra_argument declaration text, so prototypes referencing those
+** tags do not introduce them in prototype scope (C11 6.2.1p4).  If
+** the .h declared `int yyparse_extra(struct foo *x);` without a
+** prior `struct foo;` at file scope, the tag is local to that
+** prototype and is incompatible with the same struct elsewhere --
+** which is exactly the gotcha that bites real users porting from
+** bison.  We scan `decl` for the keywords struct/union/enum followed
+** by an identifier and emit a forward declaration for each.
+** Duplicates are harmless in C; we do not bother deduping. */
+static void emit_extra_arg_forward_decls(FILE *out, const char *decl) {
+    if (decl == NULL || decl[0] == 0) return;
+    static const char *kw[] = { "struct", "union", "enum", NULL };
+    for (int k = 0; kw[k] != NULL; k++) {
+        const char *needle = kw[k];
+        size_t nl = strlen(needle);
+        const char *p = decl;
+        while ((p = strstr(p, needle)) != NULL) {
+            /* Token-boundary check: char before must be non-id. */
+            if (p != decl) {
+                unsigned char prev = (unsigned char)p[-1];
+                if (isalnum(prev) || prev == '_') {
+                    p += nl;
+                    continue;
+                }
+            }
+            const char *q = p + nl;
+            while (*q == ' ' || *q == '\t') q++;
+            const char *id_start = q;
+            while (*q && (isalnum((unsigned char)*q) || *q == '_')) q++;
+            if (q == id_start) {
+                /* No identifier after the keyword (e.g. `struct {`).
+                ** No forward decl is possible. */
+                p += nl;
+                continue;
+            }
+            fprintf(out, "%s ", needle);
+            fwrite(id_start, 1, (size_t)(q - id_start), out);
+            fprintf(out, ";\n");
+            p = q;
+        }
+    }
+}
+
 
 static void emit_header(FILE *out, const struct lime *lemp,
                         const char *base_id, const char *parser_name) {
@@ -187,6 +257,8 @@ static void emit_header(FILE *out, const struct lime *lemp,
     const char *tokenprefix = lime_emit_c_skin_get_tokenprefix(lemp);
     if (tokenprefix == NULL) tokenprefix = "";
     const char *tokentype = lime_emit_c_skin_get_tokentype(lemp);
+    const char *union_body = lime_emit_c_skin_get_union(lemp);
+    const char *value_type = effective_value_type(lemp);
     int has_locs = lime_emit_c_skin_has_locations(lemp);
 
     fprintf(out,
@@ -233,24 +305,38 @@ static void emit_header(FILE *out, const struct lime *lemp,
         "#endif /* !YYTOKENTYPE */\n"
         "\n");
 
-    /* YYSTYPE typedef.  Lime's terminal slot is %token_type if set,
-    ** else `void *`.  Wrap it in YYSTYPE so any caller-supplied
-    ** YYSTYPE_IS_DECLARED takes precedence (matches bison's contract:
-    ** users with %union defined externally can predeclare YYSTYPE). */
+    /* YYSTYPE typedef.  Three cases:
+    **   1. %union { body } -- emit `typedef union { body } YYSTYPE;`,
+    **      mirroring bison's %union directive byte-for-byte.  The
+    **      standard Lime parser's print_stack_union emits the same
+    **      typedef under YYSTYPE_IS_DECLARED guards so callers can
+    **      use either header without ODR drift.
+    **   2. %token_type {T} -- emit `typedef T YYSTYPE;`.  Lime's
+    **      terminal slot type is T; YYSTYPE is just an alias.
+    **   3. neither -- emit `typedef void * YYSTYPE;` (Lime default).
+    ** All three forms gate on YYSTYPE_IS_DECLARED so a project-wide
+    ** YYSTYPE predeclaration in a shared header takes precedence. */
     fprintf(out,
         "/* Semantic value type.  Lime's parser stack stores this for\n"
         "** every terminal; the bison skin exposes it as YYSTYPE so the\n"
         "** user's yylex() can write yylval.<field> = ... in the bison\n"
-        "** idiom.  When the grammar uses %%token_type, the type below\n"
-        "** matches the user's declaration; otherwise it is `void *`. */\n"
-        "#ifndef YYSTYPE_IS_DECLARED\n"
-        "typedef %s YYSTYPE;\n"
+        "** idiom.  When the grammar uses %%union, the union body is\n"
+        "** emitted verbatim; %%token_type sets a plain type alias;\n"
+        "** otherwise YYSTYPE defaults to `void *`. */\n"
+        "#ifndef YYSTYPE_IS_DECLARED\n");
+    if (union_body && union_body[0]) {
+        fprintf(out, "typedef union {%s} YYSTYPE;\n", union_body);
+    } else {
+        fprintf(out, "typedef %s YYSTYPE;\n",
+                tokentype ? tokentype : "void *");
+    }
+    fprintf(out,
         "# define YYSTYPE_IS_DECLARED 1\n"
         "# define YYSTYPE_IS_TRIVIAL 1\n"
         "#endif\n"
         "extern YYSTYPE yylval;\n"
-        "\n",
-        tokentype ? tokentype : "void *");
+        "\n");
+    (void)value_type;
 
     /* YYLTYPE: emitted only when %location_type / has_locations. */
     if (has_locs) {
@@ -271,6 +357,20 @@ static void emit_header(FILE *out, const struct lime *lemp,
     }
 
     /* User-supplied callbacks. */
+    /* Forward-declare any struct/union/enum tags from %extra_argument
+    ** at file scope so subsequent prototypes refer to the same tag
+    ** (avoiding C11 6.2.1p4 prototype-scope tag introduction). */
+    {
+        const char *arg_pre = lime_emit_c_skin_get_arg(lemp);
+        if (arg_pre && arg_pre[0]) {
+            fprintf(out,
+                "/* Forward decls for struct/union/enum tags referenced\n"
+                "** by %%extra_argument so prototypes do not introduce\n"
+                "** them in prototype scope (C11 6.2.1p4). */\n");
+            emit_extra_arg_forward_decls(out, arg_pre);
+            fprintf(out, "\n");
+        }
+    }
     fprintf(out,
         "/* The caller supplies these, exactly as in a bison-generated\n"
         "** parser.  yyerror() is invoked from the user's %%syntax_error\n"
@@ -301,6 +401,19 @@ static void emit_header(FILE *out, const struct lime *lemp,
             arg);
     }
 
+    /* yydebug global.  Bison contract: int yydebug; setting it
+    ** non-zero before yyparse() enables a stderr trace.  The skin
+    ** wires this to Lime's <Name>Trace() inside yyparse_extra(). */
+    fprintf(out,
+        "\n"
+        "/* bison-style runtime trace flag.  Set non-zero before\n"
+        "** calling yyparse() to enable a parse-step trace on stderr;\n"
+        "** zero (the default) disables it.  The skin maps this to\n"
+        "** Lime's <Name>Trace() API, which is itself compiled out\n"
+        "** when the standard Lime parser is built with -DNDEBUG.\n"
+        "** See docs/SKINS.md `Debug tracing'. */\n"
+        "extern int yydebug;\n");
+
     fprintf(out,
         "\n"
         "#ifdef __cplusplus\n"
@@ -320,7 +433,7 @@ static void emit_source(FILE *out, const struct lime *lemp,
     int nterminal = lime_emit_rust_get_nterminal(lemp);
     int first_token = lime_emit_c_skin_get_first_token(lemp);
     const char *arg = lime_emit_c_skin_get_arg(lemp);
-    const char *tokentype = lime_emit_c_skin_get_tokentype(lemp);
+    const char *value_type = effective_value_type(lemp);
     int has_locs = lime_emit_c_skin_has_locations(lemp);
     const char *name = parser_name ? parser_name : "Parse";
 
@@ -330,15 +443,26 @@ static void emit_source(FILE *out, const struct lime *lemp,
         "** parser from yylex().  Pair with %s_bison.h. */\n"
         "\n"
         "#include <stdlib.h>\n"
+        "#include <stdio.h>\n"
         "#include <string.h>\n"
         "#include \"%s_bison.h\"\n"
-        "\n",
-        name, base_id, base_id);
+        "\n",        name, base_id, base_id);
 
-    /* Forward-declare Lime's parser entry points.  Including
-    ** <basename>.h would re-#define our enum-named tokens (bison
-    ** wants TOKEN=258, Lime's standard header defines TOKEN=1).  Use
-    ** explicit forward decls so the two headers do not collide. */
+    /* Forward declarations of the standard Lime parser API.  We
+    ** intentionally do NOT include <basename>.h: that header #defines
+    ** every token name to its Lime-internal code (1..N), which
+    ** would collide with the enum constants in <basename>_bison.h that
+    ** assign the same names to bison codes (258..258+N). */
+    /* Mirror the .h's forward decls of any struct/union/enum tags
+    ** referenced in %extra_argument.  The .h declarations alone are
+    ** not enough -- this TU includes the .h, but the .h's tag
+    ** declarations live in prototype scope when the user has not
+    ** pre-declared them.  Emitting again at file scope here makes
+    ** the parameter type identical to the user's struct definition
+    ** in their TU. */
+    if (arg && arg[0]) {
+        emit_extra_arg_forward_decls(out, arg);
+    }
     fprintf(out,
         "/* Forward declarations of the standard Lime parser API.  We\n"
         "** intentionally do NOT include <%s.h>: that header #defines\n"
@@ -349,11 +473,22 @@ static void emit_source(FILE *out, const struct lime *lemp,
         base_id, base_id, name);
     fprintf(out, "extern void  %sFree(void *p, void (*freeProc)(void *));\n", name);
     fprintf(out, "extern void  %s(void *yyp, int yymajor, %s yyminor",
-            name, tokentype ? tokentype : "void *");
+            name, value_type);
     if (arg && arg[0]) {
         fprintf(out, ", %s", arg);
     }
-    fprintf(out, ");\n\n");
+    fprintf(out, ");\n");
+    /* Lime's <Name>Trace() is the standard parser's runtime-trace
+    ** entry, conditionally compiled under #ifndef NDEBUG (matching
+    ** the limpar.c template).  Forward-declare it under the same
+    ** guard so the bison skin's yydebug bridge links cleanly in
+    ** debug builds and is silently a no-op in release builds. */
+    fprintf(out,
+        "#ifndef NDEBUG\n"
+        "extern void %sTrace(FILE *TraceFILE, char *zTracePrompt);\n"
+        "#endif\n"
+        "\n",
+        name);
 
     /* Globals.  YYSTYPE and YYLTYPE (when present) are visible in the
     ** header; instantiate them here so users do not have to. */
@@ -362,6 +497,17 @@ static void emit_source(FILE *out, const struct lime *lemp,
         "** before returning; yyparse() reads it as the per-token value\n"
         "** to push onto Lime's parse stack. */\n"
         "YYSTYPE yylval;\n");
+    /* yydebug: bison-compatible trace flag.  Definition lives here
+    ** (file-scope, zero-initialised) so consumers can `extern int
+    ** yydebug; yydebug = 1;` exactly as with bison.  The wiring into
+    ** Lime's trace API happens inside yyparse_extra() below. */
+    fprintf(out,
+        "/* bison-style runtime trace flag.  yyparse_extra() inspects\n"
+        "** this on entry and toggles Lime's <Name>Trace() accordingly.\n"
+        "** Default 0 (tracing off).  In release builds (-DNDEBUG)\n"
+        "** Lime omits the Trace() function and the wiring is a\n"
+        "** silent no-op. */\n"
+        "int yydebug = 0;\n");
     if (has_locs) {
         fprintf(out,
             "/* Location-tracking global, populated by yylex() in the\n"
@@ -422,6 +568,15 @@ static void emit_source(FILE *out, const struct lime *lemp,
             "** bison-strict yyparse() below routes through a default\n"
             "** value for that argument. */\n"
             "int yyparse_extra(%s) {\n"
+            "    /* Bison-style runtime tracing: when yydebug is set,\n"
+            "    ** route to Lime's <Name>Trace() with a default `>> '\n"
+            "    ** prefix.  Toggle either way every call so flipping\n"
+            "    ** yydebug between calls works as in bison.  Compiled\n"
+            "    ** out under -DNDEBUG to match Lime's Trace gating. */\n"
+            "#ifndef NDEBUG\n"
+            "    if (yydebug) %sTrace(stderr, (char *)\">> \");\n"
+            "    else         %sTrace((FILE *)0, (char *)0);\n"
+            "#endif\n"
             "    void *parser = %sAlloc(malloc);\n"
             "    if (parser == NULL) return 2;\n"
             "    int errors = 0;\n"
@@ -440,7 +595,10 @@ static void emit_source(FILE *out, const struct lime *lemp,
             "    %sFree(parser, free);\n"
             "    return errors;\n"
             "}\n\n",
-            arg, arg, name, name, arg_id, name, arg_id, name);
+            arg, arg,
+            name, name,
+            name,
+            name, arg_id, name, arg_id, name);
 
         /* Strict bison API yyparse(void): forwards to yyparse_extra
         ** with a zero-initialised `arg`.  We construct the zero
@@ -481,6 +639,12 @@ static void emit_source(FILE *out, const struct lime *lemp,
     } else {
         fprintf(out,
             "int yyparse(void) {\n"
+            "    /* Bison-style runtime tracing: see yyparse_extra in\n"
+            "    ** the %%extra_argument variant for the rationale. */\n"
+            "#ifndef NDEBUG\n"
+            "    if (yydebug) %sTrace(stderr, (char *)\">> \");\n"
+            "    else         %sTrace((FILE *)0, (char *)0);\n"
+            "#endif\n"
             "    void *parser = %sAlloc(malloc);\n"
             "    if (parser == NULL) return 2;\n"
             "    int errors = 0;\n"
@@ -499,7 +663,7 @@ static void emit_source(FILE *out, const struct lime *lemp,
             "    %sFree(parser, free);\n"
             "    return errors;\n"
             "}\n",
-            name, name, name, name);
+            name, name, name, name, name, name);
     }
 
     /* Suppress unused warnings on the location global if locations
