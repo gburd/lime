@@ -208,26 +208,4 @@ static inline uint64_t lime_now_realtime_ns(void) {
 #define LIME_RESTRICT
 #endif
 
-/*
-** LIME_CACHELINE_SIZE / LIME_CACHELINE_ALIGNED -- cache-line
-** alignment for hot/contended struct fields.
-**
-** 64 bytes is the L1 line size on every mainstream x86_64 CPU
-** since Pentium 4 and most ARM Cortex-A cores; aarch64 server
-** parts (Apple M1, Graviton 3, Ampere Altra) use 128 bytes
-** (the "cache line pair" prefetch quirk is detectable but rare
-** in user code).  We pick 64 to minimise padding cost on x86
-** workloads, which is the common case; aarch64 hosts pay an
-** extra 64-byte gap on the rare pair-prefetch case.
-*/
-#define LIME_CACHELINE_SIZE 64
-
-#if defined(__GNUC__) || defined(__clang__)
-#define LIME_CACHELINE_ALIGNED __attribute__((aligned(LIME_CACHELINE_SIZE)))
-#elif defined(_MSC_VER)
-#define LIME_CACHELINE_ALIGNED __declspec(align(LIME_CACHELINE_SIZE))
-#else
-#define LIME_CACHELINE_ALIGNED
-#endif
-
 #endif /* LIME_TIME_H */
