@@ -14,7 +14,10 @@ engine without rewriting the calling code.
   not yet implemented; emits a warning.
 * `--target=c:bison,flex`: both skins (only `bison` actually emits
   files in this release).
-* `--target=rust:nom` / `:pest` / `:lalrpop` / `:logos` / `:chumsky`:
+* `--target=rust:logos`: standard Rust lexer **plus** a logos-style
+  `<basename>_lex_logos.rs` adapter (requires `-X` since this is a
+  lex-side skin; see *Logos skin* below).
+* `--target=rust:nom` / `:pest` / `:lalrpop` / `:chumsky`:
   reserved for future work.  Recognised by the flag parser; rejected
   with a clear "not yet implemented" error.
 
@@ -329,14 +332,63 @@ wrappers, and `yywrap()` weak-link default.
 files.  The flag-parser hook is in place so the future commit only
 needs to add the emit module.
 
-## Rust skins (planned)
+## Rust skins
 
-Reserved.  See `.agent/notes/open-items.md` section 2:
+### Logos skin (`--target=rust:logos`)
+
+Lex-side skin.  Requires `-X`; emits **next to** the standard
+`<stem>_lex.rs`:
+
+```
+<stem>_lex_logos.rs
+```
+
+#### API surface (matches a `#[derive(Logos)]` enum)
+
+```rust
+pub enum Token { /* one unit variant per lex rule */ Lbrace, Rbrace, /* ... */ Error }
+impl Token {
+    pub fn lexer<'source>(input: &'source str) -> Lexer<'source>;
+}
+pub struct Lexer<'source> { /* ... */ }
+impl<'source> Lexer<'source> {
+    pub fn span(&self) -> core::ops::Range<usize>;
+    pub fn slice(&self) -> &'source str;
+    pub fn source(&self) -> &'source str;
+}
+impl<'source> Iterator for Lexer<'source> {
+    type Item = Result<Token, ()>;
+}
+```
+
+The wrapper imports the sibling lexer module via
+`use super::<stem>_lex as lime_lex;`.  The consumer's `lib.rs` (or
+parent module) is expected to declare both files as siblings:
+
+```rust
+pub mod foo_lex;
+pub mod foo_lex_logos;
+```
+
+#### Limitations (v0.9.3)
+
+* Token variants carry no semantic payload (unit variants only).
+  `logos`'s `Token::Number(i64)`-style payloads are deferred.
+* Single-buffer input only; spans index into `input.as_bytes()`.
+* On lex error, yields `Some(Err(()))` once then `None`.  Logos
+  itself resyncs and continues; we don't yet.
+* The wrapper drives `Lexer::tokenize()` eagerly to materialise
+  the token stream up-front.  Avoids self-referential lifetimes
+  at the cost of a per-call allocation.  Streaming will follow
+  once the inner `TokenIter`'s lifetime story is reworked.
+
+### Reserved Rust skins (planned)
+
+See `.agent/notes/open-items.md` section 2:
 
 * `--target=rust:nom` -- nom-style combinator surface
 * `--target=rust:pest` -- pest-style `Pairs` iterator
 * `--target=rust:lalrpop` -- lalrpop-style `<Grammar>Parser::parse(...)`
-* `--target=rust:logos` -- logos-style `Logos` trait over Lime's lexer
 * `--target=rust:chumsky` -- chumsky-style combinator surface
 
 `--target=rust:<skin>` already parses and rejects with a clear

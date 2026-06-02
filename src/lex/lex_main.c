@@ -258,9 +258,14 @@ int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
         /* Derive output path: <stem>_lex.rs alongside the .c/.h. */
         char *stem = strdup(input_path);
         if (stem) {
-            char *dot = strrchr(stem, '.');
+            /* Use only the basename's last `.` as the suffix split, so a
+            ** dotted directory like /tmp/foo.d/json.lex still trims `.lex`
+            ** rather than `.d/json.lex`. */
+            char *bare = strrchr(stem, '/');
+            bare = bare ? bare + 1 : stem;
+            char *dot = strrchr(bare, '.');
             if (dot) *dot = 0;
-            size_t plen = strlen(stem) + strlen("_lex.rs") + 1;
+            size_t plen = strlen(stem) + strlen("_lex_logos.rs") + 1;
             char *rust_path = (char *)malloc(plen);
             if (rust_path) {
                 snprintf(rust_path, plen, "%s_lex.rs", stem);
@@ -272,6 +277,46 @@ int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
                     emit_rc = 2;
                 } else {
                     fprintf(stderr, "lime -X --rustlex: wrote %s\n", rust_path);
+                }
+                /* --target=rust:logos: also emit a sibling logos-API skin
+                ** that wraps the just-written <stem>_lex.rs.  Skipped if
+                ** the standard emit failed (the skin would dangle). */
+                extern int g_lime_skin_logos_flag;
+                if (g_lime_skin_logos_flag && emit_rc == 0) {
+                    extern int lime_emit_rust_skin_logos(const LimeLexSpec *spec,
+                                                         const char *src_path,
+                                                         const char *out_path,
+                                                         const char *lex_module_name,
+                                                         char **error);
+                    char *logos_path = (char *)malloc(plen);
+                    if (logos_path) {
+                        snprintf(logos_path, plen, "%s_lex_logos.rs", stem);
+                        /* Derive the sibling lex module name from the basename:
+                        ** /a/b/json -> json_lex.  The skin emits
+                        ** `use super::<lex_module_name> as lime_lex;`. */
+                        const char *bare2 = strrchr(stem, '/');
+                        bare2 = bare2 ? bare2 + 1 : stem;
+                        size_t mlen = strlen(bare2) + strlen("_lex") + 1;
+                        char *mod_name = (char *)malloc(mlen);
+                        if (mod_name) {
+                            snprintf(mod_name, mlen, "%s_lex", bare2);
+                            char *lerr = NULL;
+                            if (lime_emit_rust_skin_logos(spec, input_path,
+                                                          logos_path, mod_name,
+                                                          &lerr) != 0) {
+                                fprintf(stderr, "lime --target=rust:logos: %s\n",
+                                        lerr ? lerr : "emit failed");
+                                free(lerr);
+                                emit_rc = 2;
+                            } else {
+                                fprintf(stderr,
+                                  "lime -X --target=rust:logos: wrote %s\n",
+                                  logos_path);
+                            }
+                            free(mod_name);
+                        }
+                        free(logos_path);
+                    }
                 }
                 free(rust_path);
             }

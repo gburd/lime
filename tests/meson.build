@@ -371,6 +371,22 @@ if host_machine.system() != 'windows'
     timeout : 30)
 endif
 
+# v0.9.3: --target=rust:logos skin emits a sibling <stem>_lex_logos.rs
+# that wraps <stem>_lex.rs with a logos-API-compatible iterator.
+# Regression covers: file lands at expected path, contains the
+# documented API surface (Token enum, Iterator impl, mapper, sibling
+# import).  Skipped at runtime when LIME_BIN is unset.
+if host_machine.system() != 'windows'
+  test_skin_rust_logos = executable('test_skin_rust_logos',
+    'test_skin_rust_logos.c',
+  )
+  test('skin_rust_logos', test_skin_rust_logos,
+    args : [lime_exe.full_path()],
+    depends : [lime_exe],
+    is_parallel : false,
+    timeout : 30)
+endif
+
 # v0.8.6 CLI flag redesign: regression for --target / --enable /
 # --disable plus the deprecation aliases for --rust*, --rustlex*,
 # and --per-token-dfa.  Locks down the user-facing flag surface so

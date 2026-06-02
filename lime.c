@@ -4797,6 +4797,12 @@ static int g_target_is_rust = 0;
 ** See docs/SKINS.md for the API surface each skin exposes. */
 static int g_skin_bison = 0;
 static int g_skin_flex  = 0;
+/* `logos` Rust-side skin (--target=rust:logos): emit a sibling
+** <stem>_lex_logos.rs that wraps the standard <stem>_lex.rs with
+** a logos-API-compatible iterator (`Token::lexer(&input)`, span(),
+** slice(), Iterator<Item = Result<Token, ()>>).  See docs/SKINS.md.
+** Mirrors g_skin_bison's role on the C side. */
+static int g_skin_logos = 0;
 
 /* When non-zero, --rust / --rustlex / --rust-crate / --rust-nostd /
 ** --rustlex-simd / --rustlex-memchr / --per-token-dfa was seen on
@@ -4941,13 +4947,16 @@ static void handle_target_option(char *z) {
         while (n > 0 && (tok[n-1] == ' ' || tok[n-1] == '\t')) tok[--n] = 0;
         if (tok[0] == 0) continue;
         if (g_target_is_rust) {
-            /* Rust-side skins are documented in open-items.md but not
-            ** yet implemented.  Emit a clear error so users know the
+            if (strcmp(tok, "logos") == 0) {
+                g_skin_logos = 1;
+                continue;
+            }
+            /* Other Rust-side skins are documented in open-items.md but
+            ** not yet implemented.  Emit a clear error so users know the
             ** flag form is recognised but the back-end is pending. */
             if (strcmp(tok, "nom") == 0
              || strcmp(tok, "pest") == 0
              || strcmp(tok, "lalrpop") == 0
-             || strcmp(tok, "logos") == 0
              || strcmp(tok, "chumsky") == 0) {
                 fprintf(stderr,
                   "lime: --target=rust:%s is reserved for future work; "
@@ -4955,8 +4964,8 @@ static void handle_target_option(char *z) {
                 exit(1);
             }
             fprintf(stderr,
-              "lime: unknown rust-target skin '%s'.  Valid (future): "
-              "nom, pest, lalrpop, logos, chumsky.\n", tok);
+              "lime: unknown rust-target skin '%s'.  Valid: logos.  "
+              "Reserved (future): nom, pest, lalrpop, chumsky.\n", tok);
             exit(1);
         }
         if (strcmp(tok, "bison") == 0) {
@@ -5426,6 +5435,14 @@ int main(int argc, char **argv){
   g_lime_rustlex_memchr_flag = rustLexMemchrFlag;
   g_lime_rustlex_simd_flag = rustLexSimdFlag;
   g_lime_per_token_dfa_flag = perTokenDfaFlag;
+  /* --target=rust:logos arms the logos-skin sibling emit in lex_main.c.
+  ** Implies the rust lexer flag itself: emitting just the skin without
+  ** the underlying <stem>_lex.rs makes no sense (the skin imports it). */
+  if( g_skin_logos ){
+    g_lime_rustlex_flag = 1;
+  }
+  extern int g_lime_skin_logos_flag;
+  g_lime_skin_logos_flag = g_skin_logos;
   if( lexFlag ){
     /* -X: run the .lex compiler frontend instead of the parser
     ** generator.  Reads the input as a .lex source file, runs
@@ -14348,6 +14365,10 @@ int g_lime_rustlex_flag = 0;
 int g_lime_rustlex_memchr_flag = 0;
 int g_lime_rustlex_simd_flag = 0;
 int g_lime_per_token_dfa_flag = 0;
+/* When non-zero, --target=rust:logos was on the CLI; lex_main.c
+** consults this after emit_rust_lex() succeeds and emits a sibling
+** <stem>_lex_logos.rs.  Set in main() from g_skin_logos. */
+int g_lime_skin_logos_flag = 0;
 /* g_lime_lex_vectorize_flag has two definition sites:
 **   1. src/lex/lex_emit.c (where it's actually used by emit code)
 **   2. lime.c (here -- so the standalone single-file `cc -o lime lime.c`
