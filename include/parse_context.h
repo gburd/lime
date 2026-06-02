@@ -8,6 +8,7 @@
 #define PARSE_CONTEXT_H
 
 #include "snapshot.h"
+#include <stdbool.h>
 
 /* Forward declaration (full definition in parser.h) */
 typedef struct ParseContext ParseContext;
@@ -44,6 +45,19 @@ struct ParseContext {
      * ParseContext.  Attach via parse_attach_context_stack().
      */
     struct GrammarContextStack *context_stack;
+
+    /**
+     * When true, this ParseContext was created via
+     * parse_begin_borrowed() and the caller guarantees the snapshot
+     * outlives the parse session.  parse_end will NOT call
+     * snapshot_release on the snapshot pointer (which therefore was
+     * never atomic_fetch_add'd in parse_begin_borrowed either).
+     *
+     * The flag survives the thread-local pool: parse_context_destroy
+     * resets it to false before pooling.  parse_begin_borrowed sets it
+     * to true after retrieving the pooled context.
+     */
+    bool borrowed_snapshot;
 };
 
 /*
@@ -51,6 +65,14 @@ struct ParseContext {
 ** Acquires a reference to the snapshot.
 */
 ParseContext *parse_context_create(ParserSnapshot *snap);
+
+/*
+** Borrowed-snapshot variant: same as parse_context_create except
+** snap->refcount is NOT touched.  Caller guarantees snap outlives
+** the returned ParseContext.  See parse_begin_borrowed() in the
+** parser.h-style API section below.
+*/
+ParseContext *parse_context_create_borrowed(ParserSnapshot *snap);
 
 /*
 ** Destroy a parse context, releasing the snapshot.
@@ -80,6 +102,38 @@ void parse_context_pool_drain(void);
 ParseContext *parse_begin(ParserSnapshot *snap);
 void parse_end(ParseContext *ctx);
 ParserSnapshot *parse_get_snapshot(ParseContext *ctx);
+
+/**
+ * @brief Begin a parse with a BORROWED snapshot reference.
+ *
+ * Same as parse_begin() except the snapshot's atomic refcount is NOT
+ * touched.  The caller MUST guarantee that *snap* lives for at least
+ * as long as the returned ParseContext is in use (until parse_end
+ * returns).  Typical use: a long-running parser server holds the
+ * snapshot for hours while worker threads borrow it for milliseconds.
+ *
+ * Why this exists
+ * ---------------
+ * parse_begin / parse_end issue an atomic_fetch_add / fetch_sub on
+ * snap->refcount.  At high concurrency these LOCK-prefixed RMW ops
+ * serialise through the L3 cache coherence directory; on
+ * bench/bench_parse_fanout we measure ~22%% scaling efficiency at 8
+ * threads under the refcount-acquiring API.  Skipping the atomics
+ * entirely is the only way to close that gap (cacheline-aligning the
+ * field has no measurable effect; see
+ * .agent/notes/perf-experiments-negative.md).
+ *
+ * Safety
+ * ------
+ * If the caller releases the snapshot while a borrowed parse is in
+ * flight, parse_token will read freed memory.  Use this API only
+ * when the snapshot's lifetime is statically known to dominate the
+ * parse session's.  When in doubt, use parse_begin().
+ *
+ * @param snap  Snapshot to borrow.  Must NOT be NULL.
+ * @return New ParseContext, or NULL on OOM.  Pass to parse_end().
+ */
+ParseContext *parse_begin_borrowed(ParserSnapshot *snap);
 
 /*
 ** Feed a token to the push parser.

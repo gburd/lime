@@ -111,6 +111,7 @@ typedef struct {
     const Tok      *tokens;
     uint32_t        ntoken;
     uint32_t        parses_per_thread;
+    int             use_borrowed;        /* 0 = parse_begin, 1 = parse_begin_borrowed */
 
     /* Outputs. */
     uint64_t        ns_elapsed;
@@ -137,8 +138,16 @@ static void *parse_worker(void *arg) {
         ** parse_begin internally calls snapshot_acquire (atomic_fetch_add
         ** on snap->refcount); parse_end internally calls snapshot_release
         ** (atomic_fetch_sub).  Per parse: 2 atomic RMW ops on a shared
-        ** cacheline -- the very thing this bench is here to measure. */
-        ParseContext *ctx = parse_begin(a->snap);
+        ** cacheline -- the very thing this bench is here to measure.
+        **
+        ** Use parse_begin_borrowed if the test harness has set
+        ** LIME_BENCH_BORROW=1 in the environment.  Borrowed contexts
+        ** skip the atomic refcount entirely; the caller (this bench)
+        ** guarantees snap outlives all parse sessions because it owns
+        ** the snapshot for the program's lifetime. */
+        ParseContext *ctx = a->use_borrowed
+            ? parse_begin_borrowed(a->snap)
+            : parse_begin(a->snap);
         if (!ctx) { a->error = 1; return NULL; }
 
         /* parse_token returns:  0 = continue feeding,  1 = accept,
@@ -177,7 +186,7 @@ typedef struct {
 static TrialResult run_trial(ParserSnapshot *snap,
                              const Tok *tokens, uint32_t ntoken,
                              int nthreads, uint32_t parses_per_thread,
-                             int trial) {
+                             int trial, int use_borrowed) {
     TrialResult r = { .nthreads = nthreads, .trial = trial };
 
     ThreadArgs *args = calloc((size_t)nthreads, sizeof(ThreadArgs));
@@ -193,6 +202,7 @@ static TrialResult run_trial(ParserSnapshot *snap,
         args[i].ntoken = ntoken;
         args[i].parses_per_thread = parses_per_thread;
         args[i].start_gate = &gate;
+        args[i].use_borrowed = use_borrowed;
 
         if (pthread_create(&tids[i], NULL, parse_worker, &args[i]) != 0) {
             fprintf(stderr, "pthread_create failed\n"); exit(1);
@@ -276,9 +286,22 @@ int main(int argc, char **argv) {
     const uint32_t parses_per_thread = 50000;
     const int trials_per_count = 3;
 
+    /* Decide whether to run with parse_begin (refcount-acquiring) or
+    ** parse_begin_borrowed (skip the atomic refcount).  Default is
+    ** owning; LIME_BENCH_BORROW=1 in the environment switches to the
+    ** borrowed variant. */
+    int use_borrowed = 0;
+    {
+        const char *bb = getenv("LIME_BENCH_BORROW");
+        if (bb && bb[0] && bb[0] != '0') use_borrowed = 1;
+    }
+
     printf("# Lime parse fan-out benchmark\n");
     printf("# tokens/parse=%u  parses/thread=%u  trials=%d\n",
            ntoken, parses_per_thread, trials_per_count);
+    printf("# parse-begin variant: %s\n",
+           use_borrowed ? "parse_begin_borrowed (no atomic refcount)"
+                        : "parse_begin (atomic refcount)");
     printf("# Sanity: single-thread first, then scale.\n");
     printf("#\n");
     printf("nthreads,trial,total_ms,per_thread_min_ms,per_thread_max_ms,"
@@ -291,7 +314,8 @@ int main(int argc, char **argv) {
         int nt = counts[c];
         for (int t = 0; t < trials_per_count; t++) {
             TrialResult r = run_trial(snap, tokens, ntoken,
-                                       nt, parses_per_thread, t);
+                                       nt, parses_per_thread, t,
+                                       use_borrowed);
             printf("%d,%d,%.3f,%.3f,%.3f,%llu,%.0f\n",
                    r.nthreads, r.trial, r.total_ms,
                    r.per_thread_min_ms, r.per_thread_max_ms,
@@ -307,7 +331,8 @@ int main(int argc, char **argv) {
         int top_nt = counts[ncounts - 1];
         /* Re-run one more measurement at top_nt for the verdict. */
         TrialResult final = run_trial(snap, tokens, ntoken,
-                                       top_nt, parses_per_thread, 99);
+                                       top_nt, parses_per_thread, 99,
+                                       use_borrowed);
         double expected_pps = baseline_pps * top_nt;
         double efficiency = final.parses_per_sec / expected_pps;
         printf("\n# Verdict\n");

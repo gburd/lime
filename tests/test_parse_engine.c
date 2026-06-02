@@ -228,6 +228,33 @@ static void test_parse_begin_refcount(ParserSnapshot *snap) {
     CHECK(after == before, "parse_end restores refcount to baseline");
 }
 
+static void test_parse_begin_borrowed_no_refcount(ParserSnapshot *snap) {
+    uint32_t before = atomic_load(&snap->refcount);
+    ParseContext *ctx = parse_begin_borrowed(snap);
+    CHECK(ctx != NULL, "parse_begin_borrowed returns non-NULL");
+    uint32_t mid = atomic_load(&snap->refcount);
+    CHECK(mid == before,
+          "parse_begin_borrowed does NOT bump refcount");
+    CHECK(parse_get_snapshot(ctx) == snap,
+          "borrowed ctx still pins the supplied snapshot pointer");
+    /* Drive a basic parse to confirm the borrowed-snapshot path
+    ** functions correctly through parse_token. */
+    int rc = parse_token(ctx, ARITH_NUM, NULL, -1);
+    CHECK(rc == 0, "parse_token works on borrowed ctx");
+    rc = parse_token(ctx, 0, NULL, -1);
+    CHECK(rc == 1, "EOF on borrowed ctx accepts");
+    parse_end(ctx);
+    uint32_t after = atomic_load(&snap->refcount);
+    CHECK(after == before,
+          "parse_end on borrowed ctx leaves refcount unchanged");
+}
+
+static void test_parse_begin_borrowed_null_snap(void) {
+    ParseContext *ctx = parse_begin_borrowed(NULL);
+    CHECK(ctx == NULL,
+          "parse_begin_borrowed(NULL) returns NULL gracefully");
+}
+
 static void test_multiple_contexts_independent(ParserSnapshot *snap) {
     uint32_t before = atomic_load(&snap->refcount);
     ParseContext *a = parse_begin(snap);
@@ -900,6 +927,8 @@ int main(void) {
     test_parse_begin_valid(snap);
     test_parse_begin_null_snap();
     test_parse_begin_refcount(snap);
+    test_parse_begin_borrowed_no_refcount(snap);
+    test_parse_begin_borrowed_null_snap();
     test_multiple_contexts_independent(snap);
 
     /* Parse path (real grammar) */

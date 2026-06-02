@@ -128,6 +128,7 @@ ParseContext *parse_context_create(ParserSnapshot *snap) {
             return NULL;
         }
         ctx->context_stack = NULL;
+        ctx->borrowed_snapshot = false;
         parse_engine_reset(ctx);
         return ctx;
     }
@@ -143,11 +144,51 @@ ParseContext *parse_context_create(ParserSnapshot *snap) {
     ctx->snapshot = snapshot_acquire(snap);
     ctx->engine = NULL;  /* Allocated lazily by parse_engine_step. */
     ctx->context_stack = NULL; /* No grammar boundary detection by default. */
+    ctx->borrowed_snapshot = false;
     if (ctx->snapshot == NULL) {
         free(ctx);
         return NULL;
     }
 
+    return ctx;
+}
+
+/*
+** Borrowed-snapshot variant: same as parse_context_create except
+** snap->refcount is NOT touched.  Caller guarantees snap outlives the
+** parse session.  Hot/cold paths mirror parse_context_create; the only
+** differences are (a) skip snapshot_acquire and (b) set
+** ctx->borrowed_snapshot = true so parse_context_destroy skips the
+** release.
+*/
+ParseContext *parse_context_create_borrowed(ParserSnapshot *snap) {
+    if (snap == NULL) {
+        return NULL;
+    }
+
+    ParseContext *ctx = NULL;
+#if LIME_PARSE_CONTEXT_POOL
+    pthread_once(&g_pool_key_once, pool_key_init);
+    ctx = (ParseContext *)pthread_getspecific(g_pool_key);
+    if (ctx != NULL) {
+        pthread_setspecific(g_pool_key, NULL);
+        ctx->snapshot = snap;        /* No atomic_fetch_add. */
+        ctx->context_stack = NULL;
+        ctx->borrowed_snapshot = true;
+        parse_engine_reset(ctx);
+        return ctx;
+    }
+#endif /* LIME_PARSE_CONTEXT_POOL */
+
+    ctx = malloc(sizeof(ParseContext));
+    if (ctx == NULL) {
+        return NULL;
+    }
+
+    ctx->snapshot = snap;            /* No atomic_fetch_add. */
+    ctx->engine = NULL;
+    ctx->context_stack = NULL;
+    ctx->borrowed_snapshot = true;
     return ctx;
 }
 
@@ -165,9 +206,12 @@ void parse_context_destroy(ParseContext *ctx) {
     }
 
     if (ctx->snapshot != NULL) {
-        snapshot_release(ctx->snapshot);
+        if (!ctx->borrowed_snapshot) {
+            snapshot_release(ctx->snapshot);
+        }
         ctx->snapshot = NULL;
     }
+    ctx->borrowed_snapshot = false;
 
     /* Don't free attached grammar-context stack -- it's borrowed.
     ** Just drop our pointer so the pool slot doesn't leak it. */
@@ -193,6 +237,10 @@ void parse_context_destroy(ParseContext *ctx) {
 
 ParseContext *parse_begin(ParserSnapshot *snap) {
     return parse_context_create(snap);
+}
+
+ParseContext *parse_begin_borrowed(ParserSnapshot *snap) {
+    return parse_context_create_borrowed(snap);
 }
 
 void parse_end(ParseContext *ctx) {
