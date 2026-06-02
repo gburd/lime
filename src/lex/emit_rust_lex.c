@@ -42,6 +42,14 @@ extern int g_lime_rust_no_std;
 extern int g_lime_rustlex_memchr_flag;
 extern int g_lime_rustlex_simd_flag;
 extern int g_lime_per_token_dfa_flag;
+extern int g_lime_lex_safe_flag;  /* v0.9.3: 1 = drop unsafe { } in scalar
+                                  ** DFA dispatch loops; use [] indexing.
+                                  ** 0 = current v0.9.2 behaviour (unsafe +
+                                  ** get_unchecked).  Default 1 (set in
+                                  ** lime.c).  Categories 2 (SIMD intrinsics)
+                                  ** and 3 (#[target_feature] callsites) are
+                                  ** unaffected -- they remain unsafe by
+                                  ** Rust language rules. */
 
 static char *upper_dup_local(const char *s) {
     if (!s) return NULL;
@@ -958,7 +966,14 @@ static void emit_per_token_tables(FILE *out, const char *prefix,
                     cs->state_name, cs->state_name);
         }
         fprintf(out, "    if p >= bytes.len() { return (0, -1); }\n");
-        fprintf(out, "    let lead = unsafe { *bytes.get_unchecked(p) };\n");
+        /* Lead byte read: the preceding `if p >= bytes.len() { return ... }`
+        ** dominates this access, so LLVM elides the bounds check on `bytes[p]`
+        ** equivalently to the unsafe form -- safe emit is provably free here. */
+        if (g_lime_lex_safe_flag) {
+            fprintf(out, "    let lead = bytes[p];\n");
+        } else {
+            fprintf(out, "    let lead = unsafe { *bytes.get_unchecked(p) };\n");
+        }
         fprintf(out, "    match lead {\n");
         /* Group bytes by rule for cleaner emit (e.g. b'0'..=b'9' all
         ** go to one arm).  We emit per-rule arms. */
@@ -1095,15 +1110,32 @@ static void emit_per_token_tables(FILE *out, const char *prefix,
                         "            let mut state: u16 = %s_R%d_START_%s;\n"
                         "            let mut last_accept_pos: usize = 0;\n"
                         "            let n = bytes.len();\n"
-                        "            let mut q = p;\n"
-                        "            unsafe {\n"
-                        "                if *accept.get_unchecked(state as usize) != 0 {\n"
-                        "                    last_accept_pos = q;\n"
-                        "                }\n"
-                        "                while q < n {\n",
+                        "            let mut q = p;\n",
                         prefix, r, cs->state_name,
                         prefix, r, cs->state_name,
                         prefix, r, cs->state_name);
+                /* v0.9.3 safe-emit: when g_lime_lex_safe_flag is set
+                ** (default), drop the `unsafe { ... }` wrapper around
+                ** this DFA walk and use safe `[]` indexing.  Categories
+                ** 2 (SIMD intrinsics) and 3 (#[target_feature]) are
+                ** unaffected -- the AVX2/NEON helpers and the
+                ** tokenize_avx2 / tokenize_neon dispatch sites stay
+                ** unsafe by Rust language rules.  See unsafe-audit.md
+                ** section 2.2 for the full transformation rationale. */
+                if (!g_lime_lex_safe_flag) {
+                    fprintf(out,
+                            "            unsafe {\n"
+                            "                if *accept.get_unchecked(state as usize) != 0 {\n"
+                            "                    last_accept_pos = q;\n"
+                            "                }\n"
+                            "                while q < n {\n");
+                } else {
+                    fprintf(out,
+                            "                if accept[state as usize] != 0 {\n"
+                            "                    last_accept_pos = q;\n"
+                            "                }\n"
+                            "                while q < n {\n");
+                }
                 /* Inline fast-path scan dispatch by state. */
                 int any_fp = 0;
                 for (int s = 0; s < rdfa->n_states; s++) {
@@ -1134,15 +1166,21 @@ static void emit_per_token_tables(FILE *out, const char *prefix,
                             } else {
                                 if (n == 1) {
                                     fprintf(out,
-                                            "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb == %d { break; } x += 1; } x },\n",
+                                            g_lime_lex_safe_flag
+                                            ? "                        %d => { let mut x = q; while x < n { let bb = bytes[x]; if bb == %d { break; } x += 1; } x },\n"
+                                            : "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb == %d { break; } x += 1; } x },\n",
                                             s, fp_exit[s][0]);
                                 } else if (n == 2) {
                                     fprintf(out,
-                                            "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb == %d || bb == %d { break; } x += 1; } x },\n",
+                                            g_lime_lex_safe_flag
+                                            ? "                        %d => { let mut x = q; while x < n { let bb = bytes[x]; if bb == %d || bb == %d { break; } x += 1; } x },\n"
+                                            : "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb == %d || bb == %d { break; } x += 1; } x },\n",
                                             s, fp_exit[s][0], fp_exit[s][1]);
                                 } else {
                                     fprintf(out,
-                                            "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb == %d || bb == %d || bb == %d { break; } x += 1; } x },\n",
+                                            g_lime_lex_safe_flag
+                                            ? "                        %d => { let mut x = q; while x < n { let bb = bytes[x]; if bb == %d || bb == %d || bb == %d { break; } x += 1; } x },\n"
+                                            : "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb == %d || bb == %d || bb == %d { break; } x += 1; } x },\n",
                                             s, fp_exit[s][0], fp_exit[s][1], fp_exit[s][2]);
                                 }
                             }
@@ -1155,38 +1193,69 @@ static void emit_per_token_tables(FILE *out, const char *prefix,
                             ** runs in number tokens, identifier
                             ** continuations, etc. */
                             fprintf(out,
-                                    "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb < %d || bb > %d { break; } x += 1; } x },\n",
+                                    g_lime_lex_safe_flag
+                                    ? "                        %d => { let mut x = q; while x < n { let bb = bytes[x]; if bb < %d || bb > %d { break; } x += 1; } x },\n"
+                                    : "                        %d => { let mut x = q; while x < n { let bb = *bytes.get_unchecked(x); if bb < %d || bb > %d { break; } x += 1; } x },\n",
                                     s, fp_lo[s], fp_hi[s]);
                         }
                     }
                     fprintf(out,
-                            "                        _ => q,\n"
-                            "                    };\n"
-                            "                    if new_q > q {\n"
-                            "                        if *accept.get_unchecked(state as usize) != 0 {\n"
-                            "                            last_accept_pos = new_q;\n"
-                            "                        }\n"
-                            "                        q = new_q;\n"
-                            "                        if q >= n { break; }\n"
-                            "                    }\n");
+                            g_lime_lex_safe_flag
+                            ? "                        _ => q,\n"
+                              "                    };\n"
+                              "                    if new_q > q {\n"
+                              "                        if accept[state as usize] != 0 {\n"
+                              "                            last_accept_pos = new_q;\n"
+                              "                        }\n"
+                              "                        q = new_q;\n"
+                              "                        if q >= n { break; }\n"
+                              "                    }\n"
+                            : "                        _ => q,\n"
+                              "                    };\n"
+                              "                    if new_q > q {\n"
+                              "                        if *accept.get_unchecked(state as usize) != 0 {\n"
+                              "                            last_accept_pos = new_q;\n"
+                              "                        }\n"
+                              "                        q = new_q;\n"
+                              "                        if q >= n { break; }\n"
+                              "                    }\n");
                 }
-                fprintf(out,
-                        "                    let b = *bytes.get_unchecked(q);\n"
-                        "                    let off = (state as usize) * 256 + b as usize;\n"
-                        "                    let next = *trans.get_unchecked(off);\n"
-                        "                    if next < 0 { break; }\n"
-                        "                    state = next as u16;\n"
-                        "                    q += 1;\n"
-                        "                    if *accept.get_unchecked(state as usize) != 0 {\n"
-                        "                        last_accept_pos = q;\n"
-                        "                    }\n"
-                        "                }\n"
-                        "            }\n"
-                        "            if last_accept_pos > p {\n"
-                        "                (last_accept_pos - p, %d)\n"
-                        "            } else { (0, -1) }\n"
-                        "        },\n",
-                        gid);
+                if (g_lime_lex_safe_flag) {
+                    fprintf(out,
+                            "                    let b = bytes[q];\n"
+                            "                    let off = (state as usize) * 256 + b as usize;\n"
+                            "                    let next = trans[off];\n"
+                            "                    if next < 0 { break; }\n"
+                            "                    state = next as u16;\n"
+                            "                    q += 1;\n"
+                            "                    if accept[state as usize] != 0 {\n"
+                            "                        last_accept_pos = q;\n"
+                            "                    }\n"
+                            "                }\n"
+                            "            if last_accept_pos > p {\n"
+                            "                (last_accept_pos - p, %d)\n"
+                            "            } else { (0, -1) }\n"
+                            "        },\n",
+                            gid);
+                } else {
+                    fprintf(out,
+                            "                    let b = *bytes.get_unchecked(q);\n"
+                            "                    let off = (state as usize) * 256 + b as usize;\n"
+                            "                    let next = *trans.get_unchecked(off);\n"
+                            "                    if next < 0 { break; }\n"
+                            "                    state = next as u16;\n"
+                            "                    q += 1;\n"
+                            "                    if *accept.get_unchecked(state as usize) != 0 {\n"
+                            "                        last_accept_pos = q;\n"
+                            "                    }\n"
+                            "                }\n"
+                            "            }\n"
+                            "            if last_accept_pos > p {\n"
+                            "                (last_accept_pos - p, %d)\n"
+                            "            } else { (0, -1) }\n"
+                            "        },\n",
+                            gid);
+                }
                 free(fp_kind);
                 free(fp_exit);
                 free(fp_nexit);
@@ -1482,7 +1551,14 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
             "            let mut state: u16 = dfa_start_for_state(self.state);\n"
             "            let mut last_accept: i16 = -1;\n"
             "            let mut last_accept_pos: usize = pos;\n"
-            "            let mut p = pos;\n"
+            "            let mut p = pos;\n");
+        /* v0.9.3 safe-emit: drop the surrounding `unsafe { ... }`
+        ** wrapper and use safe `[]` indexing inside the simd-mode
+        ** tokenize_impl loop body.  The unsafe-fn boundary at
+        ** tokenize_avx2 / tokenize_neon (Cat 3, #[target_feature])
+        ** stays unsafe -- this only sheds the inner Cat-1 unsafe. */
+        if (!g_lime_lex_safe_flag) {
+            fprintf(out,
             "            unsafe {\n"
             "                while p < bytes.len() {\n"
             "                    let new_p = fast_path_for_state_g::<S>(self.state, state, bytes, p);\n"
@@ -1506,7 +1582,33 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
             "                    }\n"
             "                    p += 1;\n"
             "                }\n"
-            "            }\n"
+            "            }\n");
+        } else {
+            fprintf(out,
+            "            while p < bytes.len() {\n"
+            "                let new_p = fast_path_for_state_g::<S>(self.state, state, bytes, p);\n"
+            "                if new_p > p {\n"
+            "                    let accv = accept[state as usize];\n"
+            "                    if accv >= 0 {\n"
+            "                        last_accept = accv;\n"
+            "                        last_accept_pos = new_p;\n"
+            "                    }\n"
+            "                    p = new_p;\n"
+            "                    if p >= bytes.len() { break; }\n"
+            "                }\n"
+            "                let b = bytes[p];\n"
+            "                let next = dfa_step_for_state(self.state, state, b);\n"
+            "                if next < 0 { break; }\n"
+            "                state = next as u16;\n"
+            "                let accv = accept[state as usize];\n"
+            "                if accv >= 0 {\n"
+            "                    last_accept = accv;\n"
+            "                    last_accept_pos = p + 1;\n"
+            "                }\n"
+            "                p += 1;\n"
+            "            }\n");
+        }
+        fprintf(out,
             "            if last_accept < 0 {\n"
             "                return Err(LexError::NoMatch { offset: pos, byte: bytes[pos] });\n"
             "            }\n"
@@ -1581,7 +1683,9 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
             "            let mut state: u16 = dfa_start_for_state(self.state);\n"
             "            let mut last_accept: i16 = -1;\n"
             "            let mut last_accept_pos: usize = pos;\n"
-            "            let mut p = pos;\n"
+            "            let mut p = pos;\n");
+        if (!g_lime_lex_safe_flag) {
+            fprintf(out,
             "            unsafe {\n"
             "                while p < bytes.len() {\n"
             "                    // SIMD fast path: scan self-loop run.\n"
@@ -1607,9 +1711,44 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
             "                        last_accept = accv;\n"
             "                        last_accept_pos = p + 1;\n"
             "                    }\n"
-            "                    p += 1;\n"
+            "                    p += 1;\n");
+        } else {
+            fprintf(out,
+            "            while p < bytes.len() {\n"
+            "                // SIMD fast path: scan self-loop run.\n"
+            "                let new_p = fast_path_for_state(self.state, state, bytes, p);\n"
+            "                if new_p > p {\n"
+            "                    // We advanced via self-loop scan.\n"
+            "                    // For accepting states the longest\n"
+            "                    // match extends to new_p.\n"
+            "                    let accv = accept[state as usize];\n"
+            "                    if accv >= 0 {\n"
+            "                        last_accept = accv;\n"
+            "                        last_accept_pos = new_p;\n"
+            "                    }\n"
+            "                    p = new_p;\n"
+            "                    if p >= bytes.len() { break; }\n"
             "                }\n"
-            "            }\n"
+            "                let b = bytes[p];\n"
+            "                let next = dfa_step_for_state(self.state, state, b);\n"
+            "                if next < 0 { break; }\n"
+            "                state = next as u16;\n"
+            "                let accv = accept[state as usize];\n"
+            "                if accv >= 0 {\n"
+            "                    last_accept = accv;\n"
+            "                    last_accept_pos = p + 1;\n"
+            "                }\n"
+            "                p += 1;\n");
+        }
+        if (!g_lime_lex_safe_flag) {
+            fprintf(out,
+            "                }\n"
+            "            }\n");
+        } else {
+            fprintf(out,
+            "            }\n");
+        }
+        fprintf(out,
             "            if last_accept < 0 {\n"
             "                return Err(LexError::NoMatch { offset: pos, byte: bytes[pos] });\n"
             "            }\n"
@@ -1667,7 +1806,12 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
             "        let mut state: u16 = dfa_start_for_state(self.lexer.state);\n"
             "        let mut last_accept: i16 = -1;\n"
             "        let mut last_accept_pos: usize = self.pos;\n"
-            "        let mut p = self.pos;\n"
+            "        let mut p = self.pos;\n");
+    /* v0.9.3 safe-emit: TokenIter::next DFA loop -- drop the
+    ** `unsafe { ... }` wrapper and use safe `[]` indexing.  The
+    ** scalar scan path; no SIMD/target_feature concerns here. */
+    if (!g_lime_lex_safe_flag) {
+        fprintf(out,
             "        unsafe {\n"
             "            while p < self.bytes.len() {\n"
             "                let b = *self.bytes.get_unchecked(p);\n"
@@ -1681,7 +1825,23 @@ static void emit_lexer_runtime(FILE *out, const char *prefix,
             "                }\n"
             "                p += 1;\n"
             "            }\n"
-            "        }\n"
+            "        }\n");
+    } else {
+        fprintf(out,
+            "        while p < self.bytes.len() {\n"
+            "            let b = self.bytes[p];\n"
+            "            let next = dfa_step_for_state(self.lexer.state, state, b);\n"
+            "            if next < 0 { break; }\n"
+            "            state = next as u16;\n"
+            "            let accv = accept[state as usize];\n"
+            "            if accv >= 0 {\n"
+            "                last_accept = accv;\n"
+            "                last_accept_pos = p + 1;\n"
+            "            }\n"
+            "            p += 1;\n"
+            "        }\n");
+    }
+    fprintf(out,
             "        if last_accept < 0 {\n"
             "            let off = self.pos;\n"
             "            let byte = self.bytes[self.pos];\n"
