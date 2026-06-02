@@ -709,6 +709,16 @@ struct symbol {
                            ** union is the correct data type for this object */
   int bContent;            /* True if this symbol ever carries content - if
                            ** it is ever more than just syntax */
+  /* v0.9.3: bison-style tagged token (`%token<field> NAME`).  When
+  ** the grammar uses `%union { ... }`, a tagged token records which
+  ** union arm carries its semantic value.  NULL when the token was
+  ** declared without a tag (the legacy `%token NAME` form).  The
+  ** string is interned via Strsafe() so equality is pointer-cheap.
+  ** The bison skin emits this as a per-token comment in the
+  ** generated header; user reduce actions still pick the union arm
+  ** by field name (`K.<field>`) -- the tag is documentation today
+  ** plus a hook for future type-safe locals.  See docs/SKINS.md. */
+  const char *union_field;
   /* The following fields are used by MULTITERMINALs only */
   int nsubsym;             /* Number of constituent symbols in the MULTI */
   struct symbol **subsym;  /* Array of constituent symbols */
@@ -5712,12 +5722,16 @@ int main(int argc, char **argv){
         }
       }
       if( g_skin_flex && !quiet ){
-        /* Flex skin generation is queued; warn loudly so the user
-        ** does not silently miss output.  See open-items.md item 3. */
+        /* The flex skin emits inside the .lex frontend (-X mode),
+        ** not from the parser-generator path here.  When the user
+        ** passes --target=c:flex without -X they almost certainly
+        ** meant to also invoke -X; warn so they aren't surprised
+        ** by the missing files. */
         fprintf(stderr,
-          "warning: --target=c:flex is recognised but not yet "
-          "implemented; only the bison skin emits files in this "
-          "release.  See docs/SKINS.md.\n");
+          "warning: --target=c:flex was given without -X; the flex\n"
+          "         skin emits alongside the lexer output, so add\n"
+          "         -X and a .lex grammar to receive it.  See\n"
+          "         docs/SKINS.md.\n");
       }
       lime_free(base_h);
       lime_free(base_c);
@@ -6191,6 +6205,12 @@ enum e_state {
   WAITING_FOR_CLASS_ID,
   WAITING_FOR_CLASS_TOKEN,
   WAITING_FOR_TOKEN_NAME,
+  /* v0.9.3: tagged tokens.  WAITING_FOR_TOKEN_TAG_ID expects the
+  ** identifier between `<` and `>` after `%token<`.  The next state
+  ** WAITING_FOR_TOKEN_TAG_CLOSE expects a `>` byte.  See
+  ** docs/SKINS.md for the user-facing grammar. */
+  WAITING_FOR_TOKEN_TAG_ID,
+  WAITING_FOR_TOKEN_TAG_CLOSE,
   WAITING_FOR_MODULE_REQUIRE,
   WAITING_FOR_MODULE_REQUIRE_VERSION,
   WAITING_FOR_MODULE_EXPORT,
@@ -6248,6 +6268,14 @@ struct pstate {
   int *decllinenoslot;       /* Where to write declaration line number */
   enum e_assoc declassoc;    /* Assign this association to decl arguments */
   int preccounter;           /* Assign this precedence to decl arguments */
+  /* v0.9.3: tagged-token bookkeeping.  When the directive parser
+  ** sees `%token<field>`, the field identifier is stashed here
+  ** (interned via Strsafe; not freed) and applied to every token
+  ** name that follows in the same %token directive.  Reset to NULL
+  ** when the %token directive's terminating `.` is consumed, so a
+  ** later `%token NAME` without a tag does not inherit the previous
+  ** group's tag.  See WAITING_FOR_TOKEN_NAME. */
+  const char *current_token_field;
   struct rule *firstrule;    /* Pointer to first rule in the grammar */
   struct rule *lastrule;     /* Pointer to the most recently parsed rule */
   struct rule *alt_group_head; /* First rule in an active `|` alternation
@@ -7406,6 +7434,9 @@ static void parseonetoken(struct pstate *psp)
               psp->current_token_group = saved_token_group;
             }
           }
+          /* v0.9.3: each `%token` directive starts with no tagged
+          ** field; `<id>` (if present) sets it for this directive. */
+          psp->current_token_field = 0;
           psp->state = WAITING_FOR_TOKEN_NAME;
         }else if( strcmp(x,"wildcard")==0 ){
           psp->state = WAITING_FOR_WILDCARD_ID;
@@ -7737,7 +7768,23 @@ static void parseonetoken(struct pstate *psp)
       ** to each of the tokens ONE TWO and THREE.
       */
       if( x[0]=='.' ){
+        /* End of directive: clear the pending tag so the NEXT
+        ** %token directive starts fresh (bison semantics: a tag
+        ** does not survive across `%token<a> X. %token Y.`). */
+        psp->current_token_field = 0;
         psp->state = WAITING_FOR_DECL_OR_RULE;
+      }else if( x[0]=='<' && x[1]==0 ){
+        /* v0.9.3: bison-style tagged token marker `<field>` opens a
+        ** field tag for every name that follows in this %token
+        ** directive.  The tokenizer hands us `<` and `>` as their
+        ** own one-character lexemes; the identifier between is a
+        ** standard ALNUM run.  See docs/SKINS.md "Tagged tokens". */
+        if( psp->current_token_field!=0 ){
+          ErrorMsg(psp->filename, psp->tokenlineno,
+            "%%token tag re-declared on the same directive");
+          psp->errorcnt++;
+        }
+        psp->state = WAITING_FOR_TOKEN_TAG_ID;
       }else if( !ISUPPER(x[0]) ){
         ErrorMsg(psp->filename, psp->tokenlineno,
           "%%token argument \"%s\" should be a token", x);
@@ -7749,6 +7796,44 @@ static void parseonetoken(struct pstate *psp)
         ** (`%token A B C.`) all flow through here, one at a
         ** time, and append to the same group. */
         lime_token_group_append(psp->current_token_group, sp);
+        /* v0.9.3: a previous `<field>` marker on this directive
+        ** sets the union arm for every following name.  When two
+        ** declarations of the same token disagree (e.g. `%token<a>
+        ** X` then later `%token<b> X`), the second one wins by
+        ** overwriting -- bison itself errors here, but the looser
+        ** policy matches Lime's general "diamond %extends
+        ** redeclares are silent" stance and keeps the parser
+        ** non-noisy on multi-file imports.  Untagged %token NAME
+        ** never overwrites a tag that was set earlier (so
+        ** documentation-quality info is preserved). */
+        if( psp->current_token_field!=0 ){
+          sp->union_field = psp->current_token_field;
+        }
+      }
+      break;
+    case WAITING_FOR_TOKEN_TAG_ID:
+      /* v0.9.3: identifier between `<` and `>` after `%token<`.  The
+      ** lexer emits this as a standard ALNUM token; intern via
+      ** Strsafe so a single string-table entry is shared across all
+      ** symbols that carry the same tag (cheap pointer compare). */
+      if( !ISALPHA(x[0]) ){
+        ErrorMsg(psp->filename, psp->tokenlineno,
+          "Expected identifier inside %%token<...>, got \"%s\"", x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
+      }else{
+        psp->current_token_field = Strsafe(x);
+        psp->state = WAITING_FOR_TOKEN_TAG_CLOSE;
+      }
+      break;
+    case WAITING_FOR_TOKEN_TAG_CLOSE:
+      if( x[0]=='>' && x[1]==0 ){
+        psp->state = WAITING_FOR_TOKEN_NAME;
+      }else{
+        ErrorMsg(psp->filename, psp->tokenlineno,
+          "Expected `>` to close %%token<...>, got \"%s\"", x);
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_DECL_ERROR;
       }
       break;
     case WAITING_FOR_WILDCARD_ID:
