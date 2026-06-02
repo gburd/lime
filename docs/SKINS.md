@@ -40,7 +40,7 @@ enum yytokentype {
 };
 typedef enum yytokentype yytoken_kind_t;
 
-/* semantic value type -- typedef of %token_type, or `void *` */
+/* semantic value type -- typedef of %union body, %token_type, or void* */
 typedef <token_type> YYSTYPE;
 extern YYSTYPE yylval;
 
@@ -53,6 +53,9 @@ int yyparse(void);
 
 /* additional entry point when grammar declares %extra_argument */
 int yyparse_extra(<extra_argument_decl>);
+
+/* bison-style runtime trace flag (debug builds only) */
+extern int yydebug;
 ```
 
 ### Return value contract
@@ -69,10 +72,130 @@ int yyparse_extra(<extra_argument_decl>);
 | `<Name>(parser, code, value, ...)` | `yyparse()` driving `yylex()` |
 | `<Name>Alloc()`/`<Name>Free()` | hidden inside `yyparse()` |
 | `%token_type {T}` | `typedef T YYSTYPE;` |
+| `%union { body }` | `typedef union { body } YYSTYPE;` |
 | `%extra_argument {T x}` | `int yyparse_extra(T x);` |
 | `%syntax_error { ... }` | runs verbatim; should call `yyerror()` |
 | `%token NAME` | `enum yytokentype { NAME = 258, ... }` |
 | `%location_type` / locations | `YYLTYPE` typedef + `extern yylloc` |
+| `<Name>Trace(stderr, prefix)` | `extern int yydebug;` (set non-zero) |
+
+### `%union` and the semantic-value type
+
+Lime supports the bison `%union { ... }` directive.  When set, the
+standard parser emits
+
+```c
+#ifndef YYSTYPE_IS_DECLARED
+typedef union { /* user body */ } YYSTYPE;
+# define YYSTYPE_IS_DECLARED 1
+# define YYSTYPE_IS_TRIVIAL 1
+#endif
+```
+
+in the generated `<basename>.c`, and the bison skin's
+`<basename>_bison.h` emits the same typedef under the same
+`YYSTYPE_IS_DECLARED` guard so the two headers agree byte-for-byte
+when compiled into the same translation unit.  Lime's parser stack
+stores the full `YYSTYPE` per terminal, so a value pushed via
+`yylval.<field>` arrives in the reduce action as `K.<field>`
+(see worked example below).
+
+Precedence when both `%union` and `%token_type` are set: the
+`%token_type` value wins, mirroring bison's behaviour where an
+explicit `%define api.value.type` overrides `%union`.
+
+#### Tagged tokens are NOT supported
+
+Bison pairs `%union` with `%token<field> NAME` so the parser can
+pick the correct union arm per token.  Lime's grammar parser does
+not recognise the angle-bracket tag.  The workaround is the same
+idiom early-bison and Lemon use: the user's `yylex()` writes the
+correct arm directly before returning, and reduce actions access
+the field by name:
+
+```c
+int yylex(void) {
+    int c = next_char();
+    if (isdigit(c)) { yylval.n = scan_number(c); return NUMBER; }
+    if (isalpha(c)) { yylval.s = scan_ident(c);  return NAME;   }
+    return c;
+}
+```
+
+```
+%union { int n; char *s; }
+%token NUMBER NAME.
+
+item ::= NAME(K) EQ NUMBER(V). {
+    /* K and V are YYSTYPE (the union); pick the arm by field. */
+    bind(K.s, V.n);
+}
+```
+
+This matches the documented LALR convention from before bison
+added `%token<field>`; it has no runtime cost and is more obvious
+than the angle-bracket form.
+
+#### Worked example: bison `%union` -> Lime
+
+bison input:
+```
+%union { int n; char *s; }
+%token <n> NUMBER
+%token <s> NAME
+%token EQ
+%%
+item: NAME EQ NUMBER  { bind($1, $3); }
+```
+
+Lime equivalent:
+```
+%name KV
+%union { int n; char *s; }
+%extra_argument { struct kv_state *st }
+%token NUMBER NAME EQ.
+item ::= NAME(K) EQ NUMBER(V). { bind(K.s, V.n); }
+```
+
+Generate and compile:
+```
+lime -T limpar.c --target=c:bison kv.lime
+cc -o kv driver.c kv.c kv_bison.c
+```
+
+### Debug tracing
+
+Lime's parser exposes `<Name>Trace(FILE *, char *)` for runtime
+trace output -- the same surface bison-style consumers expect via
+`yydebug`.  The bison skin bridges the two:
+
+```c
+extern int yydebug;          /* declared by <basename>_bison.h */
+
+int main(void) {
+    yydebug = 1;             /* enable trace before yyparse */
+    yyparse();
+    yydebug = 0;             /* silence again if desired */
+}
+```
+
+The skin's `yyparse_extra()` (and the strict `yyparse(void)` shim
+when there is no `%extra_argument`) checks `yydebug` on entry and
+calls
+
+```c
+if (yydebug) <Name>Trace(stderr, ">> ");
+else         <Name>Trace((FILE *)0, (char *)0);
+```
+
+The toggle runs every call so flipping `yydebug` between calls
+works as in bison.  The default trace prefix is `">> "` -- to
+change it, call `<Name>Trace(stderr, "<custom>")` directly
+(after `yyparse_extra()` returns, or instead of setting
+`yydebug`).  Tracing is wrapped in `#ifndef NDEBUG` because
+Lime's standard parser strips `<Name>Trace` under `-DNDEBUG`; in
+release builds the skin's wiring is silently a no-op and
+setting `yydebug` has no effect.
 
 ### Token-code translation
 
@@ -123,15 +246,12 @@ value through the reduce chain.
 
 ### What is **not** supported
 
-* `%union { ... }` in Lime grammars.  Lime does not accept the bison
-  `%union` directive.  Workaround: define the union in a `%include`
-  block, then point `%token_type` at the union typedef.  The
-  generated `YYSTYPE` will be the union, and your `yylex()` writes
-  `yylval.<field>` exactly as in bison.
+* Tagged tokens (`%token<field> NAME`).  Lime's grammar parser
+  does not recognise the angle-bracket tag.  Workaround: write
+  `yylval.<field> = ...` from `yylex()` and access `K.<field>`
+  in the reduce action -- see the `%union` section above.
 * `%parse-param` declarations.  Use `%extra_argument` instead and
   call `yyparse_extra()`.
-* `yydebug` / `YYDEBUG`.  Use Lime's `<Name>Trace(stderr, "...")`
-  directly until a future commit wires bison's `yydebug` to it.
 * `yychar` / `yynerrs` global lookahead/error counters.  Lime's
   parser does not expose these via globals.
 * GLR mode (`%glr-parser`).  The bison skin always uses Lime's LALR
@@ -229,6 +349,15 @@ both the native Lime API and the bison skin and asserts result
 equivalence over a handful of inputs (clean parses, invalid
 character, missing operand).  See `tests/meson.build` for the
 custom-target wiring.
+
+`tests/test_skin_bison_union.c` exercises the `%union` /
+`yylval.<field>` workflow plus the `yydebug` runtime trace flag.
+Its grammar (`tests/test_skin_bison_union_grammar.y`) declares
+`%union { int n; char *s; }` with no `%token_type`, so YYSTYPE is
+the full union and Lime's parser stack stores it per terminal.
+The driver runs both the native and skin paths, exercises both
+union arms, and verifies that flipping `yydebug` enables/disables
+the `<Name>Trace` output without crashing.
 
 ## See also
 
