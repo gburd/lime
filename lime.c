@@ -5471,6 +5471,13 @@ int main(int argc, char **argv){
   }
   extern int g_lime_skin_logos_flag;
   g_lime_skin_logos_flag = g_skin_logos;
+  /* Latch --target=c:flex into the lex-frontend gate so lex_main.c's
+  ** post-emit step knows to call lime_emit_c_skin_flex.  The global
+  ** is defined (weakly) in src/lex/emit_c_skin_flex.c. */
+  {
+    extern int g_lime_skin_flex_flag;
+    g_lime_skin_flex_flag = g_skin_flex;
+  }
   if( lexFlag ){
     /* -X: run the .lex compiler frontend instead of the parser
     ** generator.  Reads the input as a .lex source file, runs

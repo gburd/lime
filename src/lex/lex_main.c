@@ -191,6 +191,57 @@ static int emit_files(LimeLexCompiled *c, const LimeLexSpec *spec, const char *i
         fprintf(stderr, "lime -X: wrote %s and %s\n", h_path, c_path);
     }
 
+    /* v0.9.3: flex-API skin.  Emit <stem>_flex.{c,h} alongside the
+    ** standard <stem>_lex.{c,h} when --target=c:flex is set.  The
+    ** standard output above is unchanged whether or not the skin is
+    ** requested.  See docs/SKINS.md. */
+    extern int g_lime_skin_flex_flag;
+    if (!err && g_lime_skin_flex_flag) {
+        extern int lime_emit_c_skin_flex(const LimeLexCompiled *compiled,
+                                         const LimeLexSpec *spec,
+                                         const char *name_prefix,
+                                         const char *const *rule_names,
+                                         int n_rules,
+                                         const char *out_h_path,
+                                         const char *out_c_path,
+                                         const char *base_id);
+        /* Build <output_dir>/<stem>_flex.<ext> by hand: make_output_-
+        ** path always inserts "_lex." before the suffix, but we
+        ** want "_flex." -- one character longer, so an in-place
+        ** rewrite of the cached "_lex." buffer would truncate. */
+        size_t dn = output_dir ? strlen(output_dir) + 1 : 0;
+        size_t sn = strlen(stem);
+        size_t total = dn + sn + 5 /* "_flex" */ + 1 /* "." */ + 1 /* ext */ + 1;
+        char *flex_h = (char *)malloc(total);
+        char *flex_c = (char *)malloc(total);
+        if (flex_h && flex_c) {
+            flex_h[0] = 0;
+            flex_c[0] = 0;
+            if (output_dir) {
+                strcat(flex_h, output_dir);
+                strcat(flex_h, "/");
+                strcat(flex_c, output_dir);
+                strcat(flex_c, "/");
+            }
+            strcat(flex_h, stem);
+            strcat(flex_h, "_flex.h");
+            strcat(flex_c, stem);
+            strcat(flex_c, "_flex.c");
+            int frc = lime_emit_c_skin_flex(c, spec, prefix,
+                                            (const char *const *)rule_names,
+                                            n_rules,
+                                            flex_h, flex_c, stem);
+            if (frc != 0) {
+                err = 1;
+            } else {
+                fprintf(stderr, "lime -X: wrote %s and %s (flex skin)\n",
+                        flex_h, flex_c);
+            }
+        }
+        free(flex_h);
+        free(flex_c);
+    }
+
     free(h_basename);
     for (int i = 0; i < n_rules; i++)
         free(rule_names[i]);
