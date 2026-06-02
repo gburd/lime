@@ -17,7 +17,7 @@
 ** via snapshot_build_from_tables.  Bumped on any layout-breaking
 ** change to the struct. */
 #define LIME_SNAPSHOT_MAGIC       0x4C494D45U   /* L,I,M,E */
-#define LIME_SNAPSHOT_ABI_VERSION 1
+#define LIME_SNAPSHOT_ABI_VERSION 2
 
 
 /* Atomic refcount type.
@@ -139,12 +139,90 @@ typedef struct ParserModule {
 **   4. Module data   - optional module identity and content hash
 */
 typedef struct ParserSnapshot {
+    /* ================================================================
+    ** CACHELINE 0 (bytes 0..63): hot pointer reads.
+    **
+    ** Every parse_token call reads from these.  Layout-critical: do
+    ** not move fields around within this block without rerunning
+    ** bench/bench_parse_fanout (the layout was chosen so all 8
+    ** pointers occupy exactly one 64-byte cacheline on x86_64 +
+    ** aarch64).  L1 data prefetcher pulls the whole line in as a
+    ** unit on the first miss.
+    ** ================================================================ */
+
+    /** Cached pointer to the JIT'd jit_find_shift_action function, or
+    ** NULL if no JIT is attached.  Read FIRST in find_shift_action --
+    ** taking the JIT path skips the rest of the snapshot reads.  Type
+    ** is uint32_t (*)(uint32_t state, uint32_t lookahead) -- declared
+    ** as void* so this header doesn't need to pull in jit_context.h. */
+    void *jit_find_shift_fn;
+
+    uint16_t *yy_action;       /**< Combined shift+reduce action array */
+    uint16_t *yy_lookahead;    /**< Lookahead values parallel to yy_action */
+    int32_t  *yy_shift_ofst;   /**< Per-state offset into yy_action for shifts.
+                               ** int32 (not int16) so grammars with action tables
+                               ** larger than 32k entries (e.g. PostgreSQL's
+                               ** ~145k-entry action table) can be represented
+                               ** without overflow.  Memory cost on small grammars
+                               ** is at most 4 * nstate bytes; trivial. */
+    int32_t  *yy_reduce_ofst;  /**< Per-state offset into yy_action for reduces.
+                               ** Same int32 reasoning as yy_shift_ofst above. */
+    uint16_t *yy_default;      /**< Default action for each state */
+    int16_t  *yy_rule_info_lhs;/**< LHS symbol code per rule */
+    int8_t   *yy_rule_info_nrhs;/**< Negative number of RHS symbols per rule */
+
+    /* ================================================================
+    ** CACHELINE 1 (bytes 64..127): hot scalars + counts.
+    **
+    ** Action-table dispatch constants the parse_engine_step hot path
+    ** consults to classify action-table entries (shift vs reduce vs
+    ** accept) and to bounds-check indices into yy_action / yy_lookahead.
+    ** ================================================================ */
+
+    uint32_t lookahead_count;  /**< Number of entries in yy_lookahead */
+    uint32_t action_count;     /**< Number of entries in yy_action */
+    uint32_t nrule;            /**< Total number of rules */
+    uint32_t nstate;           /**< Total number of parser states */
+
+    uint16_t yy_max_shift;       /**< 0..YY_MAX_SHIFT = shift to that state */
+    uint16_t yy_min_shiftreduce; /**< Shift-reduce range minimum */
+    uint16_t yy_max_shiftreduce; /**< Shift-reduce range maximum */
+    uint16_t yy_error_action;    /**< Marker for syntax error */
+    uint16_t yy_accept_action;   /**< Marker for parser accept */
+    uint16_t yy_no_action;       /**< Marker for unused slot */
+    uint16_t yy_min_reduce;      /**< Reduce range minimum (max = nstate+nrule) */
+    uint16_t yy_ntoken;          /**< Highest terminal code + 1 */
+    /** %first_token directive value: subtracted from external token
+    ** codes to get the internal action-table index.  Zero when the
+    ** grammar didn't declare %first_token.  Mirrors the YYFIRSTTOKEN
+    ** define in generated parsers (limpar.c template). */
+    uint16_t yy_first_token;
+
+    /* Cacheline 1 has 6 bytes of padding here to land yy_fallback on
+    ** an 8-byte boundary.  Compiler inserts implicitly. */
+
+    /** Optional fallback table (length = nfallback, may be NULL). */
+    uint16_t *yy_fallback;
+    uint32_t nfallback;          /**< Length of yy_fallback */
+    uint32_t reserved_pad;       /**< Padding -- atomics on next line. */
+
+    /* ================================================================
+    ** CACHELINE 2 (bytes 128..191): refcount + magic.
+    **
+    ** Refcount is the only WRITTEN field on the parse path (via
+    ** atomic_fetch_add/sub in snapshot_acquire/release).  Keep it
+    ** away from the read-only hot lines above so threads doing
+    ** parse_begin do not invalidate the cachelines other threads
+    ** are reading yy_action etc from.
+    **
+    ** parse_begin_borrowed bypasses the refcount entirely (see
+    ** include/parse_context.h); for the borrowed-API path this
+    ** cacheline is never touched on the hot path.
+    ** ================================================================ */
+
     /** Magic 'LIME' + ABI version stamped by snapshot_build_from_tables
-    ** at construction time.  Consumers that receive a ParserSnapshot
-    ** pointer of dubious origin (a void* across an extension boundary,
-    ** a corrupted dlopen, a debugger session) can sanity-check before
-    ** dereferencing.  Mismatched magic = treat the pointer as garbage.
-    ** Added in v0.7.0. */
+    ** at construction time.  Sanity-check before dereferencing.
+    ** Mismatched magic = treat the pointer as garbage.  Added v0.7.0. */
     uint32_t magic;
     uint16_t abi_version;
     uint16_t reserved16; /**< Padding -- next field is 8-byte aligned. */
@@ -159,6 +237,13 @@ typedef struct ParserSnapshot {
     ** 1.  When the count drops to 0 the snapshot is destroyed. */
     atomic_uint_fast32_t refcount;
 
+    uint32_t reserved_pad2;      /**< Padding to 8-byte boundary. */
+
+    /* ================================================================
+    ** COLD: setup-time + introspection fields (rarely read after
+    ** snapshot construction).
+    ** ================================================================ */
+
     /* --- Grammar data (deep-copied, owned by this snapshot) ----------- */
 
     struct symbol **symbols; /**< Array of pointers to symbol structs */
@@ -166,71 +251,15 @@ typedef struct ParserSnapshot {
     uint32_t nterminal;      /**< Number of terminal symbols */
 
     struct rule *rules; /**< Linked list of production rules */
-    uint32_t nrule;     /**< Total number of rules */
 
     struct state **states; /**< Array of pointers to state structs */
-    uint32_t nstate;       /**< Total number of parser states */
-
-    /* --- Compact action tables (heap-allocated, owned) ---------------- */
-
-    uint16_t *yy_action;      /**< Combined shift+reduce action array */
-    uint16_t *yy_lookahead;   /**< Lookahead values parallel to yy_action */
-    int32_t *yy_shift_ofst;   /**< Per-state offset into yy_action for shifts.
-                              ** int32 (not int16) so grammars with action tables
-                              ** larger than 32k entries (e.g. PostgreSQL's
-                              ** ~145k-entry action table) can be represented
-                              ** without overflow.  Memory cost on small grammars
-                              ** is at most 4 * nstate bytes; trivial. */
-    int32_t *yy_reduce_ofst;  /**< Per-state offset into yy_action for reduces.
-                              ** Same int32 reasoning as yy_shift_ofst above. */
-    uint16_t *yy_default;     /**< Default action for each state */
-    uint32_t action_count;    /**< Number of entries in yy_action */
-    uint32_t lookahead_count; /**< Number of entries in yy_lookahead */
-
-    /* --- Action-table dispatch constants (as in generated parsers) ----
-    ** These are the YY_* defines the generator emits per grammar.  The
-    ** runtime LALR(1) interpreter (parse_token) needs them to classify
-    ** action-table entries.  Set by snapshot_init_from_tables() or
-    ** populated directly when a snapshot is built from a generated
-    ** parser. */
-    uint16_t yy_max_shift;       /**< 0..YY_MAX_SHIFT = shift to that state */
-    uint16_t yy_min_shiftreduce; /**< Shift-reduce range minimum */
-    uint16_t yy_max_shiftreduce; /**< Shift-reduce range maximum */
-    uint16_t yy_error_action;    /**< Marker for syntax error */
-    uint16_t yy_accept_action;   /**< Marker for parser accept */
-    uint16_t yy_no_action;       /**< Marker for unused slot */
-    uint16_t yy_min_reduce;      /**< Reduce range minimum (max = nstate+nrule) */
-    uint16_t yy_ntoken;          /**< Highest terminal code + 1 */
-    /** %first_token directive value: subtracted from external token
-    ** codes to get the internal action-table index.  Zero when the
-    ** grammar didn't declare %first_token.  Mirrors the YYFIRSTTOKEN
-    ** define in generated parsers (limpar.c template).  Added in
-    ** v0.6.x to fix Lime-Letter-25: parse_token() in
-    ** src/parse_engine.c was not applying this subtraction so
-    ** runtime callers passing externally-visible codes (e.g.
-    ** PostgreSQL extension keywords with %first_token 257) were
-    ** indexing the action table at the wrong offset and getting
-    ** spurious syntax errors. */
-    uint16_t yy_first_token;
-
-    /* --- Rule metadata (parallel arrays, length = nrule) -------------- */
-
-    int16_t *yy_rule_info_lhs; /**< LHS symbol code per rule */
-    int8_t *yy_rule_info_nrhs; /**< Negative number of RHS symbols per rule */
-
-    /* --- Optional fallback table (length = nfallback, may be NULL) ---- */
-
-    uint16_t *yy_fallback; /**< Per-token fallback substitute (0 = none) */
-    uint32_t nfallback;    /**< Length of yy_fallback */
 
     /** Optional original grammar source text.  Populated by `lime -n`
-    ** for snapshots produced via snapshot_build_from_tables() from a
-    ** generated *_snapshot.c.  publish_modified_snapshot() reads
-    ** this when an extension adds new rules so it can rebuild the
-    ** LALR(1) automaton via the lime + cc subprocess pipeline.
-    ** NULL for snapshots that don't have the source available. */
+    ** for snapshots produced via snapshot_build_from_tables().  NULL
+    ** when the source is not retained. */
     char *grammar_source;
-    uint32_t grammar_source_len; /**< Byte length, not including trailing NUL */
+    uint32_t grammar_source_len;
+    uint32_t reserved_pad3;
 
     /* --- Module identity (optional, NULL when not part of a module) --- */
 
@@ -240,17 +269,8 @@ typedef struct ParserSnapshot {
     /** Nanosecond-precision wall-clock time when this snapshot was created. */
     uint64_t create_time_ns;
 
-    /** Reserved for a future JIT compilation context that can cache
-    ** machine code generated from the action tables. */
+    /** JIT compilation context. */
     void *jit_ctx;
-
-    /** Cached pointer to the JIT'd jit_find_shift_action function, or
-    ** NULL if no JIT is attached.  Hot-path optimisation: avoids a
-    ** chase through jit_ctx -> find_shift_action_fn on every token.
-    ** Set in lime_jit_compile, cleared in snapshot_release.  Type is
-    ** uint32_t (*)(uint32_t state, uint32_t lookahead) -- declared as
-    ** void* so this header doesn't need to pull in jit_context.h. */
-    void *jit_find_shift_fn;
 } ParserSnapshot;
 
 /*
