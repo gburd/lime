@@ -1362,6 +1362,38 @@ test_skin_bison_union = executable('test_skin_bison_union',
 
 test('skin_bison_union', test_skin_bison_union)
 
+# v0.9.3: bison-style %token<field> tagged tokens.  The grammar
+# declares %token<n> NUM and %token<s> ID alongside an untagged
+# %token EQ SEMI block; the bison skin emits per-token comments
+# beside the enum constants, and the test asserts end-to-end
+# parsing through yyparse_extra() with a hand-rolled yylex() that
+# writes yylval.n / yylval.s by union arm.  See docs/SKINS.md.
+test_tagged_tokens_gen = custom_target('test_tagged_tokens_parser',
+  input   : ['test_tagged_tokens_grammar.y'],
+  output  : [
+    'test_tagged_tokens_grammar.c',
+    'test_tagged_tokens_grammar.h',
+    'test_tagged_tokens_grammar_bison.c',
+    'test_tagged_tokens_grammar_bison.h',
+  ],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '--target=c:bison',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_tagged_tokens = executable('test_tagged_tokens',
+  'test_tagged_tokens.c',
+  test_tagged_tokens_gen,
+  dependencies : lime_parser_dep,
+  c_args : nounusedparam,
+)
+
+test('tagged_tokens', test_tagged_tokens)
+
 # M1 phase 1 of the lexer subsystem: .lex source-language
 # tokenizer.  No DFA, no parser yet -- just the byte-level
 # token stream that the M1 parser will consume.
