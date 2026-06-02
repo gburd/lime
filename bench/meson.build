@@ -74,6 +74,19 @@ bench_jit_real_parser = executable('bench_jit_real_parser',
   dependencies : [lime_parser_dep, math_dep],
 )
 
+# v0.9.x: multi-thread parse-server fan-out benchmark.  Measures
+# parse throughput as the parser-thread count scales from 1..N
+# against a single shared ParserSnapshot.  Used to evaluate cache-
+# line alignment and field-reordering changes to the snapshot
+# struct (false-sharing on refcount + hot read-only fields).  See
+# the top-of-file comment in bench_parse_fanout.c.
+bench_parse_fanout = executable('bench_parse_fanout',
+  'bench_parse_fanout.c',
+  bench_arith_gen,
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, math_dep, thread_dep],
+)
+
 
 # Optional Flex/Bison comparison harness (skipped at configure time
 # when flex or bison is unavailable -- see subdir's meson.build).
