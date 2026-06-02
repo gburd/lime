@@ -18,8 +18,8 @@ PostgreSQL bootstrap parser in `examples/bootstrap/`.
 | Bison Directive | Lime Equivalent | Notes |
 |----------------|-----------------|-------|
 | `%name-prefix "foo"` | `%name_prefix foo` or `%name foo` | Both accepted.  Lime does not parse the dashed form `%name-prefix` (its directive tokenizer rejects the dash); the underscore form is a direct alias for `%name`. |
-| `%union { ... }` | Per-symbol `%type` | Lime has no union; each symbol declares its own C type |
-| `%token <type> TOK` | `%token TOK.` | Lime tokens have no inline type annotation; use `%token_type` for the default |
+| `%union { ... }` | `%union { ... }` (since v0.9.2) or per-symbol `%type` | Lime accepts the bison `%union` body verbatim and emits it as YYSTYPE; the per-symbol `%type` route is also supported |
+| `%token <type> TOK` | `%token<type> TOK.` (since v0.9.3) or `%token TOK.` | Lime accepts the bison angle-bracket tag; without it, `%token_type` supplies the default. The tag is recorded on the symbol and surfaces as a per-token comment in the generated bison-skin header. |
 | `%token_type` | (none) | Bison has no equivalent; uses `%union` instead |
 | `%type <type> sym` | `%type sym {CType}` | Curly braces instead of angle brackets |
 | `%start sym` | `%start sym` or `%start_symbol sym` | Both accepted. |
@@ -102,8 +102,40 @@ Lime:
 %token TIMES.
 ```
 
-Lime uses a single `%token_type` for all tokens. If you need different
-types per token, use a union or tagged struct as your `%token_type`.
+Lime uses a single `%token_type` for all tokens.  Since v0.9.2 Lime
+also accepts the bison-style `%union { ... }` directive directly;
+since v0.9.3 it accepts the matching `%token<field> NAME` syntax,
+so a bison file like
+
+```
+%union { int n; char *s; }
+%token<n> NUMBER
+%token<s> NAME
+%token EQ
+```
+
+translates to Lime as a one-line edit (each `%token` directive
+gains a trailing `.`):
+
+```
+%union { int n; char *s; }
+%token<n> NUMBER.
+%token<s> NAME.
+%token EQ.
+```
+
+The field tag is recorded on the symbol; the bison skin emits a
+`/yylval.<field>/` comment beside each enum constant in the
+generated header and reduce actions still pick the union arm by
+field name (`K.s`, `V.n`).
+
+If you do not want to annotate every `%token` with a tag, the
+plain `%token NUMBER NAME EQ.` form continues to work; pair it
+with the classical idiom of writing `yylval.<field> = ...` from
+`yylex()` and reading `K.<field>` in the reduce action.
+
+If you'd rather coalesce everything onto a single C type, use a
+tagged union struct as your `%token_type`.
 
 ### Type Declarations
 
@@ -339,9 +371,15 @@ boot_openStmt(A) ::= OPEN boot_ident(B). {
 3. **No `|` alternatives**: Each production is a separate `LHS ::= RHS.`
    rule. There is no shorthand for alternatives.
 
-4. **No `%union`**: If your Bison grammar uses multiple semantic value
-   types via `%union`, you must either use a tagged union struct as your
-   `%token_type` or restructure to use per-symbol `%type` declarations.
+4. **`%union` is supported (since v0.9.2)**: The bison `%union { ... }`
+   body is parsed verbatim and emitted as YYSTYPE in both the
+   standard header and the bison-skin header.  Pair it with
+   `%token<field> NAME` (since v0.9.3) to attach a union arm tag
+   to each token; the tag surfaces as a `/yylval.<field>/`
+   comment beside the enum constant in the bison skin's emitted
+   header.  If you do not want to annotate every `%token`, the
+   classical Lemon idiom still works: write `yylval.<field> = ...`
+   from `yylex()` and read `K.<field>` in the reduce action.
 
 5. **Push vs pull**: Lime does not call a `yylex()` function. You must
    write the token-feeding loop yourself. This is actually an advantage
@@ -500,7 +538,7 @@ it's `" A B C"`.
 | RHS value N | `$N` | `B`, `C`, `D`, ... |
 | Alternative | `lhs: alt1 \| alt2;` | Two separate `lhs ::=` rules |
 | Precedence override | `%prec TOKEN` | `[TOKEN]` |
-| Token type | `%union` + `%token <member>` | `%token_type {Type}` |
+| Token type | `%union` + `%token <member>` | `%union { ... }` + `%token<member> NAME.` (since v0.9.3) or `%token_type {Type}` |
 | Non-terminal type | `%type <member> sym` | `%type sym {Type}` |
 | Parser param | `%parse-param {T *p}` | `%extra_argument {T *p}` |
 | Error callback | `yyerror()` function | `%syntax_error { ... }` |

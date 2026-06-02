@@ -107,14 +107,35 @@ Precedence when both `%union` and `%token_type` are set: the
 `%token_type` value wins, mirroring bison's behaviour where an
 explicit `%define api.value.type` overrides `%union`.
 
-#### Tagged tokens are NOT supported
+#### Tagged tokens (`%token<field> NAME`)
 
-Bison pairs `%union` with `%token<field> NAME` so the parser can
-pick the correct union arm per token.  Lime's grammar parser does
-not recognise the angle-bracket tag.  The workaround is the same
-idiom early-bison and Lemon use: the user's `yylex()` writes the
-correct arm directly before returning, and reduce actions access
-the field by name:
+Since v0.9.3 Lime accepts bison's angle-bracket tag syntax to
+document which `%union` arm carries each token's semantic value:
+
+```
+%union { int n; char *s; }
+%token<n> NUMBER
+%token<s> NAME
+%token EQ.
+```
+
+The tag is recorded on the symbol (`struct symbol::union_field`)
+and surfaces in the bison skin's emitted header as a per-token
+comment beside each enum constant:
+
+```c
+enum yytokentype {
+    YYEMPTY = -2,
+    YYEOF = 0,
+    YYerror = 256,
+    YYUNDEF = 257,
+    NUMBER = 258  /* yylval.n */,
+    NAME = 259    /* yylval.s */,
+    EQ = 260
+};
+```
+
+At the point of use the user's `yylex()` writes the named arm:
 
 ```c
 int yylex(void) {
@@ -125,19 +146,27 @@ int yylex(void) {
 }
 ```
 
-```
-%union { int n; char *s; }
-%token NUMBER NAME.
+Reduce actions access the union arm by field name as before --
+Lime does not synthesise a per-rule type-safe local for the tag
+in v0.9.3 (planned for a follow-up; the `union_field` plumbing
+is already in place).  The angle-bracket tag is therefore
+documentation plus a hook for future codegen, not a runtime
+change:
 
-item ::= NAME(K) EQ NUMBER(V). {
-    /* K and V are YYSTYPE (the union); pick the arm by field. */
-    bind(K.s, V.n);
-}
+```
+item ::= NAME(K) EQ NUMBER(V). { bind(K.s, V.n); }
 ```
 
-This matches the documented LALR convention from before bison
-added `%token<field>`; it has no runtime cost and is more obvious
-than the angle-bracket form.
+Mixing tagged and untagged tokens in the same `%token` directive
+is fine; the tag is reset on the directive's terminating `.`, so
+`%token<n> A B. %token C.` produces `A->union_field = "n"`,
+`B->union_field = "n"`, `C->union_field = NULL`.
+
+Untagged grammars (`%token NUMBER NAME EQ.` with `%union`) keep
+working byte-for-byte; the early-bison / Lemon idiom of writing
+`yylval.<field>` from `yylex()` and reading `K.<field>` in reduce
+actions is the supported alternative when you do not want to
+annotate every `%token` with a tag.
 
 #### Worked example: bison `%union` -> Lime
 
@@ -151,7 +180,18 @@ bison input:
 item: NAME EQ NUMBER  { bind($1, $3); }
 ```
 
-Lime equivalent:
+Lime equivalent (one-to-one with the bison file):
+```
+%name KV
+%union { int n; char *s; }
+%extra_argument { struct kv_state *st }
+%token<n> NUMBER.
+%token<s> NAME.
+%token EQ.
+item ::= NAME(K) EQ NUMBER(V). { bind(K.s, V.n); }
+```
+
+The untagged variant (Lime <= v0.9.2 idiom) still works:
 ```
 %name KV
 %union { int n; char *s; }
@@ -249,10 +289,6 @@ value through the reduce chain.
 
 ### What is **not** supported
 
-* Tagged tokens (`%token<field> NAME`).  Lime's grammar parser
-  does not recognise the angle-bracket tag.  Workaround: write
-  `yylval.<field> = ...` from `yylex()` and access `K.<field>`
-  in the reduce action -- see the `%union` section above.
 * `%parse-param` declarations.  Use `%extra_argument` instead and
   call `yyparse_extra()`.
 * `yychar` / `yynerrs` global lookahead/error counters.  Lime's
@@ -410,6 +446,14 @@ the full union and Lime's parser stack stores it per terminal.
 The driver runs both the native and skin paths, exercises both
 union arms, and verifies that flipping `yydebug` enables/disables
 the `<Name>Trace` output without crashing.
+
+`tests/test_tagged_tokens.c` covers the v0.9.3 `%token<field>`
+tag syntax.  Its grammar mixes tagged and untagged tokens
+(`%token<n> NUM. %token<s> ID. %token EQ SEMI.`) and exercises
+the end-to-end path: yylex() writes `yylval.n` / `yylval.s` by
+arm, the reduce action reads `K.s` / `V.n` back, and the test
+asserts that the per-token comments in the emitted bison header
+(`/yylval.<field>/`) coexist with untagged enum constants.
 
 ## See also
 
