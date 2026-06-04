@@ -106,7 +106,7 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "0.11.0"
+#define LIME_VERSION_STRING "0.12.0"
 #endif
 
 
@@ -5776,8 +5776,27 @@ int main(int argc, char **argv){
         }
     }
 
-    /* Generate the source code for the parser */
-    ReportTable(&lem, mhflag, sqlFlag);
+    /* Generate the source code for the parser.
+    **
+    ** When --target=rust was the ONLY requested output (no
+    ** c:bison / c:flex skin combined with it), the C parser is
+    ** vestigial -- nothing consumes the .c/.h.  Pre-v0.12 we ran
+    ** ReportTable / ReportHeader / ReportAOTTable unconditionally
+    ** after emit_rust_parser, which (a) tried to open the
+    ** historic-Lemon-named lempar.c template (Lime ships limpar.c,
+    ** so this fails on every install where the user hasn't passed
+    ** -T explicitly) and (b) bumped errorcnt, making the whole
+    ** invocation exit non-zero even though the .rs WAS emitted.
+    ** Build systems then could not classify success vs failure.
+    ** Reported as Issue 3 in /tmp/lime-rust-target-repro/README.md.
+    **
+    ** Gate: skip C-side emit when rust-only AND no C skin combined.
+    ** A future --target=rust:c form (currently unused) would land
+    ** here as `(rustFlag && need_c_output)`. */
+    int rust_only = rustFlag && !g_skin_bison && !g_skin_flex;
+    if (!rust_only) {
+        ReportTable(&lem, mhflag, sqlFlag);
+    }
 
     /* Generate snapshot initialization code if -n flag is set */
     if( snapshotFlag ) ReportSnapshotInit(&lem);
@@ -5795,12 +5814,12 @@ int main(int argc, char **argv){
     }
 
     /* Generate AOT-compiled action table if -j flag is set */
-    if( aotFlag ) ReportAOTTable(&lem);
+    if( aotFlag && !rust_only ) ReportAOTTable(&lem);
 
     /* Produce a header file for use by the scanner.  (This step is
     ** omitted if the "-m" option is used because makeheaders will
     ** generate the file for us.) */
-    if( !mhflag ) ReportHeader(&lem);
+    if( !mhflag && !rust_only ) ReportHeader(&lem);
 
     /* C-output skins (--target=c:bison / c:flex).  Each skin emits
     ** an additional pair of files NEXT TO the standard output, so
@@ -7482,18 +7501,50 @@ static void parseonetoken(struct pstate *psp)
           psp->declargslot = &(psp->gp->rust_arg);
           psp->insertLineMacro = 0;
           break;
-        }else if( strcmp(x,"rust_action")==0 ){
+        }else if( strcmp(x,"rust_action")==0 ||
+                  strcmp(x,"action_rust")==0 ){
           /* v0.8 feat/rust-output: per-rule Rust body override.
           ** The directive takes a `{ body }` on the same line; we
           ** divert the next-brace handler to attach to
-          ** prevrule->rust_code instead of prevrule->code. */
+          ** prevrule->rust_code instead of prevrule->code.
+          **
+          ** v0.12: %action_rust accepted as a symmetric alias
+          ** alongside the existing %rust_action.  The pair
+          ** %action_c { ... } / %action_rust { ... } lets a single
+          ** grammar carry both bodies for the same production --
+          ** %action_c is a synonym for the inline brace body, and
+          ** %action_rust diverts to the Rust-only override.
+          ** Reported as Issue 2 in
+          ** /tmp/lime-rust-target-repro/README.md. */
           if( psp->prevrule == 0 ){
             ErrorMsg(psp->filename, psp->tokenlineno,
-              "%%rust_action requires a preceding rule");
+              "%%%s requires a preceding rule", x);
             psp->errorcnt++;
             psp->state = RESYNC_AFTER_DECL_ERROR;
           } else {
             psp->next_brace_is_rust = 1;
+            psp->state = WAITING_FOR_DECL_OR_RULE;
+          }
+          break;
+        }else if( strcmp(x,"action_c")==0 ){
+          /* v0.12: symmetric alias for the inline `{ body }` form,
+          ** so a grammar can write
+          **
+          **     stmt(A) ::= ... .
+          **         %action_c    { ... C body ... }
+          **         %action_rust { ... Rust body ... }
+          **
+          ** instead of mixing inline-and-directive notation.  No
+          ** state change needed: the next `{ body }` falls through
+          ** to the standard prevrule->code path. */
+          if( psp->prevrule == 0 ){
+            ErrorMsg(psp->filename, psp->tokenlineno,
+              "%%action_c requires a preceding rule");
+            psp->errorcnt++;
+            psp->state = RESYNC_AFTER_DECL_ERROR;
+          } else {
+            /* No flag flip -- next `{` body lands in prevrule->code
+            ** via the default WAITING_FOR_DECL_OR_RULE path. */
             psp->state = WAITING_FOR_DECL_OR_RULE;
           }
           break;

@@ -422,6 +422,27 @@ if host_machine.system() != 'windows'
     timeout : 30)
 endif
 
+# v0.12 --target=rust regression suite: locks down fixes for the
+# three blockers reported in the lime-rust-target-repro README
+# (Ra crates/ra-parser):
+#   Issue 1 -- multi-line action bodies preserved (was: dropped)
+#   Issue 2 -- %action_c / %action_rust dispatch per target
+#   Issue 3 -- pure --target=rust exits 0, no C-template lookup
+if host_machine.system() != 'windows'
+  test_rust_target_v0_12 = executable('test_rust_target_v0_12',
+    'test_rust_target_v0_12.c',
+  )
+  test('rust_target_v0_12', test_rust_target_v0_12,
+    args : [lime_exe.full_path()],
+    env : [
+      'LIME_BIN=' + lime_exe.full_path(),
+      'LIME_PROJECT_ROOT=' + meson.project_source_root(),
+    ],
+    depends : [lime_exe],
+    is_parallel : false,
+    timeout : 30)
+endif
+
 # v0.8.10 lex-vectorize emit coverage: drives `lime -X` with no
 # flag (default ON), --lex-vectorize (explicit ON), and
 # --lex-no-vectorize, then asserts the emitted .c file shape

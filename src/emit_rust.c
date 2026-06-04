@@ -299,12 +299,38 @@ static void emit_action_body_substituted(FILE *out, const char *code,
                                           const char *lhs_alias,
                                           const struct lime *lemp,
                                           int iRule) {
-    if (!code || !code[0] || code[0] == '\n') {
+    /* The body span we receive starts AT the byte AFTER `{`.  For
+    ** the conventional multi-line form
+    **
+    **      stmt(A) ::= ... . {
+    **          A = B + C;
+    **      }
+    **
+    ** code[0] is `\n`, NOT the first character of the action.
+    ** Pre-v0.12 we bailed on (code[0]=='\n') and emitted
+    ** `// empty action`, silently dropping every multi-line body.
+    ** Reported in /tmp/lime-rust-target-repro/README.md (Issue 1).
+    **
+    ** Walk past leading whitespace (space/tab/CR/LF) and only
+    ** treat the body as empty when nothing non-whitespace remains.
+    ** This matches the lint_is_trivial_action() empty-check on the
+    ** C-emitter side. */
+    if (!code) {
         fprintf(out, "    // empty action\n");
         return;
     }
+    {
+        const char *q = code;
+        while (*q == ' ' || *q == '\t' || *q == '\n' || *q == '\r') q++;
+        if (*q == 0) {
+            fprintf(out, "    // empty action\n");
+            return;
+        }
+    }
     const char *lhs_name = (lhs_alias && lhs_alias[0]) ? lhs_alias : "lhs";
-    fprintf(out, "    // user action body (literal copy with $$/$N substitution)\n");
+    fprintf(out, "    // user action body (copied verbatim with $$/$N substitution; "
+                 "override per-rule with %%action_rust { ... } if you need "
+                 "different code on the C and Rust targets)\n");
     /* Indent two spaces beyond "    " (call site is already indented 4). */
     fprintf(out, "    ");
     for (const char *p = code; *p; p++) {
