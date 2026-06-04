@@ -105,7 +105,7 @@ fn yy_rule_0(ctx: &mut ReduceCtx) {
     let B: Value = ctx.rhs[0].clone();
     let _rhs1: Value = ctx.rhs[1].clone();
     let C: Value = ctx.rhs[2].clone();
-    // user action body (literal copy with $$/$N substitution)
+    // user action body (copied verbatim with $$/$N substitution; override per-rule with %action_rust { ... } if you need different code on the C and Rust targets)
      A = B + C; 
     *ctx.lhs = A;
 }
@@ -117,7 +117,7 @@ fn yy_rule_1(ctx: &mut ReduceCtx) {
     let B: Value = ctx.rhs[0].clone();
     let _rhs1: Value = ctx.rhs[1].clone();
     let C: Value = ctx.rhs[2].clone();
-    // user action body (literal copy with $$/$N substitution)
+    // user action body (copied verbatim with $$/$N substitution; override per-rule with %action_rust { ... } if you need different code on the C and Rust targets)
      A = B - C; 
     *ctx.lhs = A;
 }
@@ -129,7 +129,7 @@ fn yy_rule_2(ctx: &mut ReduceCtx) {
     let B: Value = ctx.rhs[0].clone();
     let _rhs1: Value = ctx.rhs[1].clone();
     let C: Value = ctx.rhs[2].clone();
-    // user action body (literal copy with $$/$N substitution)
+    // user action body (copied verbatim with $$/$N substitution; override per-rule with %action_rust { ... } if you need different code on the C and Rust targets)
      A = B * C; 
     *ctx.lhs = A;
 }
@@ -139,7 +139,7 @@ fn yy_rule_2(ctx: &mut ReduceCtx) {
 fn yy_rule_3(ctx: &mut ReduceCtx) {
     let mut A: Value = Value::default();
     let B: Value = ctx.rhs[0].clone();
-    // user action body (literal copy with $$/$N substitution)
+    // user action body (copied verbatim with $$/$N substitution; override per-rule with %action_rust { ... } if you need different code on the C and Rust targets)
      A = B; 
     *ctx.lhs = A;
 }
