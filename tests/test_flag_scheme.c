@@ -342,6 +342,44 @@ int main(int argc, char **argv) {
               "-trust -ecrate (glued shorts) produces crate (rc=%d)", rc);
     }
 
+    /* === 19. C-target build does NOT emit spurious 'safe has no
+    ** effect' warning when no --enable=safe was given.  Regression
+    ** for lime-v0.10-upgrade-blocker.md (Ra crates/ra-parser): the
+    ** rust-only `safe` feature defaults to ON in g_features, and
+    ** pre-v0.11 the warning loop fired any time a rust-only feature
+    ** was non-zero, regardless of whether the user opted in.  Result:
+    ** every C-target build emitted a spurious stderr line that broke
+    ** downstream build systems classifying exit-1 outcomes
+    ** (resolved-conflicts vs hard-error). === */
+    {
+        unlink("g.c"); unlink("g.h"); unlink("g.out");
+        char *cargv[] = { (char *)lime_bin, tflag, "-q",
+                          "g.lime", NULL };
+        run_capture(lime_bin, cargv, errbuf, sizeof(errbuf), &rc);
+        CHECK(rc == 0 && file_exists("g.c"),
+              "C-target build succeeds (rc=%d)", rc);
+        CHECK(strstr(errbuf, "--enable=safe has no effect") == NULL,
+              "C-target build does NOT emit spurious safe warning");
+        CHECK(strstr(errbuf, "has no effect without --target=rust") == NULL,
+              "C-target build emits NO rust-only feature warnings");
+    }
+
+    /* === 20. EXPLICIT --enable=safe on C-target DOES emit warning ===
+    ** This is the intended behaviour: when the user explicitly opts
+    ** in to a rust-only feature on a non-rust target, lime tells
+    ** them it's a no-op.  Verifies the warning still fires when it
+    ** SHOULD. */
+    {
+        unlink("g.c"); unlink("g.h"); unlink("g.out");
+        char *cargv[] = { (char *)lime_bin, tflag, "-q",
+                          "--enable=safe", "g.lime", NULL };
+        run_capture(lime_bin, cargv, errbuf, sizeof(errbuf), &rc);
+        CHECK(rc == 0,
+              "C-target with explicit --enable=safe still succeeds (rc=%d)", rc);
+        CHECK(strstr(errbuf, "--enable=safe has no effect") != NULL,
+              "explicit --enable=safe DOES emit the no-effect warning");
+    }
+
     /* Cleanup. */
     unlink("g.rs");
     test_compat_rmdir_recursive("g_crate");

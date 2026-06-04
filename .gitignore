@@ -129,3 +129,4 @@ examples/json/json_parser
 # Top-level dist tarballs from make dist
 build-dist/
 bench-runs/
+lime-v0.10-upgrade-blocker.md

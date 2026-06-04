@@ -106,7 +106,7 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "0.10.0"
+#define LIME_VERSION_STRING "0.11.0"
 #endif
 
 
@@ -4822,6 +4822,26 @@ static feature_flag_state g_features = {
     .safe = 1,
 };
 
+/* Per-feature flag: was this set explicitly on the command line
+** (via --enable=<name>, --disable=<name>, --target=rust,unsafe, or
+** a deprecated alias like --rustlex-simd) versus left at its
+** g_features default?  Drives the "--enable=X has no effect without
+** --target=rust" warning -- we only fire that warning for
+** EXPLICITLY set rust-only features, not for ones inheriting their
+** default value.  Without this distinction the warning fires on
+** every C-target build because `safe` defaults to 1 (Lime-Letter
+** v0.10-upgrade-blocker / Ra crates/ra-parser).  Indexed by
+** g_feature_table[] order.  Bumped from int[] to a small struct
+** if we ever need more than a single bit per feature. */
+static int g_feature_explicit[8] = {0};
+
+static void feature_mark_explicit(int idx) {
+    if (idx >= 0 && idx < (int)(sizeof(g_feature_explicit)
+                                 / sizeof(g_feature_explicit[0]))) {
+        g_feature_explicit[idx] = 1;
+    }
+}
+
 /* `c` (default) or `rust`.  Set by --target / -t.  Drives whether
 ** rustFlag / rustLexFlag get latched in main(). */
 static int g_target_is_rust = 0;
@@ -4920,6 +4940,7 @@ static void feature_apply_list(const char *list, int enable) {
             exit(1);
         }
         *feature_field(idx) = enable ? 1 : 0;
+        feature_mark_explicit(idx);
     }
     free(dup);
     if (!any) {
@@ -5007,6 +5028,7 @@ static void handle_target_option(char *z) {
                 ** wrappers + get_unchecked indexing in the scalar DFA
                 ** dispatch loops.  Equivalent to --disable=safe. */
                 g_features.safe = 0;
+                feature_mark_explicit(feature_lookup("safe"));
             } else {
                 fprintf(stderr,
                   "lime: unknown rust-target modifier '%s'.  Valid: unsafe.\n",
@@ -5111,7 +5133,10 @@ static void deprecated_rustlex_simd(int v) {
     if (v) fprintf(stderr,
         "warning: --rustlex-simd is deprecated; use --target=rust --enable=simd "
         "(default since v0.8.6)\n");
-    if (v) g_features.simd = 1;
+    if (v) {
+        g_features.simd = 1;
+        feature_mark_explicit(feature_lookup("simd"));
+    }
     /* No `else` branch: setting it explicitly never disables.  Users who
     ** want to opt OUT use --disable=simd. */
 }
@@ -5119,13 +5144,19 @@ static void deprecated_rustlex_simd(int v) {
 static void deprecated_rustlex_memchr(int v) {
     if (v) fprintf(stderr,
         "warning: --rustlex-memchr is deprecated; use --target=rust --enable=memchr\n");
-    if (v) g_features.memchr = 1;
+    if (v) {
+        g_features.memchr = 1;
+        feature_mark_explicit(feature_lookup("memchr"));
+    }
 }
 
 static void deprecated_per_token_dfa(int v) {
     if (v) fprintf(stderr,
         "warning: --per-token-dfa is deprecated; use --enable=per-token-dfa\n");
-    if (v) g_features.per_token_dfa = 1;
+    if (v) {
+        g_features.per_token_dfa = 1;
+        feature_mark_explicit(feature_lookup("per-token-dfa"));
+    }
 }
 
 /* Pre-process argv to splice `-t rust` / `-e list` separate-arg
@@ -5448,10 +5479,17 @@ int main(int argc, char **argv){
             if (!g_feature_table[fi].rust_only) continue;
             int *fp = (int *)((char *)&g_features
                               + g_feature_table[fi].offset);
-            /* Only warn when the user OPT'd in (value 1).  Defaults
-            ** are off for all rust_only features so this never
-            ** fires absent an explicit --enable. */
-            if (*fp) {
+            /* Only warn when the user EXPLICITLY enabled the feature
+            ** (via --enable=<name>, --target=rust,unsafe, or a
+            ** deprecated --rustlex-* alias).  Without the explicit-
+            ** tracking guard the warning fires for any rust-only
+            ** feature whose g_features default is non-zero -- which
+            ** is the case for `safe` (defaults to 1).  Pre-v0.11 the
+            ** warning fired on every C-target build, breaking
+            ** downstream build systems that scan stderr to classify
+            ** exit-1 outcomes (resolved-conflicts vs hard-error).
+            ** Reported in lime-v0.10-upgrade-blocker.md. */
+            if (*fp && g_feature_explicit[fi]) {
                 fprintf(stderr,
                   "warning: --enable=%s has no effect without --target=rust\n",
                   g_feature_table[fi].name);
