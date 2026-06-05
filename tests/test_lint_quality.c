@@ -319,7 +319,33 @@ int main(int argc, char **argv) {
         free(out); free(err);
     }
 
-    int total = 8;
+    /* === W007 anchors to first-use line, not always 1:1 === */
+    {
+        const char *fix = write_fixture("w007_line.lime",
+            "%token PLUS NUM.\n"
+            "\n"
+            "start ::= myExpr.\n"
+            "myExpr ::= NUM PLUS NUM.\n");
+        char *out = NULL, *err = NULL;
+        int rc = run_lime(lime_abs, "-L --lint-format=json", fix, &out, &err);
+        if (rc != 0) {
+            FAIL("W007 line exit", "rc=%d expected 0 (W007 is warn)\n    out=%s",
+                 rc, out ? out : "");
+        } else if (!contains(out, "\"code\":\"W007\"")) {
+            FAIL("W007 line present", "missing W007:\n    out=%s",
+                 out ? out : "(null)");
+        } else if (!contains(out, "\"line\":3,")) {
+            /* myExpr first appears on line 3 (`start ::= myExpr.`).
+            ** Pre-refactor, every W007 said "line":1 unconditionally. */
+            FAIL("W007 line=3",
+                 "expected line:3 (first-use of myExpr), got:\n    out=%s", out);
+        } else {
+            PASS("W007 anchors to first-use line (3) instead of 1");
+        }
+        free(out); free(err);
+    }
+
+    int total = 9;
     (void)total;
     if (g_failures == 0) {
         printf("\n=== Summary === all sub-tests passed\n");

@@ -3197,6 +3197,23 @@ static const char *lint_suggest_prec(struct lime *lem, const char *name){
   return best;
 }
 
+/* Return the first ruleline that mentions `target` -- LHS for a
+** non-terminal, anywhere on the RHS for a terminal.  Used to anchor
+** symbol-level diagnostics (W007 / W101 / W102) to a real source line
+** so editor jump-lists land somewhere useful instead of always 1:1.
+** Returns 0 when the symbol has no usage site (caller should fall
+** back to line 1). */
+static int lint_first_use_line(struct lime *lem, struct symbol *target){
+  if( !lem || !target ) return 0;
+  for(struct rule *rp = lem->rule; rp; rp = rp->next){
+    if( rp->lhs == target ) return rp->ruleline;
+    for(int j = 0; j < rp->nrhs; j++){
+      if( rp->rhs[j] == target ) return rp->ruleline;
+    }
+  }
+  return 0;
+}
+
 static int lint_name_inconsistent(struct symbol *sp){
   if( sp==0 || sp->name==0 ) return 0;
   if( lint_is_builtin_symbol(sp->name) ) return 0;
@@ -3268,7 +3285,9 @@ static int lint_grammar(struct lime *lem){
                     "exported symbol '%s' is not defined", exp->name);
         }
       }else if( sp->type != NONTERMINAL ){
-        lint_emit(&st, LINT_W, "W101", 1, 1,
+        int sym_line = lint_first_use_line(lem, sp);
+        if( sym_line < 1 ) sym_line = 1;
+        lint_emit(&st, LINT_W, "W101", sym_line, 1,
                   "exported symbol '%s' is a terminal "
                   "(exports are usually non-terminals)", exp->name);
       }
@@ -3426,7 +3445,9 @@ static int lint_grammar(struct lime *lem){
     if( lint_is_builtin_symbol(sp->name) ) continue;
     if( sp->rule ) continue;
     if( !sp->datatype ) continue;
-    lint_emit(&st, LINT_W, "W102", 1, 1,
+    int sym_line = lint_first_use_line(lem, sp);
+    if( sym_line < 1 ) sym_line = 1;
+    lint_emit(&st, LINT_W, "W102", sym_line, 1,
               "non-terminal '%s' has %%type declaration but no "
               "production rule", sp->name);
   }
@@ -3559,7 +3580,9 @@ static int lint_grammar(struct lime *lem){
     if( !lint_name_inconsistent(sp) ) continue;
     const char *cls  = sp->type == TERMINAL ? "terminal" : "non-terminal";
     const char *want = sp->type == TERMINAL ? "ALL_UPPER" : "all_lower";
-    lint_emit(&st, LINT_W, "W007", 1, 1,
+    int sym_line = lint_first_use_line(lem, sp);
+    if( sym_line < 1 ) sym_line = 1;
+    lint_emit(&st, LINT_W, "W007", sym_line, 1,
               "%s '%s' has mixed-case name; convention is %s "
               "(uppercase for terminals, lowercase for non-terminals)",
               cls, sp->name, want);
