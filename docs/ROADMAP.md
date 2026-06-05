@@ -11,6 +11,8 @@ Items are listed in rough order of impact.
 
 ## 1. In-process LALR(1) automaton rebuild library
 
+**Status as of v0.10.0: COMPLETE.**
+
 **What works today.**  The full pipeline is end-to-end:
 
 - `lime -n` emits a `<Prefix>BuildSnapshot()` builder AND embeds the
@@ -22,6 +24,17 @@ Items are listed in rough order of impact.
   `tests/test_snapshot_create.c` (8/8 PASS).
 - `lime_compile_grammar_text(text, len, &err)` does the same for a
   grammar held in memory.
+- `lime_compile_grammar_in_process(text, len, &snap, &err)` does it
+  **without** the subprocess pipeline -- pure in-process LALR
+  construction via `liblime_compiler.a`.  Available since v0.5.4
+  (`include/lime_compiler.h`).  Linked via `pkg-config --libs
+  lime-compiler` (pkg-config file shipped since v0.10.0).
+  Documented in [docs/API.md](API.md#in-process-compiler-api).
+- `lime_lint_grammar_in_process(text, len, &diags)` runs the same
+  parse + `FindActions` + `lint_grammar` pipeline that `lime -L`
+  runs, in-process, with no fork / exec / temp file.  Available
+  since v0.10.0; used by `lime-lsp`'s diagnostic refresh path.
+  ~10% / 200 ms saved per LSP request on PG's 21k-line `gram.lime`.
 - `publish_modified_snapshot(reg, base, ...)` takes the subprocess
   path automatically when the base snapshot has `grammar_source`
   available.  It calls `lime_modifications_to_grammar_text()` to
@@ -32,50 +45,50 @@ Items are listed in rough order of impact.
   `tests/test_extension_rebuild.c` (11/11 PASS): a postfix-factorial
   extension adds a token + rule, the merged grammar is rebuilt, and
   parses through the new rule succeed.
+- **dlopen-handle cleanup.**  The subprocess pipeline's dlopen
+  handles are released by `snapshot_dlopen_release` during
+  `destroy_snapshot` (added in v0.6.x; see `src/snapshot.c:22`).
+  Long-running daemons no longer accumulate mappings.
 
-Requirements: `lime` and a C compiler must be reachable (PATH or
-`LIME_BIN` / `LIME_CC`); the runtime probes at `LIME_TEMPLATE` and
-`LIME_SNAPSHOT_BUILD_C` cover source-tree and installed layouts.
+Requirements: for the *subprocess* path, `lime` and a C compiler
+must be reachable (PATH or `LIME_BIN` / `LIME_CC`); the runtime
+probes at `LIME_TEMPLATE` and `LIME_SNAPSHOT_BUILD_C` cover
+source-tree and installed layouts.  The in-process path needs
+neither.
 
-**Why this is the next prerequisite.**  This is the prerequisite
-for composition (`compose_snapshots`, [docs/COMPOSITION.md](COMPOSITION.md))
-at production speed.  Today composition has to either fork+exec
-lime+cc to re-derive LALR (~200ms per merge) or settle for
-snapshot-table merging only (which doesn't recompute conflict
-resolutions across composed grammars).  In-process rebuild
-collapses both paths to sub-millisecond work, which is the
-threshold for PG-style daemon-startup extension loading where
-shared_preload_libraries can ship arbitrary mixes of grammar
-plugins (DuckDB-compat, EDB Oracle-compat, pg_infer, pg_mentat,
-... composed at backend startup).
+**Why this was the prerequisite.**  This is the prerequisite for
+composition (`compose_snapshots`,
+[docs/COMPOSITION.md](COMPOSITION.md)) at production speed.
+Without it, composition had to either fork+exec lime+cc to re-derive
+LALR (~200ms per merge) or settle for snapshot-table merging only
+(which doesn't recompute conflict resolutions across composed
+grammars).  The in-process path collapses both paths to sub-
+millisecond work, which is the threshold for PG-style daemon-startup
+extension loading where `shared_preload_libraries` can ship
+arbitrary mixes of grammar plugins (DuckDB-compat, EDB Oracle-compat,
+pg_infer, pg_mentat, ... composed at backend startup).
 
 Composition is the primary consumer of this work.
 
-**What is missing.**  Two tracker items remain:
+**Open follow-ups.**  All blocking items are closed.  The remaining
+item is bookkeeping:
 
-- **Cleanup of dlopen handles.**  The snapshot tables are
-  deep-copied out of each dlopened `.so`, so the snapshot itself is
-  independent of the `.so`.  But the `.so` stays mapped into the
-  process for the lifetime of the snapshot.  Memory cost is small
-  (~100 KB per loaded grammar) and acceptable for daemons that load
-  grammars during init, but a long-running process that loads
-  thousands of grammars over its lifetime would accumulate
-  mappings.  Tracker: extend `ParserSnapshot` with a `dlopen` slot
-  and `dlclose()` it during `destroy_snapshot`.
-- **Pure in-process build.**  The current pipeline forks a `lime`
-  subprocess and a C compiler, which adds ~200ms of latency and
-  requires a compiler at runtime.  A pure in-process Build() --
-  exposing `lime.c`'s `FindRulePrecedences` /  `FindFirstSets` /
-  `FindStates` / `FindLinks` / `FindFollowSets` / `FindActions` /
-  `CompressTables` / `ResortStates` as a callable library -- would
-  remove that latency and let lime work in environments without a
-  compiler installed.  The algorithms are all in `lime.c` already;
-  the work is structural decoupling from file I/O and global state.
+- **Thread-local active-context storage.**  The active
+  `LimeCompilerContext` pointer is currently process-global, not
+  `_Thread_local`, so two concurrent `lime_compile_grammar_in_process`
+  calls in different threads race.  Sequential calls in one thread
+  are fully isolated.  Thread-local promotion is tracked as phase 5;
+  no consumer has reported a need yet.
 
 **Source-tree references.**
 
 - `src/snapshot_create.c::compile_grammar_file_to_snapshot,
   lime_compile_grammar_text` -- the working subprocess pipeline.
+- `src/snapshot_create.c::lime_compile_grammar_in_process` (weak
+  shim) and `lime.c::lime_compile_grammar_in_process` (strong
+  in-process implementation, gated on `LIME_HAVE_SNAPSHOT_BUILD`).
+- `lime.c::lime_lint_grammar_in_process` (v0.10.0; LSP-grade
+  in-process linter).
 - `src/extension.c::publish_modified_snapshot` -- chooses subprocess
   rebuild when the base has `grammar_source`, falls back to the
   metadata-only path otherwise.
@@ -205,14 +218,17 @@ modified snapshot.
 
 ## 5. Flex / Bison comparison benchmark
 
+**Status: COMPLETE.**
+
 **What works today.**  `bench/bench_flex_bison_compare/` ships a
 runnable harness that compares Lime against Flex+Bison on an
 identical arithmetic grammar.  When `flex` and `bison` are not on
 `$PATH`, the benchmark prints a diagnostic and exits cleanly so
-unrelated builds are not blocked.
+unrelated builds are not blocked.  Numbers reproduced in
+[BENCHMARKS_VS_BISON.md](BENCHMARKS_VS_BISON.md): Lime 1.81x faster
+than bison+flex on the lex+parse end-to-end JSON benchmark.
 
-**What is missing.**  Nothing in the benchmark itself; it is gated on
-the host having Flex/Bison installed.
+Retained in this list as a reference entry; nothing remains to do.
 
 ---
 
