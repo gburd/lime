@@ -21,6 +21,7 @@
 #include "lsp_protocol.h"
 
 #include "lsp_diagnostics.h"
+#include "lsp_diagnostics_async.h"
 #include "lsp_documents.h"
 #include "lsp_format.h"
 #include "lsp_json.h"
@@ -167,6 +168,24 @@ static void send_notification(FILE *out, const char *method,
 
 static void publish_diagnostics(lsp_server *s, const char *uri,
                                 const char *text, size_t text_len) {
+    /* Async path (v0.13.0): enqueue a worker and return immediately.
+    ** The worker runs the lint pipeline on a separate thread and
+    ** publishes when finished.  Subsequent didChange events for the
+    ** same URI bump a generation counter so stale results get
+    ** dropped without publishing -- only the latest edit's
+    ** diagnostics reach the editor.
+    **
+    ** Falls through to synchronous publish when the async pool isn't
+    ** available (Windows, or pthread_create failed).  Set
+    ** LIME_LSP_SYNC_DIAGS=1 to force the synchronous path for
+    ** debugging or for tests that want deterministic timing. */
+    const char *force_sync = getenv("LIME_LSP_SYNC_DIAGS");
+    int sync_only = (force_sync && force_sync[0] && force_sync[0] != '0');
+    if (!sync_only && s->async_diags) {
+        lsp_diagnostics_async_request(s->async_diags, uri, text, text_len);
+        return;
+    }
+    /* Synchronous fallback. */
     json_value *diags = lsp_diagnostics_run(s->lime_bin, text, text_len);
     if (!diags) diags = json_make_array();
     json_value *params = json_make_object();
@@ -559,15 +578,31 @@ void lsp_server_init(lsp_server *s) {
     s->in  = stdin;
     s->out = stdout;
     s->log = NULL;
+    s->async_diags = NULL;  /* lazily created in lsp_server_run after
+                            ** lime_bin is set, so the worker has the
+                            ** subprocess fallback wired in. */
 }
 
 void lsp_server_free(lsp_server *s) {
+    if (s->async_diags) {
+        lsp_diagnostics_async_destroy(s->async_diags);
+        s->async_diags = NULL;
+    }
     lsp_documents_free(&s->docs);
     free(s->lime_bin);
     s->lime_bin = NULL;
 }
 
 int lsp_server_run(lsp_server *s) {
+    /* Lazily create the async-diagnostics pool now that lime_bin is set.
+    ** create() returns NULL on POSIX systems where pthread_create
+    ** failed (very rare) or on Windows where the implementation is
+    ** stubbed; in both cases publish_diagnostics falls through to
+    ** the synchronous path. */
+    if (!s->async_diags) {
+        s->async_diags = lsp_diagnostics_async_create(s->out, s->lime_bin);
+    }
+
     int got_exit = 0;
     while (!got_exit) {
         json_value *msg = lsp_read_message(s->in);

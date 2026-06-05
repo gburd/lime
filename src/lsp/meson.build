@@ -16,6 +16,7 @@ lime_lsp_sources = files(
   'lsp_protocol.c',
   'lsp_documents.c',
   'lsp_diagnostics.c',
+  'lsp_diagnostics_async.c',
   'lsp_navigation.c',
   'lsp_completion.c',
   'lsp_references.c',
@@ -42,6 +43,10 @@ lime_lsp_deps = []
 if lime_lsp_in_process.allowed()
   lime_lsp_deps += [lime_compiler_dep, lime_parser_dep]
 endif
+# v0.13.0: background-diagnostics worker uses pthread_create.
+# thread_dep adds -lpthread on POSIX; on Windows it's a no-op
+# and lsp_diagnostics_async.c falls back to synchronous diagnostics.
+lime_lsp_deps += [thread_dep]
 
 lime_lsp_exe = executable('lime-lsp',
   lime_lsp_sources,

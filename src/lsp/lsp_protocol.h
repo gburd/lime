@@ -35,6 +35,11 @@ typedef struct {
     FILE         *in;           /* defaults to stdin                */
     FILE         *out;          /* defaults to stdout               */
     FILE         *log;          /* may be NULL; otherwise logged to */
+    /* v0.13.0: background diagnostic worker.  When non-NULL,
+    ** publish_diagnostics enqueues a request to this pool and
+    ** returns immediately, instead of blocking the server thread
+    ** on the ~2 s LALR analysis.  See lsp_diagnostics_async.h. */
+    struct lsp_diagnostics_async *async_diags;
 } lsp_server;
 
 void lsp_server_init(lsp_server *s);
