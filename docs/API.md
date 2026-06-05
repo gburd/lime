@@ -12,12 +12,14 @@ All public symbols are declared in headers under `include/`.
 - [Token Table API](#token-table-api)
 - [SIMD Character Classification API](#simd-character-classification-api)
 - [Extension API](#extension-api)
+- [In-Process Compiler API](#in-process-compiler-api)
 - [JIT Compilation API](#jit-compilation-api)
 - [JIT Policy API](#jit-policy-api)
 - [Data Structures Reference](#data-structures-reference)
 - [Token Type Codes](#token-type-codes)
 - [Error Handling Conventions](#error-handling-conventions)
 - [Thread Safety](#thread-safety)
+- [Linking and pkg-config](#linking-and-pkg-config)
 - [Usage Examples](#usage-examples)
 
 ---
@@ -30,7 +32,7 @@ All public symbols are declared in headers under `include/`.
 const char *lime_parser_version(void);
 ```
 
-Returns the library version as a NUL-terminated string (e.g. `"0.1.0"`).
+Returns the library version as a NUL-terminated string (e.g. `"0.12.0"`).
 The returned pointer is to static storage and must not be freed.
 
 ---
@@ -115,6 +117,52 @@ ParseContext *parse_begin(ParserSnapshot *snap);
 Begin a new parse session pinned to `snap`. Acquires a reference to the
 snapshot that is held until `parse_end()` is called. Returns `NULL` on
 allocation failure. `snap` must not be `NULL`.
+
+#### parse_begin_borrowed
+
+*Available since v0.10.0.*
+
+```c
+ParseContext *parse_begin_borrowed(ParserSnapshot *snap);
+```
+
+Begin a new parse session pinned to `snap` **without** touching the
+snapshot's atomic refcount. The caller MUST guarantee that `snap`
+lives at least until `parse_end()` returns on the resulting
+`ParseContext`. `parse_end()` detects the borrowed flag and skips
+the matching `lime_snapshot_release()`.
+
+**Why it exists.** `parse_begin` / `parse_end` issue an
+`atomic_fetch_add` / `atomic_fetch_sub` on `snap->refcount`. At high
+concurrency these LOCK-prefixed RMW ops serialise through the L3
+cache-coherence directory; on `bench/bench_parse_fanout` the
+refcount-acquiring API tops out at ~22% scaling efficiency at 8
+threads. Skipping the atomics entirely closes the gap. Measured
+3.4x throughput uplift at 8 threads (4M parses/sec → 13M parses/sec)
+for identical work.
+
+**When to use.** A typical parser server holds a snapshot for hours
+while worker threads borrow it for milliseconds. Anything where the
+snapshot's lifetime statically dominates the parse session's is a
+candidate.
+
+**Safety.** If the caller releases the snapshot while a borrowed
+parse is in flight, `parse_token` will read freed memory. When in
+doubt, use `parse_begin()` and accept the refcount cost.
+
+```c
+/* Server pattern: snapshot owned by the manager, parse threads borrow */
+ParserSnapshot *snap = lime_snapshot_create("sql.y", &err);   /* refcount = 1 */
+
+for (int t = 0; t < num_threads; ++t) {
+    pthread_create(&threads[t], NULL, worker, snap);
+}
+
+/* Inside worker: */
+ParseContext *ctx = parse_begin_borrowed(snap);   /* no atomic op */
+parse_token(ctx, ...);
+parse_end(ctx);                                   /* no atomic op */
+```
 
 #### parse_token
 
@@ -596,6 +644,8 @@ the snapshot's `yy_rule_info_lhs` and `yy_rule_info_nrhs` tables).
 When two extensions modify the same grammar element, the `on_conflict`
 callback is invoked:
 
+
+
 ```c
 typedef enum ConflictResolution {
     CONFLICT_UNRESOLVED,    /* No resolution provided */
@@ -604,6 +654,98 @@ typedef enum ConflictResolution {
     CONFLICT_MERGE,         /* Extension provides merged result */
 } ConflictResolution;
 ```
+
+---
+
+## In-Process Compiler API
+
+**Header:** `include/lime_compiler.h`
+**Library:** `liblime_compiler.a` (separate from `liblime_parser`).
+**pkg-config:** `pkg-config --cflags --libs lime-compiler`
+**Available since:** v0.5.4 (in-process compile), v0.10.0 (in-process lint).
+
+These entry points compile or lint a grammar in the calling process,
+without `fork`, `exec`, or a temp file. Eliminates the ~200 ms
+latency of the subprocess pipeline used by `lime_compile_grammar_text`
+and removes the runtime dependency on a C compiler. Required by
+`lime-lsp`'s diagnostic refresh path and by daemon-startup grammar
+composition.
+
+### Functions
+
+#### lime_compile_grammar_in_process
+
+```c
+int lime_compile_grammar_in_process(const char *grammar_text,
+                                    size_t len,
+                                    struct ParserSnapshot **out_snapshot,
+                                    char **error);
+```
+
+Compile grammar text into a `ParserSnapshot` in-process. On success
+returns `0` and sets `*out_snapshot` to a heap-allocated snapshot
+(caller releases with `lime_snapshot_release()`). On failure returns
+non-zero, sets `*out_snapshot` to `NULL`, and sets `*error` to a
+`malloc`'d error message that the caller must `free()`.
+
+**Thread safety.** Each call uses a fresh `LimeCompilerContext`
+internally. The active-context pointer is currently process-global,
+not `_Thread_local`, so two concurrent calls in different threads
+race. Sequential calls in the same thread are fully isolated.
+Thread-local storage is tracked under ROADMAP item 1, phase 5.
+
+#### lime_lint_grammar_in_process
+
+*Available since v0.10.0.*
+
+```c
+int lime_lint_grammar_in_process(const char *grammar_text,
+                                 size_t len,
+                                 char **out_diags);
+```
+
+Run the same parse + `FindActions` + `lint_grammar` pipeline that
+`lime -L` runs, in-process, with no fork / exec / temp file. Used by
+`lime-lsp`'s diagnostic refresh path.
+
+Unlike `lime_compile_grammar_in_process()`, this entry point does
+not build a `ParserSnapshot` — its purpose is purely diagnostics. It
+runs through `FindActions` (so conflicts are visible to the linter)
+and then `lint_grammar` (which emits `W`-class warnings the compile-
+only path skips).
+
+Captures everything the lint pipeline writes to stderr (parse errors,
+conflict messages, lint diagnostics) into a heap-allocated buffer at
+`*out_diags`. Output format matches `lime -L`'s default human format
+— `lime-lsp`'s `parse_output()` in `lsp_diagnostics.c` consumes it
+directly. Caller `free()`s `*out_diags`.
+
+**Returns:**
+
+| Value | Meaning |
+|---|---|
+| `0`         | Clean lint (zero errors, zero warnings). |
+| non-zero    | Errors or warnings emitted. Parse `*out_diags` to know what. |
+| `-1`        | In-process compiler context could not be set up (NULL grammar text, OOM). |
+
+Measured ~10% / 200 ms saved per LSP request on PostgreSQL's 21 k-line
+`gram.lime` versus the `fork`+`exec` pipeline. `lime-lsp` enables this
+path by default; the meson option `-Dlime_lsp_in_process=enabled`
+controls it explicitly.
+
+#### Subprocess fallback warning
+
+When `lime_compile_grammar_text` (the subprocess pipeline in
+`src/snapshot_create.c`) is called and `lime_compile_grammar_in_process`
+is not linked in, Lime emits a one-shot stderr warning naming the
+missing link contract:
+
+```text
+lime: warning: subprocess pipeline (link -llime-compiler for in-process)
+```
+
+The warning fires once per process. Set `LIME_FORCE_SUBPROCESS=1` to
+opt in to the subprocess path explicitly and suppress the warning.
 
 ### Modification Serializer
 
@@ -962,6 +1104,37 @@ without macro gymnastics.
 
 ---
 
+## Linking and pkg-config
+
+*pkg-config files since v0.5.4 (`lime`); `lime-compiler` since v0.10.0.*
+
+`meson install` ships two pkg-config files:
+
+| File | Library | Use it for |
+|---|---|---|
+| `lime.pc`          | `liblime_parser` | The runtime push parser, snapshots, tokenizer, extension registry, JIT. |
+| `lime-compiler.pc` | `liblime_compiler` (depends on `liblime_parser`) | The in-process compiler / linter API (`lime_compile_grammar_in_process`, `lime_lint_grammar_in_process`). |
+
+Most consumers want only `lime`:
+
+```sh
+cc $(pkg-config --cflags lime) main.c $(pkg-config --libs lime)
+```
+
+Consumers that need the in-process compile or lint API link both via
+the `Requires.private` chain:
+
+```sh
+cc $(pkg-config --cflags lime-compiler) main.c $(pkg-config --libs lime-compiler)
+```
+
+The split exists because `liblime_compiler.a` is ~1.2 MB of
+LALR-construction code that most parser-runtime consumers never
+need. Splitting keeps the `liblime_parser` link footprint small for
+the common embed-a-parser case.
+
+---
+
 ## Usage Examples
 
 ### Basic Tokenization
@@ -1038,6 +1211,64 @@ while (tokenizer_next(tok, &t)) {
 parse_token(ctx, 0, NULL, LIME_LOC_UNKNOWN);  /* Signal end-of-input */
 
 parse_end(ctx);
+```
+
+### Borrowed-Snapshot Parse Session (Server Pattern)
+
+```c
+#include "parser.h"
+#include "parse_context.h"
+#include <pthread.h>
+
+/* Manager owns the snapshot.  Worker threads borrow it. */
+static ParserSnapshot *g_snap;
+
+static void *worker(void *arg) {
+    /* No atomic refcount op on entry or exit -- 3.4x throughput
+    ** uplift at 8 threads versus parse_begin/parse_end. */
+    ParseContext *ctx = parse_begin_borrowed(g_snap);
+    /* ... feed tokens ... */
+    parse_end(ctx);
+    return NULL;
+}
+
+int main(void) {
+    char *err = NULL;
+    g_snap = lime_snapshot_create("sql.y", &err);   /* refcount = 1 */
+
+    pthread_t threads[8];
+    for (int i = 0; i < 8; ++i)
+        pthread_create(&threads[i], NULL, worker, NULL);
+    for (int i = 0; i < 8; ++i)
+        pthread_join(threads[i], NULL);
+
+    /* Workers all exited.  Now safe to release the only reference. */
+    lime_snapshot_release(g_snap);
+}
+```
+
+### In-Process Lint (LSP Diagnostics Pattern)
+
+```c
+#include "lime_compiler.h"     /* lime_compile_grammar_in_process */
+#include "parser.h"
+
+extern int lime_lint_grammar_in_process(const char *, size_t, char **);
+
+void lsp_publish_diagnostics(const char *grammar_text, size_t len) {
+    char *diags = NULL;
+    int rc = lime_lint_grammar_in_process(grammar_text, len, &diags);
+    if (rc == 0) {
+        /* clean lint */
+        free(diags);
+        return;
+    }
+    /* Parse the captured stderr into LSP Diagnostic[] -- format
+    ** matches `lime -L`'s default human format.  See lime-lsp's
+    ** lsp_diagnostics.c::parse_output for a worked parser. */
+    publish_to_client(diags);
+    free(diags);
+}
 ```
 
 ### Extension Registration
