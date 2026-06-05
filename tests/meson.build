@@ -717,6 +717,18 @@ test('lint', test_lint,
   ],
 )
 
+# audit/linter-quality: rustc-quality output polish.  Covers the
+# did-you-mean Levenshtein suggestions on E001/E002/M003 and the
+# --lint-explain CODE rule-documentation flag.  No fixtures dir; the
+# test writes per-case grammars into its scratch tmpdir.
+test_lint_quality = executable('test_lint_quality',
+  'test_lint_quality.c',
+)
+
+test('lint_quality', test_lint_quality,
+  args : [ lime_exe.full_path() ],
+)
+
 # v0.4.0: %dialect NAME { ... } directive (generator-time conditional
 # inclusion).  Drives the lime binary on test_dialect_grammar.lime
 # under several -D combinations and asserts the build fingerprint
