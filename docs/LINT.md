@@ -19,6 +19,7 @@ rules across three classes:
 
 ```
 lime -L [--lint-strict] [--lint-style] [--lint-format=human|gcc|json] grammar.lime
+lime --lint-explain=CODE
 ```
 
 | Flag                       | Purpose                                                                                           |
@@ -29,6 +30,7 @@ lime -L [--lint-strict] [--lint-style] [--lint-format=human|gcc|json] grammar.li
 | `--lint-format=human`      | Default.  Human-readable lines on stderr plus a totals summary.                                   |
 | `--lint-format=gcc`        | `path:line:col: severity: [code] message` on stderr; consumable by emacs/vim/IDE error lists.     |
 | `--lint-format=json`       | JSON array on stdout.  CI-friendly; `[]` on a clean grammar.  Schema documented below.            |
+| `--lint-explain=CODE`      | Print the long-form rule documentation for CODE to stdout and exit 0.  Case-insensitive.          |
 
 The lint pass runs *after* the LALR analysis pipeline (`FindActions`),
 so rules that depend on conflict counts (W005) have full data.  Code
@@ -76,6 +78,19 @@ A rule's RHS references a symbol that has no declaration anywhere:
 expr ::= NUM PLUS unkown.   /* E001: 'unkown' has no rule */
 ```
 
+When the linter finds a declared symbol within case-insensitive
+Levenshtein distance ≤ `max(1, len/3, 3)` of the typo, it appends a
+`did you mean 'NAME'?` hint to the diagnostic:
+
+```
+rule 'expr' references undeclared non-terminal 'identifyer' (no rule produces it); did you mean 'IDENTIFIER'?
+```
+
+The hint is part of the `message` field in JSON output (no schema
+change).  Same-kind matches (TERMINAL or NONTERMINAL) are preferred;
+the linter only widens to the other kind on a second pass when no
+same-kind match is close enough.
+
 Rationale: Lemon implicitly accepts undeclared uppercase symbols as
 fresh terminals, which silently absorbs typos.  Lime treats this as
 an opt-out behaviour: lint is opinionated, codegen still works.
@@ -91,7 +106,10 @@ A rule has a `[SYMBOL]` precedence override but `SYMBOL` has no
 expr ::= MINUS expr. [UMINUS]   /* E002: UMINUS has no precedence */
 ```
 
-The override is a no-op without a precedence directive.
+The override is a no-op without a precedence directive.  Like E001,
+E002 emits a `did you mean 'NAME'?` hint when a declared precedence
+symbol is close to the typo (case-insensitive Levenshtein, same
+budget).
 
 #### E003 — duplicate-token
 
@@ -208,8 +226,10 @@ in for grammars where every non-trivial rule should be documented
 
 #### M003 — undefined-export
 
-`%module_export NAME.` references a symbol that is not declared
-anywhere in the grammar.
+`%export NAME.` references a symbol that is not declared
+anywhere in the grammar.  Like E001 / E002, M003 emits a
+`did you mean 'NAME'?` hint when a defined non-terminal is close
+to the typo.
 
 #### W101 — terminal-export
 
@@ -308,6 +328,27 @@ The W008 / W009 thresholds are compile-time constants in `lime.c`:
 
 Adjust if your project's house style differs.  Future versions may
 expose these via CLI flags or a `.limelintrc` file.
+
+## Discoverability
+
+For any rule code, `lime --lint-explain=CODE` prints the same
+long-form documentation as the per-rule entries above:
+
+```
+$ lime --lint-explain=E001
+E001 -- undeclared-rhs-symbol
+
+A rule's right-hand side references a symbol that has no declaration.
+...
+Fix: declare the symbol or correct the typo.  When the linter has a
+close match in the symbol table it appends 'did you mean NAME?'.
+```
+
+Codes are case-insensitive (`--lint-explain=e001` works).  Unknown
+codes exit 1 with a list of recognised code-letter prefixes.  No
+grammar argument is required, so editor integrations can wire
+`lime --lint-explain=$1` to a hover-on-error action without paying
+the cost of re-parsing the file.
 
 ## Behaviour Notes
 
