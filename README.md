@@ -62,6 +62,41 @@ For a detailed comparison with Yacc, Bison, ANTLR, and Menhir, see
 **[from Yacc](docs/MIGRATION_FROM_YACC.md)** ·
 **[from Flex](docs/MIGRATION_FROM_FLEX.md)**.
 
+## Tooling
+
+Lime ships a complete grammar-author toolchain alongside the
+generator itself.  All commands work on the same `.lime` files.
+
+| Tool | What it does |
+|------|--------------|
+| `lime -L`            | Grammar-hygiene linter (E001-E005, W001-W009, S001-S002), `gcc` / `json` / human formats.  See [docs/LINT.md](docs/LINT.md). |
+| `lime -F`            | Non-destructive formatter that preserves comments and indent. |
+| `lime --diff-conflicts` | Symbolic LALR-conflict diff between two grammars (`base.lime ext.lime`).  Use in CI to catch dialect-overlay regressions.  See [docs/DIFF_CONFLICTS.md](docs/DIFF_CONFLICTS.md). |
+| `lime-lsp`           | Language Server Protocol implementation for editors.  Diagnostics from the linter, hover, goto-definition.  In-process diagnostic refresh path runs ~10% / 200 ms faster than the subprocess fallback on large grammars (since v0.10.0).  See [docs/LSP.md](docs/LSP.md) and [editors/lime-lsp-config.md](editors/lime-lsp-config.md). |
+| `--target=rust`      | Emit Rust output (since v0.8.0).  See above. |
+| `--target=c:bison`   | Emit a `bison`-compatible C skin (since v0.9.1).  Drop-in replacement for `bison -d` output, including `%union` and `YYDEBUG` (v0.9.2). |
+| `--target=c:flex`    | Emit a `flex`-compatible scanner skin (since v0.9.3).  Drop-in for `lex.yy.c`. |
+| `--target=rust:logos` | Emit a `logos`-compatible Rust scanner (since v0.9.3). |
+
+Grammar-composition directives:
+
+| Directive | Purpose |
+|-----------|---------|
+| `%dialect NAME { ... }` | Generator-time conditional rule inclusion (since v0.4.0).  See [docs/DIALECT.md](docs/DIALECT.md). |
+| `%extends "base.lime"` + `%override` / `%remove` / `%override_type` | File-level grammar inheritance with diamond resolution (since v0.4.1).  See [docs/EXTENDS.md](docs/EXTENDS.md). |
+| `%embed lang TRIGGER 'lex' ENTRY_TOKEN TOKEN.` | Sugar over the context-switch trigger registry (since v0.4.4).  See [docs/EMBED.md](docs/EMBED.md). |
+| `%action_c` / `%action_rust` | Carry both a C and a Rust action body for the same production (since v0.12.0).  Migrate production-by-production with a green build at every step.  See [docs/RUST_OUTPUT.md](docs/RUST_OUTPUT.md). |
+
+Runtime APIs that complement the generator:
+
+| API | What it does |
+|-----|--------------|
+| `parse_begin_borrowed(snap)` | Skip the snapshot atomic refcount.  3.4x throughput uplift at 8 threads on `bench/bench_parse_fanout` (since v0.10.0).  See [docs/API.md](docs/API.md#parse_begin_borrowed). |
+| `lime_compile_grammar_in_process(text, len, &snap, &err)` | In-process LALR(1) construction.  No `fork` / `exec` / temp file (since v0.5.4).  Link via `pkg-config --libs lime-compiler`. |
+| `lime_lint_grammar_in_process(text, len, &diags)` | In-process linter (since v0.10.0).  Backs `lime-lsp`'s diagnostic refresh path. |
+| Generalized-LR parsing | `glr_parse(...)` for grammars where LALR(1) conflicts can't be resolved by precedence (since v0.3.4).  See [docs/GLR.md](docs/GLR.md). |
+| Multi-grammar parsing | Runtime context-switch trigger registry for SQL-with-embedded-JSON / XML / JSONPath (since v0.3.0).  See [docs/CONTEXT_SWITCH.md](docs/CONTEXT_SWITCH.md). |
+
 ## Lexer subsystem
 
 Since v0.2.0 Lime also generates lexers.  `lime -X foo.lex` produces
@@ -248,7 +283,8 @@ lime/
 
 ## Documentation
 
-See **[docs/README.md](docs/README.md)** for the full index.  Key documents:
+See **[docs/README.md](docs/README.md)** for the full index, and
+**[CHANGELOG.md](CHANGELOG.md)** for per-release detail.  Key documents:
 
 | Document | Description |
 |----------|-------------|
@@ -334,8 +370,10 @@ Generate a parser from a grammar file:
 ```
 
 Key flags: `-d dir` (output directory), `-T template` (custom template),
-`-s` (statistics), `-L` (lint), `-F` (format).  See `man lime` or
-`lime -x` for the full list.
+`-s` (statistics), `-L` (lint), `-F` (format), `-X` (run as `.lex`
+compiler), `--target=rust` (Rust output).  Pass any unrecognised flag
+(e.g. `lime --help`) to get the full option list, or read `man lime`.
+`lime -x` prints the version.
 
 ### Extension Development
 
@@ -476,7 +514,6 @@ meson setup builddir-ubsan -Db_sanitize=undefined && ninja -C builddir-ubsan tes
 **Optional:** LLVM 14-21 (JIT; verified on 14.0.6 and 21.1.8, expected
 to build on every release in between via the compat shim in
 `include/jit_llvm_compat.h`).  lcov/gcovr (coverage), Valgrind, perf.
-**Runtime:** pthreads, C11 standard library.  LLVM if JIT enabled.
 **Runtime:** pthreads, C11 standard library.  LLVM if JIT enabled.
 
 All provided by `nix develop` via `flake.nix`.
