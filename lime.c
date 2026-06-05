@@ -2566,6 +2566,214 @@ enum lint_severity    { LINT_E = 0, LINT_W, LINT_N };
 static int lint_format = LINT_FMT_HUMAN;
 static int lint_strict = 0;
 static int lint_style  = 0;
+static char *lint_explain_code = 0;  /* set by --lint-explain=CODE */
+
+/* Per-rule long-form documentation, consulted by --lint-explain CODE.
+** Each entry pairs a rule code with a multi-line block that mirrors
+** the catalog in docs/LINT.md (the docs remain the source of truth
+** for prose; this table is a CLI-accessible cache so users don't
+** have to context-switch to the browser to understand a diagnostic).
+** Codes not listed below produce a generic "see docs/LINT.md" message. */
+static const struct {
+  const char *code;
+  const char *body;
+} lint_explain_entries[] = {
+  { "E001",
+    "E001 -- undeclared-rhs-symbol\n"
+    "\n"
+    "A rule's right-hand side references a symbol that has no declaration.\n"
+    "Non-terminals must be defined by at least one production rule;\n"
+    "terminals must be declared via %token / %left / %right / %nonassoc /\n"
+    "%fallback / %token_class / %wildcard.\n"
+    "\n"
+    "Lemon implicitly accepts undeclared uppercase symbols as fresh\n"
+    "terminals, which silently absorbs typos.  Lime treats this as an\n"
+    "opt-out behaviour: lint is opinionated, codegen still works.\n"
+    "\n"
+    "Fix: declare the symbol or correct the typo.  When the linter has a\n"
+    "close match in the symbol table it appends 'did you mean NAME?'.\n" },
+  { "E002",
+    "E002 -- undeclared-prec-symbol\n"
+    "\n"
+    "A rule has a [SYMBOL] precedence override but SYMBOL has no\n"
+    "%left / %right / %nonassoc declaration.  The override is a no-op\n"
+    "without a precedence directive.\n"
+    "\n"
+    "Fix: declare the precedence symbol -- the convention is to use a\n"
+    "synthetic name like UMINUS for unary-minus precedence and pin it\n"
+    "with %nonassoc UMINUS.\n" },
+  { "E003",
+    "E003 -- duplicate-token\n"
+    "\n"
+    "The same %token NAME. declaration appears twice.  Usually a copy-\n"
+    "paste artefact left over from a refactor.  Fix: delete one\n"
+    "declaration.\n" },
+  { "E004",
+    "E004 -- ambiguous-alias\n"
+    "\n"
+    "Within one rule, two RHS slots use the same alias name.  E.g.\n"
+    "  expr(A) ::= expr(A) PLUS expr(A).\n"
+    "$A is ambiguous in the action body.  Fix: use distinct alias\n"
+    "names (`expr(L) ... expr(R)`) or omit the aliases and use\n"
+    "positional $1/$3.\n" },
+  { "E005",
+    "E005 -- unreachable-rule\n"
+    "\n"
+    "A non-terminal is defined by one or more rules but never\n"
+    "referenced from any RHS, and is not the start symbol.  Almost\n"
+    "always a typo or dead code left over after a refactor.  Fix:\n"
+    "reference the rule from the RHS that should reach it, or delete\n"
+    "the unused rule(s).\n" },
+  { "W001",
+    "W001 -- unused-token\n"
+    "\n"
+    "A symbol is declared via %token but never referenced in any rule.\n"
+    "Skipped for %fallback sources/targets and the %wildcard token,\n"
+    "which are intentionally declared without use sites.  Fix: delete\n"
+    "the declaration, or check whether a rule should be referencing it.\n" },
+  { "W002",
+    "W002 -- unused-precedence\n"
+    "\n"
+    "A symbol has %left / %right / %nonassoc but never appears on any\n"
+    "rule's RHS or in a [SYMBOL] override.  Either the precedence is\n"
+    "dead code or the rule was deleted without cleaning the directive.\n"
+    "Fix: delete the precedence directive or restore the missing rule.\n" },
+  { "W004",
+    "W004 -- trivial-action-body\n"
+    "\n"
+    "The action body is just `{ $$ = $1; }` (modulo whitespace), which\n"
+    "is the default Lime emits when no body is present.  Suggest\n"
+    "deleting the body to reduce noise.\n" },
+  { "W005",
+    "W005 -- missing-expect\n"
+    "\n"
+    "The grammar has shift/reduce or reduce/reduce conflicts but no\n"
+    "%expect N. directive.  CI cannot detect when a future patch\n"
+    "introduces NEW conflicts: absent %expect, Lime accepts any\n"
+    "conflict count.  Fix: add `%expect N.` where N is the current\n"
+    "conflict count.  This locks the grammar's conflict surface.\n" },
+  { "W006",
+    "W006 -- alias-without-action\n"
+    "\n"
+    "A rule declares an (alias) on its LHS or an RHS slot, but the\n"
+    "action body never references it.  Either the alias is leftover\n"
+    "from a previous version of the action, or the body is missing a\n"
+    "use.  Fix: either reference the alias or remove the parenthesised\n"
+    "name.\n" },
+  { "W007",
+    "W007 -- inconsistent-naming\n"
+    "\n"
+    "Lemon convention: terminals are ALL_UPPER, non-terminals are\n"
+    "all_lower.  This rule flags mixed-case names like `MyToken` or\n"
+    "`my_Rule`.  Skipped for special symbols (`error`, `$`,\n"
+    "`{default}`) and %token_class synthetics.\n" },
+  { "W008",
+    "W008 -- long-rhs\n"
+    "\n"
+    "A rule has more than LIME_MAX_RHS_WARN (default 8) RHS symbols.\n"
+    "Long sequences should be factored into named sub-rules for\n"
+    "readability and to localise reduce-time cost.\n" },
+  { "W009",
+    "W009 -- long-action-body\n"
+    "\n"
+    "An action body exceeds LIME_MAX_ACTION_LINES_WARN (default 30)\n"
+    "lines.  Long bodies belong in a helper function inside the\n"
+    "%include { ... } block; the rule should call the helper.\n" },
+  { "W101",
+    "W101 -- terminal-export\n"
+    "\n"
+    "%export NAME. references a terminal symbol.  Exports are\n"
+    "typically non-terminals (other modules import them and use them\n"
+    "on the RHS of their own rules).  Warning rather than error\n"
+    "because exporting a terminal is occasionally legitimate.\n" },
+  { "W102",
+    "W102 -- type-without-rules\n"
+    "\n"
+    "A non-terminal has a %type declaration but no production rule.\n"
+    "Distinct from E001's NONTERMINAL-no-rule case in that no rule\n"
+    "references the symbol either, so E001 would not catch it.\n" },
+  { "S001",
+    "S001 -- missing-grammar-doc\n"
+    "\n"
+    "The file has no header comment block.  Off by default.  Useful\n"
+    "when porting from Bison grammars that conventionally document\n"
+    "copyright, provenance, and dialect at the top of the file.\n" },
+  { "S002",
+    "S002 -- missing-rule-doc\n"
+    "\n"
+    "A rule with nrhs > 1 has no leading comment.  Off by default;\n"
+    "opt in for grammars where every non-trivial rule should be\n"
+    "documented (e.g. PostgreSQL's gram.y ports).\n" },
+  { "M001",
+    "M001 -- module-name-without-version\n"
+    "\n"
+    "%module_name FOO. requires a paired %module_version \"1.2.3\".\n"
+    "Without a version other modules cannot %require this one.\n" },
+  { "M002",
+    "M002 -- invalid-semver\n"
+    "\n"
+    "%module_version value does not parse as MAJOR.MINOR.PATCH.\n"
+    "Fix: use a numeric semver triple, e.g. \"0.1.0\".\n" },
+  { "M003",
+    "M003 -- undefined-export\n"
+    "\n"
+    "%export NAME. references a symbol that is not declared anywhere\n"
+    "in the grammar.  Fix: declare or rename the exported symbol.\n" },
+  { 0, 0 }
+};
+
+static int print_lint_explanation(const char *raw_code){
+  if( raw_code == 0 || raw_code[0] == 0 ){
+    fprintf(stderr,
+            "lime: --lint-explain requires a code (e.g. E001)\n"
+            "      see docs/LINT.md for the full rule catalog\n");
+    return 1;
+  }
+  /* Normalise to upper-case so --lint-explain=e001 works too. */
+  char buf[16];
+  size_t n = strlen(raw_code);
+  if( n >= sizeof(buf) ){
+    fprintf(stderr, "lime: unrecognised lint code '%s'\n", raw_code);
+    return 1;
+  }
+  for(size_t i = 0; i < n; i++){
+    char c = raw_code[i];
+    buf[i] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
+  }
+  buf[n] = 0;
+  for(int i = 0; lint_explain_entries[i].code; i++){
+    if( strcmp(lint_explain_entries[i].code, buf) == 0 ){
+      fputs(lint_explain_entries[i].body, stdout);
+      return 0;
+    }
+  }
+  fprintf(stderr,
+          "lime: unrecognised lint code '%s'\n"
+          "      known codes: E001-E005, W001-W009, W101, W102,\n"
+          "                   S001-S002, M001-M003\n"
+          "      see docs/LINT.md for the full catalog\n",
+          raw_code);
+  return 1;
+}
+
+static void handle_lint_explain_option(char *z){
+  /* OPT_FSTR delivers the verbatim argv tail; for `--lint-explain=CODE`
+  ** that's `lint-explain=CODE`, for `--lint-explain CODE` (separate
+  ** argument forms not currently supported by handleflags) it would
+  ** just be `CODE`.  Strip past the `=` if present. */
+  if( z ){
+    const char *eq = strchr(z, '=');
+    if( eq ) z = (char*)eq + 1;
+  }
+  /* Stash verbatim; main() invokes print_lint_explanation() before
+  ** the file-required check so this never fights with the rest of
+  ** the option-parsing pipeline. */
+  if( z && z[0] ){
+    lint_explain_code = z;
+  }else{
+    lint_explain_code = (char*)""; /* sentinel: usage error */
+  }
+}
 
 static void handle_lint_format_option(char *z){
   /* The option-parser passes the verbatim argv[i] tail.  For
@@ -5474,6 +5682,8 @@ int main(int argc, char **argv){
      "Enable opt-in style suggestions S001-S002 (use with -L)."},
     {OPT_FSTR, "-lint-format", (char*)handle_lint_format_option,
      "Lint output format: human (default) | gcc | json."},
+    {OPT_FSTR, "-lint-explain", (char*)handle_lint_explain_option,
+     "Print the long-form explanation for a lint code (e.g. E001) and exit."},
     {OPT_FLAG, "m", (char*)&mhflag, "Output a makeheaders compatible file."},
     {OPT_FLAG, "l", (char*)&nolinenosflag, "Do not print #line statements."},
     {OPT_FLAG, "n", (char*)&snapshotFlag,
@@ -5687,6 +5897,14 @@ int main(int argc, char **argv){
   if( version ){
      printf("lime %s\n", LIME_VERSION_STRING);
      exit(0);
+  }
+  /* --lint-explain CODE: print the long-form rule documentation and
+  ** exit.  Doesn't require a grammar file (CI scripts and editor
+  ** integrations want quick lookup of "why did E001 fire on my
+  ** grammar" without having to context-switch to docs/LINT.md). */
+  if( lint_explain_code ){
+    int rc = print_lint_explanation(lint_explain_code);
+    exit(rc);
   }
   /* v0.4.3: --diff-conflicts dispatches BEFORE the normal one-file
   ** pipeline.  It runs two compile-passes via fork() (each child
