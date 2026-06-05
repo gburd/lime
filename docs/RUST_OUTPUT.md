@@ -101,6 +101,8 @@ invariant.
 | `%rust_value_type {T}` | `pub type Value = T;` (default `i64`). |
 | `%rust_extra_argument {T}` | `pub type UserArg = T;` and threaded into ReduceCtx as `&mut UserArg`. |
 | `%rust_action { ... }` | Per-rule Rust body override (verbatim emit). |
+| `%action_rust { ... }` | Alias for `%rust_action`. *Since v0.12.0.* |
+| `%action_c { ... }` | No-op alias for the inline brace body, paired with `%action_rust`. *Since v0.12.0.* |
 | `%rust_syntax_error { ... }` | Hook on parse error. `_token: u16, _state: u16`. |
 | `%rust_parse_accept { ... }` | Hook on accept.  `self.final_value` available. |
 | `%rust_parse_failure { ... }` | Hook on unrecoverable failure. |
@@ -287,6 +289,30 @@ expr(A) ::= expr(B) PLUS expr(C). { A = B + C; }
 The `%rust_action` body is emitted **verbatim**: no
 `$$/$N/<alias>` substitution.  The user has full Rust syntax
 including pattern matching, `?` operator, method calls, etc.
+
+### Symmetric `%action_c` / `%action_rust` (v0.12.0)
+
+When a grammar must carry separate, non-portable bodies for both
+targets, the symmetric pair `%action_c` + `%action_rust` makes the
+intent explicit:
+
+```lime
+stmt(A) ::= NUM(B) PLUS NUM(C).
+    %action_c    { A = make_int_C(B, C); }
+    %action_rust { A = self.make_int(B, C); }
+```
+
+- `%action_rust` is an alias for `%rust_action` (existing since v0.8).
+- `%action_c` is a no-op alias for the inline brace body so the C
+  body and the Rust body sit symmetrically next to the rule.
+
+C target emits the C body, Rust target emits the Rust body, neither
+emits the other.  This lets a grammar migrate production-by-
+production with a green build at every step — a concrete
+requirement for downstream consumers porting large action surfaces
+(e.g. Ra's 306-action PostgreSQL grammar).
+
+Legacy `%rust_action` grammars continue to compile unchanged.
 
 ## Per-rule reduce inlining
 
