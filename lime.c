@@ -2869,6 +2869,127 @@ static int lint_is_trivial_action(const char *body, int bound){
   return i >= bound;
 }
 
+/* ------------------------------------------------------------------
+** "Did you mean" support.  When E001 / E002 / M003 fire on a name
+** that the user clearly *intended* to match an existing symbol, we
+** want rustc-quality output: append `; did you mean 'NAME'?` to the
+** diagnostic.
+**
+** Levenshtein distance, capped at `max` for early exit.  Comparison
+** is case-insensitive so a lowercase typo (`identifyer`) still finds
+** an uppercase terminal (`IDENTIFIER`) -- in Lime grammars users
+** routinely confuse the two cases when porting from bison.  Names
+** longer than LINT_LD_CAP are skipped (returned cap+1) to bound the
+** stack arrays; a 256-char identifier is already a code-smell. */
+#define LINT_LD_CAP 256
+static int lint_edit_distance(const char *a, const char *b, int max){
+  if( a==0 || b==0 ) return max + 1;
+  int la = (int)strlen(a);
+  int lb = (int)strlen(b);
+  if( la > LINT_LD_CAP || lb > LINT_LD_CAP ) return max + 1;
+  int diff = la > lb ? la - lb : lb - la;
+  if( diff > max ) return max + 1;
+  if( la == 0 ) return lb;
+  if( lb == 0 ) return la;
+  int prev[LINT_LD_CAP + 1];
+  int cur [LINT_LD_CAP + 1];
+  for(int j = 0; j <= lb; j++) prev[j] = j;
+  for(int i = 1; i <= la; i++){
+    cur[0] = i;
+    int row_min = cur[0];
+    unsigned char ca = (unsigned char)a[i-1];
+    if( ca >= 'A' && ca <= 'Z' ) ca = (unsigned char)(ca - 'A' + 'a');
+    for(int j = 1; j <= lb; j++){
+      unsigned char cb = (unsigned char)b[j-1];
+      if( cb >= 'A' && cb <= 'Z' ) cb = (unsigned char)(cb - 'A' + 'a');
+      int sub = prev[j-1] + (ca != cb);
+      int del = prev[j]   + 1;
+      int ins = cur[j-1]  + 1;
+      int v = sub < del ? sub : del;
+      if( ins < v ) v = ins;
+      cur[j] = v;
+      if( v < row_min ) row_min = v;
+    }
+    if( row_min > max ) return max + 1;
+    memcpy(prev, cur, sizeof(int) * (size_t)(lb + 1));
+  }
+  return prev[lb];
+}
+
+/* Pick the closest `declared` symbol to `name` (lower distance wins;
+** case-insensitive).  Tie-break on lex order for stability.  Returns
+** the chosen symbol's name, or NULL if nothing is close enough.
+**
+** `kind_filter` is one of TERMINAL / NONTERMINAL / -1 (any).  When
+** filtering a typoed name, we prefer matches of the same kind --
+** an undeclared TERMINAL was probably meant to refer to another
+** TERMINAL.  When the user's typo is plausibly the wrong kind
+** (e.g. they typed an uppercase NAME but meant a non-terminal) we
+** widen the search via the second pass that ignores kind.
+**
+** Threshold: distance <= max(1, len/3).  Scaling lets short names
+** require an exact match (3-letter `OR` won't suggest `AND`) while
+** longer names tolerate one or two typos.  This matches rustc's
+** approach. */
+static const char *lint_suggest_similar(struct lime *lem, const char *name,
+                                        const char *declared,
+                                        int kind_filter){
+  if( name == 0 || lem == 0 || declared == 0 ) return 0;
+  int len = (int)strlen(name);
+  int budget = len / 3;
+  if( budget < 1 ) budget = 1;
+  if( budget > 3 ) budget = 3;
+  const char *best = 0;
+  int best_d = budget + 1;
+  for(int pass = 0; pass < 2 && best == 0; pass++){
+    int filter = (pass == 0) ? kind_filter : -1;
+    for(int i = 0; i < lem->nsymbol; i++){
+      struct symbol *sp = lem->symbols[i];
+      if( !sp || !sp->name ) continue;
+      if( !declared[i] ) continue;
+      if( sp->name[0] == '{' ) continue; /* {default} synthetic */
+      if( filter >= 0 && (int)sp->type != filter ) continue;
+      if( strcmp(sp->name, name) == 0 ) continue;
+      int d = lint_edit_distance(name, sp->name, best_d);
+      if( d < best_d ){
+        best_d = d;
+        best   = sp->name;
+      }else if( d == best_d && best && strcmp(sp->name, best) < 0 ){
+        best = sp->name;
+      }
+    }
+  }
+  return best;
+}
+
+/* Same as lint_suggest_similar but searches the precedence symbols
+** (sp->prec >= 0) for E002.  Only TERMINALs carry precedence so the
+** kind filter is implicit. */
+static const char *lint_suggest_prec(struct lime *lem, const char *name){
+  if( name == 0 || lem == 0 ) return 0;
+  int len = (int)strlen(name);
+  int budget = len / 3;
+  if( budget < 1 ) budget = 1;
+  if( budget > 3 ) budget = 3;
+  const char *best = 0;
+  int best_d = budget + 1;
+  for(int i = 0; i < lem->nsymbol; i++){
+    struct symbol *sp = lem->symbols[i];
+    if( !sp || !sp->name ) continue;
+    if( sp->prec < 0 ) continue;
+    if( strcmp(sp->name, name) == 0 ) continue;
+    int d = lint_edit_distance(name, sp->name, best_d);
+    if( d < best_d ){
+      best_d = d;
+      best   = sp->name;
+    }else if( d == best_d && best && strcmp(sp->name, best) < 0 ){
+      best = sp->name;
+    }
+  }
+  return best;
+}
+
+/* TEST_MARKER_LINE */
 static int lint_name_inconsistent(struct symbol *sp){
   if( sp==0 || sp->name==0 ) return 0;
   if( lint_is_builtin_symbol(sp->name) ) return 0;
@@ -2922,8 +3043,26 @@ static int lint_grammar(struct lime *lem){
     for(struct exported_symbol *exp = lem->exports; exp; exp = exp->next){
       struct symbol *sp = Symbol_find(exp->name);
       if( !sp ){
-        lint_emit(&st, LINT_E, "M003", 1, 1,
-                  "exported symbol '%s' is not defined", exp->name);
+        /* Build a temporary "declared" mask suitable for suggesting
+        ** any defined symbol -- exports must reference NONTERMINALs
+        ** with rules, so we look across both kinds and let the user
+        ** see the closest defined name.  W101 follows up with a
+        ** terminal-export warning when the suggested match resolves
+        ** to a TERMINAL. */
+        char *mask = lint_build_declared_set(lem);
+        const char *similar = mask
+          ? lint_suggest_similar(lem, exp->name, mask, NONTERMINAL)
+          : 0;
+        if( mask ) lime_free(mask);
+        if( similar ){
+          lint_emit(&st, LINT_E, "M003", 1, 1,
+                    "exported symbol '%s' is not defined; "
+                    "did you mean '%s'?",
+                    exp->name, similar);
+        }else{
+          lint_emit(&st, LINT_E, "M003", 1, 1,
+                    "exported symbol '%s' is not defined", exp->name);
+        }
       }else if( sp->type != NONTERMINAL ){
         lint_emit(&st, LINT_W, "W101", 1, 1,
                   "exported symbol '%s' is a terminal "
@@ -2948,9 +3087,19 @@ static int lint_grammar(struct lime *lem){
         const char *hint = (sp->type == NONTERMINAL)
           ? "no rule produces it"
           : "no %token / %left / %right / %nonassoc declares it";
-        lint_emit(&st, LINT_E, "E001", rp->ruleline, 1,
-                  "rule '%s' references undeclared %s '%s' (%s)",
-                  rp->lhs ? rp->lhs->name : "?", kind, sp->name, hint);
+        const char *similar = lint_suggest_similar(lem, sp->name, declared,
+                                                    (int)sp->type);
+        if( similar ){
+          lint_emit(&st, LINT_E, "E001", rp->ruleline, 1,
+                    "rule '%s' references undeclared %s '%s' (%s); "
+                    "did you mean '%s'?",
+                    rp->lhs ? rp->lhs->name : "?", kind, sp->name, hint,
+                    similar);
+        }else{
+          lint_emit(&st, LINT_E, "E001", rp->ruleline, 1,
+                    "rule '%s' references undeclared %s '%s' (%s)",
+                    rp->lhs ? rp->lhs->name : "?", kind, sp->name, hint);
+        }
       }
     }
   }
@@ -2958,11 +3107,21 @@ static int lint_grammar(struct lime *lem){
   /* E002 undeclared-prec-symbol. */
   for(rp = lem->rule; rp; rp = rp->next){
     if( rp->precsym && rp->precsym->prec < 0 ){
-      lint_emit(&st, LINT_E, "E002", rp->ruleline, 1,
-                "rule '%s' has [%s] precedence override, but '%s' has no "
-                "%%left / %%right / %%nonassoc declaration",
-                rp->lhs ? rp->lhs->name : "?",
-                rp->precsym->name, rp->precsym->name);
+      const char *similar = lint_suggest_prec(lem, rp->precsym->name);
+      if( similar ){
+        lint_emit(&st, LINT_E, "E002", rp->ruleline, 1,
+                  "rule '%s' has [%s] precedence override, but '%s' has no "
+                  "%%left / %%right / %%nonassoc declaration; "
+                  "did you mean '%s'?",
+                  rp->lhs ? rp->lhs->name : "?",
+                  rp->precsym->name, rp->precsym->name, similar);
+      }else{
+        lint_emit(&st, LINT_E, "E002", rp->ruleline, 1,
+                  "rule '%s' has [%s] precedence override, but '%s' has no "
+                  "%%left / %%right / %%nonassoc declaration",
+                  rp->lhs ? rp->lhs->name : "?",
+                  rp->precsym->name, rp->precsym->name);
+      }
     }
   }
 
