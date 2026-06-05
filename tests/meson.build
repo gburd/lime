@@ -2546,3 +2546,16 @@ else
           '(install hegel-c to enable; see ' +
           '.agent/skills/hegel/references/c/reference.md)')
 endif
+# v0.13.0: smoke test for scripts/lime-gdb.py.  Verifies the
+# pretty-printer + lime-* commands load and produce expected
+# output against a debug-built bench_parse_fanout.  Skipped when
+# gdb is unavailable on the runner (e.g. macOS sandbox setups).
+gdb_prog = find_program('gdb', required : false)
+if gdb_prog.found()
+  test('gdb_pretty_printers',
+    find_program(meson.project_source_root() / 'scripts/test-lime-gdb.sh'),
+    workdir : meson.project_source_root(),
+    depends : [lime_exe],
+    timeout : 60,
+  )
+endif
