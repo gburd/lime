@@ -104,6 +104,22 @@ extern const char *lime_emit_rust_get_rust_accept(const struct lime *lemp);
 extern const char *lime_emit_rust_get_rust_failure(const struct lime *lemp);
 extern const char *lime_emit_rust_get_rust_overflow(const struct lime *lemp);
 
+/* True if identifier `id` occurs as a whole word in `hay` (word boundaries on
+** both sides). Used to decide whether an RHS alias binding is referenced by a
+** rule's action body — checked against BOTH the inline C body and the
+** %rust_action body, so a %rust_action-only rule (no inline body) does not get
+** its aliases spuriously underscore-prefixed. */
+static int lime_rust_ident_used(const char *hay, const char *id) {
+    if (!hay || !hay[0] || !id || !id[0]) return 0;
+    size_t blen = strlen(id);
+    for (const char *p = hay; (p = strstr(p, id)); p++) {
+        int prev_ok = (p == hay) || !(isalnum((unsigned char)p[-1]) || p[-1] == '_');
+        int next_ok = !(isalnum((unsigned char)p[blen]) || p[blen] == '_');
+        if (prev_ok && next_ok) return 1;
+    }
+    return 0;
+}
+
 /* Per-rule action body classifier (see src/jit_inline.c).  Returns
 ** true when the action body is small/pure enough that the host
 ** compiler can safely inline it; returns false for bodies that
@@ -625,26 +641,23 @@ static void emit_reduce_callbacks(FILE *out, struct lime *lemp,
                 snprintf(buf, sizeof(buf), "rhs%d", i);
                 binding = buf;
             }
-            /* Underscore-prefix when the name doesn't appear in the
-            ** action body to suppress unused-variable warnings.  Cheap
-            ** lexical check.  Fallback names always get the underscore
-            ** since they're slot defaults that the user didn't ask for. */
+            /* Underscore-prefix when the name doesn't appear in the action
+            ** body to suppress unused-variable warnings.  Cheap lexical check
+            ** against BOTH the inline C body and the %rust_action body, so a
+            ** %rust_action-only rule (no inline body) doesn't get its aliases
+            ** spuriously underscore-prefixed (which would then fail to compile
+            ** when the Rust body references them). */
             int used = 0;
-            /* Default action emits `lhs = rhs0;` when no user body
-            ** is present and nrhs > 0; that consumes the rhs0
-            ** binding even though no user-written text references it. */
-            if ((no_code || !code) && i == 0 && nrhs > 0) {
+            /* Default action emits `lhs = rhs0;` when neither an inline body
+            ** nor a %rust_action body is present and nrhs > 0; that consumes
+            ** the rhs0 binding even though no user-written text references it. */
+            if ((no_code || !code)
+                && !(rust_override_for_inline && rust_override_for_inline[0])
+                && i == 0 && nrhs > 0) {
                 used = 1;
             }
-            if (!used && code) {
-                size_t blen = strlen(binding);
-                for (const char *p = code; (p = strstr(p, binding)); ) {
-                    int prev_ok = (p == code) || !(isalnum((unsigned char)p[-1]) || p[-1] == '_');
-                    int next_ok = !(isalnum((unsigned char)p[blen]) || p[blen] == '_');
-                    if (prev_ok && next_ok) { used = 1; break; }
-                    p++;
-                }
-            }
+            if (!used) used = lime_rust_ident_used(code, binding);
+            if (!used) used = lime_rust_ident_used(rust_override_for_inline, binding);
             fprintf(out, "    let %s%s: Value = ctx.rhs[%d].clone();\n",
                     used ? "" : "_",
                     binding, i);
