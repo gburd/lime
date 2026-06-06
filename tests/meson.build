@@ -431,6 +431,29 @@ if host_machine.system() != 'windows'
     depends : [lime_exe],
     is_parallel : false,
     timeout : 30)
+
+  # v1.3.0: lalrpop-API skin regression.
+  test_emit_rust_skin_lalrpop = executable('test_emit_rust_skin_lalrpop',
+    'test_emit_rust_skin_lalrpop.c',
+  )
+  test('emit_rust_skin_lalrpop', test_emit_rust_skin_lalrpop,
+    args : [lime_exe.full_path()],
+    depends : [lime_exe],
+    is_parallel : false,
+    timeout : 60)
+  # v1.3.0: regression for c0d68d0 -- %rust_action body must be
+  # scanned for RHS alias usage so single-target Rust rules don't
+  # get their aliases spuriously underscore-prefixed.  Reported by
+  # a downstream Lime client; fix landed before v1.3.0 cut.
+  test_rust_action_alias_usage = executable('test_rust_action_alias_usage',
+    'test_rust_action_alias_usage.c',
+  )
+  test('rust_action_alias_usage', test_rust_action_alias_usage,
+    args : [lime_exe.full_path()],
+    depends : [lime_exe],
+    is_parallel : false,
+    timeout : 30)
+
 endif
 
 # v0.8.6 CLI flag redesign: regression for --target / --enable /

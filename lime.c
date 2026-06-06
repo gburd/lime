@@ -106,7 +106,7 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "1.2.0"
+#define LIME_VERSION_STRING "1.3.0"
 #endif
 
 
@@ -5026,6 +5026,12 @@ static int g_skin_flex  = 0;
 ** Mirrors g_skin_bison's role on the C side. */
 static int g_skin_logos = 0;
 
+/* `lalrpop` Rust-side skin (--target=rust:lalrpop): emit a sibling
+** <stem>_lalrpop.rs that wraps the standard generated parser in a
+** lalrpop-API-compatible shape.  See src/emit_rust_skin_lalrpop.c.
+** Mirrors g_skin_logos's role on the lex side. */
+static int g_skin_lalrpop = 0;
+
 /* When non-zero, --rust / --rustlex / --rust-crate / --rust-nostd /
 ** --rustlex-simd / --rustlex-memchr / --per-token-dfa was seen on
 ** the command line.  Used to populate the legacy globals after
@@ -5219,12 +5225,18 @@ static void handle_target_option(char *z) {
                 g_skin_logos = 1;
                 continue;
             }
+            if (strcmp(tok, "lalrpop") == 0) {
+                /* v1.3.0 (LTS): lalrpop-API skin lands.  Sets the
+                ** flag; emit happens after emit_rust_parser succeeds.
+                ** See src/emit_rust_skin_lalrpop.c. */
+                g_skin_lalrpop = 1;
+                continue;
+            }
             /* Other Rust-side skins are documented in open-items.md but
             ** not yet implemented.  Emit a clear error so users know the
             ** flag form is recognised but the back-end is pending. */
             if (strcmp(tok, "nom") == 0
              || strcmp(tok, "pest") == 0
-             || strcmp(tok, "lalrpop") == 0
              || strcmp(tok, "chumsky") == 0) {
                 fprintf(stderr,
                   "lime: --target=rust:%s is reserved for future work; "
@@ -5232,8 +5244,8 @@ static void handle_target_option(char *z) {
                 exit(1);
             }
             fprintf(stderr,
-              "lime: unknown rust-target skin '%s'.  Valid: logos.  "
-              "Reserved (future): nom, pest, lalrpop, chumsky.\n", tok);
+              "lime: unknown rust-target skin '%s'.  Valid: logos, lalrpop.  "
+              "Reserved (future): nom, pest, chumsky.\n", tok);
             exit(1);
         }
         if (strcmp(tok, "bison") == 0) {
@@ -5951,6 +5963,44 @@ int main(int argc, char **argv){
                 lem.errorcnt++;
             }else if( !quiet ){
                 fprintf(stderr, "Wrote Cargo crate skeleton next to %s\n", rust_path);
+            }
+        }
+
+        /* v1.3.0 (LTS): --target=rust:lalrpop emits a sibling
+        ** <stem>_lalrpop.rs that wraps the standard parser in a
+        ** lalrpop-API-compatible shape.  See src/emit_rust_skin_lalrpop.c. */
+        if( g_skin_lalrpop && lem.errorcnt == 0 ){
+            extern int lime_emit_rust_skin_lalrpop(struct lime *lemp,
+                                                   const char *out_path,
+                                                   const char *bare_id);
+            char skin_path[512];
+            const char *cp2 = strrchr(lem.filename, '.');
+            size_t base_len2 = cp2 ? (size_t)(cp2 - lem.filename) : strlen(lem.filename);
+            snprintf(skin_path, sizeof(skin_path), "%.*s_lalrpop.rs",
+                     (int)base_len2, lem.filename);
+            /* Compute bare_id (basename without dir/ext) for the
+            ** `use super::<bare>::*;` import in the skin. */
+            const char *raw2 = lem.filename;
+            const char *slash2 = strrchr(raw2, '/');
+#if defined(_WIN32)
+            const char *bsl2 = strrchr(raw2, '\\');
+            if( bsl2 && (!slash2 || bsl2 > slash2) ) slash2 = bsl2;
+#endif
+            const char *bare2 = slash2 ? slash2 + 1 : raw2;
+            size_t blen2 = strlen(bare2);
+            const char *dot2 = strrchr(bare2, '.');
+            if( dot2 ) blen2 = (size_t)(dot2 - bare2);
+            char *bare_id2 = (char*)lime_malloc(blen2 + 1);
+            if( bare_id2 ){
+                memcpy(bare_id2, bare2, blen2);
+                bare_id2[blen2] = 0;
+                if( lime_emit_rust_skin_lalrpop(&lem, skin_path, bare_id2) != 0 ){
+                    fprintf(stderr, "lime --target=rust:lalrpop: emit failed\n");
+                    lem.errorcnt++;
+                }else if( !quiet ){
+                    fprintf(stderr, "Wrote lalrpop skin to %s\n", skin_path);
+                }
+                lime_free(bare_id2);
             }
         }
     }

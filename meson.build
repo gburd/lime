@@ -1,5 +1,5 @@
 project('lime-parser', 'c', 'cpp',
-  version : '1.2.0',
+  version : '1.3.0',
   default_options : [
     'c_std=c11',
     'warning_level=2',
@@ -189,6 +189,7 @@ subdir('src')
 lime_exe = executable('lime',
   'lime.c',
   'src/emit_rust.c',
+  'src/emit_rust_skin_lalrpop.c',
   'src/emit_c_skin_bison.c',
   'src/jit_inline.c',
   link_with : [lime_lex_compiler_lib],
