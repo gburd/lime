@@ -15237,6 +15237,30 @@ static int lime_emit_c_skin_bison_stub(struct lime *lemp,
 }
 __pragma(comment(linker, "/alternatename:lime_emit_c_skin_bison=lime_emit_c_skin_bison_stub"))
 #endif
+
+/* lime_emit_rust_skin_lalrpop (v1.3.0): same weak-stub pattern as
+** the bison skin above.  Defined in src/emit_rust_skin_lalrpop.c;
+** the standalone single-file build provides this no-op stub so
+** `cc -o lime lime.c` links without dragging in the skin TU. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak))
+int lime_emit_rust_skin_lalrpop(struct lime *lemp,
+                                const char *out_path,
+                                const char *bare_id) {
+    (void)lemp; (void)out_path; (void)bare_id;
+    fprintf(stderr, "lime: lalrpop skin not available in standalone build\n");
+    return 1;
+}
+#elif defined(_MSC_VER)
+static int lime_emit_rust_skin_lalrpop_stub(struct lime *lemp,
+                                            const char *out_path,
+                                            const char *bare_id) {
+    (void)lemp; (void)out_path; (void)bare_id;
+    fprintf(stderr, "lime: lalrpop skin not available in standalone build\n");
+    return 1;
+}
+__pragma(comment(linker, "/alternatename:lime_emit_rust_skin_lalrpop=lime_emit_rust_skin_lalrpop_stub"))
+#endif
 int g_lime_skin_logos_flag_unused_anchor = 0;
 /* Default 1: safe-Rust emit (no unsafe { ... } wrappers in scalar
 ** DFA dispatch loops).  --target=rust,unsafe or --disable=safe
