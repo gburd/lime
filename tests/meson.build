@@ -400,6 +400,20 @@ if host_machine.system() != 'windows'
     depends : [lime_exe],
     is_parallel : false,
     timeout : 30)
+
+  # v1.1.0: --enable=token-names introspection regression test.
+  # Asserts YY_TOKEN_NAMES + token_name + yy_find_shift_action +
+  # expected_tokens_in_state are emitted by default and can be
+  # suppressed via --disable=token-names.  Closes the post-v1.0.0
+  # Rust-diagnostics gap reported by Ra.
+  test_emit_rust_token_names = executable('test_emit_rust_token_names',
+    'test_emit_rust_token_names.c',
+  )
+  test('emit_rust_token_names', test_emit_rust_token_names,
+    args : [lime_exe.full_path()],
+    depends : [lime_exe],
+    is_parallel : false,
+    timeout : 30)
 endif
 
 # v0.8.6 CLI flag redesign: regression for --target / --enable /

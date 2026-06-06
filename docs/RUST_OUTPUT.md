@@ -137,6 +137,115 @@ A self-contained `.rs` file matching the input's basename:
   - `finalize(&mut self) -> Result<bool, ParseError>` (= `push(0, default)`)
   - 4 hook methods: `on_syntax_error`, `on_parse_accept`, `on_parse_failure`, `on_stack_overflow`
 
+### Token-name + expected-tokens introspection (v1.1.0)
+
+When `--enable=token-names` is on (the default for `--target=rust`),
+the emit additionally produces:
+
+- `pub static YY_TOKEN_NAMES: &[&'static str]` -- terminal names
+  indexed by INTERNAL token code (slot 0 is `"$end"`).  Pairs with
+  `FIRST_TOKEN` to map EXTERNAL codes back to readable names.
+- `pub fn token_name(code: u16) -> Option<&'static str>` -- safe
+  wrapper accepting either internal or external codes; returns
+  `None` for out-of-range or synthetic slots.
+- `pub fn yy_find_shift_action(state: u16, lookahead: u16) -> u16`
+  -- public version of the shift-action lookup so consumers can
+  build their own table walks without copying internal logic.
+- `pub fn expected_tokens_in_state(state: u16) -> Vec<u16>` --
+  returns INTERNAL codes whose action at `state` is non-error
+  and not the default action.  Sorted ascending.
+
+Together these mirror the C target's `yyTokenName`,
+`ParseTokenName`, `ParseExpectedTokens` trio and let consumers
+build rustc-quality syntax-error diagnostics on the Rust path.
+
+Example, called from a `%rust_syntax_error` hook:
+
+```rust
+fn on_syntax_error(&mut self, token: u16, state: u16) {
+    let got = token_name(token).unwrap_or("<unknown>");
+    let expected = expected_tokens_in_state(state);
+    let names: Vec<&str> = expected
+        .iter()
+        .filter_map(|&c| token_name(c))
+        .collect();
+    eprintln!(
+        "syntax error: unexpected '{}' \u{2014} expected one of: {}",
+        got, names.join(", "));
+}
+```
+
+Disable via `--disable=token-names` if you want the smaller
+v1.0.0 emit (saves ~50-200 B per terminal name of static data).
+Token-code consts (`pub const SELECT: u16 = 5;`) are emitted
+regardless; only the introspection helpers are gated.
+
+### Embedding via `include!` -- strip crate-level inner attrs
+
+The generated `.rs` carries `#![allow(...)]` inner attributes at
+the top so it compiles standalone with the typical `cargo new`
+lint defaults.  When you `include!` the file into a sub-module
+rather than using it as a crate root, those `#![...]` lines
+trip the `inner_attrs_after_outer` rule.
+
+A one-liner build-script strip handles it cleanly:
+
+```rust
+// build.rs
+fn main() {
+    println!("cargo:rerun-if-changed=src/parser.rs");
+    let src = std::fs::read_to_string("src/parser.rs").unwrap();
+    let stripped = src
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("#!["))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(
+        std::env::var("OUT_DIR").unwrap() + "/parser_stripped.rs",
+        stripped).unwrap();
+}
+```
+
+Then `include!(concat!(env!("OUT_DIR"), "/parser_stripped.rs"));`
+in the consuming module.  No source-tree edit required; lime's
+emit stays portable for both standalone-crate and `include!`
+consumers.
+
+### `&mut UserArg` borrow check across nested reduction calls
+
+Action bodies that thread the user argument through nested
+builder calls hit Rust's `&mut` exclusivity rule:
+
+```rust
+// In a %rust_action body, `user` is &mut UserArg.
+// This double-borrows it across the nested call:
+*lhs = binop(user, op, const_int(user, 0), b);
+//             ^^^                ^^^^
+//             first borrow       second borrow (rejected)
+```
+
+The simplest fix on the consumer side is to have builders take
+`*mut State` (raw, `Copy`) instead of `&mut State`:
+
+```rust
+// In your builder layer, accept *mut State.  Nested calls now
+// each get a fresh raw pointer and Rust doesn't track exclusive
+// access across them.
+fn binop(s: *mut State, op: Op, a: Expr, b: Expr) -> Expr { ... }
+fn const_int(s: *mut State, v: i64) -> Expr { ... }
+
+// In %rust_action: cast user to a raw pointer once; pass it to
+// every nested call.
+%rust_action {
+    let s: *mut State = user;
+    *lhs = binop(s, op, const_int(s, 0), b);
+}
+```
+
+This is a Rust borrow-checker boundary, not a Lime issue, but
+comes up often enough in lime grammars that thread state through
+actions that it's worth the call-out.
+
 ## Performance
 
 On i9-12900H, `examples/rust_calc/src/bin/bench.rs`:

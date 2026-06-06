@@ -4969,6 +4969,13 @@ typedef struct feature_flag_state {
                        ** 2 (SIMD intrinsics) and 3 (#[target_feature]
                        ** callsites) are unaffected.  Opt OUT for ~<2%%
                        ** perf via --target=rust,unsafe or --disable=safe. */
+    int token_names;   /* default 1 (Rust target): emit YY_TOKEN_NAMES,
+                       ** TOKEN_NAME(code), and ParserSyntaxState helpers
+                       ** so consumers can build rustc-quality syntax-error
+                       ** diagnostics ("expected one of: FROM, ',', ...").
+                       ** Adds ~50-200 bytes of static data per terminal name.
+                       ** Opt OUT via --disable=token-names if binary size
+                       ** matters more than diagnostic quality. */
 } feature_flag_state;
 
 static feature_flag_state g_features = {
@@ -4979,6 +4986,7 @@ static feature_flag_state g_features = {
     .crate = 0,
     .nostd = 0,
     .safe = 1,
+    .token_names = 1,
 };
 
 /* Per-feature flag: was this set explicitly on the command line
@@ -5046,6 +5054,7 @@ static const struct {
     { "crate",         offsetof(feature_flag_state, crate),         1 },
     { "nostd",         offsetof(feature_flag_state, nostd),         1 },
     { "safe",          offsetof(feature_flag_state, safe),          1 },
+    { "token-names",   offsetof(feature_flag_state, token_names),   1 },
     { NULL, 0, 0 },
 };
 
@@ -5435,6 +5444,7 @@ int main(int argc, char **argv){
   extern int g_lime_per_token_dfa_flag;
   extern int g_lime_lex_vectorize_flag;
   extern int g_lime_lex_safe_flag;
+  extern int g_lime_rust_token_names_flag;
   static int rustCrateFlag = 0; /* --rust-crate: emit a complete Cargo
                                 ** crate alongside the .rs file
                                 ** (Cargo.toml + src/lib.rs).  Only valid
@@ -5675,6 +5685,16 @@ int main(int argc, char **argv){
     ** `unsafe { ... }` wrappers and uses [] indexing.  Categories 2
     ** (SIMD intrinsics) and 3 (#[target_feature]) are unaffected. */
     g_lime_lex_safe_flag = g_features.safe;
+
+    /* g_features.token_names defaults ON for Rust target; emits
+    ** YY_TOKEN_NAMES + TOKEN_NAME(code) + a public expected-tokens
+    ** lookup so consumers can build rustc-quality syntax-error
+    ** diagnostics on the Rust side.  Closes the Letter post-v1.0.0
+    ** Rust-diagnostics gap ("the only feature the Rust target
+    ** cannot yet match on the C target").  Adds ~50-200 B static
+    ** data per terminal name to the emitted parser.rs.  Opt OUT
+    ** via --disable=token-names. */
+    g_lime_rust_token_names_flag = g_features.token_names;
 
     /* Vectorize is the C-side SIMD/intrinsic toggle.  Default ON;
     ** opt-out via --disable=vectorize.  The global is consulted by
@@ -14999,6 +15019,11 @@ int g_lime_skin_logos_flag_unused_anchor = 0;
 ** sets this to 0 and reverts to the v0.9.2 unsafe+get_unchecked
 ** emit.  Has no effect when the C target is selected. */
 int g_lime_lex_safe_flag = 1;
+/* Default 1: emit token-name + expected-tokens introspection in the
+** Rust target.  --disable=token-names sets this to 0.  Has no effect
+** when the C target is selected (C output already emits yyTokenName +
+** ParseExpectedTokens unconditionally). */
+int g_lime_rust_token_names_flag = 1;
 /* g_lime_lex_vectorize_flag has two definition sites:
 **   1. src/lex/lex_emit.c (where it's actually used by emit code)
 **   2. lime.c (here -- so the standalone single-file `cc -o lime lime.c`

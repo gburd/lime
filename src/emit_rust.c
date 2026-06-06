@@ -193,6 +193,169 @@ static void emit_token_constants(FILE *out, const struct lime *lemp) {
     fprintf(out, "\n");
 }
 
+/* ------------------------------------------------------------------
+** v1.1.0: Token-name + expected-tokens introspection.
+**
+** Emitted when --enable=token-names (default ON for the Rust target).
+** Mirrors the C target's yyTokenName / ParseTokenName /
+** ParseExpectedTokens trio so consumers can build rustc-quality
+** "unexpected X; expected one of: Y, Z, ..." diagnostics on the
+** Rust path.
+**
+** Surface:
+**
+**   pub static YY_TOKEN_NAMES: &[&'static str]
+**       indexed by INTERNAL token code (0 = $end / EOF).  Empty
+**       slots stay as "".  Always emitted when token-names is on.
+**
+**   pub fn token_name(code: u16) -> Option<&'static str>
+**       safe wrapper: bounds check + Some/None for valid/invalid
+**       codes.  Maps EXTERNAL codes (FIRST_TOKEN-relative) too,
+**       so callers don't have to know the internal/external split.
+**
+**   pub fn yy_find_shift_action(state: u16, lookahead: u16) -> u16
+**       public version of the shift-action table lookup so consumers
+**       can replicate ParseExpectedTokens' table walk in Rust.
+**       Returns YY_ERROR_ACTION on any error.
+**
+**   pub fn expected_tokens_in_state(state: u16) -> Vec<u16>
+**       enumerate INTERNAL codes that have a non-error action at
+**       the given state.  Sorted ascending.  No std-lib dep beyond
+**       Vec (already used elsewhere in the parser).
+**
+** When --disable=token-names is set, NONE of the above is emitted
+** -- the parser stays at its smaller v1.0.0 size.  Token codes are
+** still pub const so existing %rust_syntax_error consumers keep
+** working; they just lose the structured introspection. */
+static void emit_token_names(FILE *out, const struct lime *lemp,
+                              const LimeRustTables *t) {
+    extern int g_lime_rust_token_names_flag;
+    if (!g_lime_rust_token_names_flag) {
+        emit_section(out, "Token-name introspection (DISABLED)");
+        fprintf(out,
+            "// --disable=token-names was passed.  YY_TOKEN_NAMES,\n"
+            "// token_name, yy_find_shift_action, and expected_tokens_in_state\n"
+            "// are NOT emitted.  Re-enable via --enable=token-names if\n"
+            "// rustc-quality syntax-error diagnostics matter more than\n"
+            "// the ~50-200 B per terminal name of static data.\n\n");
+        return;
+    }
+
+    emit_section(out, "Token-name + expected-tokens introspection");
+
+    /* YY_TOKEN_NAMES table.  Indexed by INTERNAL token code.  Slot 0
+    ** is $end / EOF (which the lemon convention names "$" -- we emit
+    ** "$end" for clarity).  Non-rust-ident names (e.g. punctuation
+    ** tokens like '.', ',') are emitted as their literal string. */
+    int nterm = lime_emit_rust_get_nterminal(lemp);
+    fprintf(out, "/// Terminal names indexed by INTERNAL token code.\n");
+    fprintf(out, "/// Slot 0 is $end (EOF).  Pairs with FIRST_TOKEN to map\n");
+    fprintf(out, "/// EXTERNAL token codes back to readable names.\n");
+    fprintf(out, "pub static YY_TOKEN_NAMES: &[&'static str] = &[\n");
+    fprintf(out, "    \"$end\",\n");
+    for (int i = 1; i < nterm; i++) {
+        struct symbol *sp = lime_emit_rust_symbol_at(lemp, i);
+        const char *name = sp ? lime_emit_rust_symbol_name(sp) : NULL;
+        if (!name || name[0] == '$') {
+            fprintf(out, "    \"\",   // slot %d (synthetic)\n", i);
+            continue;
+        }
+        /* Quote the name for Rust string-literal syntax.  Only ASCII
+        ** printable + escape backslash and double-quote; non-printable
+        ** bytes get emitted as a Unicode escape.  Token names in lime
+        ** grammars are typically [A-Za-z0-9_] so this is a fast path. */
+        fprintf(out, "    \"");
+        for (const char *p = name; *p; p++) {
+            unsigned char c = (unsigned char)*p;
+            if (c == '\\' || c == '"') {
+                fprintf(out, "\\%c", c);
+            } else if (c >= 0x20 && c < 0x7f) {
+                fputc(c, out);
+            } else {
+                fprintf(out, "\\x%02x", c);
+            }
+        }
+        fprintf(out, "\",\n");
+    }
+    fprintf(out, "];\n\n");
+
+    /* token_name(code): safe wrapper accepting either INTERNAL or
+    ** EXTERNAL codes (it tries internal first, then
+    ** external = code - FIRST_TOKEN if FIRST_TOKEN > 0). */
+    fprintf(out,
+        "/// Look up the human-readable name for a terminal token code.\n"
+        "///\n"
+        "/// Accepts either an INTERNAL code (0..NTERMINAL) or an EXTERNAL\n"
+        "/// code (FIRST_TOKEN..FIRST_TOKEN+NTERMINAL).  Returns None on\n"
+        "/// out-of-range values or for synthetic / unnamed slots.\n"
+        "pub fn token_name(code: u16) -> Option<&'static str> {\n"
+        "    let internal: usize = if (code as u32) >= FIRST_TOKEN as u32 {\n"
+        "        (code - FIRST_TOKEN) as usize\n"
+        "    } else {\n"
+        "        code as usize\n"
+        "    };\n"
+        "    if internal >= YY_TOKEN_NAMES.len() {\n"
+        "        return None;\n"
+        "    }\n"
+        "    let name = YY_TOKEN_NAMES[internal];\n"
+        "    if name.is_empty() { None } else { Some(name) }\n"
+        "}\n\n");
+
+    /* yy_find_shift_action: public version of the shift-action lookup.
+    ** Mirrors the C-side ParseExpectedTokens table walk so consumers
+    ** can build the expected-tokens set themselves if they want it
+    ** in a different shape. */
+    fprintf(out,
+        "/// Look up the shift-action for (state, lookahead).  Returns the\n"
+        "/// raw action code; compare against YY_ERROR_ACTION,\n"
+        "/// YY_NO_ACTION, YY_DEFAULT[state], or use the action-class\n"
+        "/// constants (YY_MAX_SHIFT, YY_MIN_SHIFTREDUCE, etc.) to\n"
+        "/// classify what kind of action it is.\n"
+        "pub fn yy_find_shift_action(state: u16, lookahead: u16) -> u16 {\n"
+        "    let stateno = state as usize;\n"
+        "    if stateno >= NSTATE as usize { return YY_ERROR_ACTION; }\n"
+        "    let ofst = YY_SHIFT_OFST[stateno];\n"
+        "    let idx  = ofst + lookahead as i32;\n"
+        "    if idx >= 0 && (idx as usize) < YY_LOOKAHEAD.len()\n"
+        "            && YY_LOOKAHEAD[idx as usize] == lookahead {\n"
+        "        YY_ACTION[idx as usize]\n"
+        "    } else {\n"
+        "        YY_DEFAULT[stateno]\n"
+        "    }\n"
+        "}\n\n");
+
+    /* expected_tokens_in_state: enumerate INTERNAL codes that have a
+    ** non-error action at the given state.  Mirrors the C-side
+    ** ParseExpectedTokens.  Returns Vec<u16> -- callers free by drop. */
+    fprintf(out,
+        "/// Return the INTERNAL token codes whose lookup at `state`\n"
+        "/// produces a non-error action -- i.e. the set of terminals\n"
+        "/// that would be valid as the next token.  Codes are sorted\n"
+        "/// ascending.  Pair with token_name() to build human-readable\n"
+        "/// 'expected one of ...' diagnostics from a %%rust_syntax_error\n"
+        "/// hook:\n"
+        "///\n"
+        "/// ```ignore\n"
+        "/// let codes = expected_tokens_in_state(state);\n"
+        "/// let names: Vec<&str> = codes.iter()\n"
+        "///     .filter_map(|&c| token_name(c)).collect();\n"
+        "/// eprintln!(\"expected one of: {}\", names.join(\", \"));\n"
+        "/// ```\n"
+        "pub fn expected_tokens_in_state(state: u16) -> Vec<u16> {\n"
+        "    let mut out = Vec::new();\n"
+        "    let stateno = state as usize;\n"
+        "    if stateno >= NSTATE as usize { return out; }\n"
+        "    let default = YY_DEFAULT[stateno];\n"
+        "    for tok in 0..NTERMINAL as u16 {\n"
+        "        let act = yy_find_shift_action(state, tok);\n"
+        "        if act != YY_ERROR_ACTION && act != default {\n"
+        "            out.push(tok);\n"
+        "        }\n"
+        "    }\n"
+        "    out\n"
+        "}\n\n");
+}
+
 static void emit_dispatch_constants(FILE *out, const LimeRustTables *t) {
     emit_section(out, "Dispatch range constants");
     fprintf(out, "pub const NSTATE:    u32 = %u;\n", t->nstate);
@@ -920,6 +1083,7 @@ int emit_rust_parser(struct lime *lemp, const char *out_path,
     emit_token_constants(out, lemp);
     emit_dispatch_constants(out, &tables);
     emit_action_tables(out, &tables);
+    emit_token_names(out, lemp, &tables);
     emit_reduce_callbacks(out, lemp, &tables);
     emit_parser_runtime(out, lemp);
 
