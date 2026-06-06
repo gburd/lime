@@ -8,18 +8,22 @@ url="https://codeberg.org/gregburd/lime"
 license=('PublicDomain')
 depends=('llvm-libs')
 makedepends=('meson' 'ninja' 'llvm')
-source=("https://codeberg.org/gregburd/lime/archive/v$pkgver.tar.gz")
+# Local-tarball name: the release CI stages this file as <pkgname>-<pkgver>.tar.xz.
+source=("$pkgname-$pkgver.tar.xz")
 sha256sums=('SKIP')
 
 build() {
-  arch-meson "lime-$pkgver" build -Dllvm=auto
+  cd "$srcdir"
+  arch-meson "$pkgname-$pkgver" build -Dllvm=auto
   meson compile -C build
 }
 
 check() {
+  cd "$srcdir"
   meson test -C build --no-rebuild
 }
 
 package() {
+  cd "$srcdir"
   meson install -C build --destdir "$pkgdir"
 }

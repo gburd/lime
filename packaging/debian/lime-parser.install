@@ -1,0 +1,8 @@
+usr/bin/lime
+usr/bin/lime-lsp
+usr/bin/parse-manager
+usr/share/man/man1/lime.1
+usr/share/man/man1/lime-lsp.1
+usr/share/man/man1/parse-manager.1
+usr/share/man/man5/lime_grammar.5
+usr/share/man/man5/lime_lex.5

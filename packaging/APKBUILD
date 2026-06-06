@@ -6,21 +6,32 @@ pkgdesc="Runtime-extensible LALR(1) parser generator"
 url="https://codeberg.org/gregburd/lime"
 arch="all"
 license="PublicDomain"
-makedepends="meson ninja llvm-dev"
-subpackages="$pkgname-dev"
-source="https://codeberg.org/gregburd/lime/archive/v$pkgver.tar.gz"
+makedepends="meson ninja llvm-dev llvm-static"
+subpackages="$pkgname-dev $pkgname-doc"
+# Local-tarball name: the release CI stages this file as <pkgname>-<pkgver>.tar.gz.
+source="$pkgname-$pkgver.tar.gz"
+builddir="$srcdir/$pkgname-$pkgver"
 
 build() {
+  cd "$builddir"
   abuild-meson -Dllvm=auto . build
   meson compile -C build
 }
 
 check() {
+  cd "$builddir"
   meson test -C build --no-rebuild
 }
 
 package() {
+  cd "$builddir"
   DESTDIR="$pkgdir" meson install -C build --no-rebuild
+  # Alpine policy: man pages live in -doc, and must be gzipped.
+  # default_doc() (auto-invoked when subpackages includes -doc)
+  # handles the move; we just gzip in place.
+  if [ -d "$pkgdir/usr/share/man" ]; then
+    find "$pkgdir/usr/share/man" -type f -name '*.[1-9]' -exec gzip -9 -n {} \;
+  fi
 }
 
-sha512sums="SKIP"
+sha512sums="SKIP  $pkgname-$pkgver.tar.gz"

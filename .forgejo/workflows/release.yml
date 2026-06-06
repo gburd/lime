@@ -1,7 +1,9 @@
-# Auto-create a Codeberg release when a vX.Y.Z tag is pushed.
+# Auto-create a Codeberg release when a vX.Y.Z tag is pushed: source
+# tarball, .rpm / .deb / .apk / .pkg.tar.zst distro packages, sha256sum,
+# Homebrew formula snapshot, and the release page itself.
 #
-# Reads the annotated-tag message and uses it as the release body.
-# Falls back to "Release X.Y.Z" if the tag is lightweight.
+# Mirrors .github/workflows/release.yml so both forges produce
+# identical artefact sets.
 #
 # Requires repo secret CODEBERG_TOKEN (a personal access token with
 # write:repository scope).  Without it the release step is silently
@@ -17,39 +19,45 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag name to release (e.g. v0.8.8)'
+        description: 'Tag name to release (e.g. v1.1.0)'
         required: true
         type: string
 
 jobs:
-  release:
-    runs-on: codeberg-tiny
+  # ---------------------------------------------------------------------
+  # Build the canonical source tarball.  Every downstream packaging job
+  # consumes this.
+  # ---------------------------------------------------------------------
+  source-tarball:
+    runs-on: codeberg-medium
+    outputs:
+      tag:     ${{ steps.notes.outputs.tag }}
+      version: ${{ steps.notes.outputs.version }}
+      body:    ${{ steps.notes.outputs.body }}
     steps:
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config gcc \
+                                  llvm-dev libllvm18 zlib1g-dev \
+                                  libxml2-dev libffi-dev libtinfo-dev \
+                                  xz-utils
       - name: Checkout (full, for tags)
         uses: https://code.forgejo.org/actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Extract release notes from annotated tag
+      - name: Resolve tag + extract release notes
         id: notes
         run: |
-          # When triggered by tag push, GITHUB_REF is refs/tags/<tag>.
-          # When triggered by workflow_dispatch, the user supplies
-          # the tag name as input.tag.
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             tag="${{ inputs.tag }}"
           else
             tag="${GITHUB_REF#refs/tags/}"
           fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          # Pick the longer of commit-message-body and tag-annotation
-          # as the release body.  Some tags carry rich release notes
-          # in the annotation (e.g. v0.8.4 where the release commit
-          # is just a docs update); others put the long body in the
-          # release commit message.  Whichever is longer is the
-          # "real" release notes.  Both workflows (forgejo + github)
-          # use the same selection so both forges produce identical
-          # release bodies.
+          version="${tag#v}"
+          echo "tag=$tag"          >> "$GITHUB_OUTPUT"
+          echo "version=$version"  >> "$GITHUB_OUTPUT"
           commit_body="$(git log -1 --format='%b' "$tag")"
           tag_body="$(git tag -l --format='%(contents)' "$tag")"
           if [ "${#commit_body}" -ge "${#tag_body}" ]; then
@@ -57,29 +65,284 @@ jobs:
           else
             body="$tag_body"
           fi
-          if [ -z "$body" ]; then
-            body="Release $tag"
-          fi
-          # Stage body in a file -- multiline outputs need EOF markers.
+          if [ -z "$body" ]; then body="Release $tag"; fi
           {
             echo "body<<RELEASE_BODY_EOF"
             echo "$body"
             echo "RELEASE_BODY_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Create Codeberg release
+      - name: Configure + make tarball
+        run: |
+          meson setup build --buildtype=release -Dllvm=disabled
+          meson dist -C build --no-tests --formats=xztar
+          tarball="$(ls build/meson-dist/lime-parser-*.tar.xz)"
+          tarball_basename="$(basename "$tarball")"
+          (cd build/meson-dist && sha256sum "$tarball_basename" \
+              > "${tarball_basename}.sha256sum")
+
+      - name: Upload tarball artefacts
+        uses: https://code.forgejo.org/actions/upload-artifact@v4
+        with:
+          name: source-tarball
+          path: |
+            build/meson-dist/lime-parser-*.tar.xz
+            build/meson-dist/lime-parser-*.tar.xz.sha256sum
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  # Distribution packages.  Each format runs in a matching container.
+  # Failures don't block the release; missing artefacts surface in logs.
+  # ---------------------------------------------------------------------
+  rpm:
+    needs: source-tarball
+    runs-on: codeberg-medium
+    container:
+      image: fedora:latest
+    continue-on-error: true
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: https://code.forgejo.org/actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: dist
+      - name: Build RPM
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+              rpm-build rpmdevtools meson ninja-build gcc gcc-c++ \
+              pkg-config llvm-devel xz
+          rpmdev-setuptree
+          version="${{ needs.source-tarball.outputs.version }}"
+          tarball="dist/lime-parser-${version}.tar.xz"
+          sed "s/^Version:.*/Version:        ${version}/" \
+              packaging/lime.spec > ~/rpmbuild/SPECS/lime-parser.spec
+          xz -dc "$tarball" \
+              | gzip -9 > "$HOME/rpmbuild/SOURCES/lime-parser-${version}.tar.gz"
+          rpmbuild -ba ~/rpmbuild/SPECS/lime-parser.spec || true
+          mkdir -p artefacts
+          find ~/rpmbuild/RPMS ~/rpmbuild/SRPMS -name "lime-parser-${version}*.rpm" \
+              -exec cp {} artefacts/ \; 2>/dev/null || true
+          ls -la artefacts/ || true
+      - if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v4
+        with:
+          name: rpm
+          path: artefacts/*.rpm
+          if-no-files-found: warn
+
+  deb:
+    needs: source-tarball
+    runs-on: codeberg-medium
+    container:
+      image: debian:stable
+    continue-on-error: true
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: https://code.forgejo.org/actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: dist
+      - name: Build .deb
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+              build-essential dpkg-dev debhelper \
+              meson ninja-build pkg-config llvm-dev xz-utils
+          version="${{ needs.source-tarball.outputs.version }}"
+          tarball="dist/lime-parser-${version}.tar.xz"
+          mkdir -p deb-build
+          cp "$tarball" "deb-build/lime-parser_${version}.orig.tar.xz"
+          tar -C deb-build -xf "$tarball"
+          cd "deb-build/lime-parser-${version}"
+          mkdir -p debian
+          cp -r ../../packaging/debian/* debian/
+          cat > debian/changelog <<EOF
+          lime-parser (${version}-1) unstable; urgency=medium
+
+            * Release ${version}.  See upstream release notes.
+
+           -- Greg Burd <greg@burd.me>  $(date -R)
+          EOF
+          dpkg-buildpackage -us -uc -b || true
+          mkdir -p ../../artefacts
+          mv ../*.deb ../../artefacts/ 2>/dev/null || true
+          ls -la ../../artefacts/ || true
+      - if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v4
+        with:
+          name: deb
+          path: artefacts/*.deb
+          if-no-files-found: warn
+
+  apk:
+    needs: source-tarball
+    runs-on: codeberg-medium
+    container:
+      image: alpine:latest
+    continue-on-error: true
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: https://code.forgejo.org/actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: dist
+      - name: Build APK
+        run: |
+          apk add --no-cache alpine-sdk meson ninja pkgconfig llvm-dev \
+              llvm-static gcc g++ musl-dev xz git sudo abuild
+          version="${{ needs.source-tarball.outputs.version }}"
+          mkdir -p ~/aports/lime-parser
+          tarball="dist/lime-parser-${version}.tar.xz"
+          xz -dc "$tarball" | gzip -9 \
+              > "$HOME/aports/lime-parser/lime-parser-${version}.tar.gz"
+          sed "s/^pkgver=.*/pkgver=${version}/" packaging/APKBUILD \
+              > ~/aports/lime-parser/APKBUILD
+          adduser -D -G abuild builder || true
+          chown -R builder ~/aports
+          su builder -c '
+            cd ~/aports/lime-parser
+            abuild-keygen -an
+            abuild checksum
+            abuild -r
+          ' || true
+          mkdir -p artefacts
+          find ~/packages -name "lime-parser-${version}*.apk" \
+              -exec cp {} artefacts/ \; 2>/dev/null || true
+          ls -la artefacts/ || true
+      - if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v4
+        with:
+          name: apk
+          path: artefacts/*.apk
+          if-no-files-found: warn
+
+  arch:
+    needs: source-tarball
+    runs-on: codeberg-medium
+    container:
+      image: archlinux:latest
+    continue-on-error: true
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: https://code.forgejo.org/actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: dist
+      - name: Build Arch package
+        run: |
+          pacman -Sy --noconfirm base-devel meson ninja pkgconf llvm \
+              llvm-libs xz git sudo
+          version="${{ needs.source-tarball.outputs.version }}"
+          useradd -m builder
+          mkdir -p /home/builder/build/lime-parser
+          tarball="dist/lime-parser-${version}.tar.xz"
+          cp "$tarball" /home/builder/build/lime-parser/
+          sed "s/^pkgver=.*/pkgver=${version}/" packaging/PKGBUILD \
+              > /home/builder/build/lime-parser/PKGBUILD
+          chown -R builder /home/builder/build
+          su builder -c '
+            cd /home/builder/build/lime-parser
+            updpkgsums
+            makepkg -s --noconfirm --skipchecksums
+          ' || true
+          mkdir -p artefacts
+          find /home/builder/build/lime-parser -name "*.pkg.tar.zst" \
+              -exec cp {} artefacts/ \; 2>/dev/null || true
+          ls -la artefacts/ || true
+      - if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v4
+        with:
+          name: arch
+          path: artefacts/*.pkg.tar.zst
+          if-no-files-found: warn
+
+  homebrew:
+    needs: source-tarball
+    runs-on: codeberg-medium
+    continue-on-error: true
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: dist
+      - name: Render formula
+        run: |
+          version="${{ needs.source-tarball.outputs.version }}"
+          tarball="dist/lime-parser-${version}.tar.xz"
+          sha="$(sha256sum "$tarball" | awk '{print $1}')"
+          mkdir -p artefacts
+          sed -e "s|^  url .*|  url \"https://codeberg.org/gregburd/lime/releases/download/v${version}/lime-parser-${version}.tar.xz\"|" \
+              -e "s|^  sha256 .*|  sha256 \"${sha}\"|" \
+              packaging/Formula/lime.rb > artefacts/lime.rb
+          cat artefacts/lime.rb | head -20
+      - if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v4
+        with:
+          name: homebrew
+          path: artefacts/lime.rb
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------
+  # Final publish: collect all artefacts, create the Codeberg release,
+  # POST every artefact to the release's attachments endpoint.
+  # ---------------------------------------------------------------------
+  publish:
+    runs-on: codeberg-medium
+    needs:
+      - source-tarball
+      - rpm
+      - deb
+      - apk
+      - arch
+      - homebrew
+    if: always() && needs.source-tarball.result == 'success'
+    steps:
+      - name: Install jq + curl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+
+      - name: Collect all artefacts
+        uses: https://code.forgejo.org/actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Flatten + list
+        run: |
+          mkdir -p flat
+          find dist -type f \( \
+              -name '*.tar.xz' -o \
+              -name '*.sha256sum' -o \
+              -name '*.rpm' -o \
+              -name '*.deb' -o \
+              -name '*.apk' -o \
+              -name '*.pkg.tar.zst' -o \
+              -name 'lime.rb' \
+          \) -exec cp {} flat/ \;
+          ls -la flat/
+
+      - name: Create Codeberg release + upload artefacts
         env:
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
         if: env.CODEBERG_TOKEN != ''
         run: |
           set -euo pipefail
-          tag="${{ steps.notes.outputs.tag }}"
+          tag="${{ needs.source-tarball.outputs.tag }}"
           body=$(cat <<'EOFBODY'
-          ${{ steps.notes.outputs.body }}
+          ${{ needs.source-tarball.outputs.body }}
           EOFBODY
           )
-          # POST the release.  If it already exists (re-run), the API
-          # returns 409 Conflict; treat that as success.
+
+          # Step 1: create the release (or accept conflict).
           status=$(curl -s -o /tmp/resp.json -w '%{http_code}' \
             -X POST \
             -H "Authorization: token $CODEBERG_TOKEN" \
@@ -87,10 +350,34 @@ jobs:
             -d "$(jq -n --arg tn "$tag" --arg name "Lime $tag" --arg body "$body" \
                   '{tag_name: $tn, name: $name, body: $body, draft: false, prerelease: false}')" \
             "https://codeberg.org/api/v1/repos/${GITHUB_REPOSITORY}/releases")
-          echo "POST returned $status"
-          cat /tmp/resp.json
+          echo "POST release returned $status"
           case "$status" in
-            201) echo "release created" ;;
-            409) echo "release already exists; ok" ;;
-            *)   echo "FAIL: HTTP $status"; exit 1 ;;
+            201) release_id=$(jq -r '.id' /tmp/resp.json) ;;
+            409)
+              # Release exists -- look it up.
+              curl -s -H "Authorization: token $CODEBERG_TOKEN" \
+                "https://codeberg.org/api/v1/repos/${GITHUB_REPOSITORY}/releases/tags/$tag" \
+                > /tmp/resp.json
+              release_id=$(jq -r '.id' /tmp/resp.json)
+              ;;
+            *) echo "FAIL: HTTP $status"; cat /tmp/resp.json; exit 1 ;;
           esac
+          echo "release_id=$release_id"
+
+          # Step 2: upload each artefact via the attachments endpoint.
+          for f in flat/*; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f")
+            echo "uploading $name..."
+            up_status=$(curl -s -o /tmp/up.json -w '%{http_code}' \
+              -X POST \
+              -H "Authorization: token $CODEBERG_TOKEN" \
+              -F "attachment=@${f}" \
+              "https://codeberg.org/api/v1/repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?name=${name}")
+            echo "  $name: $up_status"
+            # 422 = duplicate; rerunning a release is idempotent.
+            case "$up_status" in
+              201|422) ;;
+              *) cat /tmp/up.json; echo "(non-fatal upload failure)" ;;
+            esac
+          done

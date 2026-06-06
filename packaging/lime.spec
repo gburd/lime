@@ -7,9 +7,14 @@ URL:            https://codeberg.org/gregburd/lime
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  gcc >= 13, gcc-c++ >= 13, meson, ninja-build, pkgconfig
-BuildRequires:  pkgconfig(libllvm) >= 14
-%if 0%{?fedora} || 0%{?rhel} >= 9
-BuildRequires:  llvm-devel
+BuildRequires:  llvm-devel >= 14
+BuildRequires:  zlib-ng-compat-devel
+BuildRequires:  libxml2-devel
+BuildRequires:  libffi-devel
+%if 0%{?rhel} && 0%{?rhel} < 9
+BuildRequires:  ncurses-devel
+%else
+BuildRequires:  ncurses-devel
 %endif
 
 %description
@@ -45,15 +50,22 @@ extension-registry interfaces.
 
 %files
 %license README.md
-%doc README.md docs/COMPARISON.md docs/BENCHMARKS_VS_BISON.md
+%doc README.md docs/CONCEPTS.md docs/PERFORMANCE.md docs/RUST_OUTPUT.md
 %{_bindir}/lime
+%{_bindir}/lime-lsp
+%{_bindir}/parse-manager
 %{_mandir}/man1/lime.1*
+%{_mandir}/man1/lime-lsp.1*
+%{_mandir}/man1/parse-manager.1*
 %{_mandir}/man5/lime_grammar.5*
 %{_mandir}/man5/lime_lex.5*
 
 %files devel
 %{_includedir}/lime/
 %{_libdir}/liblime_parser.a
+%{_libdir}/liblime_compiler.a
+%{_libdir}/pkgconfig/lime.pc
+%{_libdir}/pkgconfig/lime-compiler.pc
 
 %changelog
 * Sat May 23 2026 Greg Burd <greg@burd.me> - 0.2.4-1

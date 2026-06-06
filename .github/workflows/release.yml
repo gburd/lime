@@ -1,8 +1,9 @@
-# Auto-create a GitHub release when a vX.Y.Z tag is pushed.
+# Auto-create a release when a vX.Y.Z tag is pushed: source tarball,
+# .rpm / .deb / .apk / .pkg.tar.zst distro packages, sha256sum,
+# Homebrew formula snapshot, and the release page itself.
 #
-# Uses the built-in GITHUB_TOKEN that GitHub Actions provides;
-# no setup required.  Reads the annotated-tag message as the
-# release body.
+# Single workflow with one publish job at the end so all artefacts
+# attach to the same release.
 name: Release on tag push
 
 on:
@@ -12,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag name to release (e.g. v0.8.8)'
+        description: 'Tag name to release (e.g. v1.1.0)'
         required: true
         type: string
 
@@ -20,15 +21,24 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  # ---------------------------------------------------------------------
+  # Build the canonical source tarball.  Every downstream packaging job
+  # (and downstream packagers) consumes this.
+  # ---------------------------------------------------------------------
+  source-tarball:
+    name: Source tarball
     runs-on: ubuntu-24.04
+    outputs:
+      tag:     ${{ steps.notes.outputs.tag }}
+      version: ${{ steps.notes.outputs.version }}
+      body:    ${{ steps.notes.outputs.body }}
     steps:
       - name: Checkout (full, for tags)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Extract release notes from annotated tag
+      - name: Resolve tag + extract release notes
         id: notes
         run: |
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
@@ -36,10 +46,9 @@ jobs:
           else
             tag="${GITHUB_REF#refs/tags/}"
           fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          # Pick the longer of commit-message-body and tag-annotation
-          # (matches the Codeberg workflow's selection so both forges
-          # produce identical release bodies).
+          version="${tag#v}"
+          echo "tag=$tag"          >> "$GITHUB_OUTPUT"
+          echo "version=$version"  >> "$GITHUB_OUTPUT"
           commit_body="$(git log -1 --format='%b' "$tag")"
           tag_body="$(git tag -l --format='%(contents)' "$tag")"
           if [ "${#commit_body}" -ge "${#tag_body}" ]; then
@@ -47,20 +56,311 @@ jobs:
           else
             body="$tag_body"
           fi
-          if [ -z "$body" ]; then
-            body="Release $tag"
-          fi
+          if [ -z "$body" ]; then body="Release $tag"; fi
           {
             echo "body<<RELEASE_BODY_EOF"
             echo "$body"
             echo "RELEASE_BODY_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config gcc \
+                                  llvm-dev libllvm18 zlib1g-dev \
+                                  libxml2-dev libffi-dev libtinfo-dev \
+                                  xz-utils
+
+      - name: Configure + make tarball
+        id: dist
+        run: |
+          meson setup build --buildtype=release -Dllvm=disabled
+          meson dist -C build --no-tests --formats=xztar
+          tarball="$(ls build/meson-dist/lime-parser-*.tar.xz)"
+          tarball_basename="$(basename "$tarball")"
+          # Compute sha256 next to the tarball.
+          (cd build/meson-dist && sha256sum "$tarball_basename" \
+              > "${tarball_basename}.sha256sum")
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Upload tarball artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-tarball
+          path: |
+            build/meson-dist/lime-parser-*.tar.xz
+            build/meson-dist/lime-parser-*.tar.xz.sha256sum
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  # Distribution packages, one job per format.  Each consumes the
+  # source tarball and runs the matching packaging recipe under
+  # `packaging/`.  Failures in any single distro do NOT block the
+  # release; missing artefacts surface in the workflow logs.
+  # ---------------------------------------------------------------------
+  rpm:
+    name: RPM (Fedora)
+    needs: source-tarball
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    container:
+      image: fedora:latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: dist
+      - name: Build RPM
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+              rpm-build rpmdevtools meson ninja-build gcc gcc-c++ \
+              pkg-config llvm-devel xz
+          rpmdev-setuptree
+          version="${{ needs.source-tarball.outputs.version }}"
+          tarball="dist/lime-parser-${version}.tar.xz"
+          # The lime.spec ships at v0.2.4; sed in the current version.
+          sed "s/^Version:.*/Version:        ${version}/" \
+              packaging/lime.spec > ~/rpmbuild/SPECS/lime-parser.spec
+          # rpmbuild expects the source under SOURCES/.  Convert the
+          # .tar.xz to .tar.gz (or update lime.spec to consume xz; the
+          # spec currently says .tar.gz).  Path of least surprise: keep
+          # the spec consuming .tar.gz and recompress here.
+          xz -dc "$tarball" \
+              | gzip -9 > "$HOME/rpmbuild/SOURCES/lime-parser-${version}.tar.gz"
+          rpmbuild -ba ~/rpmbuild/SPECS/lime-parser.spec || true
+          mkdir -p artefacts
+          find ~/rpmbuild/RPMS ~/rpmbuild/SRPMS -name "lime-parser-${version}*.rpm" \
+              -exec cp {} artefacts/ \; 2>/dev/null || true
+          ls -la artefacts/ || true
+      - name: Upload RPM artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm
+          path: artefacts/*.rpm
+          if-no-files-found: warn
+
+  deb:
+    name: DEB (Debian)
+    needs: source-tarball
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    container:
+      image: debian:stable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: dist
+      - name: Build .deb
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+              build-essential dpkg-dev debhelper \
+              meson ninja-build pkg-config llvm-dev xz-utils
+          version="${{ needs.source-tarball.outputs.version }}"
+          tarball="dist/lime-parser-${version}.tar.xz"
+          # Stage the upstream tarball as orig.  Debian wants
+          # <pkg>_<version>.orig.tar.xz next to the unpacked source.
+          mkdir -p deb-build
+          cp "$tarball" "deb-build/lime-parser_${version}.orig.tar.xz"
+          tar -C deb-build -xf "$tarball"
+          cd "deb-build/lime-parser-${version}"
+          # debian/changelog needs a current entry; generate from tag.
+          mkdir -p debian
+          cp -r ../../packaging/debian/* debian/
+          cat > debian/changelog <<EOF
+          lime-parser (${version}-1) unstable; urgency=medium
+
+            * Release ${version}.  See upstream release notes.
+
+           -- Greg Burd <greg@burd.me>  $(date -R)
+          EOF
+          dpkg-buildpackage -us -uc -b || true
+          mkdir -p ../../artefacts
+          mv ../*.deb ../../artefacts/ 2>/dev/null || true
+          ls -la ../../artefacts/ || true
+      - name: Upload DEB artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: artefacts/*.deb
+          if-no-files-found: warn
+
+  apk:
+    name: APK (Alpine)
+    needs: source-tarball
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    container:
+      image: alpine:latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: dist
+      - name: Build APK
+        run: |
+          apk add --no-cache alpine-sdk meson ninja pkgconfig llvm-dev \
+              llvm-static gcc g++ musl-dev xz git sudo abuild
+          version="${{ needs.source-tarball.outputs.version }}"
+          # APKBUILD wants $startdir/src/<pkgname>-<pkgver>.tar.gz; we
+          # stage from the xz tarball and patch pkgver.
+          mkdir -p ~/aports/lime-parser
+          tarball="dist/lime-parser-${version}.tar.xz"
+          xz -dc "$tarball" | gzip -9 \
+              > "$HOME/aports/lime-parser/lime-parser-${version}.tar.gz"
+          sed "s/^pkgver=.*/pkgver=${version}/" packaging/APKBUILD \
+              > ~/aports/lime-parser/APKBUILD
+          # abuild needs a non-root user.
+          adduser -D -G abuild builder || true
+          chown -R builder ~/aports
+          su builder -c '
+            cd ~/aports/lime-parser
+            abuild-keygen -an
+            abuild checksum
+            abuild -r
+          ' || true
+          mkdir -p artefacts
+          find ~/packages -name "lime-parser-${version}*.apk" \
+              -exec cp {} artefacts/ \; 2>/dev/null || true
+          ls -la artefacts/ || true
+      - name: Upload APK artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: artefacts/*.apk
+          if-no-files-found: warn
+
+  arch:
+    name: Arch (.pkg.tar.zst)
+    needs: source-tarball
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    container:
+      image: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: dist
+      - name: Build Arch package
+        run: |
+          pacman -Sy --noconfirm base-devel meson ninja pkgconf llvm \
+              llvm-libs xz git sudo
+          version="${{ needs.source-tarball.outputs.version }}"
+          # makepkg refuses to run as root.
+          useradd -m builder
+          mkdir -p /home/builder/build/lime-parser
+          tarball="dist/lime-parser-${version}.tar.xz"
+          cp "$tarball" /home/builder/build/lime-parser/
+          sed "s/^pkgver=.*/pkgver=${version}/" packaging/PKGBUILD \
+              > /home/builder/build/lime-parser/PKGBUILD
+          chown -R builder /home/builder/build
+          su builder -c '
+            cd /home/builder/build/lime-parser
+            updpkgsums
+            makepkg -s --noconfirm --skipchecksums
+          ' || true
+          mkdir -p artefacts
+          find /home/builder/build/lime-parser -name "*.pkg.tar.zst" \
+              -exec cp {} artefacts/ \; 2>/dev/null || true
+          ls -la artefacts/ || true
+      - name: Upload Arch artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch
+          path: artefacts/*.pkg.tar.zst
+          if-no-files-found: warn
+
+  homebrew:
+    name: Homebrew formula snapshot
+    needs: source-tarball
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: dist
+      - name: Render formula
+        run: |
+          version="${{ needs.source-tarball.outputs.version }}"
+          tarball="dist/lime-parser-${version}.tar.xz"
+          sha="$(sha256sum "$tarball" | awk '{print $1}')"
+          mkdir -p artefacts
+          # Patch the upstream-source URL + sha256 in the bundled
+          # formula and snapshot to the release.  Downstream brew
+          # taps can pull this directly or open a PR against
+          # homebrew-core with the same body.
+          sed -e "s|^  url .*|  url \"https://codeberg.org/gregburd/lime/releases/download/v${version}/lime-parser-${version}.tar.xz\"|" \
+              -e "s|^  sha256 .*|  sha256 \"${sha}\"|" \
+              packaging/Formula/lime.rb > artefacts/lime.rb
+          cat artefacts/lime.rb | head -20
+      - name: Upload Homebrew formula
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew
+          path: artefacts/lime.rb
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------
+  # Final publish: collect all artefacts, attach to the release page.
+  # ---------------------------------------------------------------------
+  publish:
+    name: Publish release
+    runs-on: ubuntu-24.04
+    needs:
+      - source-tarball
+      - rpm
+      - deb
+      - apk
+      - arch
+      - homebrew
+    if: always() && needs.source-tarball.result == 'success'
+    steps:
+      - name: Collect all artefacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Flatten + list
+        run: |
+          mkdir -p flat
+          find dist -type f \( \
+              -name '*.tar.xz' -o \
+              -name '*.sha256sum' -o \
+              -name '*.rpm' -o \
+              -name '*.deb' -o \
+              -name '*.apk' -o \
+              -name '*.pkg.tar.zst' -o \
+              -name 'lime.rb' \
+          \) -exec cp {} flat/ \;
+          ls -la flat/
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.notes.outputs.tag }}
-          name: Lime ${{ steps.notes.outputs.tag }}
-          body: ${{ steps.notes.outputs.body }}
+          tag_name: ${{ needs.source-tarball.outputs.tag }}
+          name: Lime ${{ needs.source-tarball.outputs.tag }}
+          body: ${{ needs.source-tarball.outputs.body }}
           draft: false
           prerelease: false
+          files: |
+            flat/*

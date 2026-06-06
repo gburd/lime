@@ -1,0 +1,5 @@
+usr/include/lime/
+usr/lib/*/liblime_parser.a
+usr/lib/*/liblime_compiler.a
+usr/lib/*/pkgconfig/lime.pc
+usr/lib/*/pkgconfig/lime-compiler.pc
