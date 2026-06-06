@@ -330,11 +330,33 @@ extern int lime_lint_grammar_in_process(const char *grammar_text,
 #endif
     ;
 
+/* v1.2.0 fast-lint variant: parse + lint without LALR construction.
+** ~10x faster on PG-class grammars (gram.lime: ~150 ms vs ~2.0 s).
+** Misses W-class warnings that need conflict information; correct
+** for E-class errors and most W-class structural checks.  Used for
+** per-keystroke didChange diagnostics in lime-lsp; full lint runs
+** on save / didOpen for completeness. */
+extern int lime_lint_grammar_fast_in_process(const char *grammar_text,
+                                             size_t len,
+                                             char **out_diags)
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((weak))
+#endif
+    ;
+
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((weak))
 int lime_lint_grammar_in_process(const char *grammar_text,
                                  size_t len,
                                  char **out_diags) {
+    (void)grammar_text; (void)len;
+    if (out_diags) *out_diags = NULL;
+    return -1;
+}
+__attribute__((weak))
+int lime_lint_grammar_fast_in_process(const char *grammar_text,
+                                      size_t len,
+                                      char **out_diags) {
     (void)grammar_text; (void)len;
     if (out_diags) *out_diags = NULL;
     return -1;
@@ -368,8 +390,26 @@ json_value *lsp_diagnostics_run(const char *lime_bin,
         const char *force_sub = getenv("LIME_LSP_FORCE_SUBPROCESS");
         int skip_in_process = (force_sub && force_sub[0] && force_sub[0] != '0');
         if (!skip_in_process) {
+            /* v1.2.0: prefer fast-lint (parse-only, ~10x quicker on
+            ** PG-class grammars).  LIME_LSP_FULL_LINT=1 forces the
+            ** full LALR-walking lint -- useful when the consumer
+            ** prefers W-class conflict warnings on every keystroke,
+            ** at the cost of multi-second latency on big grammars.
+            ** Default is fast-lint; full lint is what didSave drives
+            ** via the same lsp_diagnostics_run path (the LSP server
+            ** can pass LIME_LSP_FULL_LINT=1 in env when it wants
+            ** the slower coverage). */
+            const char *full = getenv("LIME_LSP_FULL_LINT");
+            int prefer_full = (full && full[0] && full[0] != '0');
             char *diag_buf = NULL;
-            int rc = lime_lint_grammar_in_process(text, text_len, &diag_buf);
+            int rc = -1;
+            if (!prefer_full) {
+                rc = lime_lint_grammar_fast_in_process(text, text_len, &diag_buf);
+            }
+            if (rc == -1) {
+                /* fast-lint not linked OR caller asked for full. */
+                rc = lime_lint_grammar_in_process(text, text_len, &diag_buf);
+            }
             if (rc != -1) {
                 /* In-process pipeline ran (rc 0 = clean, >0 = had
                 ** issues).  Either way, parse what it wrote. */

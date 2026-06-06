@@ -33,37 +33,12 @@
 
 #include <stdlib.h>
 
-#if defined(_WIN32) && !defined(__MINGW32__)
-
-/*
-** Windows stub.  lime_threads.h doesn't shim pthread_create/cond/key,
-** so the LSP server falls back to the synchronous diagnostic path on
-** Windows.  When a Win32 thread shim lands (TODO: lsp_diagnostics_
-** async_win32.c), this stub goes away.
-*/
-
-struct lsp_diagnostics_async {
-    int unused;
-};
-
-lsp_diagnostics_async *lsp_diagnostics_async_create(FILE *out, const char *lime_bin) {
-    (void)out; (void)lime_bin;
-    return NULL;  /* publish_diagnostics falls through to sync path. */
-}
-
-void lsp_diagnostics_async_request(lsp_diagnostics_async *p,
-                                    const char *uri,
-                                    const char *text, size_t text_len) {
-    (void)p; (void)uri; (void)text; (void)text_len;
-}
-
-void lsp_diagnostics_async_destroy(lsp_diagnostics_async *p) {
-    (void)p;
-}
-
-#else /* POSIX */
-
-#include <pthread.h>
+/* v1.2.0: pthread shim now covers Windows too via lime_threads.h
+** (CONDITION_VARIABLE-backed pthread_cond_*, SRWLOCK-backed
+** pthread_mutex_*, _beginthreadex-backed pthread_create).  The
+** Windows stub is GONE; both POSIX and Windows take the same
+** code path below. */
+#include "lime_threads.h"
 #include <stdatomic.h>
 #include <stdint.h>
 #include <string.h>
@@ -331,5 +306,3 @@ void lsp_diagnostics_async_destroy(lsp_diagnostics_async *p) {
     free(p->lime_bin);
     free(p);
 }
-
-#endif /* POSIX */

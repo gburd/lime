@@ -150,6 +150,44 @@ static __inline int pthread_mutex_unlock(pthread_mutex_t *m) {
     return 0;
 }
 
+/* --- condition variable (over Win32 CONDITION_VARIABLE) ---
+** v1.2.0 addition: lsp_diagnostics_async needs cond_wait/signal
+** pairs to gate its worker queue.  Win32 CONDITION_VARIABLE pairs
+** with either an SRWLOCK or a CRITICAL_SECTION.  Lime's mutex shim
+** above is SRWLOCK-backed so we use SleepConditionVariableSRW with
+** the CONDITION_VARIABLE_LOCKMODE_EXCLUSIVE flag (the default for
+** mutex-style usage). */
+typedef CONDITION_VARIABLE pthread_cond_t;
+typedef int pthread_condattr_t;
+
+static __inline int pthread_cond_init(pthread_cond_t *c,
+                                      const pthread_condattr_t *attr) {
+    (void)attr;
+    InitializeConditionVariable(c);
+    return 0;
+}
+static __inline int pthread_cond_destroy(pthread_cond_t *c) {
+    /* CONDITION_VARIABLE has no destructor on Win32. */
+    (void)c;
+    return 0;
+}
+static __inline int pthread_cond_wait(pthread_cond_t *c,
+                                      pthread_mutex_t *m) {
+    /* CONDITION_VARIABLE_LOCKMODE_EXCLUSIVE = 0 is the default for
+    ** SRWLOCK-backed exclusive-mode usage, which matches our mutex
+    ** shim. */
+    SleepConditionVariableSRW(c, m, INFINITE, 0);
+    return 0;
+}
+static __inline int pthread_cond_signal(pthread_cond_t *c) {
+    WakeConditionVariable(c);
+    return 0;
+}
+static __inline int pthread_cond_broadcast(pthread_cond_t *c) {
+    WakeAllConditionVariable(c);
+    return 0;
+}
+
 /* --- thread --- */
 static __inline int pthread_attr_init(pthread_attr_t *a) {
     *a = PTHREAD_CREATE_JOINABLE;

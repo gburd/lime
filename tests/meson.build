@@ -414,6 +414,23 @@ if host_machine.system() != 'windows'
     depends : [lime_exe],
     is_parallel : false,
     timeout : 30)
+
+  # v1.2.0: parse-only fast-lint regression.  Links lime_compiler_dep
+  # so the strong definition of lime_lint_grammar_fast_in_process()
+  # resolves; otherwise the test would silently call the weak no-op
+  # stub.  POSIX-only because lime_compiler_dep currently only links
+  # cleanly on POSIX (Windows tracks separately under the static-
+  # archive build).
+  test_lint_fast = executable('test_lint_fast',
+    'test_lint_fast.c',
+    dependencies : [lime_parser_dep, lime_compiler_dep],
+    include_directories : [inc, include_directories('../src')],
+    c_args : lime_warning_suppress,
+  )
+  test('lint_fast', test_lint_fast,
+    depends : [lime_exe],
+    is_parallel : false,
+    timeout : 30)
 endif
 
 # v0.8.6 CLI flag redesign: regression for --target / --enable /
@@ -2571,6 +2588,20 @@ if host_machine.system() != 'windows'
   if gdb_prog.found()
     test('gdb_pretty_printers',
       find_program(meson.project_source_root() / 'scripts/test-lime-gdb.sh'),
+      workdir : meson.project_source_root(),
+      depends : [lime_exe],
+      timeout : 60,
+    )
+  endif
+  # v1.2.0: LLDB equivalent of the gdb_pretty_printers smoke test.
+  # Same shape: builds debug, breaks at run_trial in
+  # bench_parse_fanout (where `snap` is in scope), asserts that the
+  # type summaries + lime-snapshot command produce expected output.
+  # Gated on lldb availability AND POSIX (the script is /bin/sh).
+  lldb_prog = find_program('lldb', required : false)
+  if lldb_prog.found()
+    test('lldb_pretty_printers',
+      find_program(meson.project_source_root() / 'scripts/test-lime-lldb.sh'),
       workdir : meson.project_source_root(),
       depends : [lime_exe],
       timeout : 60,

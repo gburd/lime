@@ -2,11 +2,11 @@
 #
 # Loads via:
 #
-#   echo "command script import $PWD/scripts/lime-lldb.py" >> ~/.lldbinit
+#   echo "command script import $PWD/scripts/lime_lldb.py" >> ~/.lldbinit
 #
 # Or one-shot:
 #
-#   (lldb) command script import scripts/lime-lldb.py
+#   (lldb) command script import scripts/lime_lldb.py
 #
 # Mirrors scripts/lime-gdb.py: same pretty-printer surface, same
 # convenience commands (lime-snapshot, lime-stack, lime-actions),
@@ -253,26 +253,26 @@ def lime_actions(debugger, command, result, _internal_dict):
 
 def __lldb_init_module(debugger, _internal_dict):
     debugger.HandleCommand(
-        "type summary add -F lime-lldb.parser_snapshot_summary "
+        "type summary add -F lime_lldb.parser_snapshot_summary "
         "ParserSnapshot")
     debugger.HandleCommand(
-        "type summary add -F lime-lldb.parser_snapshot_summary "
+        "type summary add -F lime_lldb.parser_snapshot_summary "
         "-x '^ParserSnapshot \\*$'")
     debugger.HandleCommand(
-        "type summary add -F lime-lldb.parse_context_summary "
+        "type summary add -F lime_lldb.parse_context_summary "
         "ParseContext")
     debugger.HandleCommand(
-        "type summary add -F lime-lldb.parse_context_summary "
+        "type summary add -F lime_lldb.parse_context_summary "
         "-x '^ParseContext \\*$'")
     debugger.HandleCommand(
-        "type summary add -F lime-lldb.parse_engine_summary "
+        "type summary add -F lime_lldb.parse_engine_summary "
         "ParseEngine")
     debugger.HandleCommand(
-        "command script add -f lime-lldb.lime_snapshot lime-snapshot")
+        "command script add -f lime_lldb.lime_snapshot lime-snapshot")
     debugger.HandleCommand(
-        "command script add -f lime-lldb.lime_stack lime-stack")
+        "command script add -f lime_lldb.lime_stack lime-stack")
     debugger.HandleCommand(
-        "command script add -f lime-lldb.lime_actions lime-actions")
+        "command script add -f lime_lldb.lime_actions lime-actions")
     print("lime-lldb: summaries registered for ParserSnapshot, ParseContext, "
           "ParseEngine")
     print("lime-lldb: commands registered: lime-snapshot, lime-stack, lime-actions")

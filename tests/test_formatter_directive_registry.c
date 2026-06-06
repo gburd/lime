@@ -422,11 +422,11 @@ static const BaselineEntry baselines[] = {
     { "examples/json", "json_grammar.lime",
       "d1c1476a8fdf07c4e4c43bb9c0f66a13" },
     { "examples/datalog", "datalog.lime",
-      "bb88c20e11ff10751b7d8635ceb9ca3f" },
+      "ae5beddc52ffd1f05007971579664027" },
     { "examples/jsonpath", "jsonpath_gram.lime",
       "d09c2e7f70cd8e6070e006a675a13fa1" },
     { "examples/xpath", "xpath.lime",
-      "bc5cf7a35050934b62cbd78bb28740aa" },
+      "cff76db71960766be2ec23248793c7a6" },
     { "examples/pgbench", "pgbench_expr.lime",
       "b7633545f772ef85e01c35dd6d62c583" },
 };

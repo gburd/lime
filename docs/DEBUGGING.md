@@ -65,13 +65,13 @@ $1 = ParserSnapshot{magic=LIME abi=2 ver=1 refcount=1 nrule=9 nstate=11}
 ### LLDB
 
 ```
-(lldb) command script import /path/to/lime/scripts/lime-lldb.py
+(lldb) command script import /path/to/lime/scripts/lime_lldb.py
 ```
 
 Persistent:
 
 ```
-echo "command script import /path/to/lime/scripts/lime-lldb.py" >> ~/.lldbinit
+echo "command script import /path/to/lime/scripts/lime_lldb.py" >> ~/.lldbinit
 ```
 
 Same commands and summaries: `lime-snapshot`, `lime-stack`, `lime-actions`.

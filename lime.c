@@ -106,7 +106,7 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "1.1.0"
+#define LIME_VERSION_STRING "1.2.0"
 #endif
 
 
@@ -9315,19 +9315,50 @@ static void parse_lime_buffer_recursive(struct pstate *psp,
   body_start = filebuf;
   if( is_top_level ){
     /* Capture file-level comments / whitespace BEFORE the first
-    ** non-comment, non-whitespace byte (Lime-Letter-18). */
+    ** non-comment, non-whitespace byte (Lime-Letter-18).
+    **
+    ** v1.2.0 idempotence fix: stop at the first BLANK LINE that
+    ** appears AFTER we've already captured at least one comment
+    ** block.  Without this, the scanner greedily eats:
+    **
+    **    file header 
+    **                                <- blank line
+    **    leading-comment for %name 
+    **   %name jsonpathParse
+    **
+    ** ... merging both comment blocks into header_comment and
+    ** leaving name_comment NULL.  format_grammar then re-emits
+    ** as `header\n\nname-comment\n%name`, which on the next pass
+    ** parses with name_comment captured separately.  Result: the
+    ** formatter is non-idempotent on this shape (5 grammars in
+    ** the tree).  Stopping the capture at the first post-comment
+    ** blank line lets BOTH passes see the same shape. */
     char *hp = filebuf;
+    int  saw_comment = 0;
     while( *hp ){
+      if( *hp == '\n' && saw_comment ){
+        /* Look ahead past spaces/tabs on the next line.  If the
+        ** next non-whitespace-on-this-line byte is another newline,
+        ** we have an empty line -- stop the capture so subsequent
+        ** comment blocks attach to whichever directive follows. */
+        char *peek = hp + 1;
+        while( *peek == ' ' || *peek == '\t' ) peek++;
+        if( *peek == '\n' || *peek == '\r' || *peek == 0 ){
+          break;
+        }
+      }
       if( ISSPACE((unsigned char)*hp) ){ hp++; continue; }
       if( hp[0]=='/' && hp[1]=='/' ){
         hp+=2;
         while( *hp && *hp!='\n' ) hp++;
+        saw_comment = 1;
         continue;
       }
       if( hp[0]=='/' && hp[1]=='*' ){
         hp+=2;
         while( *hp && !(hp[-1]=='*' && hp[0]=='/') ) hp++;
         if( *hp ) hp++;
+        saw_comment = 1;
         continue;
       }
       break;
@@ -13504,6 +13535,59 @@ oom:
   return snap;
 }
 
+/*
+** lime_post_parse_setup -- finish setting up `lem` after ParseText so
+** the LALR(1) pipeline (FindStates, FindFollowSets, FindActions) can
+** run safely.  v1.2.0 hoists what was duplicated inline in three
+** places (main, lime_compile_grammar_in_process, lime_lint_grammar_
+** in_process) -- a maintenance hazard since adding a missing field
+** to one site (e.g. nterminal) silently breaks others' analysis with
+** cryptic 'Internal error - no start rule' exits.
+**
+** Sequence (must run in this exact order, matching main()'s shape):
+**   (1) Index symbols + strip {default} sentinel
+**   (2) Compute lem->nterminal (uppercase-led names cluster low)
+**   (3) Number rules: action-bearing first, no-code after
+**   (4) lem->startRule = lem->rule (BEFORE Rule_sort)
+**
+** Returns 0 on success.  On failure (*fail_reason set, caller can
+** propagate) returns -1.  Static; only callers are inside lime.c.
+*/
+static int lime_post_parse_setup(struct lime *lem, const char **fail_reason) {
+    if( fail_reason ) *fail_reason = NULL;
+    if( lem == NULL ){
+        if( fail_reason ) *fail_reason = "post_parse_setup: NULL lem";
+        return -1;
+    }
+    Symbol_new("{default}");
+    lem->nsymbol = Symbol_count();
+    lem->symbols = Symbol_arrayof();
+    int k;
+    for(k=0; k<lem->nsymbol; k++) lem->symbols[k]->index = k;
+    qsort(lem->symbols, lem->nsymbol, sizeof(struct symbol*), Symbolcmpp);
+    for(k=0; k<lem->nsymbol; k++) lem->symbols[k]->index = k;
+    while( k>0 && lem->symbols[k-1]->type==MULTITERMINAL ){ k--; }
+    if( k<=0 || strcmp(lem->symbols[k-1]->name, "{default}")!=0 ){
+        if( fail_reason ) *fail_reason = "symbol table corruption: {default} missing";
+        return -1;
+    }
+    lem->nsymbol = k - 1;
+    for(k=1; k<lem->nsymbol && ISUPPER(lem->symbols[k]->name[0]); k++){}
+    lem->nterminal = k;
+    int idx = 0;
+    struct rule *rp;
+    for(rp=lem->rule; rp; rp=rp->next){
+        rp->iRule = rp->code ? idx++ : -1;
+    }
+    lem->nruleWithAction = idx;
+    for(rp=lem->rule; rp; rp=rp->next){
+        if( rp->iRule<0 ) rp->iRule = idx++;
+    }
+    lem->startRule = lem->rule;
+    lem->rule = Rule_sort(lem->rule);
+    return 0;
+}
+
 int lime_compile_grammar_in_process(const char *grammar_text,
                                     size_t len,
                                     struct ParserSnapshot **out_snapshot,
@@ -13573,33 +13657,10 @@ int lime_compile_grammar_in_process(const char *grammar_text,
   }
   lem.errsym = Symbol_find("error");
 
-  /* Index symbols, mirroring main()'s post-Parse setup. */
-  Symbol_new("{default}");
-  lem.nsymbol = Symbol_count();
-  lem.symbols = Symbol_arrayof();
-  for(k=0; k<lem.nsymbol; k++) lem.symbols[k]->index = k;
-  qsort(lem.symbols, lem.nsymbol, sizeof(struct symbol*), Symbolcmpp);
-  for(k=0; k<lem.nsymbol; k++) lem.symbols[k]->index = k;
-  while( k>0 && lem.symbols[k-1]->type==MULTITERMINAL ){ k--; }
-  if( k<=0 || strcmp(lem.symbols[k-1]->name, "{default}")!=0 ){
-    fail_reason = "symbol table corruption: {default} missing";
+  /* v1.2.0: hoisted post-Parse plumbing.  See helper docs above. */
+  if( lime_post_parse_setup(&lem, &fail_reason) != 0 ){
     goto done;
   }
-  lem.nsymbol = k - 1;
-  for(k=1; k<lem.nsymbol && ISUPPER(lem.symbols[k]->name[0]); k++){}
-  lem.nterminal = k;
-
-  /* Number rules: action-bearing first, then no-code rules. */
-  idx = 0;
-  for(rp=lem.rule; rp; rp=rp->next){
-    rp->iRule = rp->code ? idx++ : -1;
-  }
-  lem.nruleWithAction = idx;
-  for(rp=lem.rule; rp; rp=rp->next){
-    if( rp->iRule<0 ) rp->iRule = idx++;
-  }
-  lem.startRule = lem.rule;
-  lem.rule = Rule_sort(lem.rule);
 
   /* LALR(1) pipeline. */
   SetSize(lem.nterminal + 1);
@@ -13773,44 +13834,15 @@ int lime_lint_grammar_in_process(const char *grammar_text,
   }
   lem.errsym = Symbol_find("error");
 
-  /* Index symbols mirror compile path. */
-  Symbol_new("{default}");
-  lem.nsymbol = Symbol_count();
-  lem.symbols = Symbol_arrayof();
-  for(k=0; k<lem.nsymbol; k++) lem.symbols[k]->index = k;
-  qsort(lem.symbols, lem.nsymbol, sizeof(struct symbol*), Symbolcmpp);
-  for(k=0; k<lem.nsymbol; k++) lem.symbols[k]->index = k;
-  while( k>0 && lem.symbols[k-1]->type==MULTITERMINAL ){ k--; }
-  if( k<=0 || strcmp(lem.symbols[k-1]->name, "{default}")!=0 ){
-    fprintf(stderr, "<grammar text>:1:1: error: symbol-table corruption\n");
-    lint_rc = 1;
-    goto done;
-  }
-  lem.nsymbol = k - 1;
-
-  /* Set nterminal: terminals are the symbols starting with an uppercase
-  ** letter at the start of the sorted symbol array.  lime_compile_
-  ** grammar_in_process does the same setup before SetSize(); without
-  ** it, FindFirstSets / FindStates compute against nterminal=0 and
-  ** corrupt set-allocation arenas, leaving the next call wedged. */
-  for(k=1; k<lem.nsymbol && ISUPPER(lem.symbols[k]->name[0]); k++){}
-  lem.nterminal = k;
-
-  /* Mirror main()'s post-Parse setup that FindStates depends on:
-  ** assign rule numbers, set startRule, sort the rule list.  Without
-  ** this FindStates() exits via "Internal error - no start rule". */
+  /* v1.2.0: hoisted shared post-Parse plumbing.  See helper docs. */
   {
-    int i = 0;
-    struct rule *rp;
-    for( rp=lem.rule; rp; rp=rp->next ){
-      rp->iRule = rp->code ? i++ : -1;
+    const char *setup_err = NULL;
+    if( lime_post_parse_setup(&lem, &setup_err) != 0 ){
+      fprintf(stderr, "<grammar text>:1:1: error: %s\n",
+              setup_err ? setup_err : "post-parse setup failed");
+      lint_rc = 1;
+      goto done;
     }
-    lem.nruleWithAction = i;
-    for( rp=lem.rule; rp; rp=rp->next ){
-      if( rp->iRule<0 ) rp->iRule = i++;
-    }
-    lem.startRule = lem.rule;
-    lem.rule = Rule_sort(lem.rule);
   }
 
   /* Run the same analysis pipeline `lime -L` does. */
@@ -13832,6 +13864,148 @@ done:
   lime_active_ctx = prev_active;
 
   /* Drain captured stderr into out_diags. */
+  if( err_stream ){
+    fflush(stderr);
+    if( saved_stderr>=0 ){
+      dup2(saved_stderr, fileno(stderr));
+      close(saved_stderr);
+    }
+    if( out_diags && fseek(err_stream, 0, SEEK_END)==0 ){
+      long sz = ftell(err_stream);
+      if( sz>0 ){
+        char *buf = (char*)malloc((size_t)sz + 1);
+        if( buf ){
+          rewind(err_stream);
+          size_t got = fread(buf, 1, (size_t)sz, err_stream);
+          buf[got] = '\0';
+          *out_diags = buf;
+        }
+      }
+    }
+    fclose(err_stream);
+  }
+  return lint_rc;
+}
+
+/*
+** lime_lint_grammar_fast_in_process -- parse-only fast-lint variant.
+**
+** Closes the remaining half of Lime-Letter-27 (PG-team's LSP latency
+** complaint on gram.lime).  v0.10 added in-process diagnostics; v1.1
+** added background diagnostics; this v1.2 addition skips the LALR(1)
+** construction phases (FindStates / FindFollowSets / FindActions)
+** that account for ~95%% of analysis time on PG-class grammars.
+**
+** What you LOSE without the LALR phases:
+**
+**   * No conflict detection (W005 missing-expect, S001 doc).
+**     These need lem.nconflict which is set by FindActions.
+**   * No reachability analysis on rules / non-terminals.
+**     W101 (exported symbol is terminal), W102 (%%type without rule)
+**     and similar still work because they only need the parsed AST,
+**     but anything that needs to know which rules are reachable
+**     from the start symbol can't run.
+**
+** What you KEEP:
+**
+**   * Every parse-time error from ParseText (E001-E005).
+**   * Symbol/rule structural checks that don't need the action
+**     table (most of W001-W009 except those keyed on conflicts).
+**   * Any S-class style suggestion that doesn't need conflicts.
+**
+** Measurement on PG's gram.lime (21k LOC):
+**
+**   lime_lint_grammar_in_process       ~2.0 s   (full LALR + lint)
+**   lime_lint_grammar_fast_in_process  ~150 ms  (parse + lint only)
+**
+** Use case: lime-lsp's didChange handler runs fast-lint per
+** keystroke for instant E-class diagnostic feedback; full lint
+** runs on save / didOpen / debounce timer for the W-class
+** warnings consumers also care about.
+**
+** API parity with lime_lint_grammar_in_process: same signature,
+** same diagnostic format (gcc-friendly stderr lines that
+** parse_output() in src/lsp/lsp_diagnostics.c already understands).
+** Caller frees *out_diags with free().
+**
+** Returns 0 on clean lint, non-zero when warnings/errors emitted,
+** -1 on infrastructure failure.
+*/
+int lime_lint_grammar_fast_in_process(const char *grammar_text,
+                                      size_t len,
+                                      char **out_diags) {
+  if( out_diags ) *out_diags = NULL;
+  if( !grammar_text || len==0 ) return -1;
+
+  FILE *err_stream = tmpfile();
+  int saved_stderr = -1;
+  if( err_stream ){
+    fflush(stderr);
+    saved_stderr = dup(fileno(stderr));
+    if( saved_stderr>=0 ) dup2(fileno(err_stream), fileno(stderr));
+  }
+
+  LimeCompilerContext  cc;
+  LimeCompilerContext *prev_active = lime_active_ctx;
+  lime_compiler_context_init(&cc);
+
+  struct lime lem;
+  memset(&lem, 0, sizeof(lem));
+  lem.errorcnt = 0;
+  lem.nexpect = -1;
+  lem.first_token = 0;
+  lem.filename = (char*)"<grammar text>";
+  lem.argv = NULL;
+  lem.argc = 0;
+
+  Strsafe_init();
+  Symbol_init();
+  State_init();
+  Symbol_new("$");
+
+  ParseText(&lem, grammar_text, len);
+
+  int lint_rc = -1;
+  if( lem.errorcnt > 0 ){
+    /* ParseText already wrote diagnostics to (captured) stderr. */
+    lint_rc = 1;
+    goto done;
+  }
+  if( lem.nrule == 0 ){
+    fprintf(stderr, "<grammar text>:1:1: error: empty grammar\n");
+    lint_rc = 1;
+    goto done;
+  }
+  lem.errsym = Symbol_find("error");
+
+  /* v1.2.0: hoisted post-Parse plumbing.  Sets up symbols + rule
+  ** numbering + startRule.  Required because lint_grammar walks
+  ** lem.symbols / lem.rule and would crash without it. */
+  {
+    const char *setup_err = NULL;
+    if( lime_post_parse_setup(&lem, &setup_err) != 0 ){
+      fprintf(stderr, "<grammar text>:1:1: error: %s\n",
+              setup_err ? setup_err : "post-parse setup failed");
+      lint_rc = 1;
+      goto done;
+    }
+  }
+
+  /* SKIPPED vs lime_lint_grammar_in_process:
+  **   SetSize / FindRulePrecedences / FindFirstSets / FindStates /
+  **   FindLinks / FindFollowSets / FindActions
+  ** These ~7 calls do the LALR(1) automaton construction and account
+  ** for the ~95%% of analysis time on PG-class grammars.  We rely on
+  ** lint_grammar to handle nconflict==0 gracefully (it does -- the
+  ** W005 "missing-expect" rule is the only one that consults
+  ** lem.nconflict, and it short-circuits when nexpect == -1, the
+  ** default we set above). */
+  lint_rc = lint_grammar(&lem);
+
+done:
+  lime_compiler_context_destroy(&cc);
+  lime_active_ctx = prev_active;
+
   if( err_stream ){
     fflush(stderr);
     if( saved_stderr>=0 ){
