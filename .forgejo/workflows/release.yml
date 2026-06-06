@@ -112,7 +112,8 @@ jobs:
         run: |
           dnf install -y --setopt=install_weak_deps=False \
               rpm-build rpmdevtools meson ninja-build gcc gcc-c++ \
-              pkg-config llvm-devel xz
+              pkg-config llvm-devel xz \
+              zlib-ng-compat-devel libxml2-devel libffi-devel ncurses-devel
           rpmdev-setuptree
           version="${{ needs.source-tarball.outputs.version }}"
           tarball="dist/lime-parser-${version}.tar.xz"
@@ -197,22 +198,29 @@ jobs:
           apk add --no-cache alpine-sdk meson ninja pkgconfig llvm-dev \
               llvm-static gcc g++ musl-dev xz git sudo abuild
           version="${{ needs.source-tarball.outputs.version }}"
-          mkdir -p ~/aports/lime-parser
+          # abuild refuses to run as root; create the build user FIRST
+          # so paths are under their home, not /root.
+          adduser -D -G abuild builder || true
+          mkdir -p /home/builder/aports/lime-parser
           tarball="dist/lime-parser-${version}.tar.xz"
           xz -dc "$tarball" | gzip -9 \
-              > "$HOME/aports/lime-parser/lime-parser-${version}.tar.gz"
+              > "/home/builder/aports/lime-parser/lime-parser-${version}.tar.gz"
           sed "s/^pkgver=.*/pkgver=${version}/" packaging/APKBUILD \
-              > ~/aports/lime-parser/APKBUILD
-          adduser -D -G abuild builder || true
-          chown -R builder ~/aports
-          su builder -c '
-            cd ~/aports/lime-parser
-            abuild-keygen -an
-            abuild checksum
-            abuild -r
-          ' || true
+              > /home/builder/aports/lime-parser/APKBUILD
+          chown -R builder /home/builder/aports
+          cat > /tmp/builder.sh <<'EOFB'
+          #!/bin/sh
+          set -e
+          cd /home/builder/aports/lime-parser
+          abuild-keygen -an
+          abuild checksum
+          abuild -r
+          EOFB
+          chmod +x /tmp/builder.sh
+          chown builder /tmp/builder.sh
+          su -s /bin/sh builder /tmp/builder.sh || true
           mkdir -p artefacts
-          find ~/packages -name "lime-parser-${version}*.apk" \
+          find /home/builder -name "lime-parser-${version}*.apk" \
               -exec cp {} artefacts/ \; 2>/dev/null || true
           ls -la artefacts/ || true
       - if: always()
