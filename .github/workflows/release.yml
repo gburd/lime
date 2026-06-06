@@ -239,7 +239,7 @@ jobs:
           chown builder /tmp/builder.sh
           su -s /bin/sh builder /tmp/builder.sh || true
           mkdir -p artefacts
-          find /home/builder -name "lime-parser-${version}*.apk" \
+          find /home/builder -name "lime-parser*.apk" \
               -exec cp {} artefacts/ \; 2>/dev/null || true
           ls -la artefacts/ || true
       - name: Upload APK artefacts
