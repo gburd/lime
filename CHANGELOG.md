@@ -19,6 +19,73 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.4.0] -- 2026-06-07
+
+Feature release on `main` (the v1.3.x LTS line is unaffected and
+continues to receive bug-fix/security backports through June 2028).
+Additive only -- no existing public symbol changed; the prior Rust
+output and tuple-based lalrpop `parse()` path are byte-for-byte
+unchanged.
+
+### Added
+
+- **Rust API-compatibility skins: `nom`, `pest`, `chumsky`.**
+  `--target=rust:nom`, `--target=rust:pest`, `--target=rust:chumsky`
+  now emit a self-contained wrapper next to the standard parser
+  (`<stem>_nom.rs` etc.) presenting that crate's familiar surface
+  (`nom`-style `IResult`, `pest`-style `Pairs`, `chumsky`-style
+  `Result<_, Vec<Simple>>`).  No external crate dependency.  All
+  five reserved Rust skins (lalrpop, nom, pest, chumsky -- plus the
+  logos lexer skin) now ship; previously these three parsed the
+  flag and rejected it as "reserved."
+- **lalrpop skin: strongly-typed `Token` struct.**  The skin emits
+  `Token { start: usize, code: u16, end: usize, value: Value }` with
+  bidirectional `From` conversions to/from the
+  `(usize, u16, usize, Value)` quadruple `parse()` consumes.  Build
+  a typed token stream and `.map(Into::into)` it into `parse()`.
+  The tuple form keeps working unchanged.
+- **Generated parser: `pub fn current_state(&self) -> u16`.**  A
+  public accessor for the LALR(1) state at the top of the parse
+  stack, part of the documented introspection surface.
+
+### Changed
+
+- **lalrpop skin: `ParseError.expected` is now populated.**  Was
+  always empty in v1.3.0.  `UnrecognizedToken` / `UnrecognizedEof`
+  now carry the names of the tokens that would have been legal in
+  the current state, computed via `current_state()` +
+  `expected_tokens_in_state()` + `token_name()` (emitted when
+  token-names are enabled, the default).
+- **Internal: post-parse setup consolidated.**  Split
+  `lime_post_parse_setup` into `lime_index_symbols` +
+  `lime_number_rules`, giving a single source of truth for the
+  `(rp->code || rp->rust_code)` rule-numbering predicate that two
+  earlier customer bugs had to patch in three duplicated copies.
+  No behavioural change.
+
+### Fixed
+
+- **`lime_rust_ident_used()` false positives.**  The alias-usage
+  scan that decides whether a `%rust_action` references its named
+  RHS symbols was a word-boundary `strstr`; it now walks Rust lexer
+  state, correctly ignoring matches inside string/char/comment and
+  raw-string contexts (and disambiguating lifetimes from char
+  literals).
+- **Grammar-fragment diagnostic.**  A `%token`-only fragment
+  (`Symbol_count() > 1` but no rules) now reports that it looks
+  like an `%include`-able fragment rather than the bare "Empty
+  grammar."; genuinely empty input still reports "Empty grammar."
+
+### Tests
+
+- `test_emit_rust_skins_v14` (5 cargo sub-tests): nom/pest/chumsky
+  each parse `1+2+3` to `6`.
+- `test_lalrpop_enrich` (4 cargo sub-tests): parse via tuple, parse
+  via `Token` struct, `Token`<->tuple round-trip, and
+  `expected`-populated-on-error.
+- `test_rust_ident_scan`, `test_fragment_error`.
+- 137/137 stock + UBSan + TSan; standalone single-TU build links.
+
 ## [1.3.1] -- 2026-06-07
 
 First LTS patch release.  Pure bug fix; no API changes.
