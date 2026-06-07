@@ -491,6 +491,17 @@ if host_machine.system() != 'windows'
     is_parallel : false,
     timeout : 30)
 
+  # v1.4.0: nom / pest / chumsky Rust-API skins, cargo-driven runtime
+  # check (5 sub-tests).  SKIPs (rc=77) when cargo is absent.
+  test_emit_rust_skins_v14 = executable('test_emit_rust_skins_v14',
+    'test_emit_rust_skins_v14.c',
+  )
+  test('emit_rust_skins_v14', test_emit_rust_skins_v14,
+    args : [lime_exe.full_path()],
+    depends : [lime_exe],
+    is_parallel : false,
+    timeout : 120)
+
 endif
 
 # v0.8.6 CLI flag redesign: regression for --target / --enable /

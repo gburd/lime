@@ -5030,6 +5030,15 @@ static int g_skin_logos = 0;
 ** Mirrors g_skin_logos's role on the lex side. */
 static int g_skin_lalrpop = 0;
 
+/* `nom` / `pest` / `chumsky` Rust-side parser skins
+** (--target=rust:nom etc): each emits a sibling <stem>_<skin>.rs
+** that wraps the standard generated parser in the named library's
+** public-API shape.  See src/emit_rust_skin_{nom,pest,chumsky}.c
+** and docs/SKINS.md.  Same role as g_skin_lalrpop. */
+static int g_skin_nom = 0;
+static int g_skin_pest = 0;
+static int g_skin_chumsky = 0;
+
 /* When non-zero, --rust / --rustlex / --rust-crate / --rust-nostd /
 ** --rustlex-simd / --rustlex-memchr / --per-token-dfa was seen on
 ** the command line.  Used to populate the legacy globals after
@@ -5230,20 +5239,25 @@ static void handle_target_option(char *z) {
                 g_skin_lalrpop = 1;
                 continue;
             }
-            /* Other Rust-side skins are documented in open-items.md but
-            ** not yet implemented.  Emit a clear error so users know the
-            ** flag form is recognised but the back-end is pending. */
-            if (strcmp(tok, "nom") == 0
-             || strcmp(tok, "pest") == 0
-             || strcmp(tok, "chumsky") == 0) {
-                fprintf(stderr,
-                  "lime: --target=rust:%s is reserved for future work; "
-                  "not yet implemented.  See docs/SKINS.md.\n", tok);
-                exit(1);
+            /* v1.4.0: nom / pest / chumsky parser skins.  Each sets
+            ** its flag; emit happens after emit_rust_parser succeeds
+            ** via emit_rust_sibling_skin().  See the corresponding
+            ** src/emit_rust_skin_*.c and docs/SKINS.md. */
+            if (strcmp(tok, "nom") == 0) {
+                g_skin_nom = 1;
+                continue;
+            }
+            if (strcmp(tok, "pest") == 0) {
+                g_skin_pest = 1;
+                continue;
+            }
+            if (strcmp(tok, "chumsky") == 0) {
+                g_skin_chumsky = 1;
+                continue;
             }
             fprintf(stderr,
-              "lime: unknown rust-target skin '%s'.  Valid: logos, lalrpop.  "
-              "Reserved (future): nom, pest, chumsky.\n", tok);
+              "lime: unknown rust-target skin '%s'.  Valid: logos, "
+              "lalrpop, nom, pest, chumsky.\n", tok);
             exit(1);
         }
         if (strcmp(tok, "bison") == 0) {
@@ -5372,6 +5386,52 @@ static void splice_short_value_args(int argc, char **argv) {
         /* argc not adjusted here -- the caller can rely on the NULL
         ** terminator.  Continue from the spliced slot. */
     }
+}
+
+/* emit_rust_sibling_skin -- shared driver for the --target=rust:<skin>
+** parser skins (lalrpop, nom, pest, chumsky).  Computes the output
+** path `<stem>_<suffix>.rs` and the bare module id (basename without
+** dir/ext, used for the skin's `use super::<bare>::*;` import), then
+** calls the skin's emit function.  Factored out of main() so the
+** four skins do not duplicate the path/bare-id boilerplate.
+**
+** Returns 0 on success, nonzero on failure (message already printed).
+*/
+static int emit_rust_sibling_skin(struct lime *lem, const char *suffix,
+                                  int (*emit)(struct lime*, const char*, const char*),
+                                  int quiet) {
+    char skin_path[512];
+    const char *cp = strrchr(lem->filename, '.');
+    size_t base_len = cp ? (size_t)(cp - lem->filename) : strlen(lem->filename);
+    snprintf(skin_path, sizeof(skin_path), "%.*s_%s.rs",
+             (int)base_len, lem->filename, suffix);
+
+    const char *raw = lem->filename;
+    const char *slash = strrchr(raw, '/');
+#if defined(_WIN32)
+    const char *bsl = strrchr(raw, '\\');
+    if( bsl && (!slash || bsl > slash) ) slash = bsl;
+#endif
+    const char *bare = slash ? slash + 1 : raw;
+    size_t blen = strlen(bare);
+    const char *dot = strrchr(bare, '.');
+    if( dot ) blen = (size_t)(dot - bare);
+    char *bare_id = (char*)lime_malloc(blen + 1);
+    if( !bare_id ){
+        fprintf(stderr, "lime --target=rust:%s: out of memory\n", suffix);
+        return 1;
+    }
+    memcpy(bare_id, bare, blen);
+    bare_id[blen] = 0;
+
+    int rc = emit(lem, skin_path, bare_id);
+    lime_free(bare_id);
+    if( rc != 0 ){
+        fprintf(stderr, "lime --target=rust:%s: emit failed\n", suffix);
+        return 1;
+    }
+    if( !quiet ) fprintf(stderr, "Wrote %s skin to %s\n", suffix, skin_path);
+    return 0;
 }
 
 /* The main program.  Parse the command line and do it...
@@ -5970,41 +6030,30 @@ int main(int argc, char **argv){
             }
         }
 
-        /* v1.3.0 (LTS): --target=rust:lalrpop emits a sibling
-        ** <stem>_lalrpop.rs that wraps the standard parser in a
-        ** lalrpop-API-compatible shape.  See src/emit_rust_skin_lalrpop.c. */
-        if( g_skin_lalrpop && lem.errorcnt == 0 ){
-            extern int lime_emit_rust_skin_lalrpop(struct lime *lemp,
-                                                   const char *out_path,
-                                                   const char *bare_id);
-            char skin_path[512];
-            const char *cp2 = strrchr(lem.filename, '.');
-            size_t base_len2 = cp2 ? (size_t)(cp2 - lem.filename) : strlen(lem.filename);
-            snprintf(skin_path, sizeof(skin_path), "%.*s_lalrpop.rs",
-                     (int)base_len2, lem.filename);
-            /* Compute bare_id (basename without dir/ext) for the
-            ** `use super::<bare>::*;` import in the skin. */
-            const char *raw2 = lem.filename;
-            const char *slash2 = strrchr(raw2, '/');
-#if defined(_WIN32)
-            const char *bsl2 = strrchr(raw2, '\\');
-            if( bsl2 && (!slash2 || bsl2 > slash2) ) slash2 = bsl2;
-#endif
-            const char *bare2 = slash2 ? slash2 + 1 : raw2;
-            size_t blen2 = strlen(bare2);
-            const char *dot2 = strrchr(bare2, '.');
-            if( dot2 ) blen2 = (size_t)(dot2 - bare2);
-            char *bare_id2 = (char*)lime_malloc(blen2 + 1);
-            if( bare_id2 ){
-                memcpy(bare_id2, bare2, blen2);
-                bare_id2[blen2] = 0;
-                if( lime_emit_rust_skin_lalrpop(&lem, skin_path, bare_id2) != 0 ){
-                    fprintf(stderr, "lime --target=rust:lalrpop: emit failed\n");
+        /* Sibling Rust skins (--target=rust:<skin>): each emits a
+        ** <stem>_<skin>.rs wrapping the standard parser in a
+        ** library-API-compatible shape.  lalrpop landed in v1.3.0;
+        ** nom/pest/chumsky in v1.4.0.  All share the same path/
+        ** bare-id computation, factored into emit_rust_sibling_skin. */
+        if( lem.errorcnt == 0 ){
+            extern int lime_emit_rust_skin_lalrpop(struct lime*, const char*, const char*);
+            extern int lime_emit_rust_skin_nom(struct lime*, const char*, const char*);
+            extern int lime_emit_rust_skin_pest(struct lime*, const char*, const char*);
+            extern int lime_emit_rust_skin_chumsky(struct lime*, const char*, const char*);
+            struct { int on; const char *suffix;
+                     int (*emit)(struct lime*, const char*, const char*); }
+            sibling_skins[] = {
+                { g_skin_lalrpop, "lalrpop", lime_emit_rust_skin_lalrpop },
+                { g_skin_nom,     "nom",     lime_emit_rust_skin_nom     },
+                { g_skin_pest,    "pest",    lime_emit_rust_skin_pest    },
+                { g_skin_chumsky, "chumsky", lime_emit_rust_skin_chumsky },
+            };
+            for( unsigned si=0; si<sizeof(sibling_skins)/sizeof(sibling_skins[0]); si++ ){
+                if( !sibling_skins[si].on ) continue;
+                if( emit_rust_sibling_skin(&lem, sibling_skins[si].suffix,
+                                           sibling_skins[si].emit, quiet) != 0 ){
                     lem.errorcnt++;
-                }else if( !quiet ){
-                    fprintf(stderr, "Wrote lalrpop skin to %s\n", skin_path);
                 }
-                lime_free(bare_id2);
             }
         }
     }
@@ -15339,6 +15388,56 @@ static int lime_emit_rust_skin_lalrpop_stub(struct lime *lemp,
     return 1;
 }
 __pragma(comment(linker, "/alternatename:lime_emit_rust_skin_lalrpop=lime_emit_rust_skin_lalrpop_stub"))
+#endif
+
+/* lime_emit_rust_skin_nom / _pest / _chumsky (v1.4.0): same weak-stub
+** pattern.  Defined in src/emit_rust_skin_{nom,pest,chumsky}.c; the
+** standalone single-file build provides these no-op stubs so
+** `cc -o lime lime.c` links without dragging in the skin TUs. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak))
+int lime_emit_rust_skin_nom(struct lime *lemp, const char *out_path,
+                            const char *bare_id) {
+    (void)lemp; (void)out_path; (void)bare_id;
+    fprintf(stderr, "lime: nom skin not available in standalone build\n");
+    return 1;
+}
+__attribute__((weak))
+int lime_emit_rust_skin_pest(struct lime *lemp, const char *out_path,
+                             const char *bare_id) {
+    (void)lemp; (void)out_path; (void)bare_id;
+    fprintf(stderr, "lime: pest skin not available in standalone build\n");
+    return 1;
+}
+__attribute__((weak))
+int lime_emit_rust_skin_chumsky(struct lime *lemp, const char *out_path,
+                                const char *bare_id) {
+    (void)lemp; (void)out_path; (void)bare_id;
+    fprintf(stderr, "lime: chumsky skin not available in standalone build\n");
+    return 1;
+}
+#elif defined(_MSC_VER)
+static int lime_emit_rust_skin_nom_stub(struct lime *lemp, const char *out_path,
+                                        const char *bare_id) {
+    (void)lemp; (void)out_path; (void)bare_id;
+    fprintf(stderr, "lime: nom skin not available in standalone build\n");
+    return 1;
+}
+static int lime_emit_rust_skin_pest_stub(struct lime *lemp, const char *out_path,
+                                         const char *bare_id) {
+    (void)lemp; (void)out_path; (void)bare_id;
+    fprintf(stderr, "lime: pest skin not available in standalone build\n");
+    return 1;
+}
+static int lime_emit_rust_skin_chumsky_stub(struct lime *lemp, const char *out_path,
+                                            const char *bare_id) {
+    (void)lemp; (void)out_path; (void)bare_id;
+    fprintf(stderr, "lime: chumsky skin not available in standalone build\n");
+    return 1;
+}
+__pragma(comment(linker, "/alternatename:lime_emit_rust_skin_nom=lime_emit_rust_skin_nom_stub"))
+__pragma(comment(linker, "/alternatename:lime_emit_rust_skin_pest=lime_emit_rust_skin_pest_stub"))
+__pragma(comment(linker, "/alternatename:lime_emit_rust_skin_chumsky=lime_emit_rust_skin_chumsky_stub"))
 #endif
 int g_lime_skin_logos_flag_unused_anchor = 0;
 /* Default 1: safe-Rust emit (no unsafe { ... } wrappers in scalar

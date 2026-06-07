@@ -753,17 +753,135 @@ is stable too -- but the v1.4.0 follow-up will add a struct form
 let future fields (span-id, source-id, etc.) extend without
 breakage.  The tuple form will keep working through v1.x.
 
+### Nom skin (`--target=rust:nom`)
+
+Parser-side skin (v1.4.0).  Emits `<stem>_nom.rs` next to the
+standard `<stem>.rs`.
+
+nom is a *combinator* library; lime is LALR and has no combinators.
+What the skin provides -- and what a consumer swapping engines
+actually wants -- is a top-level parser with nom's signature and
+result type so a `nom::IResult`-shaped call site keeps compiling:
+
+```rust
+pub fn <name>(input: &[LimeTok]) -> IResult<&[LimeTok], Value>;
+```
+
+The emitted file is self-contained: it defines `LimeTok`
+(`{ code: u16, value: Value }`), and minimal `IResult` / `Err` /
+`Error` / `ErrorKind` types mirroring nom's `error` module, so the
+output compiles WITHOUT a nom dependency.  Consumers who already
+depend on nom can delete the shim block and `use nom::...` -- the
+shapes are source-compatible.
+
+On success the parser consumes the whole slice and returns
+`Ok((remainder, value))` where `remainder` is the trailing
+(empty) slice, matching nom's convention.  On a rejected token it
+returns `Err(Err::Error(Error { input, code: ErrorKind::Tag }))`;
+on EOF in a non-accepting state `ErrorKind::Eof`.
+
+```rust
+use calc_nom::{calc, LimeTok};
+let toks = vec![
+    LimeTok { code: NUM,  value: 1 },
+    LimeTok { code: PLUS, value: 0 },
+    LimeTok { code: NUM,  value: 2 },
+];
+let (rem, val) = calc(&toks).unwrap();
+assert_eq!(val, 3);
+assert!(rem.is_empty());
+```
+
+**Not provided:** combinator composition (`alt`, `many0`, ...),
+streaming/`Incomplete`.  The skin is a single top-level parser.
+
+### Pest skin (`--target=rust:pest`)
+
+Parser-side skin (v1.4.0).  Emits `<stem>_pest.rs`.
+
+pest is a PEG generator whose result is a tree of `Pair`s iterable
+via `Pairs`.  lime emits reduce actions, not a tree.  The skin
+presents a pest-shaped surface:
+
+```rust
+pub struct <PascalName>ParserPest;
+impl <PascalName>ParserPest {
+    pub fn parse(rule: Rule, input: &[(u16, Value)])
+        -> Result<Pairs, Error>;
+}
+```
+
+with self-contained `Pair` / `Pairs` / `Rule` / `Error` types so
+the output compiles WITHOUT a pest dependency.  `parse()` takes a
+starting `Rule` for signature compatibility but ignores it (lime's
+start symbol is fixed by the grammar).
+
+```rust
+use calc_pest::{CalcParserPest, Rule};
+let toks = vec![(NUM, 1i64), (PLUS, 0), (NUM, 2)];
+let mut pairs = CalcParserPest::parse(Rule::Start, &toks).unwrap();
+let p = pairs.next().unwrap();
+assert_eq!(p.as_rule(), Rule::EOI);
+assert_eq!(*p.value(), 3);
+```
+
+**Structural approximation, not a faithful pest tree:**
+
+* The minimal-viable `Rule` enum ships `Start` + `EOI` only.
+  Per-nonterminal variants (one per rule LHS) require accessors
+  into lime's symbol table and are a **v1.5.0** enrichment.
+* `Pair::into_inner()` is always empty -- the skin presents the
+  result flat, not nested.  Nesting reconstruction from reduce
+  events is **v1.5.0**.
+* `Pair::value()` returns the reduced `Value` (lime's analogue of
+  pest's `as_str()`; lime tokens carry values, not source spans).
+
+### Chumsky skin (`--target=rust:chumsky`)
+
+Parser-side skin (v1.4.0).  Emits `<stem>_chumsky.rs`.
+
+chumsky's entry point is a `Parser` value with `.parse(input)`
+returning `Result<O, Vec<Simple<I>>>` carrying rich error spans.
+The skin presents:
+
+```rust
+pub fn <name>() -> Parser;
+impl Parser {
+    pub fn parse(&self, input: &[(u16, Value)])
+        -> Result<Value, Vec<Simple>>;
+}
+```
+
+with a self-contained `Simple` error type (subset of
+`chumsky::error::Simple`) so the output compiles WITHOUT a chumsky
+dependency.  lime is LALR and stops at the first error, so the
+returned `Vec<Simple>` holds exactly one entry.
+
+```rust
+use calc_chumsky::calc;
+let toks = vec![(NUM, 1i64), (PLUS, 0), (NUM, 2)];
+let val = calc().parse(&toks).unwrap();
+assert_eq!(val, 3);
+```
+
+**Not provided:** combinator composition; full chumsky `Span` /
+label support (`Simple` carries the offending token index + an EOF
+flag).  Rich spans are a **v1.5.0** item.
+
 ### Reserved Rust skins (planned)
 
-See `.agent/notes/open-items.md` section 2:
+All five originally-reserved Rust skins now ship:
 
-* `--target=rust:nom` -- nom-style combinator surface
-* `--target=rust:pest` -- pest-style `Pairs` iterator
-* `--target=rust:lalrpop` -- lalrpop-style `<Grammar>Parser::parse(...)`
-* `--target=rust:chumsky` -- chumsky-style combinator surface
+* `--target=rust:logos`   -- logos-style token iterator (lex side, v0.9.3)
+* `--target=rust:lalrpop` -- lalrpop-style `<Grammar>Parser::parse(...)` (v1.3.0)
+* `--target=rust:nom`     -- nom-style top-level parser + `IResult` (v1.4.0)
+* `--target=rust:pest`    -- pest-style `Pairs` iterator (v1.4.0)
+* `--target=rust:chumsky` -- chumsky-style `Parser::parse` (v1.4.0)
 
-`--target=rust:<skin>` already parses and rejects with a clear
-"not yet implemented" error.  Each skin will land in its own commit.
+v1.5.0 enrichment is tracked in `.agent/notes/open-items.md`:
+per-nonterminal pest `Rule` variants + nested `Pairs`, chumsky
+`Span`/label support, and the lalrpop strongly-typed `Token` enum
++ `expected` population.
 
 ## Tests
 
