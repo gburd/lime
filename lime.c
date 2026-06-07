@@ -4413,7 +4413,7 @@ static void dc_child_compile_and_dump(const char *path, int out_fd)
   lem.nterminal = i;
 
   for(i=0, rp=lem.rule; rp; rp=rp->next){
-    rp->iRule = (rp->code || rp->rust_code) ? i++ : -1;
+    rp->iRule = rp->code ? i++ : -1;
   }
   lem.nruleWithAction = i;
   for(rp=lem.rule; rp; rp=rp->next){
@@ -5859,7 +5859,7 @@ int main(int argc, char **argv){
   ** statement that selects reduction actions will have a smaller jump table.
   */
   for(i=0, rp=lem.rule; rp; rp=rp->next){
-    rp->iRule = (rp->code || rp->rust_code) ? i++ : -1;
+    rp->iRule = rp->code ? i++ : -1;
   }
   lem.nruleWithAction = i;
   for(rp=lem.rule; rp; rp=rp->next){
@@ -7370,13 +7370,6 @@ static void parseonetoken(struct pstate *psp)
           ** the rule already has a C `code` body (the whole point
           ** of the directive is to provide a Rust override). */
           psp->prevrule->rust_code = &x[1];
-          /* A %rust_action body is real reduce code for the Rust target, even
-          ** when no C `code` body is present. Clear noCode so the rule is not
-          ** treated as an empty/passthrough reduce: otherwise the SHIFTREDUCE
-          ** optimization collapses nrhs==1 noCode nonterminal rules and the
-          ** Rust action is silently dropped. (rust_code is also folded into the
-          ** iRule "has code" test so rule numbering stays stable.) */
-          psp->prevrule->noCode = 0;
           psp->next_brace_is_rust = 0;
           propagate_alt_group_attach(psp);
         }else if( psp->prevrule->code!=0 ){
@@ -13634,7 +13627,7 @@ static int lime_post_parse_setup(struct lime *lem, const char **fail_reason) {
     int idx = 0;
     struct rule *rp;
     for(rp=lem->rule; rp; rp=rp->next){
-        rp->iRule = (rp->code || rp->rust_code) ? idx++ : -1;
+        rp->iRule = rp->code ? idx++ : -1;
     }
     lem->nruleWithAction = idx;
     for(rp=lem->rule; rp; rp=rp->next){
