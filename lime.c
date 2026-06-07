@@ -313,6 +313,17 @@ static LIME_THREAD_LOCAL LimeCompilerContext *lime_active_ctx = 0;
 static void lime_compiler_context_init(LimeCompilerContext *cc);
 static void lime_compiler_context_destroy(LimeCompilerContext *cc);
 
+/* Post-parse setup helpers (defined later, near the in-process
+** compile/lint entry points).  main() and dc_child_compile_and_dump
+** appear before the definitions, so forward-declare here.  The split
+** (index_symbols / number_rules / post_parse_setup composition) lets
+** main() interleave its -F / lint passes between symbol indexing and
+** rule numbering without duplicating either step -- see the v1.4.0
+** consolidation note on lime_number_rules. */
+static int  lime_index_symbols(struct lime *lem, const char **fail_reason);
+static void lime_number_rules(struct lime *lem);
+static int  lime_post_parse_setup(struct lime *lem, const char **fail_reason);
+
 /* Compatibility shims: the original code accessed file-static
 ** globals by their bare names.  These macros redirect every
 ** access to the active context's storage WITHOUT requiring
@@ -4369,8 +4380,6 @@ static char *dc_build_key(const DCRec *r){
 static void dc_child_compile_and_dump(const char *path, int out_fd)
 {
   struct lime lem;
-  struct rule *rp;
-  int i;
   FILE *f;
 
   memset(&lem, 0, sizeof(lem));
@@ -4401,33 +4410,15 @@ static void dc_child_compile_and_dump(const char *path, int out_fd)
   }
   lem.errsym = Symbol_find("error");
 
-  Symbol_new("{default}");
-  lem.nsymbol = Symbol_count();
-  lem.symbols = Symbol_arrayof();
-  for(i=0; i<lem.nsymbol; i++) lem.symbols[i]->index = i;
-  qsort(lem.symbols, lem.nsymbol, sizeof(struct symbol*), Symbolcmpp);
-  for(i=0; i<lem.nsymbol; i++) lem.symbols[i]->index = i;
-  while( lem.symbols[i-1]->type==MULTITERMINAL ){ i--; }
-  lem.nsymbol = i - 1;
-  for(i=1; ISUPPER(lem.symbols[i]->name[0]); i++);
-  lem.nterminal = i;
-
-  for(i=0, rp=lem.rule; rp; rp=rp->next){
-    /* v1.3.1: see lime_post_parse_setup for the full rationale.
-    ** A %rust_action-only rule has code==NULL but rust_code!=NULL
-    ** and must get a non-(-1) iRule so emit_rust's lookup table
-    ** finds it.  Three sites duplicate this loop (here, main, and
-    ** lime_post_parse_setup); kept in sync by mechanical update.
-    ** Routing all three through one helper is queued for v1.4.0
-    ** since it requires lifting the symbol indexing prelude. */
-    rp->iRule = (rp->code || rp->rust_code) ? i++ : -1;
+  {
+    const char *setup_err = NULL;
+    if( lime_post_parse_setup(&lem, &setup_err) != 0 ){
+      /* Symbol-table corruption in the child: nothing useful to
+      ** report over the pipe, the parent will see EOF + nonzero
+      ** exit.  Match the pre-consolidation _exit(2) behaviour. */
+      _exit(2);
+    }
   }
-  lem.nruleWithAction = i;
-  for(rp=lem.rule; rp; rp=rp->next){
-    if( rp->iRule<0 ) rp->iRule = i++;
-  }
-  lem.startRule = lem.rule;
-  lem.rule = Rule_sort(lem.rule);
 
   SetSize(lem.nterminal+1);
   FindRulePrecedences(&lem);
@@ -5621,10 +5612,8 @@ int main(int argc, char **argv){
      "Output diff results as JSON (use with --diff-conflicts)."},
     {OPT_FLAG,0,0,0}
   };
-  int i;
   int exitcode;
   struct lime lem;
-  struct rule *rp;
   /* ROADMAP item 1, phase 1: extract globals into a per-compilation
   ** context.  main() owns the single instance for the CLI; it is
   ** installed as the active context by lime_compiler_context_init().
@@ -5829,23 +5818,39 @@ int main(int argc, char **argv){
   }
 
   if( lem.nrule==0 ){
-    fprintf(stderr,"Empty grammar.\n");
+    /* Distinguish a genuinely empty input from a %token-only
+    ** fragment.  Fragments (e.g. pg/tokens.lime, pg/types.lime) are
+    ** meant to be %include-d into a complete grammar, not compiled
+    ** or formatted standalone -- give a message that points the
+    ** user at the actual problem instead of the bare "Empty
+    ** grammar." that looks like a parser bug. */
+    if( Symbol_count() > 1 ){
+      fprintf(stderr,
+        "%s: no rules found, only declarations.  This looks like a "
+        "grammar fragment\nintended to be %%include-d into a complete "
+        "grammar; lime requires at least\none rule to compile or format "
+        "a standalone grammar.\n",
+        lem.filename ? lem.filename : "lime");
+    }else{
+      fprintf(stderr,"Empty grammar.\n");
+    }
     exit(1);
   }
   lem.errsym = Symbol_find("error");
 
-  /* Count and index the symbols of the grammar */
-  Symbol_new("{default}");
-  lem.nsymbol = Symbol_count();
-  lem.symbols = Symbol_arrayof();
-  for(i=0; i<lem.nsymbol; i++) lem.symbols[i]->index = i;
-  qsort(lem.symbols,lem.nsymbol,sizeof(struct symbol*), Symbolcmpp);
-  for(i=0; i<lem.nsymbol; i++) lem.symbols[i]->index = i;
-  while( lem.symbols[i-1]->type==MULTITERMINAL ){ i--; }
-  assert( strcmp(lem.symbols[i-1]->name,"{default}")==0 );
-  lem.nsymbol = i - 1;
-  for(i=1; ISUPPER(lem.symbols[i]->name[0]); i++);
-  lem.nterminal = i;
+  /* Count and index the symbols of the grammar (steps 1+2 of
+  ** post-parse setup).  Rule numbering (steps 3+4) is deferred until
+  ** AFTER the -F / lint passes below, which need symbols counted but
+  ** must run before rules are renumbered/sorted. */
+  {
+    const char *setup_err = NULL;
+    if( lime_index_symbols(&lem, &setup_err) != 0 ){
+      fprintf(stderr, "%s: %s\n",
+              lem.filename ? lem.filename : "lime",
+              setup_err ? setup_err : "internal error during symbol indexing");
+      exit(1);
+    }
+  }
 
   /* v0.5.0: the lint pass moved to AFTER FindActions so W005
   ** (missing-expect) can read lem.nconflict.  See the post-FindActions
@@ -5861,20 +5866,11 @@ int main(int argc, char **argv){
     exit(format_result);
   }
 
-  /* Assign sequential rule numbers.  Start with 0.  Put rules that have no
-  ** reduce action C-code associated with them last, so that the switch()
-  ** statement that selects reduction actions will have a smaller jump table.
-  ** v1.3.1: %rust_action-only rules count as "having reduce code" for the
-  ** Rust target -- see lime_post_parse_setup for the full rationale. */
-  for(i=0, rp=lem.rule; rp; rp=rp->next){
-    rp->iRule = (rp->code || rp->rust_code) ? i++ : -1;
-  }
-  lem.nruleWithAction = i;
-  for(rp=lem.rule; rp; rp=rp->next){
-    if( rp->iRule<0 ) rp->iRule = i++;
-  }
-  lem.startRule = lem.rule;
-  lem.rule = Rule_sort(lem.rule);
+  /* Assign sequential rule numbers (steps 3+4 of post-parse setup).
+  ** Action-bearing rules first so the reduce switch() has a smaller
+  ** jump table; %rust_action-only rules count as action-bearing.
+  ** See lime_number_rules for the full rationale. */
+  lime_number_rules(&lem);
 
   /* Generate a reprint of the grammar, if requested on the command line */
   if( rpflag ){
@@ -13355,6 +13351,101 @@ void ResortStates(struct lime *lemp)
   }
 }
 
+/*
+** lime_index_symbols -- steps (1)+(2) of post-parse setup.  Adds the
+** {default} sentinel, indexes + sorts the symbol table, strips the
+** sentinel, and computes lem->nterminal.  Split out of
+** lime_post_parse_setup (v1.4.0) so main() can run its -F / lint
+** passes -- which need symbols counted but must execute BEFORE rule
+** numbering -- between symbol indexing and rule numbering without
+** duplicating the prelude.
+**
+** Defined OUTSIDE the LIME_HAVE_SNAPSHOT_BUILD guard: main() and
+** dc_child_compile_and_dump call these unconditionally, so the
+** definitions must be present in the plain `lime` build (which does
+** not define LIME_HAVE_SNAPSHOT_BUILD) as well as the in-process
+** compiler library.
+**
+** Returns 0 on success; -1 on symbol-table corruption (*fail_reason
+** set).  Static; callers are all inside lime.c.
+*/
+static int lime_index_symbols(struct lime *lem, const char **fail_reason) {
+    if( fail_reason ) *fail_reason = NULL;
+    if( lem == NULL ){
+        if( fail_reason ) *fail_reason = "index_symbols: NULL lem";
+        return -1;
+    }
+    Symbol_new("{default}");
+    lem->nsymbol = Symbol_count();
+    lem->symbols = Symbol_arrayof();
+    int k;
+    for(k=0; k<lem->nsymbol; k++) lem->symbols[k]->index = k;
+    qsort(lem->symbols, lem->nsymbol, sizeof(struct symbol*), Symbolcmpp);
+    for(k=0; k<lem->nsymbol; k++) lem->symbols[k]->index = k;
+    while( k>0 && lem->symbols[k-1]->type==MULTITERMINAL ){ k--; }
+    if( k<=0 || strcmp(lem->symbols[k-1]->name, "{default}")!=0 ){
+        if( fail_reason ) *fail_reason = "symbol table corruption: {default} missing";
+        return -1;
+    }
+    lem->nsymbol = k - 1;
+    for(k=1; k<lem->nsymbol && ISUPPER(lem->symbols[k]->name[0]); k++){}
+    lem->nterminal = k;
+    return 0;
+}
+
+/*
+** lime_number_rules -- steps (3)+(4) of post-parse setup.  Numbers
+** rules (action-bearing first so the reduce switch() has a smaller
+** jump table), records startRule, and sorts.  Split out of
+** lime_post_parse_setup (v1.4.0); the iRule predicate lived inline
+** in THREE places (main, dc_child_compile_and_dump, and here) and
+** had to be patched in lockstep twice in the v1.3.x line (the
+** %rust_action alias fix and the alt-group propagation fix).  This
+** is the single source of truth now.
+**
+** A rule "has reduce code" if it has EITHER a C `code` body OR a
+** `rust_code` body (set by `%rust_action {...}` directly, or copied
+** via propagate_alt_group_attach for earlier alternatives in a
+** `lhs ::= a | b. %rust_action` group).  Counting only `rp->code`
+** assigned iRule=-1 to %rust_action-only rules and made
+** lime_emit_rust_rule_info() / lime_emit_rust_rule_rust_code()
+** (which look up by iRule) miss them, so the Rust target emitted
+** the default `lhs = rhs0` body in their yy_rule_N slot.
+*/
+static void lime_number_rules(struct lime *lem) {
+    int idx = 0;
+    struct rule *rp;
+    for(rp=lem->rule; rp; rp=rp->next){
+        rp->iRule = (rp->code || rp->rust_code) ? idx++ : -1;
+    }
+    lem->nruleWithAction = idx;
+    for(rp=lem->rule; rp; rp=rp->next){
+        if( rp->iRule<0 ) rp->iRule = idx++;
+    }
+    lem->startRule = lem->rule;
+    lem->rule = Rule_sort(lem->rule);
+}
+
+/*
+** lime_post_parse_setup -- finish setting up `lem` after ParseText so
+** the LALR(1) pipeline (FindStates, FindFollowSets, FindActions) can
+** run safely.  Thin composition of lime_index_symbols +
+** lime_number_rules (v1.4.0); previously these steps were duplicated
+** inline in main, dc_child_compile_and_dump, and the in-process
+** compile/lint entry points -- a maintenance hazard since a missing
+** field at one site (e.g. nterminal) silently broke others' analysis
+** with cryptic 'Internal error - no start rule' exits.
+**
+** Returns 0 on success.  On failure (*fail_reason set, caller can
+** propagate) returns -1.  Static; only callers are inside lime.c.
+*/
+static int lime_post_parse_setup(struct lime *lem, const char **fail_reason) {
+    int rc = lime_index_symbols(lem, fail_reason);
+    if( rc != 0 ) return rc;
+    lime_number_rules(lem);
+    return 0;
+}
+
 #ifdef LIME_HAVE_SNAPSHOT_BUILD
 /* ROADMAP item 1, phase 3: in-process snapshot construction.
 **
@@ -13624,71 +13715,6 @@ oom:
   free(yy_fallback);
   if( pActtab ) acttab_free(pActtab);
   return snap;
-}
-
-/*
-** lime_post_parse_setup -- finish setting up `lem` after ParseText so
-** the LALR(1) pipeline (FindStates, FindFollowSets, FindActions) can
-** run safely.  v1.2.0 hoists what was duplicated inline in three
-** places (main, lime_compile_grammar_in_process, lime_lint_grammar_
-** in_process) -- a maintenance hazard since adding a missing field
-** to one site (e.g. nterminal) silently breaks others' analysis with
-** cryptic 'Internal error - no start rule' exits.
-**
-** Sequence (must run in this exact order, matching main()'s shape):
-**   (1) Index symbols + strip {default} sentinel
-**   (2) Compute lem->nterminal (uppercase-led names cluster low)
-**   (3) Number rules: action-bearing first, no-code after
-**   (4) lem->startRule = lem->rule (BEFORE Rule_sort)
-**
-** Returns 0 on success.  On failure (*fail_reason set, caller can
-** propagate) returns -1.  Static; only callers are inside lime.c.
-*/
-static int lime_post_parse_setup(struct lime *lem, const char **fail_reason) {
-    if( fail_reason ) *fail_reason = NULL;
-    if( lem == NULL ){
-        if( fail_reason ) *fail_reason = "post_parse_setup: NULL lem";
-        return -1;
-    }
-    Symbol_new("{default}");
-    lem->nsymbol = Symbol_count();
-    lem->symbols = Symbol_arrayof();
-    int k;
-    for(k=0; k<lem->nsymbol; k++) lem->symbols[k]->index = k;
-    qsort(lem->symbols, lem->nsymbol, sizeof(struct symbol*), Symbolcmpp);
-    for(k=0; k<lem->nsymbol; k++) lem->symbols[k]->index = k;
-    while( k>0 && lem->symbols[k-1]->type==MULTITERMINAL ){ k--; }
-    if( k<=0 || strcmp(lem->symbols[k-1]->name, "{default}")!=0 ){
-        if( fail_reason ) *fail_reason = "symbol table corruption: {default} missing";
-        return -1;
-    }
-    lem->nsymbol = k - 1;
-    for(k=1; k<lem->nsymbol && ISUPPER(lem->symbols[k]->name[0]); k++){}
-    lem->nterminal = k;
-    int idx = 0;
-    struct rule *rp;
-    for(rp=lem->rule; rp; rp=rp->next){
-        /* v1.3.1: count rules that have EITHER a C `code` body OR a
-        ** `rust_code` body (set by `%rust_action { ... }` directly,
-        ** or copied via propagate_alt_group_attach when the rule is
-        ** an earlier alternative in a `lhs ::= a | b. %rust_action`
-        ** group).  Pre-fix the predicate was just `rp->code`, which
-        ** assigned iRule=-1 to %rust_action-only rules and made
-        ** lime_emit_rust_rule_info() / lime_emit_rust_rule_rust_code()
-        ** miss them entirely (they look up by iRule), so the rust
-        ** target emitted the default `lhs = rhs0` body in their
-        ** yy_rule_N slot.  See companion fix in parseonetoken (clears
-        ** noCode for %rust_action) + the WAITING_FOR_DECL_OR_RULE
-        ** state machine (no longer pre-clears alt_group_head on `%`). */
-        rp->iRule = (rp->code || rp->rust_code) ? idx++ : -1;
-    }
-    lem->nruleWithAction = idx;
-    for(rp=lem->rule; rp; rp=rp->next){
-        if( rp->iRule<0 ) rp->iRule = idx++;
-    }
-    lem->startRule = lem->rule;
-    lem->rule = Rule_sort(lem->rule);
-    return 0;
 }
 
 int lime_compile_grammar_in_process(const char *grammar_text,

@@ -468,6 +468,16 @@ if host_machine.system() != 'windows'
     is_parallel : false,
     timeout : 120)
 
+  # v1.4.0: fragment vs empty-grammar diagnostic regression.
+  test_fragment_error = executable('test_fragment_error',
+    'test_fragment_error.c',
+  )
+  test('fragment_error', test_fragment_error,
+    args : [lime_exe.full_path()],
+    depends : [lime_exe],
+    is_parallel : false,
+    timeout : 30)
+
 endif
 
 # v0.8.6 CLI flag redesign: regression for --target / --enable /
