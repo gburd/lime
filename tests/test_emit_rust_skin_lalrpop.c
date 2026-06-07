@@ -139,6 +139,20 @@ int main(int argc, char **argv) {
     CHECK(file_contains(skinpath, "impl Default for CalcParser"),
           "impl Default for CalcParser");
 
+    /* --- 2b. v1.4.0 enrichment surface --------------------- */
+    CHECK(file_contains(skinpath, "pub struct Token"),
+          "v1.4.0: strongly-typed Token struct emitted");
+    CHECK(file_contains(skinpath, "impl From<Token> for (usize, u16, usize, Value)"),
+          "v1.4.0: Token -> quadruple From impl");
+    CHECK(file_contains(skinpath, "impl From<(usize, u16, usize, Value)> for Token"),
+          "v1.4.0: quadruple -> Token From impl");
+    CHECK(file_contains(skinpath, "fn expected_at"),
+          "v1.4.0: expected_at() helper emitted");
+    CHECK(file_contains(skinpath, "expected: expected_at(&p)"),
+          "v1.4.0: expected field populated (not Vec::new())");
+    CHECK(file_contains(rspath, "pub fn current_state"),
+          "v1.4.0: parser exposes pub current_state()");
+
     /* --- 3. Module imports referenced ---------------------- */
     CHECK(file_contains(skinpath, "use super::calc::*"),
           "imports super::calc::* (sibling module wildcard)");

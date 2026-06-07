@@ -728,15 +728,46 @@ pub mod calc_lalrpop;
 }
 ```
 
-#### Limitations (v1.3.x)
+#### v1.4.0 enrichment
 
-* The strongly-typed `Token` enum is NOT auto-emitted.  Consumers
-  define their own and bridge at the iterator boundary (the
-  `.map()` above).  Auto-emission is queued for v1.4.0.
-* `expected: Vec<String>` is always empty.  Computing the expected-
-  token set requires peeking the inner parser's current state,
-  which lime does not yet expose via a public getter.  v1.4.0 adds
-  `<Name>Parser::current_state()` and the skin gains the enrichment.
+As of v1.4.0 the lalrpop skin emits:
+
+* A strongly-typed `Token { start: usize, code: u16, end: usize,
+  value: Value }` struct with bidirectional `From` impls to/from
+  the `(usize, u16, usize, Value)` quadruple.  Build a typed token
+  stream and `.map(Into::into)` it into `parse()`:
+
+  ```rust
+  let typed = vec![
+      Token { start: 0, code: NUM,  end: 1, value: 1 },
+      Token { start: 2, code: PLUS, end: 3, value: 0 },
+      Token { start: 4, code: NUM,  end: 5, value: 2 },
+  ];
+  let quads: Vec<_> = typed.into_iter().map(Into::into).collect();
+  let sum = CalcParser::new().parse(quads).unwrap();
+  ```
+
+  The tuple form keeps working unchanged (LTS compat).
+
+* `expected: Vec<String>` is now **populated** on error.  The
+  generated parser exposes a public `current_state() -> u16`, and
+  the skin's `expected_at()` helper feeds it through the standard
+  `expected_tokens_in_state()` + `token_name()` introspection
+  (emitted when token-names are enabled -- the default).  A
+  `ParseError::UnrecognizedToken` / `UnrecognizedEof` now carries
+  the names of the tokens that would have been legal:
+
+  ```rust
+  match CalcParser::new().parse(vec![(0, PLUS, 1, 0)]) {
+      Err(ParseError::UnrecognizedToken { expected, .. }) => {
+          assert!(expected.contains(&"NUM".to_string()));
+      }
+      _ => unreachable!(),
+  }
+  ```
+
+#### Limitations (current)
+
 * `User` variant is exposed but lime never produces it.  Consumers
   threading their own error type construct `ParseError::User { error }`
   at the call site (typically from a lexer-side error).
@@ -748,10 +779,10 @@ pub mod calc_lalrpop;
 
 The `parse()` signature shape and the `ParseError<L, T, E>` variant
 set are LTS-stable through June 2028.  The quadruple iterator-item
-is stable too -- but the v1.4.0 follow-up will add a struct form
-(`Token { start, code, end, value }`) alongside the tuple form to
-let future fields (span-id, source-id, etc.) extend without
-breakage.  The tuple form will keep working through v1.x.
+is stable, and v1.4.0 adds the `Token` struct form (`Token { start,
+code, end, value }`) alongside it with `From` conversions both
+ways, so future fields can extend the struct without breaking the
+tuple consumers.  The tuple form keeps working through v1.x.
 
 ### Nom skin (`--target=rust:nom`)
 

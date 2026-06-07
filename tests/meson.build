@@ -502,6 +502,17 @@ if host_machine.system() != 'windows'
     is_parallel : false,
     timeout : 120)
 
+  # v1.4.0: lalrpop skin enrichment (Token struct + populated
+  # expected), cargo-driven runtime check (4 sub-tests).
+  test_lalrpop_enrich = executable('test_lalrpop_enrich',
+    'test_lalrpop_enrich.c',
+  )
+  test('lalrpop_enrich', test_lalrpop_enrich,
+    args : [lime_exe.full_path()],
+    depends : [lime_exe],
+    is_parallel : false,
+    timeout : 120)
+
 endif
 
 # v0.8.6 CLI flag redesign: regression for --target / --enable /
