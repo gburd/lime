@@ -104,18 +104,97 @@ extern const char *lime_emit_rust_get_rust_accept(const struct lime *lemp);
 extern const char *lime_emit_rust_get_rust_failure(const struct lime *lemp);
 extern const char *lime_emit_rust_get_rust_overflow(const struct lime *lemp);
 
-/* True if identifier `id` occurs as a whole word in `hay` (word boundaries on
-** both sides). Used to decide whether an RHS alias binding is referenced by a
-** rule's action body — checked against BOTH the inline C body and the
-** %rust_action body, so a %rust_action-only rule (no inline body) does not get
-** its aliases spuriously underscore-prefixed. */
+/* True if `c` may start a Rust identifier (or keyword). */
+static int lime_ident_start(int c) {
+    return isalpha((unsigned char)c) || c == '_';
+}
+
+/* True if `c` may continue a Rust identifier. */
+static int lime_ident_cont(int c) {
+    return isalnum((unsigned char)c) || c == '_';
+}
+
+/* True if identifier `id` occurs as a whole word in `hay`, counting only
+** matches that sit in actual code position. A Rust lexer-state walk skips
+** string/char literals (including raw strings) and line/block comments, so a
+** match buried in a string literal, char literal, line comment, block comment,
+** or raw string does NOT count.
+** Used to decide whether an RHS alias binding is referenced by a rule action
+** body -- checked against BOTH the inline C body and the %rust_action body, so a
+** %rust_action-only rule (no inline body) does not get its aliases spuriously
+** underscore-prefixed.
+**
+** False positives (claiming used when unused) are harmless here; false
+** negatives (claiming unused when used) are a bug (rustc E0425). The walk is
+** therefore conservative: anything it cannot lex as a literal/comment falls
+** through to ordinary identifier scanning. */
 static int lime_rust_ident_used(const char *hay, const char *id) {
     if (!hay || !hay[0] || !id || !id[0]) return 0;
-    size_t blen = strlen(id);
-    for (const char *p = hay; (p = strstr(p, id)); p++) {
-        int prev_ok = (p == hay) || !(isalnum((unsigned char)p[-1]) || p[-1] == '_');
-        int next_ok = !(isalnum((unsigned char)p[blen]) || p[blen] == '_');
-        if (prev_ok && next_ok) return 1;
+    size_t idlen = strlen(id);
+    const char *p = hay;
+    while (*p) {
+        if (p[0] == '/' && p[1] == '/') {            /* line comment */
+            p += 2;
+            while (*p && *p != '\n') p++;
+        } else if (p[0] == '/' && p[1] == '*') {     /* nesting block comment */
+            p += 2;
+            int depth = 1;
+            while (*p && depth > 0) {
+                if (p[0] == '/' && p[1] == '*') { depth++; p += 2; }
+                else if (p[0] == '*' && p[1] == '/') { depth--; p += 2; }
+                else p++;
+            }
+        } else if (p[0] == '"') {                    /* string literal */
+            p++;
+            while (*p && *p != '"') {
+                if (*p == '\\' && p[1]) p += 2; else p++;
+            }
+            if (*p == '"') p++;
+        } else if (p[0] == 'r' && (p[1] == '"' || p[1] == '#')) {
+            /* raw string r"..." / r#"..."# / r##"..."## (count the hashes) */
+            const char *q = p + 1;
+            int hashes = 0;
+            while (*q == '#') { hashes++; q++; }
+            if (*q == '"') {                         /* confirmed raw string */
+                q++;
+                for (;;) {
+                    if (!*q) break;
+                    if (*q == '"') {
+                        int n = 0;
+                        while (q[1 + n] == '#') n++;
+                        if (n >= hashes) { q += 1 + hashes; break; }
+                    }
+                    q++;
+                }
+                p = q;
+            } else {
+                /* not actually a raw string: `r` begins an identifier */
+                const char *start = p;
+                while (lime_ident_cont((unsigned char)*p)) p++;
+                if ((size_t)(p - start) == idlen &&
+                    memcmp(start, id, idlen) == 0) return 1;
+            }
+        } else if (p[0] == '\'') {                    /* char literal vs lifetime */
+            if (p[1] == '\\' && p[2]) {              /* '\n' '\\' '\'' ... */
+                const char *q = p + 2;
+                while (*q && *q != '\'') q++;         /* skip to closing quote */
+                p = (*q == '\'') ? q + 1 : q;
+            } else if (p[1] && p[2] == '\'') {       /* 'x' single-char literal */
+                p += 3;
+            } else {
+                /* lifetime: a quote followed by an identifier with no closing
+                ** quote nearby; treat the quote as punctuation, advance one,
+                ** and let the following identifier be scanned normally. */
+                p++;
+            }
+        } else if (lime_ident_start((unsigned char)*p)) {
+            const char *start = p;
+            while (lime_ident_cont((unsigned char)*p)) p++;
+            if ((size_t)(p - start) == idlen &&
+                memcmp(start, id, idlen) == 0) return 1;
+        } else {
+            p++;
+        }
     }
     return 0;
 }

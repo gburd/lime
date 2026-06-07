@@ -468,6 +468,19 @@ if host_machine.system() != 'windows'
     is_parallel : false,
     timeout : 120)
 
+  # v1.4.0: Rust-aware identifier scan in lime_rust_ident_used().
+  # An alias name that appears ONLY inside a string/char literal or
+  # comment in a %rust_action body must be classified as unused and
+  # underscore-prefixed; a genuinely used alias must stay unprefixed.
+  test_rust_ident_scan = executable('test_rust_ident_scan',
+    'test_rust_ident_scan.c',
+  )
+  test('rust_ident_scan', test_rust_ident_scan,
+    args : [lime_exe.full_path()],
+    depends : [lime_exe],
+    is_parallel : false,
+    timeout : 30)
+
   # v1.4.0: fragment vs empty-grammar diagnostic regression.
   test_fragment_error = executable('test_fragment_error',
     'test_fragment_error.c',
