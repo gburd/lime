@@ -619,6 +619,140 @@ pub mod foo_lex_logos;
   at the cost of a per-call allocation.  Streaming will follow
   once the inner `TokenIter`'s lifetime story is reworked.
 
+### Lalrpop skin (`--target=rust:lalrpop`)
+
+Parser-side skin.  Lands in **v1.3.0 (LTS)**.  Emits **next to** the
+standard `<stem>.rs`:
+
+```
+<stem>_lalrpop.rs
+```
+
+#### API surface (matches lalrpop's typical `<Name>Parser`)
+
+```rust
+pub struct <PascalName>Parser;
+impl <PascalName>Parser {
+    pub fn new() -> Self;
+    pub fn parse<I>(&self, input: I)
+        -> Result<Value, ParseError<usize, u16, ()>>
+    where
+        I: IntoIterator<Item = (usize, u16, usize, Value)>;
+}
+impl Default for <PascalName>Parser { /* ... */ }
+
+pub enum ParseError<L, T, E> {
+    InvalidToken      { location: L },
+    UnrecognizedEof   { location: L, expected: Vec<String> },
+    UnrecognizedToken { token: (L, T, L), expected: Vec<String> },
+    ExtraToken        { token: (L, T, L) },
+    User              { error: E },
+}
+```
+
+The wrapper imports the sibling parser module via `use super::<stem>::*;`
+and re-exports the inner `<Name>Parser` as `InnerParser`.  Consumer
+`lib.rs` declares both:
+
+```rust
+pub mod foo;
+pub mod foo_lalrpop;
+```
+
+#### Iterator-item shape: `(start, code, end, value)` quadruple
+
+Lalrpop typically takes `IntoIterator<Item = Spanned<Token>>` where
+`Spanned<T> = (usize, T, usize)`.  Lime's quadruple form keeps the
+semantic `Value` separate from the strongly-typed token discriminant
+(which lime represents as a `u16` token code, not an enum):
+
+- `start: usize` -- byte offset of the token's start in the source.
+- `code: u16`    -- a `TK_*` constant from the inner module.
+- `end: usize`   -- byte offset just past the token's end.
+- `value: Value` -- semantic payload (`%token_type`, `%type`,
+                    `%rust_value_type`).
+
+The `Spanned<Token>` -> quadruple bridge is one `.map()` away:
+
+```rust
+use foo::*;
+use foo_lalrpop::*;
+
+fn parse_str(input: &str, tokens: Vec<(usize, MyToken, usize)>)
+    -> Result<Value, ParseError<usize, u16, ()>>
+{
+    let parser = FooParser::new();
+    parser.parse(
+        tokens.into_iter().map(|(s, tok, e)| match tok {
+            MyToken::Num(n) => (s, TK_NUM, e, n),
+            MyToken::Plus   => (s, TK_PLUS, e, 0),
+            // ...
+        })
+    )
+}
+```
+
+#### Worked example
+
+```bash
+$ cat calc.lime
+%name calc
+%token NUM PLUS.
+%token_type {i64}
+%type expr {i64}
+%start_symbol prog
+prog ::= expr.
+expr ::= NUM.
+expr ::= expr PLUS NUM.
+
+$ lime --target=rust:lalrpop calc.lime
+Wrote Rust parser to calc.rs
+Wrote lalrpop skin to calc_lalrpop.rs
+```
+
+```rust
+// lib.rs
+pub mod calc;
+pub mod calc_lalrpop;
+
+#[test] fn parse_addition() {
+    use calc_lalrpop::*;
+    const NUM: u16 = 1; const PLUS: u16 = 2;
+    let parser = CalcParser::new();
+    let tokens = vec![
+        (0, NUM,  1, 1i64),
+        (2, PLUS, 3, 0i64),
+        (4, NUM,  5, 2i64),
+    ];
+    assert_eq!(parser.parse(tokens).unwrap(), 3);
+}
+```
+
+#### Limitations (v1.3.x)
+
+* The strongly-typed `Token` enum is NOT auto-emitted.  Consumers
+  define their own and bridge at the iterator boundary (the
+  `.map()` above).  Auto-emission is queued for v1.4.0.
+* `expected: Vec<String>` is always empty.  Computing the expected-
+  token set requires peeking the inner parser's current state,
+  which lime does not yet expose via a public getter.  v1.4.0 adds
+  `<Name>Parser::current_state()` and the skin gains the enrichment.
+* `User` variant is exposed but lime never produces it.  Consumers
+  threading their own error type construct `ParseError::User { error }`
+  at the call site (typically from a lexer-side error).
+* `ExtraToken` -- lime maps the "extra token after start-rule reduce"
+  case onto `UnrecognizedToken` for now.  A future extension may
+  emit `ExtraToken` directly.
+
+#### v1.3.0 LTS commitment
+
+The `parse()` signature shape and the `ParseError<L, T, E>` variant
+set are LTS-stable through June 2028.  The quadruple iterator-item
+is stable too -- but the v1.4.0 follow-up will add a struct form
+(`Token { start, code, end, value }`) alongside the tuple form to
+let future fields (span-id, source-id, etc.) extend without
+breakage.  The tuple form will keep working through v1.x.
+
 ### Reserved Rust skins (planned)
 
 See `.agent/notes/open-items.md` section 2:

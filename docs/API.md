@@ -1331,3 +1331,66 @@ int rc = jit_maybe_compile(snap, &metrics, &policy);
 /* At shutdown */
 jit_policy_shutdown();
 ```
+
+## API Stability (v1.3.0 LTS commitment)
+
+This document is the canonical inventory of public C symbols
+exported by `liblime` (the parser-runtime library) and `liblime-
+compiler` (the table-build / lint / snapshot library).  The LTS
+support window (v1.3.x through June 2028) commits to:
+
+- ABI compatibility for `liblime` runtime symbols (`lime_*`,
+  `<Name>*`, snapshot V2 wire format).
+- Source-level compatibility for the in-process compile / lint
+  helpers exposed via `liblime-compiler`.
+- The diagnostic text formats consumed by tooling.
+
+### Diagnostic text format (LTS-pinned)
+
+The following functions return diagnostic text in `*out_diags`:
+
+- `lime_lint_grammar_in_process(text, len, &out_diags)` (v1.0.0+)
+- `lime_lint_grammar_fast_in_process(text, len, &out_diags)` (v1.2.0+)
+- `lime_compile_grammar_in_process(text, len, &out_diags)` (v0.5.4+)
+
+The format is **gcc-style**, one diagnostic per line:
+
+```
+<filename>:<line>:<column>: <severity>: <message>
+```
+
+Where:
+- `<filename>` is whatever the caller passed in, or `(memory)` for
+  in-memory grammars.
+- `<line>` and `<column>` are 1-based.
+- `<severity>` is one of `error`, `warning`, `note`.
+- `<message>` is human-readable; may contain Lime's E-code or W-
+  code as a `[E001]` / `[W005]` suffix when applicable.
+
+Tooling (LSP servers, editor extensions, CI scripts) parses this
+shape.  The format will NOT change shape during the v1.3.x window
+without bumping to v2.0.0.
+
+A future JSON output mode is queued for v1.4.0 (additive — selected
+by passing `--lint-format=json` on the CLI; the in-process API
+will gain a `lime_lint_grammar_json_in_process` variant).  Text
+form remains the default and remains pinned.
+
+### Internal symbols (NOT stable)
+
+Documented here to flag for caller hygiene; these may change in
+any release including patch:
+
+- `lime_post_parse_setup` — internal helper extracted in v1.2.0
+  for the in-process compile/lint variants.  It runs symbol
+  indexing, `nterminal` calculation, rule numbering, and `Rule_sort`.
+  It is **not** part of the stable surface; the v1.4.0 cleanup
+  consolidates `main()` and `dc_child_compile_and_dump`'s inlined
+  copies through this helper, at which point its name or signature
+  may change.  Consumers wanting in-process lint/compile call the
+  documented `lime_lint_grammar_*` / `lime_compile_grammar_*`
+  variants instead.
+
+If your build links any `_post_parse_setup`-shaped private symbol
+directly out of `liblime-compiler`, treat it as a liability for
+future upgrades.

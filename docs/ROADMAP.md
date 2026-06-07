@@ -9,6 +9,28 @@ Items are listed in rough order of impact.
 
 ---
 
+## Releases shipped
+
+- **v1.0.0** (June 2026) -- API stability commitment for v1.x line.
+  Background diagnostics, did-you-mean linter suggestions, GDB +
+  LLDB pretty-printers.
+- **v1.1.0** (June 2026) -- Rust-target syntax-error introspection
+  (`YY_TOKEN_NAMES`, `token_name`, `expected_tokens_in_state`).
+- **v1.2.0** (June 2026) -- LSP fast-lint mode, formatter
+  idempotence, LLDB pretty-printer test, Win32 thread shim.
+- **v1.3.0 (LTS)** (June 2026) -- lalrpop-API Rust skin, formal
+  24-month support commitment, customer-reported `%rust_action`
+  alias-binding fix.
+- **v1.3.1 (LTS patch)** (June 2026) -- alt-group `%rust_action`
+  propagation fix (state-machine bug; see CHANGELOG.md), Rust-
+  target API-stability documentation, CHANGELOG backfill, README
+  LTS callout.
+
+The LTS line is **v1.3.x** through June 2028.  See
+[`docs/SUPPORT.md`](SUPPORT.md) for the backport policy.
+
+---
+
 ## 1. In-process LALR(1) automaton rebuild library
 
 **Status as of v0.10.0: COMPLETE.**

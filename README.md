@@ -3,6 +3,11 @@
 [![CI](https://codeberg.org/gregburd/lime/actions/workflows/ci.yml/badge.svg)](https://codeberg.org/gregburd/lime/actions)
 [![Pages](https://codeberg.org/gregburd/lime/actions/workflows/pages.yml/badge.svg)](https://gregburd.codeberg.page/lime/)
 
+> **Current LTS: v1.3.x** (cut June 2026, supported through June 2028).
+> Bug-fix and security backports land on the `v1.3.x` branch; all
+> consumers should track this line.  See [`docs/SUPPORT.md`](docs/SUPPORT.md)
+> for the full backport policy.
+
 ## Overview
 
 Lime is a runtime-extensible LALR(1) parser generator.  It reads a

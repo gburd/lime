@@ -17,8 +17,159 @@ git show v0.10.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [1.3.1] -- 2026-06-07
+
+First LTS patch release.  Pure bug fix; no API changes.
+
+### Fixed
+
+- `%rust_action` body silently dropped at runtime when applied to
+  the head alternative of an alt-group (`e ::= a | b. %rust_action {...}`).
+  The `WAITING_FOR_DECL_OR_RULE` state machine cleared `alt_group_head`
+  pre-emptively when it saw the `%` token, so `propagate_alt_group_attach`
+  early-returned and the head alternative kept the default `lhs = rhs0`
+  body while the tail alternative got the user's body.  Drop the
+  over-eager state-machine clear; rule-start cleanup at line 7344 is
+  sufficient.
+- `%rust_action`-only rules (no inline `{...}` C body) misclassified
+  as noCode passthrough, triggering SHIFTREDUCE table collapse that
+  skipped the user's reduce dispatch even on single-rule cases.  Set
+  `noCode = 0` when parsing the body and update the `iRule` numbering
+  predicate (3 sites, kept in sync) to recognise `rust_code` as
+  reduce code.
+- `test_lint_fast` flaked on parallel CI runs at the 1.10x ratio
+  margin.  Bumped to 2.0x; still catches a 2x regression on the 16-
+  rule test grammar, which is what the assertion is for.
+
+### Tests
+
+- New runtime regression test `test_rust_action_dispatch` (cargo-
+  driven) covering both single-rule and alt-group cases.  Three sub-
+  tests asserting `final_value` is the user's intended computation.
+  SKIPs cleanly when cargo not on PATH.
+
+### Documented
+
+- `docs/RUST_OUTPUT.md` gains an "API stability" section enumerating
+  the 6 stable Rust-target symbols (`<Name>Parser`, `new`, `push`,
+  `finalize`, `ParseError`, `Value`) and explicitly disclaiming
+  `YY_*`, `yy_*`, `ReduceCtx`, `UserArg`, and the per-rule reduce
+  dispatch tables as internal -- subject to change in any release.
+- `docs/API.md` pins the gcc-style diagnostic format used by
+  `lime_lint_grammar_in_process` / `_fast_in_process` and marks
+  `lime_post_parse_setup` as internal-only.
+- `docs/SKINS.md` gains a real `--target=rust:lalrpop` section with
+  the `(usize, u16, usize, Value)` quadruple convention, a worked
+  example, and the v1.4.0 deferred items (Token-enum auto-emit,
+  `expected: Vec<String>` enrichment).
+- `README.md` gains a top-of-file LTS callout pointing at
+  `docs/SUPPORT.md`.
+- `docs/ROADMAP.md` records v1.3.0 LTS landed and v1.3.1 patch.
+
+## [1.3.0] -- 2026-06-06 (LTS)
+
+First Long-Term Support release.  Backports through June 2028.  See
+`docs/SUPPORT.md` for the full policy.
+
 ### Added
-- `CHANGELOG.md` (this file).
+
+- **lalrpop-API-compatibility Rust skin** (`--target=rust:lalrpop`).
+  Emits a sibling `<stem>_lalrpop.rs` that wraps the standard
+  generated parser in a shape mimicking lalrpop's public API:
+  `<PascalName>Parser::new().parse(tokens) -> Result<Value, ParseError>`
+  with `ParseError<L,T,E>` mirroring `lalrpop_util::ParseError`'s
+  variants (`InvalidToken`, `UnrecognizedEof`, `UnrecognizedToken`,
+  `ExtraToken`, `User`).  See `docs/SKINS.md`.
+- **`docs/SUPPORT.md`** -- formal LTS support policy with backport
+  criteria (demonstrated bug, safe, small, regression test).
+
+### Fixed
+
+- Customer-reported `%rust_action` RHS-alias underscore-prefixing
+  (commit `c0d68d0`): the alias-usage scanner only inspected the
+  inline C body and missed identifiers used in the `%rust_action`
+  body, so `expr(L) ::= ... %rust_action { R = L; }` got `_L`
+  emitted in the binding and rustc rejected the .rs with E0425.
+  New helper `lime_rust_ident_used()` scans both bodies.
+
+### Tests
+
+- `test_emit_rust_skin_lalrpop` -- shape + rustc compile-check.
+- `test_rust_action_alias_usage` -- rustc compiles output without
+  E0425 on `%rust_action`-only rules.
+
+## [1.2.0] -- 2026-06-06
+
+Maintenance + polish release.  Five items.
+
+### Added
+
+- **Parse-only fast lint mode** (`lime_lint_grammar_fast_in_process`).
+  Skips LALR(1) construction (FindStates / FindFollowSets /
+  FindActions) and runs only ParseText + lint_grammar.  Drops LSP
+  diagnostic latency from ~2s to ~150ms on PG's `gram.lime`.
+  `lime-lsp` `didChange` path uses fast-lint by default;
+  `LIME_LSP_FULL_LINT=1` forces the full LALR pass.
+- **`lime_post_parse_setup` helper.**  Hoists what was duplicated
+  inline in three places (later v1.3.1 finds main + dc_child still
+  inlined the iRule loop and patches the predicate in-place rather
+  than completing the routing -- queued for v1.4.0).
+- **LLDB pretty-printer smoke test.**  Mirrors v1.1.0's
+  gdb_pretty_printers test.  Renamed `scripts/lime-lldb.py` ->
+  `scripts/lime_lldb.py` because Python's `command script import`
+  rejects dashes in module names.
+- **Win32 thread shim for async diagnostics.**  Extends
+  `lime_threads.h` with `pthread_cond_*` shimmed over Win32
+  `CONDITION_VARIABLE`.  `lsp_diagnostics_async.c` no longer needs
+  the `#if !defined(_WIN32)` Windows-stub branch.
+
+### Fixed
+
+- Formatter idempotence: header-comment scanner greedily merged
+  two consecutive comment blocks separated by a blank line.  Stop
+  at first blank line after seeing one block.  Idempotent grammars:
+  52/64 -> 57/64.
+
+## [1.1.0] -- 2026-06-05
+
+### Added
+
+- **Rust-target syntax-error introspection** (closes Lime-Letter-27).
+  New API: `pub static YY_TOKEN_NAMES`, `pub fn token_name(code) ->
+  Option<&'static str>`, `pub fn yy_find_shift_action(state,
+  lookahead) -> u16`, `pub fn expected_tokens_in_state(state) ->
+  Vec<u16>`.  Default ON via `--enable=token-names`; opt-out
+  `--disable=token-names`.
+
+### Documented
+
+- `docs/RUST_OUTPUT.md` gains 3 new sections (token-name introspection
+  example, `include!`-vs-crate-root inner-attr strip, `*mut State`
+  workaround for nested reduction calls).
+
+## [1.0.0] -- 2026-06-04
+
+API stability commitment for v1.x.
+
+### Added
+
+- **Background diagnostics** for `lime-lsp` (`src/lsp/lsp_diagnostics_async.{h,c}`).
+  ~5ms `didOpen` handler-return vs ~2s sync.  Per-URI generation
+  counter; in-flight workers drop stale results when a newer
+  request supersedes.  Out-stream mutex serialises LSP framing.
+  POSIX-only initially (Windows added in v1.2.0).
+- **"Did you mean" linter suggestions** on E001 / E002 / M003
+  (case-insensitive Levenshtein distance).
+- **GDB + LLDB pretty-printers** (`scripts/lime-{gdb,lldb}.py` +
+  `scripts/test-lime-gdb.sh`).  Commands: `lime-snapshot`,
+  `lime-stack`, `lime-actions`.
+- **`CHANGELOG.md`** (this file -- though it took until v1.3.1 to
+  actually backfill it; the announcement was incomplete on
+  publication and that's a maintainer hygiene failure called out
+  in v1.3.0's audit).
+- **`docs/DEBUGGING.md`**.
 
 ### Documentation
 - `docs/API.md` now covers `parse_begin_borrowed`,

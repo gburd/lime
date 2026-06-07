@@ -165,11 +165,18 @@ int main(void) {
 
         /* Assertion: fast-lint should be at LEAST as fast as full-lint.
         ** On tiny grammars the absolute difference is small (microseconds);
-        ** we just assert no regression and print the ratio so a human
+        ** we just assert no severe regression and print the ratio so a human
         ** can see the speedup if they care.  The big speedup matters on
-        ** PG-class grammars and is documented in lime.c's comment. */
-        CHECK(fast_ms <= full_ms * 1.10,  /* allow 10% noise */
-              "fast-lint is at least as fast as full-lint");
+        ** PG-class grammars and is documented in lime.c's comment.
+        **
+        ** v1.3.1: bumped tolerance from 1.10x to 2.0x because the assertion
+        ** flakes under parallel-test load on CI runners (test_lint_fast
+        ** runs in `is_parallel : false` but other lime-binary invocations
+        ** elsewhere in the suite compete for CPU).  Catching a 2x
+        ** regression is still useful; catching a 10% regression on a 16-
+        ** rule grammar where both runs total <3 ms is just noise. */
+        CHECK(fast_ms <= full_ms * 2.0,
+              "fast-lint within 2x of full-lint (regression guard)");
     }
 
     if (fail) {

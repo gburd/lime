@@ -454,6 +454,20 @@ if host_machine.system() != 'windows'
     is_parallel : false,
     timeout : 30)
 
+  # v1.3.1: regression for the alt-group %rust_action propagation
+  # bug.  Tests the head AND tail alternative each fire their
+  # %rust_action body at runtime via cargo build.  Compatible with
+  # the simpler single-rule %rust_action case too -- 3 sub-tests.
+  # SKIPs cleanly (rc=77) when cargo isn't on PATH.
+  test_rust_action_dispatch = executable('test_rust_action_dispatch',
+    'test_rust_action_dispatch.c',
+  )
+  test('rust_action_dispatch', test_rust_action_dispatch,
+    args : [lime_exe.full_path()],
+    depends : [lime_exe],
+    is_parallel : false,
+    timeout : 120)
+
 endif
 
 # v0.8.6 CLI flag redesign: regression for --target / --enable /

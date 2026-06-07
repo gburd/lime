@@ -106,7 +106,7 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "1.3.0"
+#define LIME_VERSION_STRING "1.3.1"
 #endif
 
 
@@ -4413,7 +4413,14 @@ static void dc_child_compile_and_dump(const char *path, int out_fd)
   lem.nterminal = i;
 
   for(i=0, rp=lem.rule; rp; rp=rp->next){
-    rp->iRule = rp->code ? i++ : -1;
+    /* v1.3.1: see lime_post_parse_setup for the full rationale.
+    ** A %rust_action-only rule has code==NULL but rust_code!=NULL
+    ** and must get a non-(-1) iRule so emit_rust's lookup table
+    ** finds it.  Three sites duplicate this loop (here, main, and
+    ** lime_post_parse_setup); kept in sync by mechanical update.
+    ** Routing all three through one helper is queued for v1.4.0
+    ** since it requires lifting the symbol indexing prelude. */
+    rp->iRule = (rp->code || rp->rust_code) ? i++ : -1;
   }
   lem.nruleWithAction = i;
   for(rp=lem.rule; rp; rp=rp->next){
@@ -5857,9 +5864,10 @@ int main(int argc, char **argv){
   /* Assign sequential rule numbers.  Start with 0.  Put rules that have no
   ** reduce action C-code associated with them last, so that the switch()
   ** statement that selects reduction actions will have a smaller jump table.
-  */
+  ** v1.3.1: %rust_action-only rules count as "having reduce code" for the
+  ** Rust target -- see lime_post_parse_setup for the full rationale. */
   for(i=0, rp=lem.rule; rp; rp=rp->next){
-    rp->iRule = rp->code ? i++ : -1;
+    rp->iRule = (rp->code || rp->rust_code) ? i++ : -1;
   }
   lem.nruleWithAction = i;
   for(rp=lem.rule; rp; rp=rp->next){
@@ -7317,10 +7325,32 @@ static void parseonetoken(struct pstate *psp)
       /* fall through */
     case WAITING_FOR_DECL_OR_RULE:
       if( x[0]=='%' ){
-        /* Leaving the post-rule window without a trailing action or
-        ** precedence mark: the alternation group (if any) ends here
-        ** with no attributes to propagate. */
-        psp->alt_group_head = 0;
+        /* Do NOT clear psp->alt_group_head here.  Body-attaching
+        ** directives like %rust_action / %action_c / %action_rust /
+        ** %neverreduce arrive with the `%` token first and call
+        ** propagate_alt_group_attach themselves once they have the
+        ** body in hand.  Clearing alt_group_head pre-emptively at
+        ** the `%` boundary made propagate's `head==0` early-return
+        ** fire and silently dropped the propagation -- the symptom
+        ** was a `%rust_action` body on `e ::= a | b. %rust_action {...}`
+        ** attaching to the LAST alternative only, with the head
+        ** alternative falling back to the default `lhs = rhs0`
+        ** body at runtime.
+        **
+        ** Non-body-attaching directives (%left, %right, %destructor,
+        ** %fallback, etc.) do not call propagate, so leaving
+        ** alt_group_head set is harmless: the next `lhs ::= ...`
+        ** rule start at line 7344 (the ISLOWER(x[0]) branch) clears
+        ** it cleanly.  Verified by full test suite + alt-group
+        ** runtime regression test (test_rust_action_dispatch).
+        **
+        ** Pre-fix history: this clear was added defensively when
+        ** the first body-attaching directive (`{ code }`) was
+        ** introduced, before %rust_action existed.  At that time
+        ** every `%` directive was non-attaching so the early
+        ** clear was correct in practice.  v1.3.1 makes it correct
+        ** in principle by removing the over-eager clear. */
+
         /* Lime-Letter-19: take any pending comments as the leading
         ** comment for the directive whose keyword arrives next.
         ** Free any previously-held but unattached comment first --
@@ -7370,6 +7400,17 @@ static void parseonetoken(struct pstate *psp)
           ** the rule already has a C `code` body (the whole point
           ** of the directive is to provide a Rust override). */
           psp->prevrule->rust_code = &x[1];
+          /* v1.3.1: a %rust_action body IS reduce code for the Rust
+          ** target.  Clear noCode so the rule is not treated as an
+          ** empty/passthrough reduce -- otherwise the SHIFTREDUCE
+          ** optimization collapses nrhs==1 noCode nonterminal rules
+          ** at table-emit time and the Rust action is silently
+          ** dropped at runtime.  This applies to both the
+          ** single-rule case (`expr ::= NUM. %rust_action {...}`)
+          ** and to the alt-group last-arm case (where the head
+          ** alternatives inherit noCode via propagate_alt_group_attach
+          ** below). */
+          psp->prevrule->noCode = 0;
           psp->next_brace_is_rust = 0;
           propagate_alt_group_attach(psp);
         }else if( psp->prevrule->code!=0 ){
@@ -13627,7 +13668,19 @@ static int lime_post_parse_setup(struct lime *lem, const char **fail_reason) {
     int idx = 0;
     struct rule *rp;
     for(rp=lem->rule; rp; rp=rp->next){
-        rp->iRule = rp->code ? idx++ : -1;
+        /* v1.3.1: count rules that have EITHER a C `code` body OR a
+        ** `rust_code` body (set by `%rust_action { ... }` directly,
+        ** or copied via propagate_alt_group_attach when the rule is
+        ** an earlier alternative in a `lhs ::= a | b. %rust_action`
+        ** group).  Pre-fix the predicate was just `rp->code`, which
+        ** assigned iRule=-1 to %rust_action-only rules and made
+        ** lime_emit_rust_rule_info() / lime_emit_rust_rule_rust_code()
+        ** miss them entirely (they look up by iRule), so the rust
+        ** target emitted the default `lhs = rhs0` body in their
+        ** yy_rule_N slot.  See companion fix in parseonetoken (clears
+        ** noCode for %rust_action) + the WAITING_FOR_DECL_OR_RULE
+        ** state machine (no longer pre-clears alt_group_head on `%`). */
+        rp->iRule = (rp->code || rp->rust_code) ? idx++ : -1;
     }
     lem->nruleWithAction = idx;
     for(rp=lem->rule; rp; rp=rp->next){

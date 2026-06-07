@@ -681,3 +681,70 @@ decides the parser-only Rust output story is sufficient for the
 first cut.  The deferred items above are real but each is its own
 chunk of work; v0.8.x patch releases can land them as consumers
 ask.
+
+## API Stability (v1.3.0 LTS commitment)
+
+The Rust target emits a lot of `pub` symbols.  Most of them expose
+internal table layouts and reduce-dispatch internals.  Under the LTS
+support window (v1.3.x through June 2028), only a small enumerated
+set is part of the stable surface:
+
+### Stable symbols (LTS-protected through June 2028)
+
+| Symbol                            | Shape                                                |
+|-----------------------------------|------------------------------------------------------|
+| `<Name>Parser`                    | `pub struct`, opaque internals                       |
+| `<Name>Parser::new()`             | `-> Self`, requires `UserArg: Default`               |
+| `<Name>Parser::new_with_user(u)`  | `-> Self` with caller-provided `UserArg`             |
+| `<Name>Parser::push(code, value)` | `-> Result<bool, ParseError>`                        |
+| `<Name>Parser::finalize()`        | `-> Result<bool, ParseError>`                        |
+| `pub final_value: Value`          | accumulates the start-rule's reduce result          |
+| `Value`                           | `pub type` (i64 default; `%rust_value_type` to override) |
+| `UserArg`                         | `pub type` (() default; `%rust_extra_argument` to override) |
+| `ParseError`                      | `pub enum` with the documented variants              |
+| `pub const TK_*`                  | terminal token-code constants (one per `%token`)     |
+| `--enable=token-names` introspection: `YY_TOKEN_NAMES`, `token_name`, `expected_tokens_in_state` (v1.1.0+) | stable when token-names is enabled |
+
+### Internal symbols (NOT stable; may change in any release)
+
+These are emitted as `pub` because Rust's module system requires it
+for cross-`include!` scenarios, but they are **NOT part of the
+stable surface**.  Consumers MUST NOT depend on these — we reserve
+the right to change their shape, names, or layout at any release
+boundary, including patch releases:
+
+- `YY_ACTION`, `YY_LOOKAHEAD`, `YY_SHIFT_OFST`, `YY_REDUCE_OFST`,
+  `YY_DEFAULT`, `YY_RULE_LHS`, `YY_RULE_NRHS`, `YY_FALLBACK`
+  (LALR table-compression layout — subject to change if we
+  switch compression schemes).
+- `YY_RULE_REDUCE_FN` and the `yy_rule_<N>` per-rule callback
+  functions (reduce-dispatch scheme — subject to change if we
+  move to indirect-threaded dispatch).
+- `ReduceCtx` and its fields (`lhs`, `rhs`, `user`).  Consumers
+  using `%rust_action { ... }` to write custom reduce code refer
+  to the rule's *aliases* (`(R)`, `(N)`), not directly to
+  `ReduceCtx` fields — that's the supported way to write reduce
+  bodies and is unaffected by ReduceCtx evolution.
+- `pub const NSTATE`, `NRULE`, `NTERMINAL`, `NSYMBOL`, `NTOKEN`,
+  `YY_MAX_SHIFT`, `YY_MIN_SHIFTREDUCE`, `YY_MAX_SHIFTREDUCE`,
+  `YY_ERROR_ACTION`, `YY_ACCEPT_ACTION`, `YY_NO_ACTION`,
+  `YY_MIN_REDUCE` (state-machine layout constants).
+- `HAS_FALLBACK`, `FIRST_TOKEN` (table-presence flags).
+- `yy_find_shift_action(state, lookahead)` — exposes the action-
+  table lookup as a function; useful for diagnostics building
+  but the table layout it queries is itself internal.
+
+If your code references any of the above outside of a generated
+`<stem>.rs` file you maintain, treat it as a **liability** for
+future upgrades.  Open an issue if your use case is one we should
+consider promoting to the stable list.
+
+### Why these distinctions matter
+
+A common LTS failure mode is for a maintainer to refactor an
+"obviously internal" piece of code only to discover at release
+time that consumers across multiple distros depend on the exact
+emitted shape.  Lime's CHANGELOG carries an "internal in v1.3" tag
+on every PR that touches a non-stable symbol, so reviewers can
+assess upgrade impact at review time rather than after a regression
+report lands.
