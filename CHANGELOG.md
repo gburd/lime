@@ -17,7 +17,17 @@ git show v0.10.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **`%yystype_header "NAME"` directive / `--type-header` flag.**  Emit
+  a standalone, makeheaders-free header containing the token
+  `#define`s plus the `YYSTYPE` typedef (from `%union` or
+  `%token_type`) so a separately-generated `lime -X` lexer can
+  `#include` it instead of relying on a hand-written `_yytype.h`
+  bridge.  The typedef is guarded by `YYSTYPE_IS_DECLARED`, so it
+  composes with the parser `.c` without redefinition.  The directive
+  chooses the header basename; the flag uses the default
+  `<stem>_yytype.h`.  `lime -F` round-trips the directive.
 
 ## [1.4.0] -- 2026-06-07
 
