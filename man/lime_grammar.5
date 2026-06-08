@@ -116,6 +116,31 @@ This is the type of the third argument to the parser function.
 Example:
 .BR "%token_type {int}" .
 .TP
+.BI %yystype_header " {\(dqNAME\(dq}"
+Emit a standalone header named
+.I NAME
+containing the token
+.B #define
+lines and the
+.B YYSTYPE
+typedef (from
+.B %union
+or
+.BR %token_type ),
+for a separately generated
+.RB ( lime
+.BR \-X )
+lexer to
+.BR #include .
+Equivalent to the
+.B \-\-type-header
+command-line flag, but lets the grammar pick the header basename.
+The typedef is guarded by
+.B YYSTYPE_IS_DECLARED
+so it composes with the parser
+.B .c
+without redefinition.
+.TP
 .BI %default_type " {C-type}"
 Declare the default C data type for non-terminal symbol values.
 Non-terminals without an explicit

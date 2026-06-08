@@ -666,6 +666,7 @@ void ReportTable(struct lime *, int, int);
 void ReportAOTTable(struct lime *);
 void ReportSnapshotInit(struct lime *);
 void ReportHeader(struct lime *);
+void ReportTypeHeader(struct lime *);
 static void GenerateASTActions(struct lime *);
 void CompressTables(struct lime *);
 void ResortStates(struct lime *);
@@ -1022,6 +1023,11 @@ struct lime {
   ** `yylval.<field> = ...` from yylex().  NULL when no %union
   ** directive was seen.  See docs/SKINS.md. */
   char *union_body;
+  char *yystype_header;    /* %yystype_header "name.h": basename for the
+                           ** standalone token-defines + YYSTYPE header
+                           ** that a separately-generated lexer can
+                           ** #include.  NULL when the directive/flag
+                           ** is absent.  See ReportTypeHeader(). */
   char *vartype;           /* The default type of non-terminal symbols */
   char *start;             /* Name of the start symbol for the grammar */
   char *stacksize;         /* Size of the parser stack */
@@ -2428,6 +2434,12 @@ static void handle_d_option(char *z){
   lemon_strcpy(outputDir, z);
 }
 
+/* --type-header: request a standalone token-defines + YYSTYPE header
+** for a separately-generated lexer to #include.  The flag emits the
+** header under the default basename <stem>_yytype.h; to choose the
+** name, use the in-grammar `%yystype_header "name.h"` directive, which
+** takes precedence over the flag.  See ReportTypeHeader(). */
+static int typeHeaderRequested = 0;
 static char *user_templatename = NULL;
 static void handle_T_option(char *z){
   user_templatename = (char *) lime_malloc( lemonStrlen(z)+1 );
@@ -3651,6 +3663,11 @@ static void dir_emit_union(FILE *out, const struct lime *gp){
   fprintf(out, "%%union {%s}\n", gp->union_body);
 }
 
+static int  dir_has_yystype_header(const struct lime *gp){ return gp->yystype_header != 0; }
+static void dir_emit_yystype_header(FILE *out, const struct lime *gp){
+  fprintf(out, "%%yystype_header \"%s\"\n", gp->yystype_header);
+}
+
 static int  dir_has_extra_argument(const struct lime *gp){ return gp->arg != 0; }
 static void dir_emit_extra_argument(FILE *out, const struct lime *gp){
   if( gp->arg_comment ) fprintf(out, "%s\n", gp->arg_comment);
@@ -3775,6 +3792,7 @@ static const LimeDirectiveDescriptor lime_directives[] = {
   { "name",               LIME_DIR_HEADER_VALUE,  dir_has_name,               dir_emit_name               },
   { "token_type",         LIME_DIR_HEADER_VALUE,  dir_has_token_type,         dir_emit_token_type         },
   { "union",              LIME_DIR_HEADER_VALUE,  dir_has_union,              dir_emit_union              },
+  { "yystype_header",      LIME_DIR_HEADER_VALUE,  dir_has_yystype_header,     dir_emit_yystype_header     },
   { "extra_argument",     LIME_DIR_HEADER_VALUE,  dir_has_extra_argument,     dir_emit_extra_argument     },
   { "extra_context",      LIME_DIR_HEADER_VALUE,  dir_has_extra_context,      dir_emit_extra_context      },
   { "default_type",       LIME_DIR_HEADER_VALUE,  dir_has_default_type,       dir_emit_default_type       },
@@ -5559,6 +5577,10 @@ int main(int argc, char **argv){
     {OPT_FSTR, "-lint-format", (char*)handle_lint_format_option,
      "Lint output format: human (default) | gcc | json."},
     {OPT_FLAG, "m", (char*)&mhflag, "Output a makeheaders compatible file."},
+    {OPT_FLAG, "-type-header", (char*)&typeHeaderRequested,
+                    "Emit a standalone token-defines + YYSTYPE header "
+                    "(<stem>_yytype.h) for a lime -X lexer to #include.  "
+                    "Use %yystype_header \"NAME\" to choose the basename."},
     {OPT_FLAG, "l", (char*)&nolinenosflag, "Do not print #line statements."},
     {OPT_FLAG, "n", (char*)&snapshotFlag,
                     "Generate snapshot init code (*_snapshot.c)."},
@@ -6102,6 +6124,13 @@ int main(int argc, char **argv){
     ** omitted if the "-m" option is used because makeheaders will
     ** generate the file for us.) */
     if( !mhflag && !rust_only ) ReportHeader(&lem);
+
+    /* Standalone token-defines + YYSTYPE header for a separately-
+    ** generated lexer (--type-header flag or %yystype_header
+    ** directive).  Independent of the makeheaders (-m) path. */
+    if( !rust_only && (typeHeaderRequested || lem.yystype_header) ){
+      ReportTypeHeader(&lem);
+    }
 
     /* C-output skins (--target=c:bison / c:flex).  Each skin emits
     ** an additional pair of files NEXT TO the standard output, so
@@ -7767,6 +7796,16 @@ static void parseonetoken(struct pstate *psp)
           psp->declargslot = &(psp->gp->union_body);
           psp->insertLineMacro = 0;
           attach_directive_comment(psp, &psp->gp->union_body_comment);
+        }else if( strcmp(x,"yystype_header")==0 ){
+          /* %yystype_header "name.h": emit a standalone header holding
+          ** the token #defines plus the YYSTYPE typedef (from %union /
+          ** %token_type) that a separately-generated `lime -X` lexer
+          ** can #include, removing the hand-written _yytype.h glue.
+          ** The argument is the header basename, taken verbatim.
+          ** insertLineMacro stays off (it is a filename, not code).
+          ** See ReportTypeHeader(). */
+          psp->declargslot = &(psp->gp->yystype_header);
+          psp->insertLineMacro = 0;
         }else if( strcmp(x,"location_type")==0 ){
           /* Override of the default LimeLocation YYLOCATIONTYPE.
           ** Reuses the same brace-content state as %token_type:
@@ -12687,6 +12726,100 @@ void ReportTable(
   fclose(in);
   fclose(out);
   return;
+}
+
+/* Generate a standalone token-defines + YYSTYPE header so a
+** separately-generated lexer (`lime -X`) can share the parser's
+** token enumeration and semantic-value type without hand-written
+** glue.  Triggered by the `%yystype_header "NAME"` directive or the
+** `--type-header` flag.
+**
+** Unlike the makeheaders (`-m`) path, this emits a plain, self-
+** contained header -- no external tool required.  It carries:
+**   - the `#define <prefix>TOKEN n` lines (same as ReportHeader), and
+**   - the YYSTYPE typedef derived from %union or %token_type, guarded
+**     by YYSTYPE_IS_DECLARED so it composes with the parser .c (whose
+**     own typedef is likewise guarded) and with hand-written code.
+** When neither %union nor %token_type is set, only the token defines
+** are emitted (the value type defaults to the parser's internal
+** stack type, which the lexer does not need).
+*/
+void ReportTypeHeader(struct lime *lemp)
+{
+  FILE *out;
+  const char *prefix;
+  const char *hname;
+  char guard[LINESIZE];
+  int i;
+
+  if( lemp->tokenprefix ) prefix = lemp->tokenprefix;
+  else                    prefix = "";
+
+  /* Basename: the directive value wins; otherwise the default
+  ** "<stem>_yytype.h" via file_open's suffix mechanism. */
+  if( lemp->yystype_header && lemp->yystype_header[0] ){
+    hname = lemp->yystype_header;
+    if( lemp->outname ) lime_free(lemp->outname);
+    lemp->outname = (char*)lime_malloc( lemonStrlen(hname)+1 );
+    if( lemp->outname==0 ){ memory_error(); }
+    lemon_strcpy(lemp->outname, hname);
+    out = fopen(lemp->outname, "wb");
+    if( out==0 ){
+      fprintf(stderr,"Can't open file \"%s\".\n",lemp->outname);
+      lemp->errorcnt++;
+      return;
+    }
+  }else{
+    out = file_open(lemp, "_yytype.h", "wb");
+    hname = lemp->outname ? lemp->outname : "yytype.h";
+  }
+  if( out==0 ) return;
+
+  /* Include guard from the basename (uppercase, non-alnum -> '_'). */
+  {
+    const char *b = hname;
+    const char *slash = strrchr(b, '/');
+    if( slash ) b = slash + 1;
+    size_t k = 0;
+    guard[k++] = 'L'; guard[k++] = 'I'; guard[k++] = 'M';
+    guard[k++] = 'E'; guard[k++] = '_';
+    for(; *b && k < (size_t)(LINESIZE-2); b++){
+      char c = *b;
+      if( (c>='a'&&c<='z') ) c = (char)(c - 'a' + 'A');
+      if( !((c>='A'&&c<='Z')||(c>='0'&&c<='9')) ) c = '_';
+      guard[k++] = c;
+    }
+    guard[k] = 0;
+  }
+
+  fprintf(out, "/* Generated by lime --type-header.  DO NOT EDIT. */\n");
+  fprintf(out, "#ifndef %s\n#define %s\n\n", guard, guard);
+
+  /* Token kind #defines -- identical numbering to ReportHeader so
+  ** the lexer's returned kinds match the parser's expectations. */
+  for(i=1; i<lemp->nterminal; i++){
+    fprintf(out,"#define %s%-30s %3d\n",prefix,lemp->symbols[i]->name,
+            i+lemp->first_token);
+  }
+  fprintf(out, "\n");
+
+  /* YYSTYPE typedef from %union (preferred) or %token_type.  Guarded
+  ** so the parser .c and any hand-written declaration compose. */
+  if( lemp->union_body ){
+    fprintf(out, "#ifndef YYSTYPE_IS_DECLARED\n");
+    fprintf(out, "typedef union {%s} YYSTYPE;\n", lemp->union_body);
+    fprintf(out, "#define YYSTYPE_IS_DECLARED 1\n");
+    fprintf(out, "#define YYSTYPE_IS_TRIVIAL 1\n");
+    fprintf(out, "#endif\n\n");
+  }else if( lemp->tokentype ){
+    fprintf(out, "#ifndef YYSTYPE_IS_DECLARED\n");
+    fprintf(out, "typedef %s YYSTYPE;\n", lemp->tokentype);
+    fprintf(out, "#define YYSTYPE_IS_DECLARED 1\n");
+    fprintf(out, "#endif\n\n");
+  }
+
+  fprintf(out, "#endif /* %s */\n", guard);
+  fclose(out);
 }
 
 /* Generate a header file for the parser */

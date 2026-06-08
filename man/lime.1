@@ -218,6 +218,30 @@ in the
 .B .c
 file in a format compatible with the makeheaders utility.
 .TP
+.B \-\-type-header
+Emit a standalone
+.IB basename _yytype.h
+header containing the token
+.B #define
+lines and the
+.B YYSTYPE
+typedef (derived from
+.B %union
+or
+.BR %token_type ),
+so a separately generated
+.RB ( lime
+.BR \-X )
+lexer can
+.B #include
+it instead of relying on hand-written glue.
+Unlike
+.BR \-m ,
+this needs no external makeheaders tool.
+Use the
+.B %yystype_header
+directive to choose the header basename.
+.TP
 .B \-n
 Generate snapshot initialization code in a separate
 .IB basename _snapshot.c

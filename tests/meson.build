@@ -513,6 +513,18 @@ if host_machine.system() != 'windows'
     is_parallel : false,
     timeout : 120)
 
+  # v1.5.0: standalone token-defines + YYSTYPE header for a
+  # separately-generated lexer to #include (%yystype_header /
+  # --type-header).  Pure C; compiles the emitted header with cc.
+  test_type_header = executable('test_type_header',
+    'test_type_header.c',
+  )
+  test('type_header', test_type_header,
+    args : [lime_exe.full_path(),
+            meson.project_source_root() / 'limpar.c'],
+    depends : [lime_exe],
+    timeout : 60)
+
 endif
 
 # v0.8.6 CLI flag redesign: regression for --target / --enable /

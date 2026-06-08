@@ -125,7 +125,7 @@ static const char *expected_directives[] = {
     /* MODULE */
     "module", "require", "export", "import",
     /* HEADER_VALUE */
-    "name", "token_type", "union", "extra_argument", "extra_context",
+    "name", "token_type", "union", "yystype_header", "extra_argument", "extra_context",
     "default_type", "start_symbol", "stack_size", "token_prefix",
     "symbol_prefix", "expect", "first_token", "locations",
     "location_type",
