@@ -290,6 +290,158 @@ void parse_engine_reset(struct ParseContext *ctx) {
 }
 
 /*
+** parse_context_current_state -- expose the parser's current LR state
+** (the raw top of the state stack) for introspection / logging.
+**
+** Returns LIME_NO_STATE when no parse is in progress.  NOTE: between
+** tokens the raw top may be a pending shift-reduce encoding
+** (value >= yy_min_reduce), not a settled LR state.  Callers that
+** want a context-sensitive admissibility decision should NOT try to
+** interpret this value themselves -- use
+** parse_context_token_admissible(), which simulates the engine's
+** shift/reduce/goto loop read-only and is lookahead-correct.
+*/
+uint16_t parse_context_current_state(const struct ParseContext *ctx) {
+    if (ctx == NULL || ctx->engine == NULL) return LIME_NO_STATE;
+    const ParseEngine *eng = (const ParseEngine *)ctx->engine;
+    if (!eng->initialised || eng->stack.base == NULL
+        || eng->stack.top == eng->stack.base) {
+        return LIME_NO_STATE;
+    }
+    return eng->stack.top[-1].state;
+}
+
+/*
+** parse_context_token_admissible -- would the parser, in its current
+** state, make progress on `external_token_code` (shift, shift-reduce,
+** reduce, or accept) rather than report a syntax error?
+**
+** This is the lookahead-correct oracle that backs context-sensitive
+** keyword disambiguation for composed grammars (docs/MULTI_GRAMMAR.md).
+** A scanner resolving a lexeme that collides between a base grammar
+** and a loaded extension calls this with each candidate token code
+** and emits the one that is admissible in the current parse state.
+** When BOTH a base and an extension code are admissible the collision
+** is genuinely ambiguous and must be settled by the disambiguation
+** strategy (fork-resolve), not here.
+**
+** It replays the engine's parse_token loop READ-ONLY on a scratch
+** copy of the state-number stack: resolve any pending shift-reduce,
+** probe the shift action, and on a default reduce follow the goto and
+** re-probe -- exactly what parse_engine_step would do with this
+** lookahead, but without mutating the live parse or running user
+** actions.  Returns the same LimeTokenAdmissibility classification as
+** lime_token_admissible_in_state.
+**
+** Returns LIME_TOK_SHIFT (treat-as-admissible) before the first
+** token (no live state to constrain the token) and on any internal
+** limit (stack deeper than scratch, malformed snapshot) so the
+** oracle never wrongly vetoes.
+*/
+LimeTokenAdmissibility parse_context_token_admissible(
+    const struct ParseContext *ctx, int external_token_code) {
+    if (ctx == NULL || ctx->engine == NULL) return LIME_TOK_SHIFT;
+    const ParseEngine *eng = (const ParseEngine *)ctx->engine;
+    const ParserSnapshot *snap = ctx->snapshot;
+    if (snap == NULL) return LIME_TOK_SHIFT;
+    if (!eng->initialised || eng->stack.base == NULL
+        || eng->stack.top == eng->stack.base || eng->errored) {
+        return LIME_TOK_SHIFT;
+    }
+    if (snap->yy_rule_info_nrhs == NULL || snap->yy_rule_info_lhs == NULL) {
+        return LIME_TOK_SHIFT;
+    }
+
+    /* External -> internal index (mirrors parse_engine_step). */
+    int major = (external_token_code == 0)
+                    ? 0
+                    : external_token_code - (int)snap->yy_first_token;
+    if (major < 0 || major >= (int)snap->yy_ntoken) {
+        return LIME_TOK_NONE;
+    }
+
+    /* Scratch copy of the state-number stack (states only -- goto and
+    ** shift probing need nothing else). */
+    uint32_t depth = (uint32_t)(eng->stack.top - eng->stack.base);
+    enum { SCRATCH_MAX = 512 };
+    uint16_t scratch[SCRATCH_MAX];
+    if (depth > SCRATCH_MAX) return LIME_TOK_SHIFT; /* don't risk a veto */
+    for (uint32_t i = 0; i < depth; i++) {
+        scratch[i] = eng->stack.base[i].state;
+    }
+    uint32_t sp = depth; /* one past top */
+
+    for (int guard = 0; guard < 8192; guard++) {
+        uint16_t cur = scratch[sp - 1];
+
+        /* Unpack a pending shift-reduce sitting on top first. */
+        if (cur >= snap->yy_min_reduce) {
+            uint32_t ruleno = (uint32_t)(cur - snap->yy_min_reduce);
+            if (ruleno >= snap->nrule) return LIME_TOK_SHIFT;
+            int nrhs = snap->yy_rule_info_nrhs[ruleno];
+            if (nrhs < 0) nrhs = -nrhs;
+            int lhs = snap->yy_rule_info_lhs[ruleno];
+            if ((uint32_t)nrhs >= sp) return LIME_TOK_ACCEPT; /* past bottom */
+            sp -= (uint32_t)nrhs;
+            uint16_t gstate = scratch[sp - 1];
+            uint16_t next = snap_find_reduce_action(snap, gstate, (uint16_t)lhs);
+            if (next == snap->yy_accept_action) return LIME_TOK_ACCEPT;
+            if (next == snap->yy_error_action || next == snap->yy_no_action) {
+                return LIME_TOK_NONE;
+            }
+            uint16_t pushed = next;
+            if (pushed > snap->yy_max_shift && pushed <= snap->yy_max_shiftreduce) {
+                pushed = (uint16_t)(pushed
+                            + (snap->yy_min_reduce - snap->yy_min_shiftreduce));
+            }
+            if (sp >= SCRATCH_MAX) return LIME_TOK_SHIFT;
+            scratch[sp++] = pushed;
+            continue;
+        }
+
+        /* Real state: probe the shift action for the lookahead. */
+        uint16_t act = snap_find_shift_action(snap, cur, (uint16_t)major);
+        if (act <= snap->yy_max_shift) {
+            return (act == snap->yy_no_action) ? LIME_TOK_NONE : LIME_TOK_SHIFT;
+        }
+        if (act >= snap->yy_min_shiftreduce && act <= snap->yy_max_shiftreduce) {
+            return LIME_TOK_SHIFTREDUCE;
+        }
+        if (act == snap->yy_accept_action) return LIME_TOK_ACCEPT;
+        if (act == snap->yy_error_action || act == snap->yy_no_action) {
+            return LIME_TOK_NONE;
+        }
+        /* Reduce by a rule (default action gated on this lookahead):
+        ** apply it and re-probe, exactly as the engine would. */
+        if (act >= snap->yy_min_reduce) {
+            uint32_t ruleno = (uint32_t)(act - snap->yy_min_reduce);
+            if (ruleno >= snap->nrule) return LIME_TOK_SHIFT;
+            int nrhs = snap->yy_rule_info_nrhs[ruleno];
+            if (nrhs < 0) nrhs = -nrhs;
+            int lhs = snap->yy_rule_info_lhs[ruleno];
+            if ((uint32_t)nrhs >= sp) return LIME_TOK_ACCEPT;
+            sp -= (uint32_t)nrhs;
+            uint16_t gstate = scratch[sp - 1];
+            uint16_t next = snap_find_reduce_action(snap, gstate, (uint16_t)lhs);
+            if (next == snap->yy_accept_action) return LIME_TOK_ACCEPT;
+            if (next == snap->yy_error_action || next == snap->yy_no_action) {
+                return LIME_TOK_NONE;
+            }
+            uint16_t pushed = next;
+            if (pushed > snap->yy_max_shift && pushed <= snap->yy_max_shiftreduce) {
+                pushed = (uint16_t)(pushed
+                            + (snap->yy_min_reduce - snap->yy_min_shiftreduce));
+            }
+            if (sp >= SCRATCH_MAX) return LIME_TOK_SHIFT;
+            scratch[sp++] = pushed;
+            continue;
+        }
+        return LIME_TOK_NONE;
+    }
+    return LIME_TOK_SHIFT; /* runaway guard -- never veto */
+}
+
+/*
 ** parse_token implementation.  Returns:
 **   0  -- token consumed, parse continues
 **   1  -- end-of-input token (0) accepted, parse complete

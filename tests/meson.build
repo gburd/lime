@@ -2237,6 +2237,18 @@ test_runtime_parse = executable('test_runtime_parse',
 
 test('runtime_parse', test_runtime_parse)
 
+# v1.5.0: context-sensitive token-admissibility oracle
+# (lime_token_admissible_in_state + parse_context_current_state).
+# Backs multi-grammar keyword disambiguation; reuses the arith
+# snapshot as a state-gating bed (admissibility flips with state).
+test_admissibility = executable('test_admissibility',
+  'test_admissibility.c',
+  test_runtime_arith_gen,
+  include_directories : include_directories('../src'),
+  dependencies : lime_parser_dep,
+)
+test('admissibility', test_admissibility)
+
 # Direct unit-test coverage of the LALR runtime hot path
 # (src/parse_engine.c).  Reuses the same arith-grammar snapshot as
 # test_runtime_parse but adds synthetic snapshots, NULL-safety,

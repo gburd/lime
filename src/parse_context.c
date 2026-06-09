@@ -348,16 +348,80 @@ uint16_t snap_find_reduce_action(const ParserSnapshot *snap, uint16_t stateno,
     if (snap == NULL || snap->yy_reduce_ofst == NULL) return 0;
     if (stateno >= snap->nstate) return 0;
 
+    /* NOTE: do NOT early-return on a negative offset.  For goto
+    ** lookups (nonterminal LHS after a reduce) yy_reduce_ofst[stateno]
+    ** is frequently negative yet ofst + iLookAhead still lands on a
+    ** valid positive index.  This mirrors the inline find_reduce_-
+    ** action() the runtime engine uses (src/parse_engine.c); the
+    ** earlier `if (ofst < 0) return default` here silently returned
+    ** the error action for every goto, which broke
+    ** parse_context_token_admissible's read-only replay. */
     int32_t ofst = snap->yy_reduce_ofst[stateno];
-    if (ofst < 0) {
-        return snap->yy_default[stateno];
-    }
+    int32_t idx = ofst + (int32_t)iLookAhead;
 
-    uint32_t idx = (uint32_t)(ofst + (int32_t)iLookAhead);
-
-    if (idx < snap->lookahead_count && snap->yy_lookahead[idx] == iLookAhead) {
+    if (idx >= 0 && (uint32_t)idx < snap->lookahead_count
+        && snap->yy_lookahead[idx] == iLookAhead) {
         return snap->yy_action[idx];
     }
 
     return snap->yy_default[stateno];
+}
+
+/*
+** lime_token_admissible_in_state -- classify the action a parser in
+** state `stateno` would take on `external_token_code`.  Backs
+** context-sensitive keyword disambiguation for composed grammars
+** (see docs/MULTI_GRAMMAR.md and include/parse_context.h).
+**
+** Mirrors parse_engine_step's external->internal code conversion and
+** range check exactly, then classifies the shift action against the
+** snapshot's self-describing action-code ranges.  A SHIFTREDUCE
+** result (yy_min_shiftreduce..yy_max_shiftreduce) and a REDUCE result
+** (>= yy_min_reduce) both mean the token makes progress; only
+** yy_error_action / yy_no_action mean inadmissible.
+*/
+LimeTokenAdmissibility lime_token_admissible_in_state(
+    const ParserSnapshot *snap, uint16_t stateno, int external_token_code) {
+    if (snap == NULL) return LIME_TOK_NONE;
+
+    /* No live parser state -> nothing to constrain the token; treat as
+    ** admissible so the oracle never vetoes in the pre-parse window. */
+    if (stateno == LIME_NO_STATE) return LIME_TOK_SHIFT;
+    if (stateno >= snap->nstate) return LIME_TOK_NONE;
+
+    /* External -> internal action-table index (mirrors
+    ** parse_engine_step).  EOF (0) is preserved; %first_token offset
+    ** applies to all other codes. */
+    int major = (external_token_code == 0)
+                    ? 0
+                    : external_token_code - (int)snap->yy_first_token;
+    if (major < 0 || major >= (int)snap->yy_ntoken) {
+        return LIME_TOK_NONE;
+    }
+
+    uint16_t act = snap_find_shift_action(snap, stateno, (uint16_t)major);
+
+    /* Classify against the snapshot's action-code ranges (snapshot.h):
+    **   0 .. yy_max_shift                 -> shift to that state
+    **   yy_min_shiftreduce .. max         -> shift-reduce
+    **   yy_accept_action                  -> accept
+    **   yy_error_action / yy_no_action    -> inadmissible
+    **   >= yy_min_reduce (else)           -> reduce */
+    if (act == snap->yy_error_action || act == snap->yy_no_action) {
+        return LIME_TOK_NONE;
+    }
+    if (act == snap->yy_accept_action) {
+        return LIME_TOK_ACCEPT;
+    }
+    if (act <= snap->yy_max_shift) {
+        return LIME_TOK_SHIFT;
+    }
+    if (act >= snap->yy_min_shiftreduce && act <= snap->yy_max_shiftreduce) {
+        return LIME_TOK_SHIFTREDUCE;
+    }
+    if (act >= snap->yy_min_reduce) {
+        return LIME_TOK_REDUCE;
+    }
+    /* Anything not in a recognised range is not progress. */
+    return LIME_TOK_NONE;
 }

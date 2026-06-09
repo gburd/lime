@@ -204,4 +204,71 @@ int parse_token_lex(ParseContext *ctx, int token_code, void *token_value, const 
 uint16_t snap_find_shift_action(const ParserSnapshot *snap, uint16_t stateno, uint16_t iLookAhead);
 uint16_t snap_find_reduce_action(const ParserSnapshot *snap, uint16_t stateno, uint16_t iLookAhead);
 
+/* ------------------------------------------------------------------ */
+/*  Context-sensitive token admissibility (multi-grammar composition)  */
+/* ------------------------------------------------------------------ */
+
+/* Sentinel returned by parse_context_current_state() when no parse is
+** in progress (no state to constrain a token).  Equal to UINT16_MAX. */
+#define LIME_NO_STATE ((uint16_t)0xFFFFu)
+
+/* Classification of a token's action in a given LR state.  Derived
+** from the snapshot's self-describing action-code ranges (see
+** snapshot.h: yy_max_shift / yy_min_shiftreduce / yy_min_reduce /
+** yy_error_action / yy_accept_action).  Result type of
+** lime_token_admissible_in_state().
+**
+** "Admissible" = anything other than LIME_TOK_NONE: the parser would
+** make progress (shift, shift-reduce, reduce, or accept) on the token
+** in that state.  Scanner glue resolving a lexeme that collides
+** between a base grammar and a loaded extension uses this to decide
+** which token code to emit: prefer the code admissible in the current
+** parser state.  When BOTH a base and an extension code are
+** admissible, the collision is genuinely ambiguous and must be
+** resolved by the disambiguation strategy (fork-resolve), not here. */
+typedef enum LimeTokenAdmissibility {
+    LIME_TOK_NONE = 0,    /**< Syntax error / no action -- inadmissible. */
+    LIME_TOK_SHIFT,       /**< Plain shift to another state.            */
+    LIME_TOK_SHIFTREDUCE, /**< Combined shift-reduce action.            */
+    LIME_TOK_REDUCE,      /**< Reduce by a rule.                        */
+    LIME_TOK_ACCEPT       /**< Accept (end of input in an accept state).*/
+} LimeTokenAdmissibility;
+
+/* Current LR state at the top of ctx's parse stack, or LIME_NO_STATE
+** when no parse is in progress.  Raw introspection value: between
+** tokens it may be a pending shift-reduce encoding, not a settled
+** state.  For an admissibility decision use
+** parse_context_token_admissible() instead (lookahead-correct). */
+uint16_t parse_context_current_state(const ParseContext *ctx);
+
+/* Lookahead-correct admissibility oracle: would the parser bound to
+** `ctx`, in its current state, make progress on `external_token_code`
+** (shift / shift-reduce / reduce / accept) rather than syntax-error?
+** This is the primary entry point for context-sensitive keyword
+** disambiguation -- it replays the engine's shift/reduce/goto loop
+** read-only (resolving pending reduces and lookahead-gated default
+** reduces) without mutating the live parse or running user actions.
+** Returns LIME_TOK_SHIFT (treat-as-admissible) before the first
+** token and on any internal limit, so it never wrongly vetoes.
+** See src/parse_engine.c and docs/MULTI_GRAMMAR.md. */
+LimeTokenAdmissibility parse_context_token_admissible(
+    const ParseContext *ctx, int external_token_code);
+
+/* Lower-level variant: classify `external_token_code` against an
+** explicit, already-settled LR state of `snap` (no pending-reduce
+** resolution -- the caller must pass a real state).  Most callers
+** want parse_context_token_admissible() instead, which handles the
+** pending-reduce / default-reduce resolution for them.
+**
+** `external_token_code` is the EXTERNAL token code (the value an
+** extension or the grammar's .h #define uses).  The %first_token
+** offset is applied internally; EOF (0) is preserved.  Out-of-range
+** codes classify as LIME_TOK_NONE.  When `stateno` is LIME_NO_STATE
+** the result is LIME_TOK_SHIFT (treat-as-admissible).
+**
+** Pure function over read-only snapshot tables; O(1) -- one action-
+** table probe.  Single-grammar parsers never call this. */
+LimeTokenAdmissibility lime_token_admissible_in_state(
+    const ParserSnapshot *snap, uint16_t stateno, int external_token_code);
+
 #endif /* PARSE_CONTEXT_H */
