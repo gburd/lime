@@ -17,6 +17,10 @@ git show v0.10.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [1.5.0] -- 2026-06-07
+
 ### Added
 
 - **`%yystype_header "NAME"` directive / `--type-header` flag.**  Emit
@@ -28,6 +32,42 @@ git show v0.10.0
   composes with the parser `.c` without redefinition.  The directive
   chooses the header basename; the flag uses the default
   `<stem>_yytype.h`.  `lime -F` round-trips the directive.
+
+- **Context-sensitive token-admissibility oracle for multi-grammar
+  composition.**  New public C API in `include/parse_context.h`:
+  `parse_context_token_admissible(ctx, external_token_code)` and the
+  lower-level `lime_token_admissible_in_state(snap, stateno, code)`,
+  returning a `LimeTokenAdmissibility` classification
+  (`NONE`/`SHIFT`/`SHIFTREDUCE`/`REDUCE`/`ACCEPT`).  A scanner that
+  loads several grammars into one parser can ask, for a lexeme that
+  collides between a base grammar and an extension, *which* candidate
+  token code the parser would actually accept in its current state,
+  and emit that one -- the missing piece for seamless keyword
+  disambiguation (e.g. SQL + QUEL, `pg_mysql_lang`, `pg_oracle_lang`).
+  The `ctx` form replays the engine's shift/reduce/goto loop read-only
+  (resolving pending shift-reduces and lookahead-gated default
+  reduces) without mutating the live parse.  Zero hot-path cost for
+  single-grammar parsers (only consulted on a registered-extension
+  keyword collision).  `parse_context_current_state(ctx)` exposes the
+  raw stack-top state for introspection.  See `docs/MULTI_GRAMMAR.md`.
+
+### Fixed
+
+- `snap_find_reduce_action()` no longer short-circuits on a negative
+  reduce offset.  For goto lookups (nonterminal LHS after a reduce)
+  the offset is frequently negative while `offset + lookahead` still
+  lands on a valid index; the spurious early-return made every such
+  lookup return the error action.  Now matches the inline
+  `find_reduce_action()` the runtime engine uses.  This was latent
+  (goto was never queried through the public helper until the
+  admissibility oracle landed) and does not affect the parse hot path.
+
+### Tests
+
+- `tests/test_admissibility.c` -- 24 sub-tests of the admissibility
+  oracle against a real LALR grammar, proving a token's admissibility
+  flips with parser state (the property keyword disambiguation relies
+  on) and that the read-only replay agrees with the live engine.
 
 ## [1.4.0] -- 2026-06-07
 
