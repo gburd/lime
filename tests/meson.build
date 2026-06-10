@@ -525,6 +525,22 @@ if host_machine.system() != 'windows'
     depends : [lime_exe],
     timeout : 60)
 
+  # v1.5.1: regression guard that generated C compiles cleanly under
+  # the strict downstream warning flags (PostgreSQL's
+  # -Wdeclaration-after-statement / -Wshadow=compatible-local /
+  # -Wmisleading-indentation) that Lime's own build doesn't enable.
+  # Compiles a generated parser .c (action-body reduce preamble) and a
+  # %buffer lexer .c with -Werror on exactly those flags.
+  test_codegen_strict_warnings = executable('test_codegen_strict_warnings',
+    'test_codegen_strict_warnings.c',
+  )
+  test('codegen_strict_warnings', test_codegen_strict_warnings,
+    args : [lime_exe.full_path(),
+            meson.project_source_root() / 'limpar.c',
+            meson.project_source_root()],
+    depends : [lime_exe],
+    timeout : 60)
+
 endif
 
 # v0.8.6 CLI flag redesign: regression for --target / --enable /

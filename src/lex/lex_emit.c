@@ -215,8 +215,10 @@ static void emit_buf_helpers(const LimeLexSpec *spec, const char *prefix, FILE *
         /* grow(): ensure capacity >= need; returns 0 ok / -1 fail. */
         fprintf(out,
                 "static int %s_buf_%s_grow(%sLexer *lex, size_t need) {\n"
+                "    size_t new_cap;\n"
+                "    void *p;\n"
                 "    if (lex->%s_cap >= need) return 0;\n"
-                "    size_t new_cap = lex->%s_cap;\n"
+                "    new_cap = lex->%s_cap;\n"
                 "    if (new_cap == 0) new_cap = %d;\n"
                 "    while (new_cap < need) {\n"
                 "        size_t prev = new_cap;\n",
@@ -225,7 +227,7 @@ static void emit_buf_helpers(const LimeLexSpec *spec, const char *prefix, FILE *
         fprintf(out,
                 "        if (new_cap <= prev) { new_cap = need; break; }\n"
                 "    }\n"
-                "    void *p = lex->%s_buf\n"
+                "    p = lex->%s_buf\n"
                 "        ? %s(lex->%s_buf, new_cap * sizeof(%s))\n"
                 "        : %s(new_cap * sizeof(%s));\n"
                 "    if (!p) return -1;\n"
@@ -239,19 +241,20 @@ static void emit_buf_helpers(const LimeLexSpec *spec, const char *prefix, FILE *
         ** ownership to caller (returned pointer), reset state. */
         fprintf(out,
                 "static %s *%s_buf_%s_take(%sLexer *lex) {\n"
+                "    %s *p;\n"
                 "    if (%s_buf_%s_grow(lex, lex->%s_len + 1) != 0) {\n"
                 "        lex->err_msg = \"literal buffer alloc failed\";\n"
                 "        return 0;\n"
                 "    }\n"
                 "    lex->%s_buf[lex->%s_len] = 0;\n"
-                "    %s *p = lex->%s_buf;\n"
+                "    p = lex->%s_buf;\n"
                 "    lex->%s_buf = 0;\n"
                 "    lex->%s_len = 0;\n"
                 "    lex->%s_cap = 0;\n"
                 "    return p;\n"
                 "}\n\n",
-                type, prefix, lb->name, prefix, prefix, lb->name, lb->name, lb->name, lb->name,
-                type, lb->name, lb->name, lb->name, lb->name);
+                type, prefix, lb->name, prefix, type, prefix, lb->name, lb->name,
+                lb->name, lb->name, lb->name, lb->name, lb->name, lb->name);
     }
 }
 
@@ -616,14 +619,14 @@ int lime_lex_emit_h(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
     if (extra_arg) {
         fprintf(out,
                 "%sLexResult  %sLexFeedBytes(%sLexer *yyl,\n"
-                "                              const char *bytes, size_t n,\n"
+                "                              const char *yybytes, size_t yyn,\n"
                 "                              %sEmitFn emit, void *user,\n"
                 "                              %s);\n",
                 prefix, prefix, prefix, prefix, extra_arg);
     } else {
         fprintf(out,
                 "%sLexResult  %sLexFeedBytes(%sLexer *yyl,\n"
-                "                              const char *bytes, size_t n,\n"
+                "                              const char *yybytes, size_t yyn,\n"
                 "                              %sEmitFn emit, void *user);\n",
                 prefix, prefix, prefix, prefix);
     }
@@ -1047,6 +1050,7 @@ static void emit_match_function_for_kind(FILE *out, const LimeLexCompiled *c, co
     fprintf(out, "    size_t last_accept_pos = 0;\n");
     fprintf(out, "    size_t i;\n");
     fprintf(out, "    int s;\n");
+    fprintf(out, "    int next;\n");
     fprintf(out, "    const unsigned char *p = (const unsigned char *)bytes;\n");
     /* v0.8.x audit item #2: hoist per-state trans/accept pointers +
     ** fast-path function pointer ABOVE the byte loop instead of doing
@@ -1090,7 +1094,7 @@ static void emit_match_function_for_kind(FILE *out, const LimeLexCompiled *c, co
     fprintf(out, "            i = new_pos;\n");
     fprintf(out, "            if (i >= n) break;\n");
     fprintf(out, "        }\n");
-    fprintf(out, "        int next = trans[s][p[i]];\n");
+    fprintf(out, "        next = trans[s][p[i]];\n");
     fprintf(out, "        if (next < 0) break;\n");
     fprintf(out, "        s = next;\n");
     fprintf(out, "        if (accept[s] >= 0) {\n");
@@ -1267,6 +1271,7 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
         fprintf(out, "    size_t last_accept_pos = 0;\n");
         fprintf(out, "    size_t i;\n");
         fprintf(out, "    int s;\n");
+        fprintf(out, "    int next;\n");
         fprintf(out, "    /* Hoisted: pick per-state trans/accept pointers ONCE. */\n");
         fprintf(out, "    const short (*trans)[256] = NULL;\n");
         fprintf(out, "    const short *accept = NULL;\n");
@@ -1291,7 +1296,7 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
         fprintf(out, "    }\n\n");
 
         fprintf(out, "    for (i = 0; i < n; i++) {\n");
-        fprintf(out, "        int next = trans[s][(unsigned char)bytes[i]];\n");
+        fprintf(out, "        next = trans[s][(unsigned char)bytes[i]];\n");
         fprintf(out, "        if (next < 0) break;\n");
         fprintf(out, "        s = next;\n");
         fprintf(out, "        if (accept[s] >= 0) {\n");
@@ -1334,8 +1339,9 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
 
     fprintf(out,
             "%sLexer *%sLexAlloc(void *(*mallocProc)(size_t)) {\n"
+            "    %sLexer *yyl;\n"
             "    if (!mallocProc) return 0;\n"
-            "    %sLexer *yyl = (%sLexer*)mallocProc(sizeof(*yyl));\n"
+            "    yyl = (%sLexer*)mallocProc(sizeof(*yyl));\n"
             "    if (!yyl) return 0;\n"
             "    yyl->state = 0;          /* INITIAL */\n"
             "    yyl->err_msg = 0;\n"
@@ -1511,11 +1517,12 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
             prefix, prefix, prefix, PREFIX, PREFIX, PREFIX, PREFIX);
     fprintf(out,
             "%sLexResult %sLexPushback(%sLexer *yyl, size_t n) {\n"
+            "    size_t pos;\n"
             "    if (!yyl || yyl->depth <= 0) {\n"
             "        if (yyl) yyl->err_msg = \"pushback on empty stack\";\n"
             "        return %s_LEX_ERROR;\n"
             "    }\n"
-            "    size_t pos = yyl->stack[yyl->depth - 1].pos;\n"
+            "    pos = yyl->stack[yyl->depth - 1].pos;\n"
             "    if (n > pos) {\n"
             "        yyl->err_msg = \"pushback exceeds buffered prefix\";\n"
             "        return %s_LEX_ERROR;\n"
@@ -1562,18 +1569,22 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
     if (extra_arg) {
         fprintf(out,
                 "%sLexResult %sLexFeedBytes(%sLexer *yyl,\n"
-                "                              const char *bytes, size_t n,\n"
+                "                              const char *yybytes, size_t yyn,\n"
                 "                              %sEmitFn emit, void *user,\n"
                 "                              %s) {\n",
                 prefix, prefix, prefix, prefix, extra_arg);
     } else {
         fprintf(out,
                 "%sLexResult %sLexFeedBytes(%sLexer *yyl,\n"
-                "                              const char *bytes, size_t n,\n"
+                "                              const char *yybytes, size_t yyn,\n"
                 "                              %sEmitFn emit, void *user) {\n",
                 prefix, prefix, prefix, prefix);
     }
     fprintf(out,
+            "    int initial_depth;\n"
+            "    int _terminate = 0;\n"
+            "    int _error = 0;\n"
+            "    %sLexResult _result = %s_LEX_OK;\n"
             "    if (!yyl) return %s_LEX_ERROR;\n"
             "    yyl->err_msg = 0;\n"
             "    /* M3.5: push the caller's buffer as a new bottom-of-this-call\n"
@@ -1585,22 +1596,17 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
             "        yyl->err_msg = \"include depth exceeded\";\n"
             "        return %s_LEX_ERROR;\n"
             "    }\n"
-            "    int initial_depth = yyl->depth;\n"
-            "    yyl->stack[yyl->depth].bytes = bytes;\n"
-            "    yyl->stack[yyl->depth].len   = n;\n"
+            "    initial_depth = yyl->depth;\n"
+            "    yyl->stack[yyl->depth].bytes = yybytes;\n"
+            "    yyl->stack[yyl->depth].len   = yyn;\n"
             "    yyl->stack[yyl->depth].pos   = 0;\n"
             "    yyl->depth++;\n"
             "    /* M3.4: function-scope flags set by LEX_TERMINATE /\n"
-            "    ** LEX_ERROR_AT inside an action body. */\n"
-            "    int _terminate = 0;\n"
-            "    int _error = 0;\n"
-            "    /* P0-NEW-13: result accumulator + drain label.  Every\n"
-            "    ** abnormal exit (_terminate, _error, unmatched input)\n"
-            "    ** sets _result and jumps to _feed_done; the drain loop\n"
-            "    ** there pops any frames pushed during this call so the\n"
-            "    ** depth invariant on return is yyl->depth == initial_depth. */\n"
-            "    %sLexResult _result = %s_LEX_OK;\n",
-            PREFIX, PREFIX, PREFIX, prefix, PREFIX);
+            "    ** LEX_ERROR_AT inside an action body (declared above).\n"
+            "    ** P0-NEW-13: _result + drain label below pop any frames\n"
+            "    ** pushed during this call so depth==initial_depth on\n"
+            "    ** return. */\n",
+            prefix, PREFIX, PREFIX, PREFIX, PREFIX);
     if (extra_name) {
         /* Suppress -Wunused-parameter when no action body references
         ** the extra arg.  The user's identifier is already in scope
@@ -1611,7 +1617,17 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
                  "        int top = yyl->depth - 1;\n"
                  "        size_t fpos = yyl->stack[top].pos;\n"
                  "        size_t flen = yyl->stack[top].len;\n"
-                 "        if (fpos >= flen) {\n");
+                 "        const char *fbytes;\n"
+                 "        const char *matched;\n"
+                 "        size_t matched_len;\n"
+                 "        int rule;\n"
+                 "        size_t consumed;\n"
+                 "        int ok;\n"
+                 "        int state;\n"
+                 "        int _action_emitted;\n"
+                 "        %sLexer *lex;\n"
+                 "        if (fpos >= flen) {\n",
+                 prefix);
 
     /* M3.6: EOF-rule dispatch inside the auto-pop branch.  When
     ** the top-of-stack frame is exhausted, look up the EOF rule
@@ -1641,14 +1657,14 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
                 "                _eof_rule = %s_eof_rule[yyl->state];\n"
                 "            }\n"
                 "            if (_eof_rule >= 0) {\n"
-                "                const char *fbytes = yyl->stack[top].bytes;\n"
-                "                const char *matched = fbytes + flen;\n"
-                "                size_t matched_len = 0;\n"
-                "                %sLexer *lex = yyl;\n"
-                "                int state = lex->state;\n"
-                "                int _action_emitted = 0;\n"
+                "                fbytes = yyl->stack[top].bytes;\n"
+                "                matched = fbytes + flen;\n"
+                "                matched_len = 0;\n"
+                "                lex = yyl;\n"
+                "                state = lex->state;\n"
+                "                _action_emitted = 0;\n"
                 "                switch (_eof_rule) {\n",
-                c->n_states, prefix, prefix);
+                c->n_states, prefix);
         for (int i = 0; i < n_rules; i++) {
             if (!rule_is_eof[i]) continue;
             const char *body = rule_actions[i] ? rule_actions[i] : "";
@@ -1674,10 +1690,10 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
             "            yyl->depth--;\n"
             "            continue;\n"
             "        }\n"
-            "        const char *fbytes = yyl->stack[top].bytes;\n"
-            "        int rule = -1;\n"
-            "        size_t consumed = 0;\n"
-            "        int ok = %s_match(yyl->state, fbytes + fpos, flen - fpos,\n"
+            "        fbytes = yyl->stack[top].bytes;\n"
+            "        rule = -1;\n"
+            "        consumed = 0;\n"
+            "        ok = %s_match(yyl->state, fbytes + fpos, flen - fpos,\n"
             "                          &rule, &consumed);\n"
             "        if (!ok || consumed == 0) {\n"
             "            yyl->err_msg = \"unmatched input\";\n"
@@ -1691,13 +1707,13 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
             "        ** position. */\n"
             "        yyl->stack[top].pos = fpos + consumed;\n"
             "        /* M3.4: per-iteration locals + action body switch. */\n"
-            "        const char *matched = fbytes + fpos;\n"
-            "        size_t matched_len = consumed;\n"
-            "        %sLexer *lex = yyl;\n"
-            "        int state = lex->state;\n"
-            "        int _action_emitted = 0;\n"
+            "        matched = fbytes + fpos;\n"
+            "        matched_len = consumed;\n"
+            "        lex = yyl;\n"
+            "        state = lex->state;\n"
+            "        _action_emitted = 0;\n"
             "        switch (rule) {\n",
-            prefix, PREFIX, prefix);
+            prefix, PREFIX);
 
     if (have_actions) {
         for (int i = 0; i < n_rules; i++) {

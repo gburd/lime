@@ -1344,6 +1344,7 @@ void Parse(
   int yyerrorhit = 0;   /* True if yymajor has invoked an error */
 #endif
   yyParser *yypParser = (yyParser*)yyp;  /* The parser */
+  int yymajorExternal;
   ParseCTX_FETCH
   ParseARG_STORE
 
@@ -1367,7 +1368,7 @@ void Parse(
   ** fire %syntax_error directly and return.  Indexing the action
   ** table at a negative or out-of-range slot would be undefined
   ** behaviour. */
-  int yymajorExternal = yymajor;
+  yymajorExternal = yymajor;
 #if YYFIRSTTOKEN > 0
   if( yymajor != 0 ){
     yymajor -= YYFIRSTTOKEN;
@@ -1684,14 +1685,14 @@ int ParseFallback(int iToken){
 */
 char *ParseExpectedTokensString(void *yyp){
   yyParser *yypParser = (yyParser*)yyp;
-  if( yypParser==0 || yypParser->yytos==0 ) return 0;
-
-  YYACTIONTYPE stateno = yypParser->yytos->stateno;
+  YYACTIONTYPE stateno;
   char *buf = 0;
   size_t buf_len = 0;
   size_t buf_cap = 0;
   int first = 1;
   int i;
+  if( yypParser==0 || yypParser->yytos==0 ) return 0;
+  stateno = yypParser->yytos->stateno;
 
   for(i=0; i<YYNTOKEN; i++){
     YYACTIONTYPE act;
@@ -1709,14 +1710,16 @@ char *ParseExpectedTokensString(void *yyp){
       const char *name = yyTokenName[i];
       size_t nlen = 0;
       const char *p = name;
+      size_t needed;
       while( *p ) { nlen++; p++; }
 
       /* Need space for ", " + name + NUL */
-      size_t needed = buf_len + (first ? 0 : 2) + nlen + 1;
+      needed = buf_len + (first ? 0 : 2) + nlen + 1;
       if( needed > buf_cap ){
         size_t new_cap = (buf_cap == 0) ? 128 : buf_cap * 2;
+        char *tmp;
         if( new_cap < needed ) new_cap = needed;
-        char *tmp = (char*)realloc(buf, new_cap);
+        tmp = (char*)realloc(buf, new_cap);
         if( tmp==0 ){
           free(buf);
           return 0;

@@ -106,7 +106,7 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "1.5.0"
+#define LIME_VERSION_STRING "1.5.1"
 #endif
 
 
@@ -12659,18 +12659,23 @@ void ReportTable(
       ** runs only on text it transfers verbatim, not on
       ** fprintf'd code from the generator. */
       fprintf(out,
-        "  yyParser *yypParser = yy_ctx->yypParser; (void)yypParser;\n"
-        "  yyStackEntry *yymsp = yy_ctx->yymsp; (void)yymsp;\n"
-        "  int yyLookahead = yy_ctx->yyLookahead; (void)yyLookahead;\n"
-        "  %sTOKENTYPE yyLookaheadToken = yy_ctx->yyLookaheadToken; (void)yyLookaheadToken;\n"
-        "  YYMINORTYPE yylhsminor; (void)yylhsminor;\n"
+        "  yyParser *yypParser = yy_ctx->yypParser;\n"
+        "  yyStackEntry *yymsp = yy_ctx->yymsp;\n"
+        "  int yyLookahead = yy_ctx->yyLookahead;\n"
+        "  %sTOKENTYPE yyLookaheadToken = yy_ctx->yyLookaheadToken;\n"
+        "  YYMINORTYPE yylhsminor;\n"
         "#ifdef YYLOCATIONTYPE\n"
-        "  YYLOCATIONTYPE yyloc_lhs = *yy_ctx->yyloc_lhs_ptr; (void)yyloc_lhs;\n"
+        "  YYLOCATIONTYPE yyloc_lhs = *yy_ctx->yyloc_lhs_ptr;\n"
         "#endif\n"
+        "  %sCTX_FETCH\n"
         "  %sARG_FETCH\n"
-        "  %sCTX_FETCH\n",
+        "  (void)yypParser; (void)yymsp; (void)yyLookahead;\n"
+        "  (void)yyLookaheadToken; (void)yylhsminor;\n"
+        "#ifdef YYLOCATIONTYPE\n"
+        "  (void)yyloc_lhs;\n"
+        "#endif\n",
         name, name, name);
-      lineno += 10;
+      lineno += 15;
       /* The action body proper: codePrefix + #line +
       ** { user code } + #line + codeSuffix.  emit_code()
       ** does the work, including line-directive bookkeeping. */
