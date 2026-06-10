@@ -19,6 +19,50 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.5.1] -- 2026-06-10
+
+### Fixed
+
+- **Generated C no longer trips strict compiler warnings.**  Projects
+  that build Lime-generated lexers and parsers under stricter flags
+  than Lime's own build (notably PostgreSQL's
+  `-Wdeclaration-after-statement`, `-Wshadow=compatible-local`,
+  `-Wmisleading-indentation`) saw warnings confined entirely to the
+  generated `*_lex.c` and parser `.c` files.  All are eliminated:
+
+  - **`-Wdeclaration-after-statement`** (the bulk): the per-rule
+    reduce-action preamble interleaved `decl; (void)decl;` pairs, so
+    each `(void)` cast was a statement preceding the next
+    declaration.  The casts are now grouped after all declarations,
+    and `ParseCTX_FETCH` (declaration-only) is emitted before
+    `ParseARG_FETCH` (which ends in a `(void)` statement).  The
+    lexer's `match()` loop (`int next`), `LexFeedBytes()` frame
+    locals, `LexAlloc()`, per-`%buffer` `grow()`/`take()` helpers,
+    and the template's `ParseExpectedTokensString()` /
+    `%first_token` range-check all hoist their declarations to block
+    top.
+  - **`-Wshadow=compatible-local`**: the `LexFeedBytes()` parameters
+    `bytes`/`n` (internal, not part of the documented action-body
+    API of `matched`/`matched_len`/`loc`/`lex`/`state`/`extra`) are
+    renamed `yybytes`/`yyn`, so an action body declaring its own
+    `n` no longer shadows a parameter.
+  - **`-Wmisleading-indentation`**: cleared by the same
+    declaration-hoisting in the buffer and feed paths.
+
+  Verified zero warnings across scalar/vectorized lexers, `%buffer`
+  and `%eof` grammars, the full SQL scanner, and the calc / arith /
+  JSON / datalog / cobol / jsonpath parsers under
+  `-Wall -Wextra -Wdeclaration-after-statement -Wshadow=compatible-local
+  -Wmisleading-indentation`.  Rust output (default plus the logos /
+  lalrpop / nom / pest / chumsky skins) was already warning-clean and
+  passes `cargo build`/`clippy` with `-D warnings`.
+
+  This is a codegen-only change.  The emitted machine code is
+  identical at `-O2` apart from `#line` constants (verified by
+  assembly diff); lexer throughput is unchanged within measurement
+  noise.  No ABI or runtime behaviour change.
+
+
 ## [1.5.0] -- 2026-06-07
 
 ### Added
