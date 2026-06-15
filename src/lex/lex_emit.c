@@ -1042,6 +1042,16 @@ static void emit_match_function_for_kind(FILE *out, const LimeLexCompiled *c, co
     if (is_avx2) {
         fprintf(out, "__attribute__((target(\"avx2\")))\n");
     }
+    /* The dispatcher selects exactly one variant per target at compile
+    ** time (#if __x86_64__ / __aarch64__ / else), so the other variants
+    ** are emitted but unreferenced on any given build.  Mark them
+    ** maybe-unused so a strict downstream build (PostgreSQL's
+    ** -Wunused-function, on by default) stays clean -- e.g. the scalar
+    ** variant on aarch64, where the dispatcher uses NEON exclusively. */
+    fprintf(out,
+            "#if defined(__GNUC__) || defined(__clang__)\n"
+            "__attribute__((unused))\n"
+            "#endif\n");
     fprintf(out, "static int %s_match_%s(int state, const char *bytes, size_t n,\n", prefix,
             kind);
     fprintf(out, "        int *out_rule, size_t *out_consumed) {\n");

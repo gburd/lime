@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <sys/wait.h>
 
 #define CHECK(cond, msg) do {                                            \
@@ -36,12 +37,42 @@ static int run_lime(const char *lime, const char *tmpl, const char *extra,
                     const char *workdir, const char *grammar) {
     /* lime writes parser output next to the input file but writes
     ** lexer (-X) output to the current working directory, so cd into
-    ** the work dir first to make both land in the same place. */
-    char cmd[2600];
+    ** the work dir first to make both land in the same place.  Because
+    ** we cd, resolve the lime binary and template to absolute paths
+    ** first -- a relative path would be invalid after the cd. */
+    char limeabs[1024], tmplabs[1024];
+    if (lime[0] == '/') {
+        snprintf(limeabs, sizeof(limeabs), "%s", lime);
+    } else {
+        char cwd[768];
+        if (!getcwd(cwd, sizeof(cwd))) return 1;
+        snprintf(limeabs, sizeof(limeabs), "%s/%s", cwd, lime);
+    }
+    if (tmpl[0] == '/') {
+        snprintf(tmplabs, sizeof(tmplabs), "%s", tmpl);
+    } else {
+        char cwd[768];
+        if (!getcwd(cwd, sizeof(cwd))) return 1;
+        snprintf(tmplabs, sizeof(tmplabs), "%s/%s", cwd, tmpl);
+    }
+    char cmd[4096];
     snprintf(cmd, sizeof(cmd),
              "cd \"%s\" && \"%s\" %s -T\"%s\" \"%s\" >/dev/null 2>&1",
-             workdir, lime, extra ? extra : "", tmpl, grammar);
+             workdir, limeabs, extra ? extra : "", tmplabs, grammar);
     return system(cmd);
+}
+
+/* Is the C compiler clang?  clang and GCC disagree on a couple of
+** warning spellings: clang treats GCC-only options (e.g.
+** -Wshadow=compatible-local, -Wmaybe-uninitialized) as unknown and
+** GCC rejects clang's -W[no-]unknown-warning-option.  We detect once
+** and tailor the flag list so the categories BOTH understand still
+** bite (unused-function / missing-prototypes / uninitialized /
+** declaration-after-statement). */
+static int cc_is_clang(void) {
+    /* `cc --version` mentions "clang" iff cc is clang. */
+    int rc = system("cc --version 2>/dev/null | grep -qi clang");
+    return rc == 0;
 }
 
 /* Compile a generated TU under the strict flagset with -Werror for the
@@ -54,21 +85,29 @@ static int run_lime(const char *lime, const char *tmpl, const char *extra,
 ** -Werror is scoped to exactly these flags so unrelated compiler nits
 ** don't fail the test. */
 static int compile_strict(const char *workdir, const char *file) {
+    /* Flags both compilers accept and that catch the reported bugs. */
+    const char *common =
+        "-Werror=declaration-after-statement "
+        "-Werror=misleading-indentation "
+        "-Werror=missing-prototypes "
+        "-Werror=unused-function "
+        "-Werror=uninitialized ";
+    /* GCC-only spellings (clang would emit unknown-option warnings). */
+    const char *gcc_only =
+        "-Werror=shadow=compatible-local "
+        "-Werror=maybe-uninitialized ";
+    /* clang's nearest equivalents. */
+    const char *clang_only =
+        "-Werror=shadow ";
     char cmd[3072];
     snprintf(cmd, sizeof(cmd),
-             "cc -c -std=c11 -O2 -I\"%s\" "
-             "-Werror=declaration-after-statement "
-             "-Werror=shadow=compatible-local "
-             "-Werror=misleading-indentation "
-             "-Werror=missing-prototypes "
-             "-Werror=unused-function "
-             "-Werror=maybe-uninitialized "
-             "-Werror=uninitialized "
+             "cc -c -std=c11 -O2 -I\"%s\" %s%s"
              "-Wall -Wextra "
              "-Wno-error=unused-parameter -Wno-error=type-limits "
              "-Wno-error=unused-but-set-variable "
              "\"%s/%s\" -o /dev/null 2>\"%s/cc_err.txt\"",
-             workdir, workdir, file, workdir);
+             workdir, common, cc_is_clang() ? clang_only : gcc_only,
+             workdir, file, workdir);
     int rc = system(cmd);
     return (rc == 0) ? 0 : 1;
 }
