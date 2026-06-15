@@ -106,7 +106,7 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "1.5.1"
+#define LIME_VERSION_STRING "1.5.2"
 #endif
 
 
@@ -11571,6 +11571,12 @@ void ReportAOTTable(struct lime *lemp){
   }
 
   fprintf(out,
+    "/* Forward self-prototype so the definition is not flagged by\n"
+    "** -Wmissing-prototypes; the matching extern lives in the main\n"
+    "** generated .c that calls this across the TU boundary. */\n"
+    "YYACTIONTYPE_AOT yy_find_shift_action_aot(YYACTIONTYPE_AOT, unsigned short);\n");
+
+  fprintf(out,
     "YYACTIONTYPE_AOT yy_find_shift_action_aot(\n"
     "  YYACTIONTYPE_AOT stateno,\n"
     "  unsigned short iLookAhead\n"
@@ -12663,7 +12669,16 @@ void ReportTable(
         "  yyStackEntry *yymsp = yy_ctx->yymsp;\n"
         "  int yyLookahead = yy_ctx->yyLookahead;\n"
         "  %sTOKENTYPE yyLookaheadToken = yy_ctx->yyLookaheadToken;\n"
-        "  YYMINORTYPE yylhsminor;\n"
+        "  /* Zero-init: a copy rule (LHS ::= RHS, action `A = B`) reads\n"
+        "  ** yylhsminor on a path GCC's data-flow can't prove is\n"
+        "  ** write-dominated, tripping -Wmaybe-uninitialized /\n"
+        "  ** -Wuninitialized under strict downstream flags.  Bison\n"
+        "  ** likewise defines the LHS slot on entry to every action.\n"
+        "  ** An initializer (not memset) keeps this a declaration so it\n"
+        "  ** stays ahead of the other locals (-Wdeclaration-after-stmt).\n"
+        "  ** {0} zero-inits the union's first member (always the scalar\n"
+        "  ** `int yyinit`), which is well-defined and warning-clean. */\n"
+        "  YYMINORTYPE yylhsminor = {0};\n"
         "#ifdef YYLOCATIONTYPE\n"
         "  YYLOCATIONTYPE yyloc_lhs = *yy_ctx->yyloc_lhs_ptr;\n"
         "#endif\n"

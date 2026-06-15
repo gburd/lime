@@ -310,6 +310,7 @@ static char *yyTracePrompt = 0;
 ** Outputs:
 ** None.
 */
+void ParseTrace(FILE*,char*);
 void ParseTrace(FILE *TraceFILE, char *zTracePrompt){
   yyTraceFILE = TraceFILE;
   yyTracePrompt = zTracePrompt;
@@ -395,6 +396,7 @@ static int yyGrowStack(yyParser *p){
 
 /* Initialize a new parser that has already been allocated.
 */
+void ParseInit(void* ParseCTX_PDECL);
 void ParseInit(void *yypRawParser ParseCTX_PDECL){
   yyParser *yypParser = (yyParser*)yypRawParser;
   ParseCTX_STORE
@@ -443,6 +445,7 @@ void ParseInit(void *yypRawParser ParseCTX_PDECL){
 ** A pointer to a parser.  This pointer is used in subsequent calls
 ** to Parse and ParseFree.
 */
+void *ParseAlloc(void *(*)(YYMALLOCARGTYPE) ParseCTX_PDECL);
 void *ParseAlloc(void *(*mallocProc)(YYMALLOCARGTYPE) ParseCTX_PDECL){
   yyParser *yypParser;
   yypParser = (yyParser*)(*mallocProc)( (YYMALLOCARGTYPE)sizeof(yyParser) );
@@ -515,6 +518,7 @@ static void yy_pop_parser_stack(yyParser *pParser){
 /*
 ** Clear all secondary memory allocations from the parser
 */
+void ParseFinalize(void*);
 void ParseFinalize(void *p){
   yyParser *pParser = (yyParser*)p;
 
@@ -551,6 +555,7 @@ void ParseFinalize(void *p){
 ** is defined in a %include section of the input grammar) then it is
 ** assumed that the input pointer is never NULL.
 */
+void ParseFree(void*,void(*)(void*));
 void ParseFree(
   void *p,                    /* The parser to be deleted */
   void (*freeProc)(void*)     /* Function used to reclaim memory */
@@ -569,6 +574,7 @@ void ParseFree(
  * (running %destructor), resets state-0 markers + error count
  * + high-water mark.  user-arg is preserved.  Available v0.6.1.
  */
+void ParseReset(void*);
 void ParseReset(void *yyp){
   yyParser *pParser = (yyParser*)yyp;
 #ifndef YYPARSEFREENEVERNULL
@@ -613,6 +619,7 @@ void ParseReset(void *yyp){
 ** Return the peak depth of the stack for a parser.
 */
 #ifdef YYTRACKMAXSTACKDEPTH
+int ParseStackPeak(void*);
 int ParseStackPeak(void *p){
   yyParser *pParser = (yyParser*)p;
   return pParser->yyhwm;
@@ -637,6 +644,7 @@ static unsigned char yycoverage[YYNSTATE][YYNTOKEN];
 ** Return the number of missed state/lookahead combinations.
 */
 #if defined(YYCOVERAGE)
+int ParseCoverage(FILE*);
 int ParseCoverage(FILE *out){
   int stateno, iLookAhead, i;
   int nMissed = 0;
@@ -1329,6 +1337,7 @@ void Parse_drain(void *yyp ParseCTX_PDECL){
 #endif
 }
 
+void Parse(void*,int,ParseTOKENTYPE ParseARG_PDECL);
 void Parse(
   void *yyp,                   /* The parser */
   int yymajor,                 /* The major token code number */
@@ -1636,6 +1645,7 @@ void Parse(
 ** Nth RHS symbol, and the result location is computed by merging the
 ** locations of the first and last RHS symbols.
 */
+void ParseLoc(void*,int,ParseTOKENTYPE,YYLOCATIONTYPE ParseARG_PDECL);
 void ParseLoc(
   void *yyp,                   /* The parser */
   int yymajor,                 /* The major token code number */
@@ -1661,6 +1671,7 @@ void ParseLoc(
 ** Return the fallback token corresponding to canonical token iToken, or
 ** 0 if iToken has no fallback.
 */
+int ParseFallback(int);
 int ParseFallback(int iToken){
 #ifdef YYFALLBACK
   assert( iToken<(int)(sizeof(yyFallback)/sizeof(yyFallback[0])) );
@@ -1683,6 +1694,7 @@ int ParseFallback(int iToken){
 ** See also ParseExpectedTokens() for a structured (array) form and
 ** ParseTokenName() for looking up individual token names.
 */
+char *ParseExpectedTokensString(void*);
 char *ParseExpectedTokensString(void *yyp){
   yyParser *yypParser = (yyParser*)yyp;
   YYACTIONTYPE stateno;
@@ -1759,6 +1771,7 @@ char *ParseExpectedTokensString(void *yyp){
 ** Return the string name of a terminal token code, or NULL if the
 ** code is out of range.  Names come from the yyTokenName[] table.
 */
+const char *ParseTokenName(int);
 const char *ParseTokenName(int tokenCode){
   if( tokenCode < 0 || tokenCode >= (int)YYNTOKEN ) return 0;
   return yyTokenName[tokenCode];
@@ -1774,6 +1787,7 @@ const char *ParseTokenName(int tokenCode){
 ** to the number itself -- it is an internal identifier and may change
 ** whenever the grammar is regenerated.
 */
+int ParseState(void*);
 int ParseState(void *yyp){
   yyParser *yypParser = (yyParser*)yyp;
   if( yypParser==0 || yypParser->yytos==0 ) return -1;
@@ -1801,6 +1815,7 @@ int ParseState(void *yyp){
 **   }
 **   free(codes);
 */
+int ParseExpectedTokens(int,int*,int);
 int ParseExpectedTokens(int stateno, int *out, int max){
   int count = 0;
   int i;

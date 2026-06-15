@@ -1,18 +1,21 @@
 /*
 ** tests/test_codegen_strict_warnings.c -- regression guard ensuring
 ** Lime-generated C compiles cleanly under the strict warning flags
-** downstream projects use but Lime's own build does not (notably
-** PostgreSQL: -Wdeclaration-after-statement, -Wshadow=compatible-local,
-** -Wmisleading-indentation).  Reported in v1.5.0: the generated
-** *_lex.c and parser .c emitted ~107 warnings under these flags while
-** Lime's own warning_level=2 build stayed silent.  Fixed in v1.5.1 by
-** hoisting declarations to block top, grouping (void) casts, and
-** renaming internal LexFeedBytes parameters (bytes/n -> yybytes/yyn)
-** so user action-body locals can't shadow them.
+** downstream projects use but Lime's own build does not.
 **
-** The test compiles each generated TU with the exact flagset and
-** -Werror, so any future codegen regression in these categories
-** fails the build rather than silently shipping.
+** v1.5.1 (lexer, commit c8ec094): -Wdeclaration-after-statement,
+**   -Wshadow=compatible-local, -Wmisleading-indentation.
+** v1.5.2 (parser/grammar emitter): -Wmissing-prototypes (public API
+**   functions now self-prototyped / the AOT helper too),
+**   -Wunused-function, and -Wmaybe-uninitialized / -Wuninitialized
+**   (yylhsminor zero-initialised so a copy rule `A = B` never reads
+**   it on an undominated path).  These are all on by default in a
+**   PostgreSQL build.
+**
+** The test compiles a generated parser .c (table path AND AOT -j
+** path) plus a %literal_buffer lexer .c with -Werror on exactly
+** these categories, so any future codegen regression fails the build
+** rather than silently shipping.
 */
 #include "test_compat.h"
 
@@ -42,9 +45,14 @@ static int run_lime(const char *lime, const char *tmpl, const char *extra,
 }
 
 /* Compile a generated TU under the strict flagset with -Werror for the
-** three reported categories.  Returns 0 iff it compiled with zero of
-** those warnings.  We scope -Werror to exactly the reported flags so
-** unrelated nits in the C compiler's defaults don't fail the test. */
+** reported categories.  Returns 0 iff it compiled with zero of those
+** warnings.  Covers both the v1.5.1 lexer set
+** (-Wdeclaration-after-statement / -Wshadow=compatible-local /
+** -Wmisleading-indentation) and the v1.5.2 parser set that
+** PostgreSQL builds with by default (-Wmissing-prototypes /
+** -Wunused-function / -Wmaybe-uninitialized / -Wuninitialized).
+** -Werror is scoped to exactly these flags so unrelated compiler nits
+** don't fail the test. */
 static int compile_strict(const char *workdir, const char *file) {
     char cmd[3072];
     snprintf(cmd, sizeof(cmd),
@@ -52,6 +60,10 @@ static int compile_strict(const char *workdir, const char *file) {
              "-Werror=declaration-after-statement "
              "-Werror=shadow=compatible-local "
              "-Werror=misleading-indentation "
+             "-Werror=missing-prototypes "
+             "-Werror=unused-function "
+             "-Werror=maybe-uninitialized "
+             "-Werror=uninitialized "
              "-Wall -Wextra "
              "-Wno-error=unused-parameter -Wno-error=type-limits "
              "-Wno-error=unused-but-set-variable "
@@ -80,15 +92,29 @@ int main(int argc, char **argv) {
     mkdir(dir, 0755);
 
     /* Copy the real repo grammars into the work dir (lime writes its
-    ** output next to the input).  These are known-valid and exercise
-    ** the exact emission paths that regressed:
-    **   - a parser grammar with semantic action bodies (the per-rule
-    **     reduce preamble that emitted decl-after-statement), and
+    ** parser output next to the input but writes -X lexer output to
+    ** the cwd; run_lime cds into the work dir to unify them).  These
+    ** are known-valid and exercise the emission paths that regressed:
+    **   - a parser grammar with semantic action bodies including the
+    **     copy pattern `A = B` (the per-rule reduce preamble:
+    **     decl-after-statement in v1.5.1, uninitialised yylhsminor in
+    **     v1.5.2), in both the table path and the AOT (-j) path, and
     **   - the %literal_buffer lexer grammar whose action bodies
     **     declare a local `n` (the LexFeedBytes parameter shadow). */
-    struct { const char *src; const char *dst; int is_lexer; const char *out; } cases[] = {
-        { "examples/calc/calc.lime", "p.lime", 0, "p.c" },
-        { "tests/test_lex_buf_grammar.lex", "lx.lex", 1, "lx_lex.c" },
+    struct {
+        const char *src;    /* repo-relative grammar */
+        const char *dst;    /* basename copied into the work dir */
+        const char *flags;  /* extra lime flags (NULL = none) */
+        const char *out1;   /* first generated TU to compile */
+        const char *out2;   /* second TU (e.g. _aot.c), or NULL */
+        const char *label;
+    } cases[] = {
+        { "examples/calc/calc.lime", "p.lime", NULL,
+          "p.c", NULL, "parser C (table path)" },
+        { "examples/calc/calc.lime", "pa.lime", "-j",
+          "pa.c", "pa_aot.c", "parser C (AOT -j path)" },
+        { "tests/test_lex_buf_grammar.lex", "lx.lex", "-X",
+          "lx_lex.c", NULL, "lexer C" },
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
@@ -102,12 +128,15 @@ int main(int argc, char **argv) {
             fail++;
             continue;
         }
-        CHECK(run_lime(lime, tmpl, cases[i].is_lexer ? "-X" : NULL, dir, dst) == 0,
-              cases[i].is_lexer ? "generate lexer C" : "generate parser C");
-        CHECK(compile_strict(dir, cases[i].out) == 0,
-              cases[i].is_lexer
-                  ? "lexer C compiles with no strict-flag warnings"
-                  : "parser C compiles with no strict-flag warnings");
+        char genmsg[128], cmsg[128];
+        snprintf(genmsg, sizeof(genmsg), "generate %s", cases[i].label);
+        snprintf(cmsg, sizeof(cmsg),
+                 "%s compiles with no strict-flag warnings", cases[i].label);
+        CHECK(run_lime(lime, tmpl, cases[i].flags, dir, dst) == 0, genmsg);
+        CHECK(compile_strict(dir, cases[i].out1) == 0, cmsg);
+        if (cases[i].out2) {
+            CHECK(compile_strict(dir, cases[i].out2) == 0, cmsg);
+        }
     }
 
     if (fail) {
