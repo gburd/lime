@@ -19,6 +19,31 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.5.3] -- 2026-06-10
+
+### Fixed
+
+- **Generated lexer's per-target `match` variants no longer trip
+  `-Wunused-function` on non-x86_64.**  The SIMD dispatcher selects
+  exactly one of `<prefix>_match_avx2` / `_neon` / `_scalar` per
+  target at compile time (`#if __x86_64__ / __aarch64__ / else`), but
+  all variants are emitted, so the unselected ones are defined but
+  unreferenced -- e.g. the scalar variant on aarch64, where the
+  dispatcher uses NEON exclusively.  Each variant is now emitted with
+  a GCC/clang `__attribute__((unused))`, keeping a strict downstream
+  build clean on ARM and other non-AVX2 targets.  (x86_64 was already
+  clean because the scalar variant is the runtime fallback there.)
+  This surfaced in CI's aarch64 and macOS jobs after the v1.5.2
+  parser-warning work tightened the regression guard.
+
+### Tests
+
+- `tests/test_codegen_strict_warnings.c` made compiler-aware (clang
+  vs GCC differ on `-Wshadow=compatible-local` /
+  `-Wmaybe-uninitialized` spellings) and robust to a relative `lime`
+  path (it resolves the binary and template to absolute paths before
+  `cd`-ing into the work dir).  Now exercises both gcc and clang.
+
 ## [1.5.2] -- 2026-06-10
 
 ### Fixed
