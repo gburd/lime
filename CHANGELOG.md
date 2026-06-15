@@ -19,6 +19,69 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.5.2] -- 2026-06-10
+
+### Fixed
+
+- **Generated parser/grammar C now compiles clean under PostgreSQL's
+  default warning set**, completing for the parser emitter what
+  v1.5.1 did for the lexer.  The PG team confirmed v1.5.1 made the
+  `lime -X` lexer fully warning-clean (all lexer-side suppression
+  removed downstream); this release does the same for the grammar
+  emitter (both the AOT `-j` path that produces `gram.c` and the
+  table-driven path that produces ecpg's `preproc.c`).  Addresses
+  three categories that are on by default in a PostgreSQL build:
+
+  - **`-Wmissing-prototypes`**: the generated public parser API
+    functions (`<Name>`, `<Name>Init`, `<Name>Alloc`, `<Name>Free`,
+    `<Name>Finalize`, `<Name>Reset`, `<Name>Trace`, `<Name>Loc`,
+    `<Name>Fallback`, `<Name>TokenName`, `<Name>State`,
+    `<Name>ExpectedTokens`, `<Name>ExpectedTokensString`,
+    `<Name>StackPeak`, `<Name>Coverage`) now carry a self-prototype
+    immediately above each definition in the generated `.c`, where
+    the grammar-specific macros (`TOKENTYPE`/`ARG_PDECL`/`CTX_PDECL`/
+    `YYLOCATIONTYPE`) are in scope and inside the same conditional
+    guard as the definition.  The AOT path's internal
+    `yy_find_shift_action_aot` helper likewise gets a matching
+    forward prototype (it is referenced across the AOT/main TU
+    boundary via an `extern`, so it cannot simply be `static`).
+
+  - **`-Wmaybe-uninitialized` / `-Wuninitialized`**: the per-reduce
+    left-hand-side temporary `yylhsminor` is now zero-initialised at
+    its declaration (`YYMINORTYPE yylhsminor = {0};`, which inits the
+    union's first member, the scalar `yyinit`).  Copy rules of the
+    form `lhs(A) ::= rhs(B). { A = B; }` read `yylhsminor` on a path
+    GCC's data-flow analysis can't always prove is write-dominated;
+    Bison sidesteps this by defining the LHS slot on entry to every
+    action.  The initializer (not `memset`) keeps the line a
+    declaration so it stays ahead of the other reduce locals
+    (preserving the v1.5.1 `-Wdeclaration-after-statement` fix).
+
+  - **`-Wunused-function`**: Lime's emitted error helper
+    (`yy_syntax_error`) is always referenced, so it does not trip
+    this flag.  (The `base_yyerror` the PG report cited is a
+    hand-written `static` function in the PostgreSQL grammar's own
+    `%include` epilogue, not Lime-emitted code; that one is theirs
+    to reference or annotate.)
+
+  Verified zero warnings on the full PostgreSQL backend grammar
+  (`gram.c`, AOT path) and the calc grammar in both the table and
+  AOT paths, under `-Wmissing-prototypes -Wunused-function
+  -Wmaybe-uninitialized -Wuninitialized -Wdeclaration-after-statement`
+  (plus the v1.5.1 shadow/indentation flags).  Codegen-only: no ABI,
+  no runtime behaviour change, no measurable performance change
+  (`yylhsminor = {0}` zero-inits one stack union per reduce; the
+  prototypes are declarations the optimiser discards).
+
+### Tests
+
+- `tests/test_codegen_strict_warnings.c` extended to compile the
+  generated parser in BOTH the table and AOT (`-j`) paths and to add
+  `-Werror=missing-prototypes -Werror=unused-function
+  -Werror=maybe-uninitialized -Werror=uninitialized` to the existing
+  lexer/parser strict-warning guard.
+
+
 ## [1.5.1] -- 2026-06-10
 
 ### Fixed
