@@ -39,6 +39,13 @@
 typedef struct {
     uint16_t state; /* Snapshot state number */
     int symbol;     /* Symbol code that put us in this state */
+    /* Letter 30: per-entry semantic value + location, carried so the
+    ** host-reduce hook can run BASE-grammar actions.  `value` holds
+    ** the opaque %token_type slot payload pushed by parse_token (for
+    ** a terminal) or written back by a reduce (for a nonterminal).
+    ** Untouched by the recognition-only path (host_reduce == NULL). */
+    void *value;
+    int loc;
 } ParseStackEntry;
 
 typedef struct {
@@ -73,6 +80,8 @@ static bool stack_push(ParseStack *s, uint16_t state, int symbol) {
     }
     s->top->state = state;
     s->top->symbol = symbol;
+    s->top->value = NULL;
+    s->top->loc = 0;
     s->top++;
     return true;
 }
@@ -81,6 +90,17 @@ static void stack_pop_n(ParseStack *s, uint32_t n) {
     uint32_t depth = (uint32_t)(s->top - s->base);
     if (n > depth) n = depth;
     s->top -= n;
+}
+
+static inline uint32_t stack_depth(const ParseStack *s) {
+    return (uint32_t)(s->top - s->base);
+}
+
+/* Letter 30: the semantic value sitting on top of the value stack --
+** the start-symbol's value once a reduce has produced it.  Captured
+** into ctx->result_value at accept so parse_result() can return it. */
+static inline void *stack_top_value(const ParseStack *s) {
+    return (s->top > s->base) ? s->top[-1].value : NULL;
 }
 
 /* ------------------------------------------------------------------ */
@@ -171,7 +191,9 @@ static inline uint16_t find_reduce_action(const ParserSnapshot * LIME_RESTRICT s
 ** on the LHS non-terminal from the new top state.  Mirrors yy_reduce
 ** in limpar.c.
 */
-static int reduce(const ParserSnapshot * LIME_RESTRICT snap, ParseStack * LIME_RESTRICT stk, uint32_t ruleno) {
+static int reduce(const ParserSnapshot * LIME_RESTRICT snap, ParseStack * LIME_RESTRICT stk,
+                  uint32_t ruleno, LimeHostReduceFn host_reduce, void *host_user,
+                  void **out_start_value) {
     if (snap->yy_rule_info_nrhs == NULL || snap->yy_rule_info_lhs == NULL) {
         return -1;
     }
@@ -184,17 +206,75 @@ static int reduce(const ParserSnapshot * LIME_RESTRICT snap, ParseStack * LIME_R
 
     int lhs = snap->yy_rule_info_lhs[ruleno];
 
+    /* Letter 30: run the BASE-grammar reduce action, if a host-reduce
+    ** hook is bound.  The RHS values live in the top `nrhs` stack
+    ** entries (entry[top-nrhs] == $1 .. entry[top-1] == $N); the LHS
+    ** value the action computes is stored on the entry we push for the
+    ** goto.  When no hook is bound this whole block is skipped and the
+    ** engine stays recognition-only (historical behaviour).
+    **
+    ** Slots are gathered into a small scratch array sized for the
+    ** common case; rules with more RHS symbols than the inline buffer
+    ** fall back to a heap array.  This runs only on a reduce with a
+    ** hook attached -- never on the shift hot path. */
+    void *lhs_value = NULL;
+    int lhs_loc = 0;
+    if (host_reduce != NULL && (uint32_t)nrhs <= stack_depth(stk)) {
+        enum { INLINE_RHS = 16 };
+        void *vbuf_inline[INLINE_RHS];
+        int   lbuf_inline[INLINE_RHS];
+        void **vbuf = vbuf_inline;
+        int   *lbuf = lbuf_inline;
+        void **vheap = NULL;
+        int   *lheap = NULL;
+        if (nrhs > INLINE_RHS) {
+            vheap = malloc((size_t)nrhs * sizeof(*vheap));
+            lheap = malloc((size_t)nrhs * sizeof(*lheap));
+            if (vheap == NULL || lheap == NULL) {
+                free(vheap);
+                free(lheap);
+                return -1;
+            }
+            vbuf = vheap;
+            lbuf = lheap;
+        }
+        ParseStackEntry *first_rhs = stk->top - nrhs;
+        for (int i = 0; i < nrhs; i++) {
+            vbuf[i] = first_rhs[i].value;
+            lbuf[i] = first_rhs[i].loc;
+        }
+        /* For an epsilon rule (nrhs == 0) there are no slots to read;
+        ** pass NULL so the scratch buffers are never dereferenced
+        ** (and gcc doesn't flag them as read-while-uninitialised). */
+        int rc = host_reduce(host_user, (int)ruleno,
+                             nrhs > 0 ? vbuf : NULL, nrhs > 0 ? lbuf : NULL,
+                             nrhs, &lhs_value, &lhs_loc);
+        free(vheap);
+        free(lheap);
+        if (rc != 0) return -1;
+        /* Default the LHS location to the leftmost RHS if the action
+        ** didn't set one. */
+        if (nrhs > 0 && lhs_loc == 0) lhs_loc = first_rhs[0].loc;
+    }
+
     stack_pop_n(stk, (uint32_t)nrhs);
 
     if (stk->top == stk->base) {
-        /* Reduced past the bottom -- start rule completed. */
+        /* Reduced past the bottom -- start rule completed.  Surface
+        ** the start-rule LHS value as the parse result (Letter 30). */
+        if (out_start_value != NULL) *out_start_value = lhs_value;
         return 1;
     }
 
     uint16_t goto_state = stk->top[-1].state;
     uint16_t next = find_reduce_action(snap, goto_state, (uint16_t)lhs);
 
-    if (next == snap->yy_accept_action) return 1;
+    if (next == snap->yy_accept_action) {
+        /* Goto leads straight to accept -- the LHS value the action
+        ** just produced is the parse result (Letter 30). */
+        if (out_start_value != NULL) *out_start_value = lhs_value;
+        return 1;
+    }
     if (next == snap->yy_error_action || next == snap->yy_no_action) return -1;
 
     /* yy_shift(yyact, lhs): if yyact is in the shift-reduce range
@@ -206,6 +286,11 @@ static int reduce(const ParserSnapshot * LIME_RESTRICT snap, ParseStack * LIME_R
         pushed = (uint16_t)(pushed + (snap->yy_min_reduce - snap->yy_min_shiftreduce));
     }
     if (!stack_push(stk, pushed, lhs)) return -1;
+    /* Carry the LHS value/location onto the goto entry so a later
+    ** reduce that consumes this nonterminal sees it as one of its
+    ** RHS values. */
+    stk->top[-1].value = lhs_value;
+    stk->top[-1].loc = lhs_loc;
     return 0;
 }
 
@@ -449,8 +534,10 @@ LimeTokenAdmissibility parse_context_token_admissible(
 */
 LIME_HOT
 int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_value, int location) {
-    (void)token_value; /* The runtime engine is value-free; the */
-    (void)location;    /* generator's typed entry handles those. */
+    /* Letter 30: token_value/location now flow onto the engine value
+    ** stack so a bound host-reduce hook can run base-grammar actions.
+    ** When no hook is bound they are stored but otherwise inert -- the
+    ** recognition-only behaviour is unchanged. */
 
     if (ctx == NULL || ctx->snapshot == NULL) return -1;
 
@@ -479,6 +566,12 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
     }
 
     ParserSnapshot *snap = ctx->snapshot;
+
+    /* Letter 30: resolve the effective host-reduce hook -- a
+    ** per-session override (parse_set_host_reduce) wins over the
+    ** snapshot's bound hook. */
+    LimeHostReduceFn eff_host_reduce = ctx->host_reduce ? ctx->host_reduce : snap->host_reduce;
+    void *eff_host_user = ctx->host_reduce ? ctx->host_reduce_user : snap->host_reduce_user;
 
     if (snap->yy_action == NULL || snap->yy_default == NULL || snap->yy_rule_info_nrhs == NULL) {
         /* Snapshot wasn't built from a real parser. */
@@ -532,9 +625,12 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
         ** yy_find_shift_action(). */
         if (cur_state >= snap->yy_min_reduce) {
             uint32_t ruleno = (uint32_t)(cur_state - snap->yy_min_reduce);
-            int r = reduce(snap, &eng->stack, ruleno);
+            int r = reduce(snap, &eng->stack, ruleno, eff_host_reduce,
+                           eff_host_user, &ctx->result_value);
             if (r == 1) {
                 eng->accepted = true;
+                if (eff_host_reduce && ctx->result_value == NULL)
+                    ctx->result_value = stack_top_value(&eng->stack);
                 return token_code == 0 ? 1 : 0;
             }
             if (r < 0) {
@@ -552,12 +648,19 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
                 /* End-of-input shift means we're done if next reduce
                 ** is the accept rule.  Treat as accept. */
                 eng->accepted = true;
+                if (eff_host_reduce && ctx->result_value == NULL)
+                    ctx->result_value = stack_top_value(&eng->stack);
                 return 1;
             }
             if (!stack_push(&eng->stack, action, major)) {
                 eng->errored = true;
                 return -1;
             }
+            /* Letter 30: carry this terminal's value+location so a
+            ** later reduce can hand it to the host-reduce action as a
+            ** $N slot.  No-op for recognition-only parses. */
+            eng->stack.top[-1].value = token_value;
+            eng->stack.top[-1].loc = location;
             return 0;
         }
 
@@ -575,11 +678,17 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
                 eng->errored = true;
                 return -1;
             }
+            /* Letter 30: the shifted terminal's value/location, read
+            ** by the pending reduce that fires on the next token. */
+            eng->stack.top[-1].value = token_value;
+            eng->stack.top[-1].loc = location;
             return 0;
         }
 
         if (action == snap->yy_accept_action) {
             eng->accepted = true;
+            if (eff_host_reduce && ctx->result_value == NULL)
+                ctx->result_value = stack_top_value(&eng->stack);
             return 1;
         }
 
@@ -587,9 +696,12 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
         if (action >= snap->yy_min_reduce && action != snap->yy_error_action &&
             action != snap->yy_no_action) {
             uint32_t ruleno = (uint32_t)(action - snap->yy_min_reduce);
-            int r = reduce(snap, &eng->stack, ruleno);
+            int r = reduce(snap, &eng->stack, ruleno, eff_host_reduce,
+                           eff_host_user, &ctx->result_value);
             if (r == 1) {
                 eng->accepted = true;
+                if (eff_host_reduce && ctx->result_value == NULL)
+                    ctx->result_value = stack_top_value(&eng->stack);
                 return token_code == 0 ? 1 : 0;
             }
             if (r < 0) {

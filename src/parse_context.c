@@ -129,6 +129,9 @@ ParseContext *parse_context_create(ParserSnapshot *snap) {
         }
         ctx->context_stack = NULL;
         ctx->borrowed_snapshot = false;
+        ctx->host_reduce = NULL;
+        ctx->host_reduce_user = NULL;
+        ctx->result_value = NULL;
         parse_engine_reset(ctx);
         return ctx;
     }
@@ -145,6 +148,9 @@ ParseContext *parse_context_create(ParserSnapshot *snap) {
     ctx->engine = NULL;  /* Allocated lazily by parse_engine_step. */
     ctx->context_stack = NULL; /* No grammar boundary detection by default. */
     ctx->borrowed_snapshot = false;
+    ctx->host_reduce = NULL;
+    ctx->host_reduce_user = NULL;
+    ctx->result_value = NULL;
     if (ctx->snapshot == NULL) {
         free(ctx);
         return NULL;
@@ -175,6 +181,9 @@ ParseContext *parse_context_create_borrowed(ParserSnapshot *snap) {
         ctx->snapshot = snap;        /* No atomic_fetch_add. */
         ctx->context_stack = NULL;
         ctx->borrowed_snapshot = true;
+        ctx->host_reduce = NULL;
+        ctx->host_reduce_user = NULL;
+        ctx->result_value = NULL;
         parse_engine_reset(ctx);
         return ctx;
     }
@@ -189,6 +198,9 @@ ParseContext *parse_context_create_borrowed(ParserSnapshot *snap) {
     ctx->engine = NULL;
     ctx->context_stack = NULL;
     ctx->borrowed_snapshot = true;
+    ctx->host_reduce = NULL;
+    ctx->host_reduce_user = NULL;
+    ctx->result_value = NULL;
     return ctx;
 }
 
@@ -260,6 +272,17 @@ int parse_token(ParseContext *ctx, int token_code, void *token_value, int locati
     ** extension applies modifications). */
     extern int parse_engine_step(ParseContext *, int, void *, int);
     return parse_engine_step(ctx, token_code, token_value, location);
+}
+
+void parse_set_host_reduce(ParseContext *ctx, LimeHostReduceFn fn, void *user) {
+    if (ctx == NULL) return;
+    ctx->host_reduce = fn;
+    ctx->host_reduce_user = user;
+}
+
+void *parse_result(const ParseContext *ctx) {
+    if (ctx == NULL) return NULL;
+    return ctx->result_value;
 }
 
 /* ------------------------------------------------------------------ */

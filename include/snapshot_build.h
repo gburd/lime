@@ -112,6 +112,15 @@ typedef struct LimeParserTables {
     ** built against pre-v0.7.0 lime; rebuild required". */
     uint32_t magic;       /* LIME_TABLES_MAGIC */
     uint16_t abi_version; /* LIME_TABLES_ABI_VERSION */
+
+    /* Optional host-reduce hook (Letter 30).  `lime -n` sets this to
+    ** the generated, exported <Name>HostReduce wrapper so the push
+    ** parser can run BASE-grammar reduce actions over the snapshot.
+    ** NULL for recognition-only snapshots (and for tables emitted by
+    ** pre-host-reduce lime), in which case parse_token accepts/rejects
+    ** without running actions.  Copied verbatim into the snapshot. */
+    LimeHostReduceFn host_reduce;
+    void *host_reduce_user;
 } LimeParserTables;
 
 #define LIME_TABLES_MAGIC       0x4C494D45U   /* 'L','I','M','E' */

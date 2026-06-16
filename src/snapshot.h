@@ -46,6 +46,38 @@ struct rule;
 struct state;
 
 /* ------------------------------------------------------------------ */
+/*  Host-reduce hook (Letter 30)                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Run one BASE-grammar reduce action over a snapshot.
+ *
+ * Mirrors LimeReduceFn (extension reduces, src/extension.h) so the
+ * base and extension reduce paths share a single ABI.  Bound into a
+ * ParserSnapshot via snapshot_build_from_tables (wired by `lime -n`
+ * to the generated, exported <Name>HostReduce wrapper) and called by
+ * the push parser on each base reduce when non-NULL.
+ *
+ *   user        host_reduce_user from the snapshot / session.
+ *   ruleno      Internal rule number being reduced.
+ *   rhs_values  Array of `nrhs` opaque slot payloads, one per RHS
+ *               symbol in rule order (index 0 = leftmost = $1).
+ *               Slot layout is the grammar's %token_type; the
+ *               generated wrapper owns that layout knowledge so it
+ *               never crosses the liblime_parser boundary.
+ *   rhs_locs    Array of `nrhs` byte-offset locations, or NULL when
+ *               the grammar has no %locations.
+ *   nrhs        Number of RHS symbols (>= 0).
+ *   lhs_out     Where to write the LHS ($$) value payload.
+ *   lhs_loc_out Where to write the LHS location (may be NULL).
+ *
+ * Returns 0 on success, non-zero to abort the parse.
+ */
+typedef int (*LimeHostReduceFn)(void *user, int ruleno,
+                                const void *rhs_values, const int *rhs_locs,
+                                int nrhs, void *lhs_out, int *lhs_loc_out);
+
+/* ------------------------------------------------------------------ */
 /*  Semantic versioning                                                */
 /* ------------------------------------------------------------------ */
 
@@ -271,6 +303,28 @@ typedef struct ParserSnapshot {
 
     /** JIT compilation context. */
     void *jit_ctx;
+
+    /* --- Host-reduce hook (Letter 30) -------------------------------
+    ** Optional callback that runs a BASE-grammar reduce action over
+    ** this snapshot when the push parser (parse_token) performs a
+    ** reduce.  NULL on every snapshot built before this feature and
+    ** on any recognition-only snapshot, in which case parse_token
+    ** drives the automaton to accept/reject WITHOUT running actions
+    ** (the historical behaviour -- fully back-compatible).
+    **
+    ** `lime -n` wires this to the generated, exported
+    ** <Name>HostReduce wrapper, which adapts the engine's value
+    ** stack to the static per-rule yy_rule_reduce_fn[] dispatch in
+    ** the parser .c.  The signature mirrors LimeReduceFn (extension
+    ** reduces), so base and extension reduce paths share one ABI.
+    **
+    ** COLD field: never read on the shift hot path; consulted only
+    ** inside the reduce branch, and only when non-NULL.  Additive
+    ** trailing field -- old snapshot readers never touch it, so no
+    ** abi_version bump is required (snapshot_build_from_tables
+    ** zero-inits it for tables that don't supply one). */
+    LimeHostReduceFn host_reduce;
+    void *host_reduce_user;
 } ParserSnapshot;
 
 /*

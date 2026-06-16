@@ -2253,6 +2253,33 @@ test_runtime_parse = executable('test_runtime_parse',
 
 test('runtime_parse', test_runtime_parse)
 
+# Letter 30: host-reduce -- the push parser runs a generated grammar's
+# BASE reduce actions over a snapshot (no cc) and propagates $1..$N ->
+# $$.  Generate hr_grammar with `lime -n` (emits HrBuildSnapshot +
+# HrHostReduce), then drive parse_token and assert the computed value
+# comes back via parse_result().
+test_host_reduce_gen = custom_target('test_host_reduce_parser',
+  input   : ['hr_grammar.lime'],
+  output  : ['hr_grammar.c', 'hr_grammar.h', 'hr_grammar_snapshot.c'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-n',
+    '--host-reduce',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
+test_host_reduce = executable('test_host_reduce',
+  'test_host_reduce.c',
+  test_host_reduce_gen,
+  include_directories : include_directories('../src'),
+  dependencies : lime_parser_dep,
+)
+
+test('host_reduce', test_host_reduce)
+
 # v1.5.0: context-sensitive token-admissibility oracle
 # (lime_token_admissible_in_state + parse_context_current_state).
 # Backs multi-grammar keyword disambiguation; reuses the arith

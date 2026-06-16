@@ -106,7 +106,7 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "1.5.3"
+#define LIME_VERSION_STRING "1.6.0"
 #endif
 
 
@@ -5057,6 +5057,15 @@ static int g_skin_nom = 0;
 static int g_skin_pest = 0;
 static int g_skin_chumsky = 0;
 
+/* Letter 30: --host-reduce.  When set, `lime -n` wires the generated
+** snapshot's host_reduce to the exported <Name>HostReduce wrapper so
+** the runtime push parser runs this grammar's base reduce actions.
+** OFF by default: a plain `-n` snapshot stays recognition-only, so
+** existing consumers (whose actions may deref yypParser / %extra_
+** argument, which the host-reduce path cannot supply) are unaffected.
+** Opt in only for grammars whose actions are self-contained. */
+static int g_host_reduce = 0;
+
 /* When non-zero, --rust / --rustlex / --rust-crate / --rust-nostd /
 ** --rustlex-simd / --rustlex-memchr / --per-token-dfa was seen on
 ** the command line.  Used to populate the legacy globals after
@@ -5584,6 +5593,12 @@ int main(int argc, char **argv){
     {OPT_FLAG, "l", (char*)&nolinenosflag, "Do not print #line statements."},
     {OPT_FLAG, "n", (char*)&snapshotFlag,
                     "Generate snapshot init code (*_snapshot.c)."},
+    {OPT_FLAG, "-host-reduce", (char*)&g_host_reduce,
+                    "With -n, wire the snapshot's host_reduce to the "
+                    "generated <Name>HostReduce so the push parser runs "
+                    "base reduce actions (Letter 30).  Opt-in: actions "
+                    "must be self-contained (no yypParser/%extra_argument "
+                    "deref)."},
     {OPT_FSTR, "O", 0, "Ignored.  (Placeholder for '-O' compiler options.)"},
     {OPT_FLAG, "p", (char*)&showPrecedenceConflict,
                     "Show conflicts resolved by precedence rules"},
@@ -12725,6 +12740,81 @@ void ReportTable(
     fprintf(out, " */\n"); lineno++;
   }
   fprintf(out, "};\n"); lineno++;
+
+  /* Letter 30: exported host-reduce wrapper.  Lets the runtime push
+  ** parser (liblime_parser) run THIS grammar's base reduce actions
+  ** over a composed ParserSnapshot without a C compiler -- the
+  ** snapshot's host_reduce is wired to <Name>HostReduce by the
+  ** generated <Name>BuildSnapshot in the _snapshot.c output.
+  **
+  ** The wrapper owns the grammar-specific yyStackEntry / YYMINORTYPE
+  ** layout knowledge so that layout never crosses the liblime_parser
+  ** boundary; the engine passes an array of opaque void* slot values
+  ** ($1..$N in rule order) and reads back the LHS ($$) value.
+  **
+  ** Slot bridging: a terminal/nonterminal value occupies the union's
+  ** .yy0 member (the %token_type slot).  We memcpy a pointer-width
+  ** payload in and out so any pointer-representable YYSTYPE works
+  ** (PostgreSQL's YYSTYPE union included); grammars whose value type
+  ** is wider than a pointer are not supported on this path and should
+  ** box their value behind a pointer. */
+  if( g_host_reduce ){
+  fprintf(out,
+      "/* Letter 30: exported adapter from the runtime push parser's\n"
+      "** generic value stack to this grammar's static per-rule reduce\n"
+      "** dispatch.  ruleno selects yy_rule_reduce_fn[ruleno]; rhs_values\n"
+      "** holds nrhs opaque slot payloads ($1..$N); the LHS value is\n"
+      "** written through lhs_out.  Returns 0 on success. */\n"
+      "int %sHostReduce(void *user, int ruleno,\n"
+      "                 const void *rhs_values, const int *rhs_locs,\n"
+      "                 int nrhs, void *lhs_out, int *lhs_loc_out);\n"
+      "int %sHostReduce(void *user, int ruleno,\n"
+      "                 const void *rhs_values, const int *rhs_locs,\n"
+      "                 int nrhs, void *lhs_out, int *lhs_loc_out){\n"
+      "  void *const *vals = (void *const *)rhs_values;\n"
+      "  yyStackEntry yystk[YYNRHS_MAX + 2];\n"
+      "  yyStackEntry *yymsp;\n"
+      "  yy_reduce_ctx yy_ctx;\n"
+      "  int i;\n"
+      "  (void)user; (void)rhs_locs; (void)lhs_loc_out;\n"
+      "  if (ruleno < 0 ||\n"
+      "      (unsigned)ruleno >= sizeof(yy_rule_reduce_fn)/sizeof(yy_rule_reduce_fn[0]))\n"
+      "    return -1;\n"
+      "  if (nrhs < 0 || nrhs > YYNRHS_MAX) return -1;\n"
+      "  /* yystk[0..nrhs-1] hold $1..$N; yystk[nrhs] is the LHS write\n"
+      "  ** slot for an empty rule.  Zero the whole scratch first. */\n"
+      "  memset(yystk, 0, sizeof(yystk));\n"
+      "  for (i = 0; i < nrhs; i++) {\n"
+      "    void *v = vals ? vals[i] : (void *)0;\n"
+      "    memcpy(&yystk[i].minor, &v, sizeof(void *) <= sizeof(yystk[i].minor)\n"
+      "                                  ? sizeof(void *) : sizeof(yystk[i].minor));\n"
+      "  }\n"
+      "  /* yymsp points at the TOP = $N (yymsp[0]); $1 = yymsp[1-nrhs].\n"
+      "  ** For an empty rule yymsp points one slot below the LHS slot. */\n"
+      "  yymsp = (nrhs > 0) ? &yystk[nrhs - 1] : &yystk[0] - 1;\n"
+      "  yy_ctx.yypParser = (yyParser *)0;\n"
+      "  yy_ctx.yymsp = yymsp;\n"
+      "  yy_ctx.yyLookahead = YYNOCODE;\n"
+      "  memset(&yy_ctx.yyLookaheadToken, 0, sizeof(yy_ctx.yyLookaheadToken));\n"
+      "#ifdef YYLOCATIONTYPE\n"
+      "  { static YYLOCATIONTYPE yyloc_zero; yy_ctx.yyloc_lhs_ptr = &yyloc_zero; }\n"
+      "#endif\n"
+      "  yy_rule_reduce_fn[ruleno](&yy_ctx);\n"
+      "  /* The action wrote the LHS into the $1 slot (yymsp[1-nrhs]) or,\n"
+      "  ** for an empty rule, the slot just above yymsp.  That is\n"
+      "  ** yystk[0] in both layouts above. */\n"
+      "  if (lhs_out) {\n"
+      "    void *out = (void *)0;\n"
+      "    memcpy(&out, &yystk[0].minor, sizeof(void *) <= sizeof(yystk[0].minor)\n"
+      "                                   ? sizeof(void *) : sizeof(yystk[0].minor));\n"
+      "    *(void **)lhs_out = out;\n"
+      "  }\n"
+      "  return 0;\n"
+      "}\n",
+      name, name);
+    lineno += 40;
+  }
+
   tplt_xfer(lemp->name,in,out,&lineno);
 
   /* Generate code which executes if a parse fails */
@@ -13189,7 +13279,25 @@ void ReportSnapshotInit(struct lime *lemp)
   /*  Builder function                                            */
   /* ------------------------------------------------------------ */
 
+  /* Letter 30: the host-reduce wrapper is defined in the parser .c
+  ** (where the static yy_rule_reduce_fn[] dispatch lives); declare it
+  ** here so BuildSnapshot can bind it into the snapshot's tables. */
+  if( g_host_reduce ){
+    fprintf(out,
+      "extern int %sHostReduce(void *user, int ruleno,\n"
+      "                        const void *rhs_values, const int *rhs_locs,\n"
+      "                        int nrhs, void *lhs_out, int *lhs_loc_out);\n\n",
+      name);
+  }
+
   fprintf(out, "\nParserSnapshot *%sBuildSnapshot(void) {\n", name);
+  {
+  char hostReduceExpr[256];
+  if( g_host_reduce ){
+    lemon_sprintf(hostReduceExpr, "%sHostReduce", name);
+  }else{
+    lemon_strcpy(hostReduceExpr, "NULL");
+  }
   fprintf(out,
     "    LimeParserTables tables = {\n"
     "        .yy_action            = s_yy_action,\n"
@@ -13218,6 +13326,8 @@ void ReportSnapshotInit(struct lime *lemp)
     "        .nfallback            = 0,\n"
     "        .grammar_source       = (const char *)s_grammar_source,\n"
     "        .grammar_source_len   = sizeof(s_grammar_source) - 1,\n"
+    "        .host_reduce          = %s,\n"
+    "        .host_reduce_user     = NULL,\n"
     "        .magic                = LIME_TABLES_MAGIC,\n"
     "        .abi_version          = LIME_TABLES_ABI_VERSION,\n"
     "    };\n"
@@ -13255,8 +13365,10 @@ void ReportSnapshotInit(struct lime *lemp)
     lemp->accAction,
     lemp->noAction,
     lemp->minReduce,
+    hostReduceExpr,                             /* .host_reduce = <name>HostReduce or NULL */
     name
   );
+  }
 
   /* ------------------------------------------------------------ */
   /*  v0.4.4: %embed lang TRIGGER 'lex' ENTRY_TOKEN TOKEN.        */

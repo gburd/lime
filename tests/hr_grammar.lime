@@ -1,0 +1,36 @@
+/*
+** tests/hr_grammar.lime -- Letter 30 host-reduce test grammar.
+**
+** A minimal expression grammar that BUILDS a value through its reduce
+** actions ($$ = $1 OP $3) and returns it as the start symbol's value
+** (no %extra_argument).  Driven by the runtime push parser over a
+** `lime -n` snapshot whose host_reduce is wired to HrHostReduce, the
+** computed value must come back via parse_result().
+**
+** %token_type is intptr_t so the semantic value is pointer-
+** representable -- the contract the host-reduce wrapper bridges
+** between the engine's void* value stack and the grammar's slot.
+*/
+
+%name Hr
+%token_type {intptr_t}
+%type expr {intptr_t}
+
+%include {
+#include <stdint.h>
+}
+
+%token PLUS.
+%token STAR.
+%token NUM.
+
+%left PLUS.
+%left STAR.
+
+%start_symbol prog
+
+prog(R)  ::= expr(E).               { R = E; }
+
+expr(A)  ::= expr(B) PLUS expr(C).  { A = B + C; }
+expr(A)  ::= expr(B) STAR expr(C).  { A = B * C; }
+expr(A)  ::= NUM(N).                { A = N; }

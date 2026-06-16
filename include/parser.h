@@ -152,10 +152,12 @@ ParseContext *parse_begin(ParserSnapshot *snap);
  * @param location    Byte offset of the token in the original source, or
  *                    LIME_LOC_UNKNOWN if the grammar does not declare
  *                    %locations or the caller does not track positions.
- *                    Currently stored but not yet propagated into reduce
- *                    actions (that plumbing lands with the push-parser
- *                    full implementation); callers should pass real
- *                    locations anyway so they are ready for it.
+ *                    Propagated to reduce actions when a host-reduce
+ *                    hook is bound (see parse_set_host_reduce /
+ *                    LimeHostReduceFn, Letter 30): the value/location
+ *                    of each shifted token is handed to the base
+ *                    action as a $N slot.  Without a hook the parser
+ *                    is recognition-only and the value is inert.
  * @retval 0     Success.
  * @retval non-zero Parse error.
  */

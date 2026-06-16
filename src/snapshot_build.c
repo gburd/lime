@@ -156,6 +156,12 @@ ParserSnapshot *snapshot_build_from_tables(const LimeParserTables *t) {
     snap->yy_ntoken = t->ntoken;
     snap->yy_first_token = t->first_token;
 
+    /* Letter 30: carry the optional host-reduce hook.  snap is
+    ** calloc'd, so both fields are already NULL for tables that don't
+    ** supply one (recognition-only / pre-host-reduce lime). */
+    snap->host_reduce = t->host_reduce;
+    snap->host_reduce_user = t->host_reduce_user;
+
     /* v0.7.0: stamp magic + ABI version for downstream sanity
     ** checks.  Cheap; one assignment.  Useful when a void*
     ** crosses an extension boundary or a debugger session. */

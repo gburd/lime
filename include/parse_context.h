@@ -58,6 +58,23 @@ struct ParseContext {
      * to true after retrieving the pooled context.
      */
     bool borrowed_snapshot;
+
+    /**
+     * Letter 30: optional per-session host-reduce override.  When
+     * non-NULL it takes precedence over snapshot->host_reduce, letting
+     * a host bind or replace the base-reduce dispatch without mutating
+     * the (shared, possibly multi-threaded) snapshot.  NULL by default
+     * -- the engine then falls back to snapshot->host_reduce.
+     */
+    LimeHostReduceFn host_reduce;
+    void *host_reduce_user;
+
+    /**
+     * Letter 30: the LHS value the top-level (start-rule) reduce
+     * produced, captured when the parse accepts.  parse_result()
+     * returns it.  NULL until accept, or when no host-reduce ran.
+     */
+    void *result_value;
 };
 
 /*
@@ -148,6 +165,33 @@ ParseContext *parse_begin_borrowed(ParserSnapshot *snap);
 ** Returns 0 on success, non-zero on parse error.
 */
 int parse_token(ParseContext *ctx, int token_code, void *token_value, int location);
+
+/* ------------------------------------------------------------------ */
+/*  Host-reduce binding (Letter 30)                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+** Bind a host-reduce hook on this parse session, overriding any
+** hook carried by the snapshot.  When set, the push parser calls
+** `fn` on every base-grammar reduce to run the action and produce
+** the LHS value (see LimeHostReduceFn in snapshot.h).  Pass fn==NULL
+** to clear the session override and fall back to the snapshot's
+** host_reduce (which may itself be NULL = recognition-only).
+**
+** This keeps the snapshot immutable/shareable: a composed snapshot
+** can be driven by different reduce dispatches per session.  Has no
+** effect on the shift hot path; the hook is consulted only inside a
+** reduce.
+*/
+void parse_set_host_reduce(ParseContext *ctx, LimeHostReduceFn fn, void *user);
+
+/*
+** Return the semantic value the start-rule reduce produced once the
+** parse has accepted, or NULL if the parse has not accepted, ran no
+** host-reduce, or the start action produced NULL.  The pointer's
+** lifetime is the host's responsibility (Lime never frees it).
+*/
+void *parse_result(const ParseContext *ctx);
 
 /*
 ** Sentinel value for `location` callers who do not track positions
