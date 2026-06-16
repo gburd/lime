@@ -19,6 +19,66 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.6.0] -- 2026-06-10
+
+### Added
+
+- **Host-reduce: run a generated grammar's BASE reduce actions over a
+  runtime snapshot, with no C compiler (Lime-Letter-30).**  The push
+  parser (`parse_begin`/`parse_token`/`parse_end`) could previously
+  only drive a `ParserSnapshot`'s automaton to accept/reject; it ran
+  no actions and built no result.  It can now additionally execute the
+  base grammar's compile-time reduce actions in-process and propagate
+  semantic values, which is what PostgreSQL's runtime grammar-extension
+  feature needs to drop its subprocess `fork`+`lime`+`cc`+`dlopen`
+  pipeline ("no C compiler at runtime").
+
+  - New `--host-reduce` flag: with `-n`, emits an exported
+    `<Name>HostReduce` wrapper in the parser `.c` and binds it into
+    the snapshot (`snap->host_reduce`).  The wrapper adapts the
+    engine's generic `void *` value stack to the static per-rule
+    `yy_rule_reduce_fn[]` dispatch, so the grammar-specific
+    `yyStackEntry`/`YYMINORTYPE` layout never crosses the
+    `liblime_parser` boundary.  **Opt-in** -- a plain `-n` snapshot
+    stays recognition-only (`host_reduce == NULL`), so every existing
+    consumer is unaffected.
+  - New public API (`include/parse_context.h`):
+    `parse_set_host_reduce(ctx, fn, user)` binds/overrides the reducer
+    per session (keeping the snapshot immutable + shareable);
+    `parse_result(ctx)` returns the start symbol's value after accept.
+  - New `LimeHostReduceFn` typedef (`src/snapshot.h`), mirroring the
+    extension `LimeReduceFn` so base and extension reduce paths share
+    one ABI; new `ParserSnapshot.host_reduce` / `.host_reduce_user`
+    (COLD region, additive, no abi_version bump) and `LimeParserTables`
+    `.host_reduce` / `.host_reduce_user`.
+  - `parse_token`'s `token_value` / `location` are now propagated onto
+    the engine value stack and delivered to base actions as `$1..$N`;
+    the LHS `$$` value propagates back.  Resolves the long-standing
+    "stored but not yet propagated into reduce actions" caveat on
+    `parse_token` (`include/parser.h`).
+
+  Recognition-only behaviour and performance are unchanged when no
+  hook is bound: the reduce hook is consulted only inside a reduce,
+  never on the shift hot path, and `host_reduce == NULL` skips the
+  block entirely.  Verified no regression in `parser_bench` /
+  `bench_jit_real_parser` (within measurement noise).  See
+  `docs/HOST_REDUCE.md`.
+
+  Values are bridged through the union's `.yy0` member as a
+  pointer-width payload, so any pointer-representable `%token_type`
+  works (PostgreSQL's `YYSTYPE` union, `intptr_t`-wide scalars).
+  Grammars whose actions dereference `yypParser` / `%extra_argument`,
+  or whose value type is wider than a pointer, are not host-reduce-
+  compatible and should stay on the recognition-only path.
+
+### Tests
+
+- `tests/test_host_reduce.c` + `tests/hr_grammar.lime`: end-to-end
+  proof that base actions fire and values propagate
+  (`2 + 3 * 4 == 14` with correct precedence), the session-override
+  setter works, and a `host_reduce == NULL` snapshot still
+  accepts/rejects identically (recognition-only back-compat).
+
 ## [1.5.3] -- 2026-06-10
 
 ### Fixed
