@@ -19,6 +19,50 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.6.1] -- 2026-06-10
+
+### Fixed
+
+- **Host-reduce now works for `%extra_argument` grammars (Lime-Letter-31).**
+  v1.6.0's `<Name>HostReduce` wrapper NULLed `yy_ctx.yypParser` and
+  ignored its `user` parameter, so any action that fetches the extra
+  argument (which expands to `yypParser->arg` -- e.g. PostgreSQL's
+  `core_yyscan_t yyscanner`, referenced by 95 reduce actions)
+  dereferenced NULL and crashed.  This limited host-reduce to grammars
+  whose actions are pure functions of `$1..$N`.
+
+  The wrapper now builds a zeroed stack `yyParser` and, when the
+  grammar declares `%extra_argument`, stores the `user` pointer
+  (threaded through `parse_set_host_reduce` / `snap->host_reduce_user`)
+  into the extra-argument slot before invoking each rule function:
+  `yyp.<argname> = (<argtype>)user;`.  An action that reads
+  `yypParser->yyscanner` (or any `%extra_argument`) now sees exactly
+  that pointer.  Grammars with no `%extra_argument` are unchanged
+  (the wrapper passes a valid zeroed `yyParser` and ignores `user`).
+
+  This generalises host-reduce to the grammars people actually have
+  -- those threading a scanner / arena / error sink / symbol table
+  through their actions -- and makes the previously load-bearing-
+  looking-but-ignored `user` parameter honest.  The extra-argument
+  value must be pointer-representable (a scanner handle, an arena
+  pointer); documented alongside the existing pointer-width
+  `%token_type` note.  See `docs/HOST_REDUCE.md`.
+
+  Codegen-only, behind the opt-in `--host-reduce` flag: recognition-
+  only snapshots and the parse hot path are unaffected.
+
+### Docs
+
+- `man/lime.1` now documents `--host-reduce` (was missing since
+  v1.6.0), including the `%extra_argument` threading.
+
+### Tests
+
+- `tests/he_grammar.lime` + a new sub-test in `tests/test_host_reduce.c`:
+  a grammar with `%extra_argument {long *bias}` whose actions compute
+  `N + *bias`, proving `user` reaches the action and is read live
+  (`(2+bias)+(3+bias) == 25`; changing `bias` between sessions tracks).
+
 ## [1.6.0] -- 2026-06-10
 
 ### Added
