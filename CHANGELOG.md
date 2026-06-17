@@ -19,6 +19,65 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.6.2] -- 2026-06-10
+
+### Fixed
+
+- **Runtime grammar composition dropped `%first_token`, rejecting
+  valid base queries.**  `clone_snapshot()` -- the metadata-only
+  composition path used by `create_modified_snapshot` /
+  `publish_modified_snapshot` when the in-process LALR rebuild is
+  unavailable -- copied every action-range scalar (`yy_ntoken`,
+  `yy_max_shift`, ...) **except `yy_first_token`**.  A composed
+  snapshot therefore got `yy_first_token == 0`, so `parse_token`
+  applied a zero offset and treated each external token code
+  (`internal_index + N`) as an internal index -- out of range -- and
+  rejected every token of an otherwise-valid base query with `rc=-1`
+  and an empty tree.  Base-only parsing was unaffected because the
+  base snapshot retained its offset.
+
+  Reported by the PostgreSQL Track B port (`SELECT 1+2;` accepted by
+  the base snapshot, rejected by the composed one).  Their symptom
+  ("token-code misalignment") was correct; the mechanism was a single
+  dropped field in the clone, not in-process token renumbering --
+  in-process recompile preserves token codes and `%first_token`
+  (proven by `test_first_token_runtime`).
+
+  `clone_snapshot` now copies `yy_first_token` (and, for the same
+  reason, the `host_reduce` / `host_reduce_user` hook so a composed
+  snapshot can still run base reduce actions).  A debug-build
+  field-drift guard asserts the parse-critical scalars all carried
+  over, so a future field this clone forgets trips a test instead of
+  shipping.
+
+### Added
+
+- `lime_snapshot_first_token(snap)` (`include/parser.h`) -- returns
+  the `%first_token` offset baked into a snapshot (0 when none).
+  Lets a consumer that composes grammars at runtime verify the offset
+  survived; pair with `lime_token_admissible_in_state(snap, 0,
+  external_code)` to confirm each base terminal keeps its external
+  code across a rebuild.
+
+### Docs
+
+- `man/lime_grammar.5` now documents the `%first_token` directive,
+  including the off-by-one that the external code is
+  `internal_index + N` with internal indices starting at 1 -- so
+  `%first_token 257` makes the first declared terminal external code
+  **258**, not 257.  Always read the generated `.h`.
+
+### Tests
+
+- `tests/test_compose_first_token.c` + `tests/ft_base_grammar.lime`:
+  compose an extension over a `%first_token 257` base and assert
+  (a) the offset survives composition, (b) base terminals keep their
+  external codes (probed via the admissibility oracle), and (c) a
+  valid base query parses through the composed snapshot.  This is the
+  exact regression the PG report identified as missing ("the
+  compose-ruleno probe confirmed rule-count stability but didn't
+  check token-code stability").
+
 ## [1.6.1] -- 2026-06-10
 
 ### Fixed
