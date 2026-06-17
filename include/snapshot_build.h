@@ -65,6 +65,18 @@ typedef struct LimeParserTables {
     /* Counts */
     uint32_t nsymbol;
     uint32_t nterminal;
+
+    /* Optional symbol-name table (the generated yyTokenName[]), indexed
+    ** by internal symbol index: [0]="$", [1..nterminal-1]=terminals,
+    ** [nterminal..nsymbol-1]=nonterminals.  When supplied,
+    ** snapshot_build_from_tables deep-copies it so the snapshot can map
+    ** a token NAME -> external code (lime_snapshot_token_code), which a
+    ** scanner needs to emit the right code for an extension keyword in
+    ** a recompiled/composed snapshot.  NULL when the generator did not
+    ** emit names (recognition-only / pre-name-table lime); the lookup
+    ** then returns -1. */
+    const char *const *token_names;
+    uint32_t token_names_count; /* = nsymbol when token_names != NULL */
     uint16_t ntoken; /* YYNTOKEN = highest terminal + 1 */
     /* YYFIRSTTOKEN: the %first_token directive value (0 when not
     ** declared).  Subtracted from external token codes by parse_token

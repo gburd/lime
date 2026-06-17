@@ -325,6 +325,17 @@ typedef struct ParserSnapshot {
     ** zero-inits it for tables that don't supply one). */
     LimeHostReduceFn host_reduce;
     void *host_reduce_user;
+
+    /* --- Token-name table (name -> code lookup) ---------------------
+    ** Optional copy of the generated yyTokenName[], indexed by internal
+    ** symbol index ([0]="$", terminals then nonterminals).  Lets
+    ** lime_snapshot_token_code() map a token NAME to its external code
+    ** in THIS snapshot -- needed so a scanner can emit the right code
+    ** for an extension keyword after a runtime recompile renumbers the
+    ** token set.  NULL when names were not provided (the lookup then
+    ** returns -1).  Deep-copied + owned by the snapshot. */
+    char **token_names;
+    uint32_t token_names_count;
 } ParserSnapshot;
 
 /*

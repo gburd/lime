@@ -23,6 +23,45 @@ handles rule/precedence/automaton conflicts.  The fix is to let the
 scanner ask the parser *"in your current state, which of these
 candidate token codes would you actually accept?"* and emit that one.
 
+## Resolving an extension keyword's token code
+
+Before the scanner can offer a candidate code to the oracle, it needs
+the code.  For a base keyword the scanner already has it (baked into
+the compiled-in keyword table).  For an *extension* keyword the code
+is assigned by the runtime recompile that produced the composed
+snapshot — it is not known at scanner build time and must not be
+hard-coded.
+
+```c
+/* parser.h: external token code for a name in THIS snapshot, or -1. */
+int lime_snapshot_token_code(const ParserSnapshot *snap, const char *name);
+```
+
+Resolve each extension keyword **once**, at scanner setup, against the
+composed snapshot:
+
+```c
+int code_delete = lime_snapshot_token_code(composed, "K_QUEL_DELETE");
+int code_range  = lime_snapshot_token_code(composed, "K_QUEL_RANGE");
+/* -1 means the extension that defines this keyword is not loaded;
+** fall back to the base token. */
+```
+
+The returned value is the **external** code (it already includes the
+`%first_token` offset), i.e. exactly what `parse_token` expects and
+what the admissibility oracle below takes.  This lets QUEL emit real
+`delete` / `range` tokens instead of mangled `delete_quel` / `q_range`
+workarounds: the scanner consults the extension first, resolves the
+extension keyword's live code, and shadows the base keyword when the
+oracle says the extension token is the admissible one.
+
+The lookup is a linear scan over the snapshot's symbol table — do it
+once per keyword at setup, not per token.  It works on any snapshot
+that carries a name table (every `lime -n` snapshot, and any snapshot
+recompiled in-process from grammar text); `lime_snapshot_first_token`
+reports the offset if you need to cross-check against a compiled-in
+header.
+
 ## The oracle
 
 Two read-only entry points (declared in `include/parse_context.h`):

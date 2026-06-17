@@ -103,6 +103,26 @@ void lime_snapshot_release(ParserSnapshot *snap);
 uint16_t lime_snapshot_first_token(const ParserSnapshot *snap);
 
 /**
+ * @brief Map a token name to its external code in a snapshot.
+ *
+ * Returns the external token code (the value parse_token() expects and
+ * a scanner emits: internal_index + %first_token) for the terminal or
+ * nonterminal named @p name, or -1 when the name is unknown or the
+ * snapshot carries no name table.
+ *
+ * This is the lookup a scanner needs to make an extension keyword
+ * resolve to its token in a runtime-composed snapshot: extension token
+ * codes are assigned by the recompile, so they cannot be hard-coded.
+ * Resolve each keyword once at scanner setup (the lookup is a linear
+ * scan over the symbol table, not meant for the per-token hot path).
+ *
+ * @param snap  Snapshot to query (may be NULL -> -1).
+ * @param name  Token name, e.g. "DELETE" (may be NULL -> -1).
+ * @return External token code, or -1 if not found.
+ */
+int lime_snapshot_token_code(const ParserSnapshot *snap, const char *name);
+
+/**
  * @brief Create a base snapshot by parsing a grammar file.
  *
  * Runs the Lime parser generator on @p grammar_file and produces a

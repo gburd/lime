@@ -209,6 +209,22 @@ ParserSnapshot *clone_snapshot(const ParserSnapshot *base) {
         snap->grammar_source_len = base->grammar_source_len;
     }
 
+    /* Token-name table -- deep copy so a cloned/composed snapshot can
+    ** still map a token name -> external code (lime_snapshot_token_code). */
+    if (base->token_names != NULL && base->token_names_count > 0) {
+        snap->token_names = calloc(base->token_names_count, sizeof(char *));
+        if (snap->token_names == NULL) goto fail;
+        /* Set the count up-front so the fail: cleanup frees whatever we
+        ** managed to copy (calloc zeroed the rest; free(NULL) is ok). */
+        snap->token_names_count = base->token_names_count;
+        for (uint32_t i = 0; i < base->token_names_count; i++) {
+            if (base->token_names[i] != NULL) {
+                snap->token_names[i] = dup_string(base->token_names[i]);
+                if (snap->token_names[i] == NULL) goto fail;
+            }
+        }
+    }
+
     /* Verify critical allocations succeeded */
     if (base->action_count > 0 && snap->yy_action == NULL) goto fail;
     if (base->lookahead_count > 0 && snap->yy_lookahead == NULL) goto fail;
@@ -240,6 +256,10 @@ fail:
     free(snap->yy_rule_info_nrhs);
     free(snap->yy_fallback);
     free(snap->grammar_source);
+    if (snap->token_names != NULL) {
+        for (uint32_t i = 0; i < snap->token_names_count; i++) free(snap->token_names[i]);
+        free(snap->token_names);
+    }
     free(snap);
     return NULL;
 }

@@ -162,6 +162,34 @@ ParserSnapshot *snapshot_build_from_tables(const LimeParserTables *t) {
     snap->host_reduce = t->host_reduce;
     snap->host_reduce_user = t->host_reduce_user;
 
+    /* Token-name table: deep-copy the generated yyTokenName[] so the
+    ** snapshot can map a token name -> external code.  Each entry is a
+    ** strdup; the array + strings are freed in snapshot destruction.
+    ** NULL/0 when the generator did not supply names. */
+    if (t->token_names != NULL && t->token_names_count > 0) {
+        snap->token_names = calloc(t->token_names_count, sizeof(char *));
+        if (snap->token_names != NULL) {
+            uint32_t i;
+            int ok = 1;
+            for (i = 0; i < t->token_names_count; i++) {
+                const char *nm = t->token_names[i];
+                if (nm != NULL) {
+                    snap->token_names[i] = strdup(nm);
+                    if (snap->token_names[i] == NULL) { ok = 0; break; }
+                }
+            }
+            if (ok) {
+                snap->token_names_count = t->token_names_count;
+            } else {
+                /* Partial copy -- drop it rather than ship a hole. */
+                uint32_t j;
+                for (j = 0; j < t->token_names_count; j++) free(snap->token_names[j]);
+                free(snap->token_names);
+                snap->token_names = NULL;
+            }
+        }
+    }
+
     /* v0.7.0: stamp magic + ABI version for downstream sanity
     ** checks.  Cheap; one assignment.  Useful when a void*
     ** crosses an extension boundary or a debugger session. */

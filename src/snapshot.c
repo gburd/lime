@@ -79,6 +79,13 @@ static void destroy_snapshot(ParserSnapshot *snap) {
     free(snap->yy_fallback);
     free(snap->grammar_source);
 
+    /* Token-name table (deep-copied strings + array). */
+    if (snap->token_names != NULL) {
+        uint32_t i;
+        for (i = 0; i < snap->token_names_count; i++) free(snap->token_names[i]);
+        free(snap->token_names);
+    }
+
     /* JIT context (if any).  jit_detach_from_snapshot is declared
     ** weak in jit_context.h so this snapshot.c file can be bundled
     ** into the dynamically-built .so produced by lime_snapshot_create
@@ -190,6 +197,31 @@ void lime_snapshot_release(ParserSnapshot *snap) {
 ** terminal's external code is unchanged across a rebuild. */
 uint16_t lime_snapshot_first_token(const ParserSnapshot *snap) {
     return snap ? snap->yy_first_token : 0;
+}
+
+/* Map a token NAME to its EXTERNAL code in this snapshot, or -1 when
+** the name is unknown / the snapshot carries no name table.
+**
+** The external code is what parse_token() expects and what a scanner
+** emits: internal_index + first_token.  This is the missing piece for
+** a scanner that wants an extension keyword to resolve to its token in
+** a recompiled/composed snapshot -- extension token codes are assigned
+** by the recompile, so the scanner cannot hard-code them.
+**
+** Matches both terminals and nonterminals by name (a scanner only
+** cares about terminals); the offset is applied uniformly.  O(nsymbol)
+** linear scan -- intended for one-time scanner setup (resolve each
+** keyword once into a code), not per-token.  Returns int (not
+** uint16_t) so the -1 "not found" sentinel is unambiguous. */
+int lime_snapshot_token_code(const ParserSnapshot *snap, const char *name) {
+    if (snap == NULL || name == NULL || snap->token_names == NULL) return -1;
+    uint32_t i;
+    for (i = 0; i < snap->token_names_count; i++) {
+        if (snap->token_names[i] != NULL && strcmp(snap->token_names[i], name) == 0) {
+            return (int)i + (int)snap->yy_first_token;
+        }
+    }
+    return -1;
 }
 
 ParserSnapshot *lime_snapshot_create(const char *grammar_file, char **error) {

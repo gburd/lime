@@ -2448,7 +2448,12 @@ if host_machine.system() != 'windows'
     'test_compose_first_token.c',
     test_compose_ft_gen,
     include_directories : include_directories('../src'),
-    dependencies : lime_parser_dep,
+    # Link the in-process compiler so publish_modified_snapshot takes
+    # the real recompile path PG uses (path A), which rebuilds the
+    # token-name table from the merged grammar -- so the extension's
+    # new token resolves via lime_snapshot_token_code.
+    dependencies : [lime_parser_dep, lime_compiler_dep],
+    c_args : ['-DLIME_HAVE_SNAPSHOT_BUILD'],
     export_dynamic : true,
   )
 

@@ -106,7 +106,7 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "1.6.2"
+#define LIME_VERSION_STRING "1.7.0"
 #endif
 
 
@@ -13266,6 +13266,25 @@ void ReportSnapshotInit(struct lime *lemp)
   fprintf(out, "};\n");
 
   /* ------------------------------------------------------------ */
+  /*  Symbol-name table (name -> code lookup)                     */
+  /* ------------------------------------------------------------ */
+  /*
+  ** Emit the symbol names indexed by internal symbol index, matching
+  ** the generated yyTokenName[] convention ([0]="$", terminals then
+  ** nonterminals).  Lets the runtime snapshot map a token NAME to its
+  ** external code (lime_snapshot_token_code) -- needed so a scanner
+  ** can emit the right code for an extension keyword after a runtime
+  ** recompile.  symbols[] is sorted so symbols[i]->index == i.
+  */
+  fprintf(out, "static const char *const s_token_names[] = {\n");
+  for(i=0; i<lemp->nsymbol; i++){
+    struct symbol *sp = lemp->symbols[i];
+    fprintf(out, "    \"%s\",\n", sp && sp->name ? sp->name : "");
+  }
+  if( lemp->nsymbol==0 ) fprintf(out, "    0\n");
+  fprintf(out, "};\n");
+
+  /* ------------------------------------------------------------ */
   /*  Grammar source text                                         */
   /* ------------------------------------------------------------ */
   /*
@@ -13355,6 +13374,8 @@ void ReportSnapshotInit(struct lime *lemp)
     "        .nfallback            = 0,\n"
     "        .grammar_source       = (const char *)s_grammar_source,\n"
     "        .grammar_source_len   = sizeof(s_grammar_source) - 1,\n"
+    "        .token_names          = s_token_names,\n"
+    "        .token_names_count    = sizeof(s_token_names)/sizeof(s_token_names[0]),\n"
     "        .host_reduce          = %s,\n"
     "        .host_reduce_user     = NULL,\n"
     "        .magic                = LIME_TABLES_MAGIC,\n"
@@ -13848,6 +13869,7 @@ static struct ParserSnapshot *build_snapshot_from_lime(struct lime *lemp,
   int16_t  *rule_lhs = NULL;
   int8_t   *rule_nrhs = NULL;
   uint16_t *yy_fallback = NULL;
+  const char **token_names = NULL;
   acttab   *pActtab = NULL;
   struct ParserSnapshot *snap = NULL;
   int i;
@@ -14044,6 +14066,19 @@ static struct ParserSnapshot *build_snapshot_from_lime(struct lime *lemp,
     tables.nfallback            = nfallback;
     tables.grammar_source       = grammar_text;
     tables.grammar_source_len   = (uint32_t)grammar_text_len;
+    /* Token-name table for name->code lookup (lime_snapshot_token_code).
+    ** Borrow lemp->symbols[i]->name -- symbols are sorted so index==i,
+    ** matching the generated yyTokenName[] convention.
+    ** snapshot_build_from_tables strdup's each, so this array holds
+    ** borrowed pointers freed (array only) on the oom: path. */
+    token_names = (const char **)calloc((size_t)lemp->nsymbol, sizeof(char *));
+    if (token_names != NULL) {
+      for (int ti = 0; ti < lemp->nsymbol; ti++) {
+        token_names[ti] = lemp->symbols[ti] ? lemp->symbols[ti]->name : NULL;
+      }
+      tables.token_names = token_names;
+      tables.token_names_count = (uint32_t)lemp->nsymbol;
+    }
     snap = snapshot_build_from_tables(&tables);
   }
 
@@ -14056,6 +14091,7 @@ oom:
   free(rule_lhs);
   free(rule_nrhs);
   free(yy_fallback);
+  free(token_names);
   if( pActtab ) acttab_free(pActtab);
   return snap;
 }

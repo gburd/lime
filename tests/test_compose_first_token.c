@@ -111,6 +111,14 @@ int main(void) {
     CHECK(base->grammar_source != NULL && base->grammar_source_len > 0,
           "base carries grammar_source (in-process rebuild path reachable)");
 
+    /* name -> code lookup on the base: SELECT must map to 258. */
+    CHECK(lime_snapshot_token_code(base, "SELECT") == FTB_SELECT,
+          "base: lime_snapshot_token_code(SELECT) == 258");
+    CHECK(lime_snapshot_token_code(base, "SEMI") == FTB_SEMI,
+          "base: lime_snapshot_token_code(SEMI) == 261");
+    CHECK(lime_snapshot_token_code(base, "NOSUCHTOKEN") == -1,
+          "base: unknown token name -> -1");
+
     /* Base accepts "SELECT NUM + NUM ;" at external codes. */
     int base_query[] = { FTB_SELECT, FTB_NUM, FTB_PLUS, FTB_NUM, FTB_SEMI };
     CHECK(parse_seq(base, base_query, 5) == 1,
@@ -151,6 +159,23 @@ int main(void) {
         ** the COMPOSED snapshot, not just the base. */
         CHECK(parse_seq(composed, base_query, 5) == 1,
               "composed snapshot accepts SELECT NUM + NUM ; (base query)");
+
+        /* (3) name -> code lookup survives composition AND resolves the
+        ** extension's new token -- the scanner-shadowing use case. */
+        CHECK(lime_snapshot_token_code(composed, "SELECT") == FTB_SELECT,
+              "composed: SELECT name->code still 258 (base code stable)");
+        int ext_code = lime_snapshot_token_code(composed, "KW_EXT");
+        CHECK(ext_code > 0, "composed: extension token KW_EXT resolves to a code");
+        CHECK(lime_snapshot_token_code(base, "KW_EXT") == -1,
+              "base: KW_EXT is unknown (it's extension-only)");
+        /* The extension code must be admissible somewhere the base code
+        ** isn't -- prove it's a real, distinct token in the composed
+        ** automaton (it appears after an expr). */
+        {
+            int seq[] = { FTB_SELECT, FTB_NUM, ext_code, FTB_SEMI };
+            CHECK(parse_seq(composed, seq, 4) == 1,
+                  "composed: SELECT NUM <KW_EXT> ; accepted via resolved code");
+        }
 
         snapshot_release(composed);
     }
