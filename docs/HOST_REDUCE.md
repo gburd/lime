@@ -38,12 +38,39 @@ every base reduce.
 ### Opt-in, not automatic — and why
 
 The wrapper invokes the generated per-rule action functions, which run in a
-reduced environment: there is no live `yyParser`. Actions that dereference
-`yypParser` or read a `%extra_argument` (which expands to `yypParser->arg`)
-will crash. Such grammars are **not** host-reduce-compatible; keep them on the
-recognition-only path or restructure the actions to be self-contained
-(compute `$$` from `$1..$N` only). Making the hook opt-in keeps every existing
-`-n` consumer working unchanged.
+reduced environment: the parser stack/lookahead are not live during a
+host-reduce.  Actions that read `$1..$N` (via `yymsp`), compute `$$`, and use
+the grammar's `%extra_argument` are fully supported.  Actions that require a
+*live* parser stack or lookahead mid-reduce are not.  Making the hook opt-in
+keeps every existing `-n` consumer working unchanged.
+
+### %extra_argument (scanners, allocators, error sinks)
+
+Most non-toy grammars thread something through their actions with bison/Lemon's
+`%extra_argument` — a scanner, an arena, an error sink, a symbol table.
+PostgreSQL's grammar declares `%extra_argument {core_yyscan_t yyscanner}` and 95
+actions read `yyscanner`.
+
+The `user` pointer you pass to `parse_set_host_reduce` (or store in
+`snap->host_reduce_user`) is delivered into the generated parser's
+extra-argument slot before each action runs, so an action that fetches
+`yypParser->yyscanner` reads exactly that pointer:
+
+```c
+snap = GramBuildSnapshot();                       /* host_reduce set */
+ctx  = parse_begin(snap);
+parse_set_host_reduce(ctx, snap->host_reduce, yyscanner);  /* user = scanner */
+... parse_token(ctx, code, boxed_value, loc) ...
+tree = parse_result(ctx);
+parse_end(ctx);
+```
+
+The wrapper builds a zeroed stack `yyParser`, stores `user` into the
+extra-argument field (`yyp.<argname> = (<argtype>)user;`), and points the
+reduce context at it.  The extra-argument value must be **pointer-
+representable** (a scanner handle, an arena pointer — all fine).  Grammars
+with no `%extra_argument` ignore `user` (the wrapper still passes a valid
+zeroed `yyParser`).
 
 ## Driving it
 

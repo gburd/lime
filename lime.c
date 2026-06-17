@@ -106,7 +106,7 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "1.6.0"
+#define LIME_VERSION_STRING "1.6.1"
 #endif
 
 
@@ -12759,6 +12759,28 @@ void ReportTable(
   ** is wider than a pointer are not supported on this path and should
   ** box their value behind a pointer. */
   if( g_host_reduce ){
+  /* Letter 31: thread `user` into the %extra_argument slot so actions
+  ** that fetch yypParser->ARG (e.g. PostgreSQL's yyscanner) work.
+  ** Build the assignment line from gp->arg: the trailing identifier
+  ** is the field name, the leading text is the cast type. */
+  char hostReduceArgAssign[512];
+  if( lemp->arg && lemp->arg[0] ){
+    int ai = lemonStrlen(lemp->arg);
+    int at;
+    char argType[256];
+    while( ai>=1 && ISSPACE(lemp->arg[ai-1]) ) ai--;
+    while( ai>=1 && (ISALNUM(lemp->arg[ai-1]) || lemp->arg[ai-1]=='_') ) ai--;
+    /* lemp->arg[ai..] is the bare identifier; [0..ai) is the type. */
+    at = ai;
+    while( at>=1 && ISSPACE(lemp->arg[at-1]) ) at--;
+    if( at > (int)sizeof(argType)-1 ) at = (int)sizeof(argType)-1;
+    memcpy(argType, lemp->arg, (size_t)at);
+    argType[at] = '\0';
+    lemon_sprintf(hostReduceArgAssign,
+      "  yyp.%s = (%s)user;\n", &lemp->arg[ai], argType);
+  }else{
+    lemon_strcpy(hostReduceArgAssign, "  (void)user;\n");
+  }
   fprintf(out,
       "/* Letter 30: exported adapter from the runtime push parser's\n"
       "** generic value stack to this grammar's static per-rule reduce\n"
@@ -12775,8 +12797,9 @@ void ReportTable(
       "  yyStackEntry yystk[YYNRHS_MAX + 2];\n"
       "  yyStackEntry *yymsp;\n"
       "  yy_reduce_ctx yy_ctx;\n"
+      "  yyParser yyp;\n"
       "  int i;\n"
-      "  (void)user; (void)rhs_locs; (void)lhs_loc_out;\n"
+      "  (void)rhs_locs; (void)lhs_loc_out;\n"
       "  if (ruleno < 0 ||\n"
       "      (unsigned)ruleno >= sizeof(yy_rule_reduce_fn)/sizeof(yy_rule_reduce_fn[0]))\n"
       "    return -1;\n"
@@ -12792,7 +12815,13 @@ void ReportTable(
       "  /* yymsp points at the TOP = $N (yymsp[0]); $1 = yymsp[1-nrhs].\n"
       "  ** For an empty rule yymsp points one slot below the LHS slot. */\n"
       "  yymsp = (nrhs > 0) ? &yystk[nrhs - 1] : &yystk[0] - 1;\n"
-      "  yy_ctx.yypParser = (yyParser *)0;\n"
+      "  /* Letter 31: a zeroed stack yyParser, so a %%extra_argument\n"
+      "  ** action that fetches yypParser->ARG can read it.  `user`\n"
+      "  ** (from parse_set_host_reduce / host_reduce_user) is stored\n"
+      "  ** into the extra-argument slot when the grammar declares one. */\n"
+      "  memset(&yyp, 0, sizeof yyp);\n"
+      "%s"
+      "  yy_ctx.yypParser = &yyp;\n"
       "  yy_ctx.yymsp = yymsp;\n"
       "  yy_ctx.yyLookahead = YYNOCODE;\n"
       "  memset(&yy_ctx.yyLookaheadToken, 0, sizeof(yy_ctx.yyLookaheadToken));\n"
@@ -12811,7 +12840,7 @@ void ReportTable(
       "  }\n"
       "  return 0;\n"
       "}\n",
-      name, name);
+      name, name, hostReduceArgAssign);
     lineno += 40;
   }
 

@@ -34,8 +34,16 @@
 ** hr_grammar.lime is run through `lime -n` at build time). */
 extern ParserSnapshot *HrBuildSnapshot(void);
 
+/* The He grammar adds a %extra_argument {long *bias}; each NUM action
+** computes N + *bias, proving the wrapper delivers `user` into the
+** extra-argument slot (Letter 31). */
+extern ParserSnapshot *HeBuildSnapshot(void);
+
 /* Token codes from the generated hr_grammar.h (declaration order). */
 enum { HR_PLUS = 1, HR_STAR = 2, HR_NUM = 3 };
+
+/* Token codes from he_grammar.h (PLUS, NUM in declaration order). */
+enum { HE_PLUS = 1, HE_NUM = 2 };
 
 /* Box / unbox an int as the opaque value slot.  The grammar's
 ** %token_type is intptr_t so the value is pointer-representable -- the
@@ -112,6 +120,37 @@ int main(void) {
         ParseContext *ctx2 = parse_begin(snap);
         int bad = parse_token(ctx2, HR_PLUS, NULL, 0); /* leading PLUS */
         CHECK(bad != 0, "recognition-only: leading PLUS rejected");
+        parse_end(ctx2);
+
+        snapshot_release(snap);
+    }
+
+    /* --- 4. %extra_argument: `user` reaches the action (Letter 31) - */
+    {
+        ParserSnapshot *snap = HeBuildSnapshot();
+        CHECK(snap != NULL, "HeBuildSnapshot");
+        CHECK(snap->host_reduce != NULL, "He snapshot carries host_reduce");
+
+        long bias = 10;
+        ParseContext *ctx = parse_begin(snap);
+        /* user = &bias; each NUM action computes N + *bias. */
+        parse_set_host_reduce(ctx, snap->host_reduce, &bias);
+        /* Parse "2 + 3": (2+10) + (3+10) = 25. */
+        CHECK(parse_token(ctx, HE_NUM, boxi(2), 0) == 0, "He NUM 2");
+        CHECK(parse_token(ctx, HE_PLUS, NULL, 1) == 0, "He PLUS");
+        CHECK(parse_token(ctx, HE_NUM, boxi(3), 2) == 0, "He NUM 3");
+        CHECK(parse_token(ctx, 0, NULL, -1) == 1, "He EOF accepts");
+        intptr_t r = (intptr_t)parse_result(ctx);
+        CHECK(r == 25, "(2+bias) + (3+bias) == 25 (extra-arg reached action)");
+        parse_end(ctx);
+
+        /* Change the bias -> result tracks it, proving it's read live. */
+        bias = 100;
+        ParseContext *ctx2 = parse_begin(snap);
+        parse_set_host_reduce(ctx2, snap->host_reduce, &bias);
+        CHECK(parse_token(ctx2, HE_NUM, boxi(5), 0) == 0, "He NUM 5");
+        CHECK(parse_token(ctx2, 0, NULL, -1) == 1, "He EOF accepts (single)");
+        CHECK((intptr_t)parse_result(ctx2) == 105, "5 + bias(100) == 105");
         parse_end(ctx2);
 
         snapshot_release(snap);

@@ -1,0 +1,34 @@
+/*
+** tests/he_grammar.lime -- Letter 31 host-reduce + %extra_argument
+** test grammar.  Each reduce action reads the extra argument
+** (a `long *bias` threaded via parse_set_host_reduce's user) and adds
+** *bias to the leaf value, proving the host-reduce wrapper delivers
+** `user` into the yypParser extra-argument slot the action fetches.
+**
+** %token_type is intptr_t so values are pointer-representable; the
+** extra argument is a pointer (long *), the contract the wrapper
+** documents.
+*/
+
+%name He
+%token_type {intptr_t}
+%type expr {intptr_t}
+%extra_argument {long *bias}
+
+%include {
+#include <stdint.h>
+}
+
+%token PLUS.
+%token NUM.
+
+%left PLUS.
+
+%start_symbol prog
+
+prog(R)  ::= expr(E).               { R = E; }
+
+/* Each NUM contributes its value plus the threaded bias, proving the
+** action actually read yypParser->bias (== user). */
+expr(A)  ::= expr(B) PLUS expr(C).  { A = B + C; }
+expr(A)  ::= NUM(N).                { A = N + *bias; }

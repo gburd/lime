@@ -247,6 +247,30 @@ Generate snapshot initialization code in a separate
 .IB basename _snapshot.c
 file.
 .TP
+.B \-\-host\-reduce
+With
+.BR \-n ,
+wire the generated snapshot's host-reduce hook to an exported
+.IB Name HostReduce
+wrapper so the runtime push parser can run the grammar's base reduce
+actions in-process (no C compiler).  Opt-in: a plain
+.B \-n
+snapshot stays recognition-only.  Token values passed to
+.B parse_token
+flow to the actions as
+.RB $ 1 .. $ N
+and the
+.RB $ $
+value propagates back; the
+.B user
+pointer bound via
+.B parse_set_host_reduce
+is delivered into the grammar's
+.B %extra_argument
+slot (e.g. a scanner handle).  Semantic values and the extra argument
+must be pointer-representable.  See
+.B docs/HOST_REDUCE.md .
+.TP
 .BI \-O " value"
 Ignored.
 Placeholder for passing

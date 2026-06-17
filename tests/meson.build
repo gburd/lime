@@ -2271,10 +2271,31 @@ test_host_reduce_gen = custom_target('test_host_reduce_parser',
   ],
 )
 
+# Letter 31: %extra_argument grammar -- the host-reduce wrapper threads
+# `user` into the yypParser extra-argument slot the action fetches.
+test_host_reduce_ea_gen = custom_target('test_host_reduce_ea_parser',
+  input   : ['he_grammar.lime'],
+  output  : ['he_grammar.c', 'he_grammar.h', 'he_grammar_snapshot.c'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-n',
+    '--host-reduce',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
 test_host_reduce = executable('test_host_reduce',
   'test_host_reduce.c',
   test_host_reduce_gen,
+  test_host_reduce_ea_gen,
   include_directories : include_directories('../src'),
+  # Two generated *_snapshot.c units are linked together here; each
+  # emits the lime_snapshot_entry alias, so suppress it (the test
+  # calls HrBuildSnapshot / HeBuildSnapshot by name, not via the
+  # generic entry point).
+  c_args : ['-DLIME_NO_SNAPSHOT_ENTRY_ALIAS'],
   dependencies : lime_parser_dep,
 )
 
