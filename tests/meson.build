@@ -2426,6 +2426,36 @@ if host_machine.system() != 'windows'
     workdir : meson.project_source_root(),
     is_parallel : false,
   )
+
+  # PG Track B repro/regression: compose over a %first_token 257 base
+  # and assert (a) base token codes survive composition and (b) a
+  # valid base query parses through the composed snapshot.  Generated
+  # with `lime -n` so the base embeds grammar_source.
+  test_compose_ft_gen = custom_target('test_compose_ft_parser',
+    input   : ['ft_base_grammar.lime'],
+    output  : ['ft_base_grammar.c', 'ft_base_grammar.h',
+               'ft_base_grammar_snapshot.c'],
+    command : [
+      lime_exe,
+      '-T' + meson.project_source_root() / 'limpar.c',
+      '-n',
+      '-d@OUTDIR@',
+      '@INPUT@',
+    ],
+  )
+
+  test_compose_first_token = executable('test_compose_first_token',
+    'test_compose_first_token.c',
+    test_compose_ft_gen,
+    include_directories : include_directories('../src'),
+    dependencies : lime_parser_dep,
+    export_dynamic : true,
+  )
+
+  test('compose_first_token', test_compose_first_token,
+    workdir : meson.project_source_root(),
+    is_parallel : false,
+  )
 endif
 
 # Equivalence test: the JIT-armed parse_token path produces the same

@@ -141,6 +141,35 @@ so it composes with the parser
 .B .c
 without redefinition.
 .TP
+.BI %first_token " N"
+Offset every externally-visible terminal code by
+.IR N .
+The generated header emits
+.RI "#define <NAME> (<internal_index> + " N )
+and the runtime
+.B parse_token()
+subtracts
+.I N
+from each incoming code to recover the internal action-table index.
+Useful when an external scanner (e.g. one shared with a hand-written
+lexer) assigns token codes in a range that must not collide with the
+parser's low-numbered internal indices.
+.IP
+Internal terminal indices start at 1 (index 0 is the implicit
+end-of-input marker), so with
+.B %first_token 257
+the
+.I first
+declared terminal has external code
+.BR 258 ,
+not 257 \(em the offset is added to a 1-based index.  Always read the
+generated
+.B .h
+for the actual codes.  The offset is recorded in the runtime snapshot
+(queryable via
+.BR lime_snapshot_first_token() )
+and is preserved across runtime grammar composition.
+.TP
 .BI %default_type " {C-type}"
 Declare the default C data type for non-terminal symbol values.
 Non-terminals without an explicit

@@ -1,0 +1,29 @@
+/*
+** tests/ft_base_grammar.lime -- base grammar for the compose +
+** %first_token regression (test_compose_first_token.c).
+**
+** Mirrors PostgreSQL's pattern: %first_token 257 shifts every
+** external terminal code up by 257, so SELECT=257, NUM=258, PLUS=259,
+** SEMI=260.  Generated with `lime -n` so the snapshot embeds
+** grammar_source and publish_modified_snapshot can recompile a merged
+** (base + extension) grammar in-process.
+*/
+
+%name Ftb
+%token_type {int}
+%type expr {int}
+%first_token 257
+
+%token SELECT.
+%token NUM.
+%token PLUS.
+%token SEMI.
+
+%left PLUS.
+
+%start_symbol stmt
+
+stmt ::= SELECT expr(E) SEMI. { (void)E; }
+
+expr(A) ::= NUM(N).                { A = N; }
+expr(A) ::= expr(B) PLUS expr(C).  { A = B + C; (void)C; }

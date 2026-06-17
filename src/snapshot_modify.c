@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <assert.h>
 #if defined(_WIN32)
 #include <windows.h>
 #else
@@ -167,6 +168,17 @@ ParserSnapshot *clone_snapshot(const ParserSnapshot *base) {
     snap->yy_min_reduce = base->yy_min_reduce;
     snap->yy_ntoken = base->yy_ntoken;
 
+    /* PG Track B fix: carry the %first_token offset.  Omitting it left
+    ** a cloned/metadata-composed snapshot with yy_first_token == 0, so
+    ** parse_token applied a zero offset and treated external code
+    ** (internal + N) as an internal index -- out of range -> every
+    ** token of a valid base query was rejected (rc=-1).  Also carry
+    ** the host-reduce hook so a composed snapshot can still run the
+    ** base grammar's reduce actions (Letter 30/31). */
+    snap->yy_first_token = base->yy_first_token;
+    snap->host_reduce = base->host_reduce;
+    snap->host_reduce_user = base->host_reduce_user;
+
     /* Rule-metadata arrays -- deep copy. */
     if (base->nrule > 0 && base->yy_rule_info_lhs != NULL) {
         size_t sz = base->nrule * sizeof(int16_t);
@@ -200,6 +212,18 @@ ParserSnapshot *clone_snapshot(const ParserSnapshot *base) {
     /* Verify critical allocations succeeded */
     if (base->action_count > 0 && snap->yy_action == NULL) goto fail;
     if (base->lookahead_count > 0 && snap->yy_lookahead == NULL) goto fail;
+
+    /* Field-drift guard (PG Track B): a clone that silently drops a
+    ** parse-critical scalar produces a snapshot that parses wrong
+    ** rather than failing -- exactly the dropped-%first_token bug.
+    ** Assert the scalars the parse hot path consults all carried over,
+    ** so any future field added to ParserSnapshot that this clone
+    ** forgets trips in a debug build instead of shipping. */
+    assert(snap->yy_first_token == base->yy_first_token);
+    assert(snap->yy_ntoken == base->yy_ntoken);
+    assert(snap->yy_min_reduce == base->yy_min_reduce);
+    assert(snap->yy_max_shift == base->yy_max_shift);
+    assert(snap->host_reduce == base->host_reduce);
 
     return snap;
 

@@ -37,6 +37,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -85,6 +86,21 @@ ParserSnapshot *lime_snapshot_acquire(ParserSnapshot *snap);
  * @param snap Snapshot to release.  Passing NULL is safe.
  */
 void lime_snapshot_release(ParserSnapshot *snap);
+
+/**
+ * @brief The %first_token offset baked into a snapshot.
+ *
+ * External token codes are `internal_index + first_token`;
+ * parse_token() subtracts this offset.  Returns 0 when the grammar
+ * declared no %first_token (external codes equal internal indices).
+ *
+ * Use this to verify, after composing/recompiling a grammar at
+ * runtime, that the offset survived -- and, with
+ * lime_token_admissible_in_state(snap, 0, external_code), that each
+ * base terminal keeps the same external code across the rebuild.
+ * Passing NULL returns 0.
+ */
+uint16_t lime_snapshot_first_token(const ParserSnapshot *snap);
 
 /**
  * @brief Create a base snapshot by parsing a grammar file.

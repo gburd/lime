@@ -180,6 +180,18 @@ void lime_snapshot_release(ParserSnapshot *snap) {
     snapshot_release(snap);
 }
 
+/* PG Track B introspection: the %first_token offset baked into this
+** snapshot.  External token codes are `internal_index + first_token`;
+** parse_token subtracts it.  Returns 0 when the grammar declared no
+** %first_token (external == internal).  Lets a consumer that composes
+** snapshots verify the offset survived composition (the bug fixed in
+** clone_snapshot) without reaching into the struct.  Pair with
+** lime_token_admissible_in_state(snap, 0, external_code) to confirm a
+** terminal's external code is unchanged across a rebuild. */
+uint16_t lime_snapshot_first_token(const ParserSnapshot *snap) {
+    return snap ? snap->yy_first_token : 0;
+}
+
 ParserSnapshot *lime_snapshot_create(const char *grammar_file, char **error) {
     return create_base_snapshot(grammar_file, error);
 }
