@@ -19,6 +19,45 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.7.0] -- 2026-06-10
+
+### Added
+
+- **`lime_snapshot_token_code(snap, name)` -- map a token name to its
+  external code in a snapshot.**  Returns the external token code
+  (internal index + `%first_token`) for a terminal or nonterminal
+  named `name`, or -1 if unknown / no name table.  This is the piece a
+  scanner needs to make an *extension* keyword resolve to its token in
+  a runtime-composed snapshot: extension token codes are assigned by
+  the recompile, so they cannot be hard-coded, and there was
+  previously no way to look one up by name (the generated
+  `<Name>TokenName` only maps code->name, and only for base tokens).
+  Requested by the PostgreSQL Track B port so QUEL can emit real
+  `delete` / `range` tokens instead of mangled `delete_quel` /
+  `q_range` workarounds.  Resolve each keyword once at scanner setup
+  (linear scan, not for the per-token hot path), then feed the code to
+  `parse_context_token_admissible` to shadow a base keyword.  See
+  `docs/MULTI_GRAMMAR.md`.
+
+  Backed by a new optional symbol-name table on the snapshot
+  (`token_names`, a copy of the generated `yyTokenName[]`): `lime -n`
+  emits it (`s_token_names[]` in the `_snapshot.c`), the in-process
+  recompile (`lime_compile_grammar_in_process`) rebuilds it from the
+  merged grammar so extension tokens appear, and `clone_snapshot`
+  carries it across composition.  Additive trailing COLD snapshot
+  field -- no `abi_version` bump; NULL on snapshots whose generator
+  predates this, in which case the lookup returns -1.
+
+### Tests
+
+- `tests/test_compose_first_token.c` extended: name->code resolves
+  base tokens (`SELECT`->258 under `%first_token 257`), survives
+  composition, resolves the **extension's** new token in the composed
+  snapshot (the scanner-shadowing case), parses with that resolved
+  code, and returns -1 for unknown / extension-only-vs-base names.
+  Now linked against the in-process compiler so it exercises the real
+  recompile path PG uses.
+
 ## [1.6.2] -- 2026-06-10
 
 ### Fixed
