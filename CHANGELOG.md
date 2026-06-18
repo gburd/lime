@@ -19,6 +19,34 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.7.1] -- 2026-06-10
+
+### Documentation
+
+- **Clarified the reduce-callback value ABI (Lime-Letter-33).**  The
+  `rhs_values` element and `lhs_out` contracts for `LimeReduceFn`
+  (`src/extension.h`), `LimeHostReduceFn` (`src/snapshot.h`), and
+  `docs/HOST_REDUCE.md` previously said "opaque slot payload ... layout
+  is the grammar's %token_type," which read ambiguously as either the
+  value or a pointer to a slot holding it.  Now stated explicitly:
+  **`rhs_values[i]` IS the i-th symbol's value by value (a pointer-
+  width payload), with no extra indirection** -- read
+  `(Type)rhs_values[i]`, never `*(Type *)rhs_values[i]`.  For a union
+  `%token_type` (e.g. PostgreSQL's `core_YYSTYPE`) the element is the
+  union's pointer-width content (the active member's bits), delivered
+  directly.  `lhs_out` is symmetric (`*(Type *)lhs_out = v`).  This was
+  the documented behaviour and the implementation; only the wording
+  was unclear.  No code change.
+
+### Tests
+
+- `tests/test_host_reduce.c` + `tests/hs_grammar.lime`: a
+  `%token_type {const char *}` grammar whose action reads `$1` as a
+  `char*` directly and returns it as `$$`.  Passing a `char*` through
+  `parse_token` and getting the **same pointer** back via
+  `parse_result` locks the value-by-value contract against future
+  drift to a pointer-to-slot indirection.
+
 ## [1.7.0] -- 2026-06-10
 
 ### Added
