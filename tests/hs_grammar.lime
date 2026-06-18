@@ -1,0 +1,23 @@
+/*
+** tests/hs_grammar.lime -- Letter 33: value-by-value ABI for a
+** pointer/string %token_type.
+**
+** %token_type {const char *}.  The reduce action reads $1 as a
+** `const char *` DIRECTLY (no extra indirection) and returns it as
+** $$.  Driving parse_token with a char* value and getting the SAME
+** pointer back through parse_result proves rhs_values[i] is the
+** symbol's value-by-value, not a pointer to a slot holding it --
+** the contract PG asked us to confirm.
+*/
+
+%name Hs
+%token_type {const char *}
+%type word {const char *}
+
+%token WORD.
+
+%start_symbol prog
+
+/* $$ = $1 read directly as the char* value. */
+prog(R)  ::= word(W).        { R = W; }
+word(A)  ::= WORD(N).        { A = N; }

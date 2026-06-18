@@ -124,12 +124,26 @@ The two questions raised in Letter 30:
 
 ### Value representation
 
-Each slot is one opaque payload whose layout is the grammar's `%token_type`.
-The wrapper bridges it through the union's `.yy0` member, copying a
-pointer-width payload. Any **pointer-representable** semantic value works —
-including PostgreSQL's `YYSTYPE` union and any `intptr_t`-wide scalar. Grammars
-whose value type is wider than a pointer must box it behind a pointer to use
-this path.
+Each `rhs_values[i]` **is the symbol's value, by value** -- a pointer-width
+payload -- not a pointer to a slot holding the value.  There is no extra
+indirection: read it directly as `(Type)rhs_values[i]`, never
+`*(Type *)rhs_values[i]`.  For `%type {char *}` the element is the `char*`;
+for `%type {Node *}` it is the `Node*`; for `%type {intptr_t}` it is the
+scalar.  Write the LHS the same way: `*(Type *)lhs_out = v`.
+
+When the grammar's `%token_type` is a **union** (e.g. PostgreSQL's
+`core_YYSTYPE { int ival; char *str; const char *keyword; }`) the element is
+the union's pointer-width *content* -- the active member's bits -- delivered
+directly.  A terminal carrying `core_YYSTYPE.str` arrives as that `char*`:
+read it as `(char *)rhs_values[i]`; do **not** reconstruct a
+`core_YYSTYPE *` and dereference it.
+
+Mechanically, the wrapper bridges the payload through the union's `.yy0`
+member (the slot the generated parser uses for terminal values), copying a
+pointer-width payload in and out.  Any **pointer-representable** semantic
+value works -- including a pointer-width union and any `intptr_t`-wide scalar.
+Grammars whose value type is wider than a pointer must box it behind a pointer
+to use this path.
 
 ## Cost
 

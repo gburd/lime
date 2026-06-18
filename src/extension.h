@@ -52,10 +52,22 @@ struct ParserSnapshot;
 **   nrhs        Number of right-hand-side symbols for this rule.  The
 **               matching MOD_ADD_RULE stored nrhs at registration.
 **
-**   rhs_values  Array of `nrhs` opaque slot payloads, one per RHS
-**               symbol in rule order (index 0 = leftmost).  The layout
-**               of each slot is the same as the grammar's
-**               %token_type; the extension must know its own types.
+**   rhs_values  Array of `nrhs` symbol values in rule order (index 0 =
+**               leftmost = $1).  Each element IS the symbol's value
+**               by value -- a pointer-width payload -- NOT a pointer
+**               to a slot holding the value: there is no extra
+**               indirection.  For `%type {char *}` the element IS the
+**               char*; for `%type {Node *}` it IS the Node*; read it
+**               directly as `(Type)rhs_values[i]`, never
+**               `*(Type *)rhs_values[i]`.  When the grammar's
+**               %token_type is a *union* (e.g. PostgreSQL's
+**               core_YYSTYPE), the element is the union's pointer-
+**               width content (the active member's bits) -- a
+**               terminal carrying `core_YYSTYPE.str` arrives as that
+**               char* directly; do not reconstruct a `core_YYSTYPE *`
+**               and dereference.  The extension must know its own
+**               types.  (Semantic values must be pointer-
+**               representable; see docs/HOST_REDUCE.md.)
 **
 **   rhs_locs    Array of `nrhs` byte-offset locations, one per RHS
 **               symbol, or NULL if the grammar does not declare
@@ -63,7 +75,11 @@ struct ParserSnapshot;
 **               non-negative byte offset or LIME_LOC_UNKNOWN (-1).
 **
 **   lhs_out     Writeback slot for the LHS value, laid out per the
-**               LHS symbol's declared %type.  The callback must fill
+**               LHS symbol's declared %type.  Symmetric with
+**               rhs_values: store the value BY VALUE (the pointer-
+**               width payload) at *lhs_out, e.g.
+**               `*(Node **)lhs_out = node;` -- not via an extra slot
+**               indirection.  The callback must fill
 **               this slot before returning; on failure the extension
 **               is responsible for zero-initialising it (Lime does
 **               not inspect it but the next rule that consumes this

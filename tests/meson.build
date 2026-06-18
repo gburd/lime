@@ -2286,15 +2286,30 @@ test_host_reduce_ea_gen = custom_target('test_host_reduce_ea_parser',
   ],
 )
 
+# Letter 33: pointer/string %token_type -- value-by-value ABI.
+test_host_reduce_str_gen = custom_target('test_host_reduce_str_parser',
+  input   : ['hs_grammar.lime'],
+  output  : ['hs_grammar.c', 'hs_grammar.h', 'hs_grammar_snapshot.c'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-n',
+    '--host-reduce',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
 test_host_reduce = executable('test_host_reduce',
   'test_host_reduce.c',
   test_host_reduce_gen,
   test_host_reduce_ea_gen,
+  test_host_reduce_str_gen,
   include_directories : include_directories('../src'),
-  # Two generated *_snapshot.c units are linked together here; each
+  # Three generated *_snapshot.c units are linked together here; each
   # emits the lime_snapshot_entry alias, so suppress it (the test
-  # calls HrBuildSnapshot / HeBuildSnapshot by name, not via the
-  # generic entry point).
+  # calls Hr/He/HsBuildSnapshot by name, not via the generic entry
+  # point).
   c_args : ['-DLIME_NO_SNAPSHOT_ENTRY_ALIAS'],
   dependencies : lime_parser_dep,
 )

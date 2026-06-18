@@ -60,15 +60,19 @@ struct state;
  *
  *   user        host_reduce_user from the snapshot / session.
  *   ruleno      Internal rule number being reduced.
- *   rhs_values  Array of `nrhs` opaque slot payloads, one per RHS
- *               symbol in rule order (index 0 = leftmost = $1).
- *               Slot layout is the grammar's %token_type; the
- *               generated wrapper owns that layout knowledge so it
- *               never crosses the liblime_parser boundary.
+ *   rhs_values  Array of `nrhs` symbol values in rule order (index 0 =
+ *               leftmost = $1).  Each element IS the symbol's value by
+ *               value (a pointer-width payload), NOT a pointer to a
+ *               slot holding it -- read `(Type)rhs_values[i]`, never
+ *               `*(Type *)rhs_values[i]`.  For a union %token_type the
+ *               element is the union's pointer-width content (the
+ *               active member's bits).  See docs/HOST_REDUCE.md.
  *   rhs_locs    Array of `nrhs` byte-offset locations, or NULL when
  *               the grammar has no %locations.
  *   nrhs        Number of RHS symbols (>= 0).
- *   lhs_out     Where to write the LHS ($$) value payload.
+ *   lhs_out     Where to write the LHS ($$) value -- by value, the
+ *               pointer-width payload (`*(Type *)lhs_out = v`),
+ *               symmetric with rhs_values.
  *   lhs_loc_out Where to write the LHS location (may be NULL).
  *
  * Returns 0 on success, non-zero to abort the parse.

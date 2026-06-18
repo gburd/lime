@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 
 #define CHECK(cond, msg) do {                                            \
     if (!(cond)) {                                                       \
@@ -38,6 +39,12 @@ extern ParserSnapshot *HrBuildSnapshot(void);
 ** computes N + *bias, proving the wrapper delivers `user` into the
 ** extra-argument slot (Letter 31). */
 extern ParserSnapshot *HeBuildSnapshot(void);
+
+/* The Hs grammar has %token_type {const char *}; its action reads $1
+** as a char* DIRECTLY and returns it as $$.  Proves rhs_values[i] is
+** the symbol's value-by-value (a pointer-width payload), not a pointer
+** to a slot holding it -- the Letter 33 ABI confirmation. */
+extern ParserSnapshot *HsBuildSnapshot(void);
 
 /* Token codes from the generated hr_grammar.h (declaration order). */
 enum { HR_PLUS = 1, HR_STAR = 2, HR_NUM = 3 };
@@ -153,6 +160,30 @@ int main(void) {
         CHECK((intptr_t)parse_result(ctx2) == 105, "5 + bias(100) == 105");
         parse_end(ctx2);
 
+        snapshot_release(snap);
+    }
+
+    /* --- 5. value-by-value ABI for a pointer/string %token_type ---
+    ** (Letter 33).  Pass a char* through parse_token; the action reads
+    ** it as `(const char *) $1` directly and returns it as $$.  The
+    ** SAME pointer must come back -- proving rhs_values[i] IS the value
+    ** (no extra indirection). ----------------------------------------- */
+    {
+        ParserSnapshot *snap = HsBuildSnapshot();
+        CHECK(snap != NULL, "HsBuildSnapshot");
+        CHECK(snap->host_reduce != NULL, "Hs snapshot carries host_reduce");
+
+        static const char kWord[] = "name";
+        /* Hs token codes: WORD is the first (only) terminal -> 1. */
+        ParseContext *ctx = parse_begin(snap);
+        CHECK(parse_token(ctx, 1 /*WORD*/, (void *)kWord, 0) == 0, "Hs WORD");
+        CHECK(parse_token(ctx, 0, NULL, -1) == 1, "Hs EOF accepts");
+        const char *got = (const char *)parse_result(ctx);
+        /* Same pointer (value-by-value, not a deref of a slot). */
+        CHECK(got == kWord, "Hs: parse_result is the SAME char* passed in");
+        CHECK(got != NULL && strcmp(got, "name") == 0,
+              "Hs: the char* points at the original bytes");
+        parse_end(ctx);
         snapshot_release(snap);
     }
 
