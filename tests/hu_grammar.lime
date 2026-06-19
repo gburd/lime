@@ -1,0 +1,36 @@
+/*
+** tests/hu_grammar.lime -- Letter 34/36: type-changing UNIT production
+** under host-reduce.
+**
+** list ::= attr is a single-symbol (unit) production that lemon
+** collapses to a SHIFT-REDUCE in the action table.  The question
+** (letter-34) was whether its reduce action still fires under
+** host-reduce, since a type-changing unit rule (attr is a scalar/Node,
+** list is a List) needs its action to run to build the right
+** representation.
+**
+** Here the unit action adds 1000 so the test can SEE whether it ran:
+** a single ATTR must come back as value+1000, not value.  %token_type
+** is intptr_t so values are pointer-representable.
+*/
+
+%name Hu
+%token_type {intptr_t}
+%type attr {intptr_t}
+%type list {intptr_t}
+
+%include { #include <stdint.h> }
+
+%token ATTR COMMA.
+
+%start_symbol prog
+
+prog(R) ::= list(L).                  { R = L; }
+
+/* The type-changing unit production: marks its result with +1000 so a
+** test can detect whether the action fired (vs. the bare attr value
+** passing through a collapsed/eliminated reduction). */
+list(L) ::= attr(A).                  { L = A + 1000; }
+list(L) ::= list(B) COMMA attr(A).    { L = B + A; }
+
+attr(A) ::= ATTR(T).                  { A = T; }

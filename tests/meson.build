@@ -2313,11 +2313,26 @@ test_host_reduce_str_gen = custom_target('test_host_reduce_str_parser',
   ],
 )
 
+# Letter 34/36: type-changing unit production under host-reduce.
+test_host_reduce_unit_gen = custom_target('test_host_reduce_unit_parser',
+  input   : ['hu_grammar.lime'],
+  output  : ['hu_grammar.c', 'hu_grammar.h', 'hu_grammar_snapshot.c'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-n',
+    '--host-reduce',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+
 test_host_reduce = executable('test_host_reduce',
   'test_host_reduce.c',
   test_host_reduce_gen,
   test_host_reduce_ea_gen,
   test_host_reduce_str_gen,
+  test_host_reduce_unit_gen,
   include_directories : include_directories('../src'),
   # Three generated *_snapshot.c units are linked together here; each
   # emits the lime_snapshot_entry alias, so suppress it (the test

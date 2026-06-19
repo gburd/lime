@@ -46,6 +46,11 @@ extern ParserSnapshot *HeBuildSnapshot(void);
 ** to a slot holding it -- the Letter 33 ABI confirmation. */
 extern ParserSnapshot *HsBuildSnapshot(void);
 
+/* The Hu grammar has a type-changing UNIT production list ::= attr that
+** lemon collapses to a shift-reduce.  Its action adds 1000 so the test
+** can detect whether the reduce fired under host-reduce (Letter 34/36). */
+extern ParserSnapshot *HuBuildSnapshot(void);
+
 /* Token codes from the generated hr_grammar.h (declaration order). */
 enum { HR_PLUS = 1, HR_STAR = 2, HR_NUM = 3 };
 
@@ -184,6 +189,39 @@ int main(void) {
         CHECK(got != NULL && strcmp(got, "name") == 0,
               "Hs: the char* points at the original bytes");
         parse_end(ctx);
+        snapshot_release(snap);
+    }
+
+    /* --- 6. type-changing UNIT production fires under host-reduce ---
+    ** (Letter 34/36).  list ::= attr is collapsed to a shift-reduce by
+    ** the table generator, but its action must still run so the
+    ** type-changing reduce (attr -> list) builds the right value.
+    ** Single ATTR=5 must come back as 5+1000=1005 (the unit action
+    ** ran), not 5 (eliminated/passed-through). ------------------------ */
+    {
+        ParserSnapshot *snap = HuBuildSnapshot();
+        CHECK(snap != NULL, "HuBuildSnapshot");
+        CHECK(snap->host_reduce != NULL, "Hu snapshot carries host_reduce");
+
+        /* Hu token codes: ATTR=1, COMMA=2 (declaration order). */
+        ParseContext *ctx = parse_begin(snap);
+        CHECK(parse_token(ctx, 1 /*ATTR*/, boxi(5), 0) == 0, "Hu ATTR");
+        CHECK(parse_token(ctx, 0, NULL, -1) == 1, "Hu EOF accepts (single attr)");
+        intptr_t r = (intptr_t)parse_result(ctx);
+        CHECK(r == 1005,
+              "Hu: unit production list::=attr action FIRED (5+1000), not eliminated");
+        parse_end(ctx);
+
+        /* attr , attr : list::=attr (5+1000) then cons (1005 + 5). */
+        ParseContext *ctx2 = parse_begin(snap);
+        parse_token(ctx2, 1, boxi(5), 0);
+        parse_token(ctx2, 2 /*COMMA*/, NULL, 1);
+        parse_token(ctx2, 1, boxi(5), 2);
+        CHECK(parse_token(ctx2, 0, NULL, -1) == 1, "Hu EOF accepts (attr,attr)");
+        CHECK((intptr_t)parse_result(ctx2) == 1010,
+              "Hu: cons rule read the List* value (1005) the unit rule built");
+        parse_end(ctx2);
+
         snapshot_release(snap);
     }
 
