@@ -19,6 +19,25 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.8.2] -- 2026-06-10
+
+### Tests
+
+- **Type-changing unit production fires under host-reduce (Letter
+  34/36).**  A unit rule like `list ::= attr` (single RHS symbol) is
+  collapsed to a SHIFT-REDUCE action by the table generator, but its
+  reduce action still runs on the host-reduce path: the engine unpacks
+  the pending shift-reduce and dispatches the rule's action through
+  `reduce()` -> `host_reduce` like any other rule.  So a type-changing
+  unit rule (e.g. `attr` is a node, `list` is a list) builds the right
+  value -- no elimination, no need for a normalize-at-consumer
+  workaround on this path.  `tests/hu_grammar.lime` + a sub-test in
+  `tests/test_host_reduce.c` assert that a single `attr` reduces
+  through `list ::= attr` (value + 1000) and that the `cons` rule then
+  reads the list value the unit rule produced (locking the behaviour
+  against future regression).  No code change -- this documents and
+  guards existing behaviour the PG Track B port asked us to confirm.
+
 ## [1.8.1] -- 2026-06-10
 
 ### Added
