@@ -298,6 +298,19 @@ test_first_token_runtime = executable('test_first_token_runtime',
 
 test('first_token_runtime', test_first_token_runtime)
 
+# Tiers 1-3: overlapping-grammar disambiguation (full-statement
+# fork-resolve, Bayesian tie-break + persistence, dialect selection).
+# Compiles two divergent dialects in-process, so it links the
+# in-process compiler like first_token_runtime.
+test_multi_grammar = executable('test_multi_grammar',
+  'test_multi_grammar.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+  c_args : ['-DLIME_HAVE_SNAPSHOT_BUILD'],
+)
+
+test('multi_grammar', test_multi_grammar)
+
 # v0.8 feat/rust-output: skeleton emitter regression.  Drives
 # `lime --rust` against a small grammar and verifies the .rs file
 # contains the expected token constants + parser struct shape.

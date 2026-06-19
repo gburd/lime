@@ -237,3 +237,122 @@ const DisambiguationStrategyVTable strategy_bayesian_vtable = {
     .update = bayesian_update,
     .destroy = bayesian_destroy,
 };
+
+/* ================================================================== */
+/*  Tier 2 standalone store (multi_grammar.h)                          */
+/*                                                                      */
+/*  A directly-usable Beta-Bernoulli store for the multi-grammar       */
+/*  fork-resolve tie-break, independent of the disambiguation vtable.  */
+/*  Same posterior math; adds observe-by-(state,token,ext), rank, and  */
+/*  serialize/deserialize for host-side persistence.  Sold as a        */
+/*  heuristic -- it does not make ambiguous parses correct, it makes   */
+/*  them resolve to the historically-likelier dialect and improve with */
+/*  feedback.                                                          */
+/* ================================================================== */
+
+#include "multi_grammar.h"
+
+struct LimeBayesStore {
+    BayesianContext bc;
+};
+
+LimeBayesStore *lime_bayes_create(void) {
+    LimeBayesStore *s = calloc(1, sizeof(*s));
+    return s; /* entries allocated lazily */
+}
+
+void lime_bayes_destroy(LimeBayesStore *s) {
+    if (s == NULL) return;
+    free(s->bc.entries);
+    free(s);
+}
+
+void lime_bayes_observe(LimeBayesStore *s, uint16_t state, uint16_t token,
+                        uint32_t ext_id, bool success) {
+    if (s == NULL) return;
+    BayesianEntry *e = find_or_insert(&s->bc, token, (int32_t)state, ext_id);
+    if (e == NULL) return;
+    if (success) {
+        if (e->alpha < UINT32_MAX - 1) e->alpha++;
+    } else {
+        if (e->beta < UINT32_MAX - 1) e->beta++;
+    }
+}
+
+int lime_bayes_rank(LimeBayesStore *s, uint16_t state, uint16_t token,
+                    const uint32_t *ext_ids, uint32_t n, float *out_confidence) {
+    if (s == NULL || ext_ids == NULL || n == 0) return -1;
+    int best_idx = -1;
+    float best = -1.0f;
+    for (uint32_t i = 0; i < n; i++) {
+        BayesianEntry *e = find_or_insert(&s->bc, token, (int32_t)state, ext_ids[i]);
+        if (e == NULL) return -1;
+        float p = (float)e->alpha / (float)(e->alpha + e->beta);
+        if (p > best) { best = p; best_idx = (int)i; }
+    }
+    if (out_confidence) *out_confidence = best;
+    return best_idx;
+}
+
+/* Flat, versioned, fixed-width serialization: a header then `count`
+** entries (each token,state,ext,alpha,beta as little-endian u32).  The
+** host stores the blob (e.g. a file a GUC points at) and reloads it
+** next session.  Returns bytes written, or 0 on failure; pass buf=NULL
+** to query the required size. */
+#define LIME_BAYES_MAGIC 0x4C424159u /* 'L','B','A','Y' */
+#define LIME_BAYES_VER   1u
+
+size_t lime_bayes_serialize(const LimeBayesStore *s, void *buf, size_t buflen) {
+    if (s == NULL) return 0;
+    size_t need = 12 + (size_t)s->bc.count * 20; /* hdr(magic,ver,count) + entries */
+    if (buf == NULL) return need;
+    if (buflen < need) return 0;
+    unsigned char *p = (unsigned char *)buf;
+    uint32_t hdr[3] = { LIME_BAYES_MAGIC, LIME_BAYES_VER, (uint32_t)s->bc.count };
+    for (int h = 0; h < 3; h++) {
+        p[0] = (unsigned char)(hdr[h]); p[1] = (unsigned char)(hdr[h] >> 8);
+        p[2] = (unsigned char)(hdr[h] >> 16); p[3] = (unsigned char)(hdr[h] >> 24);
+        p += 4;
+    }
+    for (size_t i = 0; i < s->bc.count; i++) {
+        const BayesianEntry *e = &s->bc.entries[i];
+        uint32_t f[5] = { (uint32_t)e->token, (uint32_t)e->state, e->ext_id, e->alpha, e->beta };
+        for (int k = 0; k < 5; k++) {
+            p[0] = (unsigned char)(f[k]); p[1] = (unsigned char)(f[k] >> 8);
+            p[2] = (unsigned char)(f[k] >> 16); p[3] = (unsigned char)(f[k] >> 24);
+            p += 4;
+        }
+    }
+    return need;
+}
+
+static uint32_t rd_u32(const unsigned char *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16)
+         | ((uint32_t)p[3] << 24);
+}
+
+LimeBayesStore *lime_bayes_deserialize(const void *buf, size_t buflen) {
+    if (buf == NULL || buflen < 12) return NULL;
+    const unsigned char *p = (const unsigned char *)buf;
+    if (rd_u32(p) != LIME_BAYES_MAGIC) return NULL;
+    if (rd_u32(p + 4) != LIME_BAYES_VER) return NULL;
+    uint32_t count = rd_u32(p + 8);
+    if ((size_t)count * 20 + 12 > buflen) return NULL; /* truncated / lying header */
+    LimeBayesStore *s = lime_bayes_create();
+    if (s == NULL) return NULL;
+    p += 12;
+    for (uint32_t i = 0; i < count; i++) {
+        uint16_t token = (uint16_t)rd_u32(p);
+        int32_t  state = (int32_t)rd_u32(p + 4);
+        uint32_t ext   = rd_u32(p + 8);
+        uint32_t alpha = rd_u32(p + 12);
+        uint32_t beta  = rd_u32(p + 16);
+        p += 20;
+        BayesianEntry *e = find_or_insert(&s->bc, token, state, ext);
+        if (e == NULL) { lime_bayes_destroy(s); return NULL; }
+        e->alpha = alpha ? alpha : 1;
+        e->beta = beta ? beta : 1;
+    }
+    return s;
+}
+

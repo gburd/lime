@@ -723,3 +723,175 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
         return -1;
     }
 }
+
+/* ================================================================== */
+/*  Tier 1: full-statement fork simulation (read-only)                 */
+/*                                                                      */
+/*  lime_simulate_parse drives a fresh parse of `snap` over a fixed     */
+/*  token buffer WITHOUT mutating anything or running user actions.     */
+/*  It is the engine's own step loop (parse_engine_step) replayed on a  */
+/*  private state-only stack, so a disambiguator can ask "how far does  */
+/*  candidate grammar G get on this upcoming token stream?" and rank    */
+/*  candidates by how far each gets -- full-statement matching built on */
+/*  the same primitive the admissibility oracle uses.                   */
+/*                                                                      */
+/*  Recognition-only: it tracks states, not semantic values (the        */
+/*  ranking needs accept/error/depth, not the tree).  No allocation on  */
+/*  the common path -- a fixed scratch stack with a heap fallback for   */
+/*  unusually deep parses.                                              */
+/* ================================================================== */
+
+LimeForkTrial lime_simulate_parse(const ParserSnapshot *snap, const int *tokens,
+                                  uint32_t ntokens) {
+    LimeForkTrial trial = {0, false, 0};
+    if (snap == NULL || snap->yy_action == NULL || snap->yy_default == NULL
+        || snap->yy_rule_info_nrhs == NULL || snap->yy_rule_info_lhs == NULL) {
+        return trial;
+    }
+
+    enum { SIM_INLINE = 512 };
+    uint16_t inlinebuf[SIM_INLINE];
+    uint16_t *stk = inlinebuf;
+    uint32_t cap = SIM_INLINE;
+    uint32_t sp = 0; /* one past top */
+    stk[sp++] = 0;   /* LR start state */
+
+    bool errored = false;
+    bool accepted = false;
+    uint32_t i = 0;
+
+    /* Feed each external token plus a trailing EOF (0). */
+    for (i = 0; i <= ntokens && !errored && !accepted; i++) {
+        int token_code = (i < ntokens) ? tokens[i] : 0;
+        int major = (token_code == 0) ? 0 : token_code - (int)snap->yy_first_token;
+        if (major < 0 || major >= (int)snap->yy_ntoken) {
+            trial.error_count++;
+            errored = true;
+            break;
+        }
+
+        bool retried_with_fallback = false;
+        for (;;) {
+            uint16_t cur = stk[sp - 1];
+
+            /* Pending shift-reduce on top: apply it first. */
+            if (cur >= snap->yy_min_reduce) {
+                uint32_t ruleno = (uint32_t)(cur - snap->yy_min_reduce);
+                if (ruleno >= snap->nrule) { errored = true; break; }
+                int nrhs = snap->yy_rule_info_nrhs[ruleno];
+                if (nrhs < 0) nrhs = -nrhs;
+                int lhs = snap->yy_rule_info_lhs[ruleno];
+                if ((uint32_t)nrhs >= sp) { accepted = true; break; }
+                sp -= (uint32_t)nrhs;
+                uint16_t gstate = stk[sp - 1];
+                uint16_t next = find_reduce_action(snap, gstate, (uint16_t)lhs);
+                if (next == snap->yy_accept_action) { accepted = true; break; }
+                if (next == snap->yy_error_action || next == snap->yy_no_action) {
+                    errored = true; break;
+                }
+                uint16_t pushed = next;
+                if (pushed > snap->yy_max_shift && pushed <= snap->yy_max_shiftreduce) {
+                    pushed = (uint16_t)(pushed
+                                + (snap->yy_min_reduce - snap->yy_min_shiftreduce));
+                }
+                if (sp >= cap) {
+                    uint32_t ncap = cap * 2;
+                    uint16_t *nb = (stk == inlinebuf)
+                                       ? (uint16_t *)malloc(ncap * sizeof(uint16_t))
+                                       : (uint16_t *)realloc(stk, ncap * sizeof(uint16_t));
+                    if (nb == NULL) { errored = true; break; }
+                    if (stk == inlinebuf) memcpy(nb, inlinebuf, cap * sizeof(uint16_t));
+                    stk = nb; cap = ncap;
+                }
+                stk[sp++] = pushed;
+                continue;
+            }
+
+            uint16_t action = find_shift_action(snap, cur, (uint16_t)major);
+
+            if (action <= snap->yy_max_shift) {
+                if (token_code == 0) { accepted = true; break; } /* EOF shift = done */
+                if (action == snap->yy_no_action) { goto try_fallback; }
+                if (sp >= cap) {
+                    uint32_t ncap = cap * 2;
+                    uint16_t *nb = (stk == inlinebuf)
+                                       ? (uint16_t *)malloc(ncap * sizeof(uint16_t))
+                                       : (uint16_t *)realloc(stk, ncap * sizeof(uint16_t));
+                    if (nb == NULL) { errored = true; break; }
+                    if (stk == inlinebuf) memcpy(nb, inlinebuf, cap * sizeof(uint16_t));
+                    stk = nb; cap = ncap;
+                }
+                stk[sp++] = action;
+                trial.tokens_consumed++;
+                break; /* next token */
+            }
+
+            if (action <= snap->yy_max_shiftreduce) {
+                uint16_t encoded = (uint16_t)(action
+                                   + (snap->yy_min_reduce - snap->yy_min_shiftreduce));
+                if (sp >= cap) {
+                    uint32_t ncap = cap * 2;
+                    uint16_t *nb = (stk == inlinebuf)
+                                       ? (uint16_t *)malloc(ncap * sizeof(uint16_t))
+                                       : (uint16_t *)realloc(stk, ncap * sizeof(uint16_t));
+                    if (nb == NULL) { errored = true; break; }
+                    if (stk == inlinebuf) memcpy(nb, inlinebuf, cap * sizeof(uint16_t));
+                    stk = nb; cap = ncap;
+                }
+                stk[sp++] = encoded;
+                trial.tokens_consumed++;
+                break; /* next token; pending reduce fires then */
+            }
+
+            if (action == snap->yy_accept_action) { accepted = true; break; }
+
+            if (action >= snap->yy_min_reduce && action != snap->yy_error_action
+                && action != snap->yy_no_action) {
+                uint32_t ruleno = (uint32_t)(action - snap->yy_min_reduce);
+                if (ruleno >= snap->nrule) { errored = true; break; }
+                int nrhs = snap->yy_rule_info_nrhs[ruleno];
+                if (nrhs < 0) nrhs = -nrhs;
+                int lhs = snap->yy_rule_info_lhs[ruleno];
+                if ((uint32_t)nrhs >= sp) { accepted = true; break; }
+                sp -= (uint32_t)nrhs;
+                uint16_t gstate = stk[sp - 1];
+                uint16_t next = find_reduce_action(snap, gstate, (uint16_t)lhs);
+                if (next == snap->yy_accept_action) { accepted = true; break; }
+                if (next == snap->yy_error_action || next == snap->yy_no_action) {
+                    errored = true; break;
+                }
+                uint16_t pushed = next;
+                if (pushed > snap->yy_max_shift && pushed <= snap->yy_max_shiftreduce) {
+                    pushed = (uint16_t)(pushed
+                                + (snap->yy_min_reduce - snap->yy_min_shiftreduce));
+                }
+                if (sp >= cap) {
+                    uint32_t ncap = cap * 2;
+                    uint16_t *nb = (stk == inlinebuf)
+                                       ? (uint16_t *)malloc(ncap * sizeof(uint16_t))
+                                       : (uint16_t *)realloc(stk, ncap * sizeof(uint16_t));
+                    if (nb == NULL) { errored = true; break; }
+                    if (stk == inlinebuf) memcpy(nb, inlinebuf, cap * sizeof(uint16_t));
+                    stk = nb; cap = ncap;
+                }
+                stk[sp++] = pushed;
+                continue;
+            }
+
+        try_fallback:
+            if (!retried_with_fallback && snap->yy_fallback != NULL && major >= 0
+                && (uint32_t)major < snap->nfallback && snap->yy_fallback[major] != 0) {
+                major = snap->yy_fallback[major];
+                retried_with_fallback = true;
+                continue;
+            }
+            trial.error_count++;
+            errored = true;
+            break;
+        }
+    }
+
+    trial.reached_accept = accepted;
+    if (stk != inlinebuf) free(stk);
+    return trial;
+}

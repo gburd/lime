@@ -20,6 +20,7 @@ lib_sources = files(
   'strategy_priority.c',
   'strategy_fork_resolve.c',
   'strategy_bayesian.c',
+  'multi_grammar.c',
   'snapshot_modify.c',
   'mod_serialize.c',
   'dependency_resolver.c',

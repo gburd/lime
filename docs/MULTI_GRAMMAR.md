@@ -169,6 +169,95 @@ oracle; such a scanner must be converted to interleaved lex+parse
 (emit a token, let the parser consume it, then scan the next) so the
 parser state is current when each colliding lexeme is classified.
 
+## Beyond one token: the three disambiguation tiers
+
+The admissibility oracle above resolves *lexical* collisions and the
+bounded-lookahead cases (QUEL vs SQL, the `delete` one-token peek).
+For dialects that overlap more deeply ("load MySQL + Oracle + DuckDB
+at once"), Lime offers three layered mechanisms, each **explicit about
+its guarantee level**.  This is deliberately not a promise that any
+union of dialects "always works": LR theory forbids that when two
+dialects share a production with a different meaning.  (`multi_grammar.h`)
+
+### Tier 1 — full-statement fork-resolve (CORRECT when forks diverge)
+
+When a collision is admissible in two or more candidate grammars,
+simulate each candidate over the **real upcoming token stream** and
+prefer the one that reaches accept (or gets furthest with fewest
+errors):
+
+```c
+LimeForkCandidate cands[] = { {mysql_snap, 0, 1}, {oracle_snap, 0, 2} };
+int w = lime_mg_resolve(cands, 2, lookahead, nlook,
+                        /*bayes*/NULL, 0, 0, /*ranks*/NULL);
+/* w == 0 -> MySQL; the simulated MySQL parse reached accept on this
+** stream and the Oracle one errored (e.g. at LIMIT vs ROWNUM). */
+```
+
+`lime_simulate_parse` (the primitive) replays the engine's
+shift/reduce/goto loop on a private state stack — read-only, no
+actions, no mutation — so this is *full-statement matching*, not a
+one-token peek.  It is **correct** for the common "90% overlap" case
+where the dialects diverge somewhere inside the statement (LIMIT vs
+ROWNUM, hint syntax, `(+)` joins).  It does **not** resolve two
+truly-identical productions (same RHS, same LHS, different action) —
+those simulate identically and fall to Tier 2/3.
+
+### Tier 2 — Bayesian tie-break (HEURISTIC)
+
+When Tier 1 ties, a Beta-Bernoulli store keyed by `(state, token,
+ext_id)` picks the historically-likelier dialect and learns from
+confirmed parses:
+
+```c
+LimeBayesStore *bs = lime_bayes_create();
+... lime_mg_resolve(cands, n, look, nlook, bs, state, token, NULL) ...
+lime_bayes_observe(bs, state, token, winning_ext, parse_succeeded);
+/* persist across sessions: */
+size_t k = lime_bayes_serialize(bs, NULL, 0); void *blob = malloc(k);
+lime_bayes_serialize(bs, blob, k);   /* store blob; lime_bayes_deserialize later */
+```
+
+This does **not** make an ambiguous parse correct — it makes it
+resolve consistently and improve with feedback.  It is consulted only
+on a Tier-1 tie, and only overrides the deterministic fallback once it
+has real evidence (posterior moved off the 0.5 prior), so behaviour is
+reproducible until the host actually trains it.
+
+### Tier 3 — dialect mode selection (EXACT, but not disambiguation)
+
+For genuinely mutually-ambiguous full dialects that no parse-time
+method can separate, select one dialect per session or per statement:
+
+```c
+LimeDialectRegistry *reg = lime_dialect_registry_create();
+lime_dialect_register(reg, "mysql",  mysql_snap);
+lime_dialect_register(reg, "oracle", oracle_snap);
+
+/* per session: */
+ParserSnapshot *snap = lime_dialect_select(reg, guc_grammar_dialect);
+
+/* per statement, via a leading @dialect sigil: */
+ParserSnapshot *snap; size_t body;
+if (lime_dialect_parse_sigil(reg, "@mysql SELECT ...", &snap, &body)) {
+    /* parse input + body with snap */
+}
+```
+
+This is mode selection, not disambiguation — but it is the only thing
+that is *exact* for fully-overlapping dialects, and Lime enables it as
+a first-class, named capability.
+
+### Cost
+
+All three tiers cost **zero on the parse hot path**.  Tier 1
+simulation runs only on a registered-extension collision with two or
+more admissible candidates; single-dialect parsing never forks.  Tier
+2 tables allocate lazily on the first collision.  Tier 3 is a
+host-side snapshot-pointer swap.  `parse_engine_step` and
+`lime_simulate_parse` share no state; the bench binaries are byte-
+identical with and without the tiers compiled in.
+
 ## See also
 
 - [EXTENSIONS.md](EXTENSIONS.md) — loading grammars at runtime.
@@ -179,4 +268,8 @@ parser state is current when each colliding lexeme is classified.
   context.
 - `src/strategy_fork_resolve.c` — the fork engine for genuine
   ambiguity (the `delete` case above).
+- `multi_grammar.h` / `src/multi_grammar.c` — the three disambiguation
+  tiers (full-statement fork-resolve, Bayesian tie-break, dialect
+  selection).
 - `tests/test_admissibility.c` — the oracle's regression suite.
+- `tests/test_multi_grammar.c` — the three-tier regression suite.

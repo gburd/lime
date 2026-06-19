@@ -315,4 +315,37 @@ LimeTokenAdmissibility parse_context_token_admissible(
 LimeTokenAdmissibility lime_token_admissible_in_state(
     const ParserSnapshot *snap, uint16_t stateno, int external_token_code);
 
+/* ------------------------------------------------------------------ */
+/*  Tier 1: full-statement fork simulation                             */
+/* ------------------------------------------------------------------ */
+
+/* Outcome of simulating a fresh parse of a snapshot over a fixed token
+** buffer (lime_simulate_parse).  Used to rank candidate grammars when
+** a collision is admissible in more than one: feed each candidate the
+** real upcoming token stream and see how far it gets. */
+typedef struct LimeForkTrial {
+    uint32_t tokens_consumed; /* external tokens shifted before stopping */
+    bool     reached_accept;  /* true if the parse reached an accept state */
+    uint32_t error_count;     /* unrecoverable errors encountered (0 or 1) */
+} LimeForkTrial;
+
+/* Read-only, action-free simulation of parsing `tokens[0..ntokens)`
+** (plus an implicit trailing EOF) with `snap`'s automaton, starting
+** from the LR start state.  Mutates nothing and runs no user/host
+** reduce actions; it replays the engine's shift/reduce/goto loop on a
+** private state stack purely to measure how far the grammar gets.
+**
+** This is the Tier 1 primitive behind multi-grammar fork-resolve: on a
+** collision where two loaded dialects both admit the colliding token,
+** simulate each over the real lookahead and prefer the one that
+** reaches accept (or gets furthest with fewest errors).  Resolves
+** structural overlap that DIVERGES within the statement; two truly-
+** identical productions trial identically (rank by Tier 2 / Tier 3).
+**
+** Cost: invoked only on a registered-extension collision; never on the
+** single-grammar / no-collision hot path.  No allocation for parses
+** that stay within the inline scratch depth. */
+LimeForkTrial lime_simulate_parse(const ParserSnapshot *snap,
+                                  const int *tokens, uint32_t ntokens);
+
 #endif /* PARSE_CONTEXT_H */
