@@ -19,6 +19,46 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.8.3] -- 2026-06-10
+
+### Fixed
+
+- **Type-changing unit production via the in-process compose path now
+  fires its reduce action (Letter 37).**  v1.8.2 confirmed a unit rule
+  fires on the AOT path -- but only because the AOT test rule had an
+  inline `{ }` body (`noCode == 0`).  A unit rule contributed as an
+  *extension fragment* with NO inline body but a host-reduce /
+  `LimeReduceFn` action (e.g. QUEL's `quel_attr_list ::= quel_attr`,
+  `Node *` -> `List *`) is `noCode == 1`, so `CompressTables` collapsed
+  it to a goto and dropped its ruleno entirely -- the host_reduce
+  callback was never dispatched, and the parent `cons` rule received a
+  bare node where it expected the list the unit action would have
+  built.  The PG team caught this with a host_reduce trace (the unit
+  ruleno was absent: 0, 8, 10, 12 with no single-rule entry).
+
+  Fix: `CompressTables` no longer applies the unit-reduction-
+  elimination optimization when building for the host-reduce path.
+  `lime_compile_grammar_in_process_ex` (always) and `lime -n
+  --host-reduce` (the emitted snapshot) keep unit-rule reductions, so
+  every rule's ruleno survives and its action -- inline or callback --
+  fires.  A plain `lime` / `lime -n` (no `--host-reduce`) is unchanged:
+  the optimization still runs and the generated tables are
+  byte-identical (verified: `bench_jit_real_parser` and `parser_bench`
+  binaries match v1.8.2 exactly).  Zero cost for non-host-reduce
+  grammars.
+
+  This corrects the v1.8.2 guidance: PostgreSQL's
+  normalize-at-consumer workaround was genuinely required on the
+  compose path and is no longer needed once on v1.8.3.
+
+### Tests
+
+- `tests/test_multi_grammar.c`: composes base + a no-inline-body
+  unit/cons grammar via `lime_compile_grammar_in_process_ex`, binds a
+  host_reduce, and asserts the unit rule fires (single -> 1005,
+  attr,attr -> 1010) -- the exact compose-path case v1.8.2's AOT test
+  missed.
+
 ## [1.8.2] -- 2026-06-10
 
 ### Tests
