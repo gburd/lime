@@ -19,6 +19,73 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.8.0] -- 2026-06-10
+
+### Added
+
+- **Three-tier runtime disambiguation for overlapping loaded grammars**
+  (the "load MySQL + Oracle + DuckDB at once" question).  New public
+  header `include/multi_grammar.h`.  Each tier is explicit about its
+  guarantee level -- this is not a claim that any union of dialects
+  "always works" (LR theory forbids that when two dialects share a
+  production with different meaning); it is the honest set of
+  mechanisms that resolve the cases that *are* resolvable.
+
+  - **Tier 1 -- full-statement fork-resolve** (`lime_mg_resolve`,
+    backed by `lime_simulate_parse` in `parse_context.h`).  On a
+    collision admissible in two or more candidate grammars, simulate
+    each over the real upcoming token stream and prefer the one that
+    reaches accept / gets furthest with fewest errors.
+    `lime_simulate_parse` replays the engine's shift/reduce/goto loop
+    on a private state stack -- read-only, no user/host actions, no
+    mutation -- so this is full-statement matching, not a one-token
+    peek.  CORRECT for dialects that diverge within the statement
+    (LIMIT vs ROWNUM, hint syntax); truly-identical productions trial
+    identically and fall to Tier 2/3.
+  - **Tier 2 -- Bayesian tie-break** (`LimeBayesStore`:
+    `lime_bayes_create`/`observe`/`rank`/`serialize`/`deserialize`).
+    A Beta-Bernoulli posterior keyed by `(state, token, ext_id)`
+    breaks a Tier-1 tie toward the historically-likelier dialect and
+    learns from confirmed parses; serializable for host-side
+    persistence.  HEURISTIC -- it makes an ambiguous parse resolve
+    consistently and improve with feedback, not become correct.
+    Consulted only on a Tier-1 tie, and only overrides the
+    deterministic fallback once it has real evidence (posterior off
+    the 0.5 prior).
+  - **Tier 3 -- dialect mode selection** (`LimeDialectRegistry`:
+    `lime_dialect_register`/`select`/`parse_sigil`).  A
+    name->composed-snapshot map plus a leading `@dialect` sigil parser,
+    for genuinely mutually-ambiguous full dialects no parse-time method
+    can separate.  EXACT, but it is mode selection, not
+    disambiguation.
+
+  **Zero cost on the parse hot path**, proven at the binary level:
+  `parse_engine_step` and `lime_simulate_parse` share no state, and the
+  `bench_jit_real_parser` / `parser_bench` executables are byte-
+  identical with and without the tiers compiled in.  Tier 1 runs only
+  on a registered-extension collision with two or more admissible
+  candidates; single-dialect parsing never forks.  Tier 2 tables
+  allocate lazily; Tier 3 is a host-side pointer swap.
+
+### Tests
+
+- `tests/test_multi_grammar.c`: two deliberately-overlapping dialects
+  (MySQL-ish `LIMIT` vs Oracle-ish `ROWS`) compiled in-process.
+  Asserts Tier 1 picks the dialect that reaches accept on a divergent
+  stream (and that the other does not accept); Tier 2 flips a true tie
+  once trained and round-trips through serialize/deserialize; Tier 3
+  registry selection and `@dialect` sigil parsing (including unknown-
+  dialect fallback).
+
+### Documentation
+
+- `docs/MULTI_GRAMMAR.md` gains a "three disambiguation tiers" section
+  documenting each tier's API and guarantee level, and the honest
+  boundary: Lime unions context-separable extensions and resolves
+  collisions at runtime; it does not (and cannot) merge mutually-
+  ambiguous full dialects into one always-correct parser -- those use
+  per-session dialect selection.
+
 ## [1.7.1] -- 2026-06-10
 
 ### Documentation

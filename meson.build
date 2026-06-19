@@ -1,5 +1,5 @@
 project('lime-parser', 'c', 'cpp',
-  version : '1.7.1',
+  version : '1.8.0',
   default_options : [
     'c_std=c11',
     'warning_level=2',
@@ -161,6 +161,7 @@ lime_public_headers = [
   'include/lime_location.h',
   'include/parse_context.h',
   'include/parser_fork.h',
+  'include/multi_grammar.h',
   'include/parser.h',
   'include/parser_manager.h',
   'include/parser_operations.h',
