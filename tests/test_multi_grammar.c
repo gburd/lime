@@ -21,6 +21,7 @@
 #include "parse_context.h"
 #include "snapshot.h"
 #include "lime_compiler.h"
+#include "lime_threads.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,6 +66,45 @@ static ParserSnapshot *compile(const char *g) {
         return NULL;
     }
     return s;
+}
+
+/* Drive a token sequence; return 1=accept, <0=error, 0=mid-parse. */
+static int parse_seq(ParserSnapshot *snap, const int *toks, int n) {
+    ParseContext *ctx = parse_begin(snap);
+    if (!ctx) return -1;
+    int rc = 0;
+    for (int i = 0; i < n; i++) {
+        rc = parse_token(ctx, toks[i], NULL, -1);
+        if (rc < 0 || rc == 1) break;
+    }
+    if (rc == 0) rc = parse_token(ctx, 0, NULL, -1);
+    parse_end(ctx);
+    return rc;
+}
+
+/* Q3 (Letter 35): per-backend snapshot safety.  Each thread parses a
+** SHARED composed snapshot concurrently -- the "one snapshot per
+** backend, swapped by pointer" model.  A ParserSnapshot is read-only
+** during a parse (the engine only reads its tables; the sole written
+** field is the atomic refcount), so this must run race-free under TSan
+** with every parse succeeding. */
+#define Q3_THREADS 8
+#define Q3_ITERS   1500
+typedef struct {
+    ParserSnapshot *snap;
+    const int *toks;
+    int ntoks;
+    int failures;
+} Q3Arg;
+
+static void *q3_worker(void *p) {
+    Q3Arg *a = (Q3Arg *)p;
+    for (int i = 0; i < Q3_ITERS; i++) {
+        ParserSnapshot *ref = snapshot_acquire(a->snap); /* per-backend pin */
+        if (parse_seq(ref, a->toks, a->ntoks) != 1) a->failures++;
+        snapshot_release(ref);
+    }
+    return NULL;
 }
 
 int main(void) {
@@ -167,8 +207,87 @@ int main(void) {
         lime_dialect_registry_destroy(reg);
     }
 
+    /* ---- Q3 (Letter 35): per-backend snapshot safety ---------------
+    ** N threads each parse the SHARED composed `my` snapshot
+    ** concurrently (acquire / parse / release), the per-backend model.
+    ** Under TSan this proves a composed snapshot is read-only during a
+    ** parse and concurrently usable by pointer with no shared mutable
+    ** state beyond the atomic refcount. */
+    {
+        int toks[] = { T_SELECT, T_STAR, T_FROM, T_NAME };
+        Q3Arg args[Q3_THREADS];
+        pthread_t th[Q3_THREADS];
+        for (int i = 0; i < Q3_THREADS; i++) {
+            args[i].snap = my;
+            args[i].toks = toks;
+            args[i].ntoks = 4;
+            args[i].failures = 0;
+        }
+        int spawned = 0;
+        for (int i = 0; i < Q3_THREADS; i++) {
+            if (pthread_create(&th[i], NULL, q3_worker, &args[i]) == 0) spawned++;
+            else break;
+        }
+        for (int i = 0; i < spawned; i++) pthread_join(th[i], NULL);
+        CHECK(spawned == Q3_THREADS, "Q3: spawned all worker threads");
+        int total_fail = 0;
+        for (int i = 0; i < spawned; i++) total_fail += args[i].failures;
+        CHECK(total_fail == 0,
+              "Q3: concurrent parses of a shared composed snapshot all succeed");
+    }
+
     snapshot_release(my);
     snapshot_release(ora);
+
+    /* ---- Q1 (Letter 35): compose-time conflict reporting ----------
+    ** A genuine reduce/reduce conflict (duplicate production: same RHS,
+    ** same LHS) and a shift/reduce conflict are resolved SILENTLY by
+    ** lemon (keep-first / keep-shift) -- the plain compile returns 0
+    ** and builds a snapshot.  The _ex variant surfaces the conflict
+    ** count so the host can refuse / warn instead of shipping a
+    ** silently mis-parsing grammar. */
+    {
+        const char *clean =
+            "%name OK\n%token A B.\n%start_symbol s\ns ::= A B.\n";
+        /* Dangling-else: a genuine, lemon-counted shift/reduce conflict,
+        ** resolved keep-shift -- builds successfully, nconflict > 0. */
+        const char *sr =
+            "%name DE\n%token IF THEN ELSE X.\n%start_symbol prog\n"
+            "prog ::= stmt.\n"
+            "stmt ::= IF X THEN stmt.\n"
+            "stmt ::= IF X THEN stmt ELSE stmt.\n"
+            "stmt ::= X.\n";
+        /* Two nonterminals deriving A both reachable before A: a
+        ** reduce/reduce that makes one rule unreducible -- this one
+        ** HARD-FAILS the in-process compile (rc != 0, error string),
+        ** because lemon flags the unreducible rule via errorcnt. */
+        const char *rr =
+            "%name RR2\n%token A.\n%start_symbol prog\n"
+            "prog ::= a A.\nprog ::= b A.\na ::= A.\nb ::= A.\n";
+
+        ParserSnapshot *s = NULL; char *e = NULL; int nc = -1;
+
+        int rc = lime_compile_grammar_in_process_ex(clean, strlen(clean), &s, &e, &nc);
+        CHECK(rc == 0 && s != NULL, "Q1: clean grammar compiles");
+        CHECK(nc == 0, "Q1: clean grammar reports 0 conflicts");
+        free(e); e = NULL; if (s) snapshot_release(s); s = NULL;
+
+        /* Shift/reduce: silently resolved -> builds, but the conflict
+        ** count is now SURFACED so the host can warn/refuse. */
+        nc = -1;
+        rc = lime_compile_grammar_in_process_ex(sr, strlen(sr), &s, &e, &nc);
+        CHECK(rc == 0 && s != NULL, "Q1: shift/reduce still builds (resolved keep-shift)");
+        CHECK(nc > 0, "Q1: shift/reduce conflict count is surfaced (> 0)");
+        free(e); e = NULL; if (s) snapshot_release(s); s = NULL;
+
+        /* Reduce/reduce that renders a rule unreducible: HARD error,
+        ** reported via rc != 0 + a non-NULL error string (not silent). */
+        nc = -1;
+        rc = lime_compile_grammar_in_process_ex(rr, strlen(rr), &s, &e, &nc);
+        CHECK(rc != 0 && s == NULL, "Q1: unreducible reduce/reduce hard-fails");
+        CHECK(e != NULL && e[0] != '\0', "Q1: hard failure carries an error string");
+        free(e); e = NULL; if (s) snapshot_release(s); s = NULL;
+    }
 
     printf("test_multi_grammar: %s\n", fail ? "FAIL" : "PASS");
     return fail ? 1 : 0;

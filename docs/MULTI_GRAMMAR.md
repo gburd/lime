@@ -258,6 +258,50 @@ host-side snapshot-pointer swap.  `parse_engine_step` and
 `lime_simulate_parse` share no state; the bench binaries are byte-
 identical with and without the tiers compiled in.
 
+## Compose-time conflict reporting
+
+When composing fragments introduces an LALR conflict, the contract has
+two cases:
+
+- A **shift/reduce** conflict (and a reduce/reduce that lemon resolves
+  keep-first while leaving both rules reducible) is **resolved
+  silently** -- `lime_compile_grammar_in_process` returns 0 and builds
+  a snapshot, with the winner chosen by table-build order, not author
+  intent.  This is the dangerous case: a fragment that shadows an
+  already-loaded dialect's rule mis-parses silently.
+- A **reduce/reduce** conflict that renders a rule unreducible is a
+  **hard error** (non-zero return, non-NULL error string).
+
+To detect the silent case, use the reporting variant and refuse / warn
+when the conflict count is non-zero:
+
+```c
+int nconf = 0;
+int rc = lime_compile_grammar_in_process_ex(text, len, &snap, &err, &nconf);
+if (rc != 0)        { /* hard error: err explains */ }
+else if (nconf > 0) { /* built, but a rule was shadowed -- reject the
+                       ** extension or warn the author, do not install */ }
+else                { /* clean compose */ }
+```
+
+## Per-backend snapshot safety
+
+A `ParserSnapshot` is **read-only during a parse**: the engine only
+reads its tables, and the sole field written on the parse path is the
+atomic refcount.  Composed snapshots have the same layout, so the
+per-dialect-selection model is safe:
+
+- Hold several composed snapshots; each backend pins the active one
+  with `snapshot_acquire` and releases with `snapshot_release` (atomic,
+  lock-free).  Swap dialects by pointer.
+- Concurrent parses of the **same** snapshot from many backends are
+  race-free (verified under ThreadSanitizer:
+  `tests/test_multi_grammar.c` runs 8 threads parsing one shared
+  composed snapshot).
+- A `ParseContext` is **not** shareable -- it holds the live parse
+  stack; use one per backend/parse.  The snapshot is the shared object;
+  the context is per-thread.
+
 ## See also
 
 - [EXTENSIONS.md](EXTENSIONS.md) — loading grammars at runtime.

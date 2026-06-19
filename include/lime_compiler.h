@@ -54,6 +54,39 @@ int lime_compile_grammar_in_process(const char *grammar_text,
                                     struct ParserSnapshot **out_snapshot,
                                     char **error);
 
+/**
+ * @brief Like lime_compile_grammar_in_process, but also reports the
+ *        number of LALR conflicts the compose resolved (Letter 35 Q1).
+ *
+ * lemon resolves reduce/reduce conflicts (keep the earlier rule) and
+ * shift/reduce conflicts (keep the shift) SILENTLY: they do not fail
+ * the build.  So when a composed fragment contributes a rule that
+ * shadows an already-loaded dialect's rule -- same RHS reducing to the
+ * same LHS, or a shift/reduce overlap -- the snapshot builds and one
+ * meaning is chosen by table-build order, not the author's intent.
+ *
+ * @param out_nconflict  On success, receives the count of conflicts
+ *                       resolved during table construction.  0 = clean
+ *                       compose.  >0 = at least one fragment rule
+ *                       collided and lemon picked a winner
+ *                       deterministically (keep-first / keep-shift);
+ *                       the caller should treat this as "this grammar
+ *                       conflicts with an already-loaded dialect" and
+ *                       refuse the load or warn the author rather than
+ *                       ship a snapshot that silently mis-parses.
+ *                       May be NULL.
+ *
+ * Same return/ownership contract: 0 on success (*out_snapshot
+ * non-NULL), non-zero on a hard error (parse error, empty grammar,
+ * unreducible rule, LALR construction failure -- distinct from a
+ * resolved conflict, which still returns 0).
+ */
+int lime_compile_grammar_in_process_ex(const char *grammar_text,
+                                       size_t len,
+                                       struct ParserSnapshot **out_snapshot,
+                                       char **error,
+                                       int *out_nconflict);
+
 #ifdef __cplusplus
 }
 #endif

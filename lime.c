@@ -106,7 +106,7 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "1.8.0"
+#define LIME_VERSION_STRING "1.8.1"
 #endif
 
 
@@ -14096,11 +14096,13 @@ oom:
   return snap;
 }
 
-int lime_compile_grammar_in_process(const char *grammar_text,
+int lime_compile_grammar_in_process_ex(const char *grammar_text,
                                     size_t len,
                                     struct ParserSnapshot **out_snapshot,
-                                    char **error)
+                                    char **error,
+                                    int *out_nconflict)
 {
+  if( out_nconflict ) *out_nconflict = 0;
   if( !grammar_text || len==0 || !out_snapshot ){
     if( error ) *error = strdup("lime_compile_grammar_in_process: bad arguments");
     if( out_snapshot ) *out_snapshot = NULL;
@@ -14196,6 +14198,14 @@ int lime_compile_grammar_in_process(const char *grammar_text,
     fail_reason = "snapshot build failed";
     goto done;
   }
+  /* Q1 (Letter 35): surface the LALR conflict count.  lemon resolves
+  ** reduce/reduce (keep-first) and shift/reduce (keep-shift) conflicts
+  ** silently -- they increment lem.nconflict but NOT lem.errorcnt, so
+  ** the snapshot builds successfully even though a composed fragment
+  ** shadowed an already-loaded rule.  Report the count so the caller
+  ** can refuse the compose or warn the extension author rather than
+  ** ship a silently mis-parsing grammar. */
+  if( out_nconflict ) *out_nconflict = lem.nconflict;
   *out_snapshot = snap;
   rc = 0;
 
@@ -14256,6 +14266,18 @@ done:
   }
   free(err_buf);
   return rc;
+}
+
+/* Back-compat wrapper: the original signature, no conflict count.
+** Forwards to the _ex variant.  A grammar that compiles with resolved
+** (silent) conflicts still returns 0 here -- callers that need to know
+** about shadowed rules must use lime_compile_grammar_in_process_ex. */
+int lime_compile_grammar_in_process(const char *grammar_text,
+                                    size_t len,
+                                    struct ParserSnapshot **out_snapshot,
+                                    char **error)
+{
+  return lime_compile_grammar_in_process_ex(grammar_text, len, out_snapshot, error, NULL);
 }
 
 /*
