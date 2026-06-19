@@ -145,13 +145,45 @@ value works -- including a pointer-width union and any `intptr_t`-wide scalar.
 Grammars whose value type is wider than a pointer must box it behind a pointer
 to use this path.
 
+## Unit productions (single-RHS rules)
+
+A unit production -- a rule with one RHS symbol, e.g.
+`list ::= attr` -- is normally collapsed by the table generator: the
+shift of the RHS and the reduce to the LHS are fused, and when the rule
+has no inline `{ }` body the reduce is optimized away entirely (the
+value passes through unchanged).  That is correct for a same-type
+passthrough, but **wrong for a type-changing unit rule whose action is
+a host-reduce / extension callback** (e.g. `attr` is a `Node *`, `list`
+is a `List *`, and the action must wrap the node in a one-element
+list): the rule has no inline body, so it looks action-free to the
+optimizer, but it DOES have an action -- the callback dispatched by
+ruleno.
+
+Lime keeps unit-rule reductions on the host-reduce path so their action
+fires:
+
+- `lime_compile_grammar_in_process_ex` (the in-process compose path
+  PostgreSQL uses) always keeps them -- every rule's action is a
+  host_reduce callback dispatched by ruleno, so no unit ruleno may be
+  dropped.
+- `lime -n --host-reduce` keeps them in the emitted snapshot for the
+  same reason.
+- A plain `lime` / `lime -n` (no `--host-reduce`) keeps the
+  table-shrinking optimization unchanged -- the generated tables are
+  byte-identical, zero cost for grammars that don't drive a
+  host-reduce.
+
+So a type-changing unit rule contributed as an extension fragment
+builds the right value with no normalize-at-consumer workaround.
+
 ## Cost
 
 Zero on the recognition-only path: `host_reduce == NULL` skips the entire
 block, and the per-entry value/location stores are cheap. Benchmarks
 (`parser_bench`, `bench_jit_real_parser`) show no measurable change versus the
 recognition-only engine. The hook is consulted only inside a reduce, never on
-the shift hot path.
+the shift hot path.  Keeping unit reductions affects only `--host-reduce`
+snapshots; a non-host-reduce build's tables are unchanged.
 
 ## See also
 

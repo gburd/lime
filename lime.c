@@ -106,7 +106,7 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "1.8.2"
+#define LIME_VERSION_STRING "1.8.3"
 #endif
 
 
@@ -5066,6 +5066,17 @@ static int g_skin_chumsky = 0;
 ** Opt in only for grammars whose actions are self-contained. */
 static int g_host_reduce = 0;
 
+/* Letter 37: when set, CompressTables does NOT optimize away a
+** single-RHS (unit) production's reduce action, even when the rule has
+** no inline C body (noCode=1).  On the host-reduce / in-process
+** snapshot path EVERY rule's action is dispatched by ruleno through
+** the host_reduce hook, so eliminating a unit rule's ruleno silently
+** drops a callable action -- exactly the type-changing
+** quel_attr_list ::= quel_attr (Node* -> List*) case that needs its
+** reduce to run.  The AOT generated-pull-parser path leaves this 0 and
+** keeps the table-shrinking optimization (it has no host_reduce). */
+static int g_keep_unit_reductions = 0;
+
 /* When non-zero, --rust / --rustlex / --rust-crate / --rust-nostd /
 ** --rustlex-simd / --rustlex-memchr / --per-token-dfa was seen on
 ** the command line.  Used to populate the legacy globals after
@@ -6010,7 +6021,18 @@ int main(int argc, char **argv){
     }
 
     /* Compress the action tables */
-    if( compress==0 ) CompressTables(&lem);
+    /* Letter 37: under --host-reduce, the emitted snapshot is driven by
+    ** the push parser + host_reduce (actions dispatched by ruleno), so
+    ** keep unit-rule reductions -- their ruleno must survive for a
+    ** no-inline-body unit rule whose action is the host_reduce
+    ** callback.  Without --host-reduce the AOT pull-parser keeps the
+    ** table-shrinking optimization. */
+    {
+      int saved_keep = g_keep_unit_reductions;
+      if( g_host_reduce ) g_keep_unit_reductions = 1;
+      if( compress==0 ) CompressTables(&lem);
+      g_keep_unit_reductions = saved_keep;
+    }
 
     /* Reorder and renumber the states so that states with fewer choices
     ** occur at the end.  This is an optimization that helps make the
@@ -13624,8 +13646,14 @@ void CompressTables(struct lime *lemp)
   ** started) and if there is no C-code associated with the reduce action,
   ** then we can go ahead and convert the action to be the same as the
   ** action for the RHS of the rule.
-  */
-  for(i=0; i<lemp->nstate; i++){
+  **
+  ** Letter 37: skipped entirely when g_keep_unit_reductions is set
+  ** (the host-reduce / in-process snapshot path), because there the
+  ** rule's action is the host_reduce callback dispatched by ruleno --
+  ** "noCode" only means "no INLINE C body", not "no action" -- so
+  ** collapsing the unit rule to a goto would silently drop a callable
+  ** reduce (e.g. a type-changing quel_attr_list ::= quel_attr). */
+  for(i=0; !g_keep_unit_reductions && i<lemp->nstate; i++){
     stp = lemp->sorted[i];
     for(ap=stp->ap; ap; ap=nextap){
       nextap = ap->next;
@@ -14186,7 +14214,17 @@ int lime_compile_grammar_in_process_ex(const char *grammar_text,
     fail_reason = "grammar has unresolved conflicts";
     goto done;
   }
-  CompressTables(&lem);
+  /* Letter 37: the in-process snapshot path is always driven by the
+  ** push parser + host_reduce, where a unit rule's action is a
+  ** callback dispatched by ruleno.  Keep unit-rule reductions so their
+  ** ruleno survives and the action fires (a no-inline-body unit rule
+  ** still has a host_reduce action). */
+  {
+    int saved_keep = g_keep_unit_reductions;
+    g_keep_unit_reductions = 1;
+    CompressTables(&lem);
+    g_keep_unit_reductions = saved_keep;
+  }
   ResortStates(&lem);
 
   /* Build the snapshot.  build_snapshot_from_lime() owns its

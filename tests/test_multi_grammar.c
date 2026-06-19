@@ -25,6 +25,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 
 #define CHECK(cond, msg) do {                                            \
@@ -80,6 +81,46 @@ static int parse_seq(ParserSnapshot *snap, const int *toks, int n) {
     if (rc == 0) rc = parse_token(ctx, 0, NULL, -1);
     parse_end(ctx);
     return rc;
+}
+
+/* Letter 37: host_reduce dispatcher for the unit-production compose
+** test.  Mirrors hu_grammar's arithmetic so we can SEE which rulenos
+** fire.  Internal rulenos for the grammar below (declaration order):
+**   0: prog ::= list
+**   1: list ::= attr             -> L = A + 1000   (the UNIT rule)
+**   2: list ::= list COMMA attr  -> L = B + A       (cons)
+**   3: attr ::= ATTR             -> A = T
+** value type is intptr_t boxed in void*. */
+static int ul_host_reduce(void *u, int ruleno, const void *vals, const int *locs, int n,
+                          void *out, int *lo) {
+    (void)u; (void)locs; (void)lo; (void)n;
+    void *const *v = (void *const *)vals;
+    intptr_t r = 0;
+    switch (ruleno) {
+        case 0: r = (intptr_t)v[0]; break;                  /* prog ::= list */
+        case 1: r = (intptr_t)v[0] + 1000; break;           /* list ::= attr (UNIT) */
+        case 2: r = (intptr_t)v[0] + (intptr_t)v[2]; break; /* cons */
+        case 3: r = (intptr_t)v[0]; break;                  /* attr ::= ATTR */
+        default: r = 0; break;
+    }
+    *(void **)out = (void *)r;
+    return 0;
+}
+
+/* Parse with a session host_reduce bound; leaf ATTR carries value 5. */
+static intptr_t ul_run(ParserSnapshot *snap, const int *toks, int n) {
+    ParseContext *ctx = parse_begin(snap);
+    if (!ctx) return -1;
+    parse_set_host_reduce(ctx, ul_host_reduce, NULL);
+    int rc = 0;
+    for (int i = 0; i < n; i++) {
+        rc = parse_token(ctx, toks[i], (void *)(intptr_t)5, -1);
+        if (rc < 0 || rc == 1) break;
+    }
+    if (rc == 0) rc = parse_token(ctx, 0, NULL, -1);
+    intptr_t res = (intptr_t)parse_result(ctx);
+    parse_end(ctx);
+    return res;
 }
 
 /* Q3 (Letter 35): per-backend snapshot safety.  Each thread parses a
@@ -287,6 +328,35 @@ int main(void) {
         CHECK(rc != 0 && s == NULL, "Q1: unreducible reduce/reduce hard-fails");
         CHECK(e != NULL && e[0] != '\0', "Q1: hard failure carries an error string");
         free(e); e = NULL; if (s) snapshot_release(s); s = NULL;
+    }
+
+    /* ---- Letter 37: unit-production reduce on the IN-PROCESS COMPOSE
+    ** path (not AOT).  The same unit rule that fires on the AOT path
+    ** (v1.8.2 hu_grammar test) must also fire when the grammar is
+    ** compiled by lime_compile_grammar_in_process_ex with a host_reduce
+    ** bound -- otherwise a type-changing unit rule (Node* -> List*)
+    ** leaves the wrong value on the stack for the parent rule. ------- */
+    {
+        const char *g =
+            "%name UL\n%token_type {void*}\n"
+            "%token ATTR COMMA.\n%start_symbol prog\n"
+            "prog ::= list.\n"
+            "list ::= attr.\n"               /* unit, type-changing in PG */
+            "list ::= list COMMA attr.\n"    /* cons */
+            "attr ::= ATTR.\n";
+        ParserSnapshot *s = NULL; char *e = NULL; int nc = 0;
+        int rc = lime_compile_grammar_in_process_ex(g, strlen(g), &s, &e, &nc);
+        CHECK(rc == 0 && s != NULL, "L37: compose base+unit+cons in-process");
+        free(e);
+        if (s) {
+            int one[] = { 1 /*ATTR*/ };
+            CHECK(ul_run(s, one, 1) == 1005,
+                  "L37: unit rule list::=attr FIRES on compose path (5+1000)");
+            int two[] = { 1, 2 /*COMMA*/, 1 };
+            CHECK(ul_run(s, two, 3) == 1010,
+                  "L37: cons reads the List* the unit rule built (1005+5)");
+            snapshot_release(s);
+        }
     }
 
     printf("test_multi_grammar: %s\n", fail ? "FAIL" : "PASS");
