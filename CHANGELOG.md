@@ -19,6 +19,44 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.8.1] -- 2026-06-10
+
+### Added
+
+- **`lime_compile_grammar_in_process_ex` -- compose-time conflict
+  reporting (Letter 35 Q1).**  lemon resolves shift/reduce conflicts
+  (and reduce/reduce conflicts that leave both rules reducible)
+  *silently* during table construction: the snapshot builds and one
+  meaning is chosen by build order, not author intent.  The plain
+  `lime_compile_grammar_in_process` gave no signal, so a composed
+  fragment that shadowed an already-loaded dialect's rule mis-parsed
+  silently.  The new `_ex` variant adds an `out_nconflict` parameter:
+  `rc == 0 && nconflict == 0` is a clean compose; `rc == 0 &&
+  nconflict > 0` means a rule was shadowed (caller should refuse the
+  extension or warn the author); `rc != 0` is a hard error
+  (unreducible rule, parse error).  The plain function is unchanged
+  (forwards with `out_nconflict = NULL`).
+
+### Tests
+
+- `tests/test_multi_grammar.c` Q1 coverage: a clean grammar reports 0
+  conflicts; a dangling-else shift/reduce builds with the conflict
+  count surfaced (> 0); an unreducible reduce/reduce hard-fails with an
+  error string.
+- Q3 (per-backend snapshot safety): 8 threads x 1500 iterations parse
+  a **shared composed snapshot** concurrently (acquire / parse /
+  release), verified race-free under ThreadSanitizer.  Confirms the
+  per-session dialect-selection model -- hold several composed
+  snapshots, pin/release per backend, swap by pointer -- is safe; a
+  ParserSnapshot is read-only during a parse (only the atomic refcount
+  is written), and a ParseContext is the per-thread object.
+
+### Documentation
+
+- `docs/MULTI_GRAMMAR.md`: "Compose-time conflict reporting" and
+  "Per-backend snapshot safety" sections documenting the two contracts
+  (Letter 35 Q1/Q3).
+
 ## [1.8.0] -- 2026-06-10
 
 ### Added
