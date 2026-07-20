@@ -34,7 +34,7 @@ jobs:
       body:    ${{ steps.notes.outputs.body }}
     steps:
       - name: Checkout (full, for tags)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -84,7 +84,7 @@ jobs:
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
 
       - name: Upload tarball artefacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: source-tarball
           path: |
@@ -106,10 +106,10 @@ jobs:
     container:
       image: fedora:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: source-tarball
           path: dist
@@ -138,7 +138,7 @@ jobs:
           ls -la artefacts/ || true
       - name: Upload RPM artefacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rpm
           path: artefacts/*.rpm
@@ -152,10 +152,10 @@ jobs:
     container:
       image: debian:stable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: source-tarball
           path: dist
@@ -189,7 +189,7 @@ jobs:
           ls -la ../../artefacts/ || true
       - name: Upload DEB artefacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deb
           path: artefacts/*.deb
@@ -203,10 +203,10 @@ jobs:
     container:
       image: alpine:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: source-tarball
           path: dist
@@ -244,7 +244,7 @@ jobs:
           ls -la artefacts/ || true
       - name: Upload APK artefacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: apk
           path: artefacts/*.apk
@@ -258,10 +258,10 @@ jobs:
     container:
       image: archlinux:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: source-tarball
           path: dist
@@ -289,7 +289,7 @@ jobs:
           ls -la artefacts/ || true
       - name: Upload Arch artefacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: arch
           path: artefacts/*.pkg.tar.zst
@@ -301,8 +301,8 @@ jobs:
     runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: source-tarball
           path: dist
@@ -322,7 +322,7 @@ jobs:
           cat artefacts/lime.rb | head -20
       - name: Upload Homebrew formula
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: homebrew
           path: artefacts/lime.rb
@@ -344,7 +344,7 @@ jobs:
     if: always() && needs.source-tarball.result == 'success'
     steps:
       - name: Collect all artefacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
       - name: Flatten + list
