@@ -106,7 +106,7 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "1.9.0"
+#define LIME_VERSION_STRING "1.10.0"
 #endif
 
 
@@ -11768,6 +11768,54 @@ static void writeRuleText(FILE *out, struct rule *rp){
 }
 
 /*
+** Build the canonical identity text of a rule ("lhs ::= rhs1 rhs2
+** ...") into a freshly malloc'd, NUL-terminated string.  This is the
+** same identity rule_identity_eq() compares on (LHS + RHS symbol
+** sequence by name), serialised so a runtime host can key reduce
+** dispatch on it via lime_snapshot_rule_by_id().  Returns NULL on OOM.
+** Caller owns the result.
+*/
+static char *ruleIdentityString(struct rule *rp){
+  size_t cap = 64;
+  size_t len = 0;
+  char *buf = (char*)malloc(cap);
+  int j;
+  if( buf==0 ) return 0;
+  #define RID_APPEND(Z) do{ \
+    const char *z_ = (Z); \
+    size_t zl_ = strlen(z_); \
+    if( len+zl_+1 > cap ){ \
+      size_t ncap = cap*2; \
+      char *nb; \
+      while( len+zl_+1 > ncap ) ncap *= 2; \
+      nb = (char*)realloc(buf, ncap); \
+      if( nb==0 ){ free(buf); return 0; } \
+      buf = nb; cap = ncap; \
+    } \
+    memcpy(buf+len, z_, zl_); len += zl_; buf[len] = 0; \
+  }while(0)
+  RID_APPEND(rp->lhs ? rp->lhs->name : "?");
+  RID_APPEND(" ::=");
+  for(j=0; j<rp->nrhs; j++){
+    struct symbol *sp = rp->rhs[j];
+    if( sp->type!=MULTITERMINAL ){
+      RID_APPEND(" ");
+      RID_APPEND(sp->name);
+    }else{
+      int k;
+      RID_APPEND(" ");
+      RID_APPEND(sp->subsym[0]->name);
+      for(k=1; k<sp->nsubsym; k++){
+        RID_APPEND("|");
+        RID_APPEND(sp->subsym[k]->name);
+      }
+    }
+  }
+  #undef RID_APPEND
+  return buf;
+}
+
+/*
 ** Return true if the string is not NULL and not empty.
 */
 static int notnull(const char *z){
@@ -13306,6 +13354,23 @@ void ReportSnapshotInit(struct lime *lemp)
   if( lemp->nsymbol==0 ) fprintf(out, "    0\n");
   fprintf(out, "};\n");
 
+  /* Rule-identity table: canonical rule text ("lhs ::= rhs...") indexed
+  ** by ruleno, for lime_snapshot_rule_by_id().  Only emitted under
+  ** --host-reduce: it is only meaningful when a host dispatches reduce
+  ** callbacks by rule, and gating it keeps plain `lime -n` output
+  ** byte-identical for grammars that do not use host-reduce. */
+  if( g_host_reduce ){
+    struct rule *rp_id;
+    fprintf(out, "static const char *const s_rule_ids[] = {\n");
+    for(rp_id=lemp->rule; rp_id; rp_id=rp_id->next){
+      char *rid = ruleIdentityString(rp_id);
+      fprintf(out, "    \"%s\",\n", rid ? rid : "");
+      free(rid);
+    }
+    if( lemp->nrule==0 ) fprintf(out, "    0\n");
+    fprintf(out, "};\n");
+  }
+
   /* ------------------------------------------------------------ */
   /*  Grammar source text                                         */
   /* ------------------------------------------------------------ */
@@ -13363,10 +13428,15 @@ void ReportSnapshotInit(struct lime *lemp)
   fprintf(out, "\nParserSnapshot *%sBuildSnapshot(void) {\n", name);
   {
   char hostReduceExpr[256];
+  const char *ruleIdsInit;
   if( g_host_reduce ){
     lemon_sprintf(hostReduceExpr, "%sHostReduce", name);
+    ruleIdsInit =
+      "        .rule_ids             = s_rule_ids,\n"
+      "        .rule_ids_count       = sizeof(s_rule_ids)/sizeof(s_rule_ids[0]),\n";
   }else{
     lemon_strcpy(hostReduceExpr, "NULL");
+    ruleIdsInit = "";
   }
   fprintf(out,
     "    LimeParserTables tables = {\n"
@@ -13398,6 +13468,7 @@ void ReportSnapshotInit(struct lime *lemp)
     "        .grammar_source_len   = sizeof(s_grammar_source) - 1,\n"
     "        .token_names          = s_token_names,\n"
     "        .token_names_count    = sizeof(s_token_names)/sizeof(s_token_names[0]),\n"
+    "%s"
     "        .host_reduce          = %s,\n"
     "        .host_reduce_user     = NULL,\n"
     "        .magic                = LIME_TABLES_MAGIC,\n"
@@ -13437,6 +13508,7 @@ void ReportSnapshotInit(struct lime *lemp)
     lemp->accAction,
     lemp->noAction,
     lemp->minReduce,
+    ruleIdsInit,                                /* .rule_ids block (host-reduce only) or "" */
     hostReduceExpr,                             /* .host_reduce = <name>HostReduce or NULL */
     name
   );
@@ -13898,6 +13970,7 @@ static struct ParserSnapshot *build_snapshot_from_lime(struct lime *lemp,
   int8_t   *rule_nrhs = NULL;
   uint16_t *yy_fallback = NULL;
   const char **token_names = NULL;
+  char **rule_ids = NULL;
   acttab   *pActtab = NULL;
   struct ParserSnapshot *snap = NULL;
   int i;
@@ -14107,6 +14180,29 @@ static struct ParserSnapshot *build_snapshot_from_lime(struct lime *lemp,
       tables.token_names = token_names;
       tables.token_names_count = (uint32_t)lemp->nsymbol;
     }
+    /* Rule-identity table for stable source-rule -> ruleno lookup
+    ** (lime_snapshot_rule_by_id).  Unlike token_names (which borrows
+    ** interned ->name pointers), each entry is a freshly-owned string;
+    ** snapshot_build_from_tables strdup's it again, and the oom: path
+    ** frees these originals per-string.  Indexed by ruleno (iRule),
+    ** matching yy_rule_info_*: walk lemp->rule in list order, which
+    ** Rule_sort() has aligned to iRule. */
+    if( lemp->nrule > 0 ){
+      rule_ids = (char **)calloc((size_t)lemp->nrule, sizeof(char *));
+      if( rule_ids != NULL ){
+        int ri = 0;
+        struct rule *rp2;
+        int ok = 1;
+        for(rp2=lemp->rule; rp2 && ri<lemp->nrule; rp2=rp2->next, ri++){
+          rule_ids[ri] = ruleIdentityString(rp2);
+          if( rule_ids[ri]==0 ){ ok = 0; break; }
+        }
+        if( ok ){
+          tables.rule_ids = (const char *const *)rule_ids;
+          tables.rule_ids_count = (uint32_t)lemp->nrule;
+        }
+      }
+    }
     snap = snapshot_build_from_tables(&tables);
   }
 
@@ -14120,6 +14216,11 @@ oom:
   free(rule_nrhs);
   free(yy_fallback);
   free(token_names);
+  if( rule_ids ){
+    uint32_t ri2;
+    for(ri2=0; ri2<(uint32_t)lemp->nrule; ri2++) free(rule_ids[ri2]);
+    free(rule_ids);
+  }
   if( pActtab ) acttab_free(pActtab);
   return snap;
 }

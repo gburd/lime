@@ -190,6 +190,34 @@ ParserSnapshot *snapshot_build_from_tables(const LimeParserTables *t) {
         }
     }
 
+    /* Rule-identity table: deep-copy the canonical rule-text strings so
+    ** lime_snapshot_rule_by_id() can map a stable source-rule identity to
+    ** its ruleno in this snapshot.  Same all-or-nothing discipline as the
+    ** token-name table above: a partial copy is dropped rather than shipped
+    ** with a hole. */
+    if (t->rule_ids != NULL && t->rule_ids_count > 0) {
+        snap->rule_ids = calloc(t->rule_ids_count, sizeof(char *));
+        if (snap->rule_ids != NULL) {
+            uint32_t i;
+            int ok = 1;
+            for (i = 0; i < t->rule_ids_count; i++) {
+                const char *id = t->rule_ids[i];
+                if (id != NULL) {
+                    snap->rule_ids[i] = strdup(id);
+                    if (snap->rule_ids[i] == NULL) { ok = 0; break; }
+                }
+            }
+            if (ok) {
+                snap->rule_ids_count = t->rule_ids_count;
+            } else {
+                uint32_t j;
+                for (j = 0; j < t->rule_ids_count; j++) free(snap->rule_ids[j]);
+                free(snap->rule_ids);
+                snap->rule_ids = NULL;
+            }
+        }
+    }
+
     /* v0.7.0: stamp magic + ABI version for downstream sanity
     ** checks.  Cheap; one assignment.  Useful when a void*
     ** crosses an extension boundary or a debugger session. */

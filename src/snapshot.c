@@ -86,6 +86,13 @@ static void destroy_snapshot(ParserSnapshot *snap) {
         free(snap->token_names);
     }
 
+    /* Rule-identity table (deep-copied strings + array). */
+    if (snap->rule_ids != NULL) {
+        uint32_t i;
+        for (i = 0; i < snap->rule_ids_count; i++) free(snap->rule_ids[i]);
+        free(snap->rule_ids);
+    }
+
     /* JIT context (if any).  jit_detach_from_snapshot is declared
     ** weak in jit_context.h so this snapshot.c file can be bundled
     ** into the dynamically-built .so produced by lime_snapshot_create
@@ -222,6 +229,40 @@ int lime_snapshot_token_code(const ParserSnapshot *snap, const char *name) {
         }
     }
     return -1;
+}
+
+/* Map a stable source-rule IDENTITY (its canonical rule text,
+** "lhs ::= rhs1 rhs2 ...") to its ruleno in this snapshot, or -1 when
+** the identity is unknown / the snapshot carries no rule-id table.
+**
+** This is the fix for fragile positional reduce dispatch: an embedder
+** that supplies host/extension reduce callbacks (see
+** lime_host_reduce_router) resolves each rule's ruleno ONCE by identity
+** at setup, instead of computing (composed_ruleno - base_nrule), which
+** breaks whenever the extension set, action presence, or unit-rule
+** elimination renumbers rules.  The identity string is stable across
+** all of those.  O(nrule) linear scan -- intended for one-time binding
+** setup, not per-reduction.  Returns int so -1 is unambiguous. */
+int lime_snapshot_rule_by_id(const ParserSnapshot *snap, const char *rule_id) {
+    if (snap == NULL || rule_id == NULL || snap->rule_ids == NULL) return -1;
+    uint32_t i;
+    for (i = 0; i < snap->rule_ids_count; i++) {
+        if (snap->rule_ids[i] != NULL && strcmp(snap->rule_ids[i], rule_id) == 0) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+/* Inverse of lime_snapshot_rule_by_id: return the canonical identity
+** string for a given ruleno, or NULL when out of range / no table.
+** For diagnostics ("which source rule is ruleno N in this composed
+** snapshot?").  The returned pointer is owned by the snapshot; do not
+** free it. */
+const char *lime_snapshot_rule_id(const ParserSnapshot *snap, int ruleno) {
+    if (snap == NULL || snap->rule_ids == NULL) return NULL;
+    if (ruleno < 0 || (uint32_t)ruleno >= snap->rule_ids_count) return NULL;
+    return snap->rule_ids[ruleno];
 }
 
 ParserSnapshot *lime_snapshot_create(const char *grammar_file, char **error) {

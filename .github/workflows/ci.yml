@@ -367,6 +367,25 @@ jobs:
         run: scripts/check_version_consistency.sh
 
   # =====================================================================
+  # contrib grammar smoke test.  The contrib/ SQL dialects
+  # (oracle/mysql/sqlite/duckdb/xml/edn) are the Goal B reference
+  # artifacts but are not wired into the root meson build, so they can
+  # silently rot.  This job runs each grammar through lime and asserts
+  # a non-empty .c is emitted -- a compile smoke test, not a
+  # conformance run.  It does NOT gate on LALR conflicts (existing
+  # grammar-quality debt); it fails only if lime can no longer compile
+  # a grammar at all.
+  # =====================================================================
+  contrib-grammars:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build standalone lime
+        run: cc -O2 -o lime lime.c
+      - name: Smoke-test contrib grammars
+        run: scripts/check_contrib_grammars.sh
+
+  # =====================================================================
   # Exercise the LLVM/JIT integration paths.  Without this matrix,
   # the LLVM 14-21 compat shim, -Dllvm-static, and -Dllvm=disabled
   # stub mode have no automated coverage; a regression in any of

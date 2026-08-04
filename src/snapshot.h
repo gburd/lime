@@ -38,22 +38,26 @@ typedef std::atomic<std::uint_fast32_t> atomic_uint_fast32_t;
 #include <stdatomic.h>
 #endif
 
-/* Forward declarations for Lemon grammar structures.
-** The actual definitions live in lemon.c; snapshot consumers only
+/* Forward declarations for the grammar structures.
+** The actual definitions live in lime.c; snapshot consumers only
 ** need pointers to these types. */
 struct symbol;
 struct rule;
 struct state;
 
 /* ------------------------------------------------------------------ */
-/*  Host-reduce hook (Letter 30)                                       */
+/*  Host-reduce hook (runtime base-grammar reduce dispatch)            */
 /* ------------------------------------------------------------------ */
 
 /**
  * @brief Run one BASE-grammar reduce action over a snapshot.
  *
- * Mirrors LimeReduceFn (extension reduces, src/extension.h) so the
- * base and extension reduce paths share a single ABI.  Bound into a
+ * This is a SEPARATE ABI from the extension-reduce callback
+ * LimeReduceFn (src/extension.h): the two have different signatures
+ * (LimeHostReduceFn carries `ruleno`/`lhs_loc_out`; LimeReduceFn
+ * carries an `extra_arg`).  A composed snapshot's base and extension
+ * reduce paths are bridged at runtime by lime_host_reduce_router
+ * (include/multi_grammar.h), not by a shared signature.  Bound into a
  * ParserSnapshot via snapshot_build_from_tables (wired by `lime -n`
  * to the generated, exported <Name>HostReduce wrapper) and called by
  * the push parser on each base reduce when non-NULL.
@@ -308,7 +312,7 @@ typedef struct ParserSnapshot {
     /** JIT compilation context. */
     void *jit_ctx;
 
-    /* --- Host-reduce hook (Letter 30) -------------------------------
+    /* --- Host-reduce hook (runtime base-grammar reduce dispatch) ----
     ** Optional callback that runs a BASE-grammar reduce action over
     ** this snapshot when the push parser (parse_token) performs a
     ** reduce.  NULL on every snapshot built before this feature and
@@ -319,8 +323,10 @@ typedef struct ParserSnapshot {
     ** `lime -n` wires this to the generated, exported
     ** <Name>HostReduce wrapper, which adapts the engine's value
     ** stack to the static per-rule yy_rule_reduce_fn[] dispatch in
-    ** the parser .c.  The signature mirrors LimeReduceFn (extension
-    ** reduces), so base and extension reduce paths share one ABI.
+    ** the parser .c.  LimeHostReduceFn and the extension LimeReduceFn
+    ** are separate ABIs with different signatures; a composed
+    ** snapshot's base and extension reduce paths are bridged at
+    ** runtime by lime_host_reduce_router (include/multi_grammar.h).
     **
     ** COLD field: never read on the shift hot path; consulted only
     ** inside the reduce branch, and only when non-NULL.  Additive
@@ -340,6 +346,21 @@ typedef struct ParserSnapshot {
     ** returns -1).  Deep-copied + owned by the snapshot. */
     char **token_names;
     uint32_t token_names_count;
+
+    /* --- Rule-identity table (stable source-rule -> ruleno lookup) ---
+    ** Optional array of canonical rule-text strings ("lhs ::= rhs1 rhs2
+    ** ...", the same identity rule_identity_eq() compares on), indexed by
+    ** ruleno (iRule).  Lets lime_snapshot_rule_by_id() map a source rule's
+    ** stable identity to its ruleno in THIS snapshot -- so a host that
+    ** dispatches reduce callbacks (see lime_host_reduce_router) can bind an
+    ** extension rule ONCE by identity instead of computing a fragile
+    ** positional (composed_ruleno - base_nrule) offset that shifts whenever
+    ** the extension set, action presence, or unit-rule elimination
+    ** renumbers rules.  The identity string is independent of iRule
+    ** numbering.  NULL when ids were not provided (the lookup then returns
+    ** -1).  Deep-copied + owned by the snapshot. */
+    char **rule_ids;
+    uint32_t rule_ids_count;
 } ParserSnapshot;
 
 /*
@@ -371,12 +392,15 @@ void snapshot_release(ParserSnapshot *snap);
 ** into the host process this function returns NULL with an
 ** actionable error message.
 **
-** Building a snapshot directly from a grammar file at runtime --
-** without a pre-compiled <Prefix>BuildSnapshot() symbol -- is
-** under construction.  It requires exposing the lime generator's
-** LALR(1) Build()/ReportTable() phases as a library callable from
-** the runtime; the generator's algorithm is fully implemented in
-** lime.c but not yet refactored into a public function.
+** In-process LALR(1) construction IS available: link liblime_compiler
+** and call lime_compile_grammar_in_process[_ex]
+** (include/lime_compiler.h), which runs the generator's
+** Build()/ReportTable() phases in-process (no fork/exec/temp file)
+** and returns a ready snapshot.  The only path still unbuilt is this
+** convenience entry point -- constructing a snapshot from a grammar
+** FILE at runtime WITHOUT going through lime_compile_grammar_in_process
+** or a pre-compiled <Prefix>BuildSnapshot() symbol.  Prefer
+** lime_compile_grammar_in_process for runtime construction today.
 **
 ** Returns a snapshot with refcount == 1 on success, or NULL with
 ** *error pointing to a malloc'd message on failure.

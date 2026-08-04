@@ -77,6 +77,13 @@ typedef struct LimeParserTables {
     ** then returns -1. */
     const char *const *token_names;
     uint32_t token_names_count; /* = nsymbol when token_names != NULL */
+    /* Optional array of canonical rule-text identity strings
+    ** ("lhs ::= rhs1 rhs2 ..."), indexed by ruleno.  Carried into
+    ** ParserSnapshot.rule_ids for stable source-rule -> ruleno lookup
+    ** (lime_snapshot_rule_by_id).  NULL when the generator did not emit
+    ** them; the lookup then returns -1. */
+    const char *const *rule_ids;
+    uint32_t rule_ids_count; /* = nrule when rule_ids != NULL */
     uint16_t ntoken; /* YYNTOKEN = highest terminal + 1 */
     /* YYFIRSTTOKEN: the %first_token directive value (0 when not
     ** declared).  Subtracted from external token codes by parse_token
@@ -125,7 +132,7 @@ typedef struct LimeParserTables {
     uint32_t magic;       /* LIME_TABLES_MAGIC */
     uint16_t abi_version; /* LIME_TABLES_ABI_VERSION */
 
-    /* Optional host-reduce hook (Letter 30).  `lime -n` sets this to
+    /* Optional host-reduce hook.  `lime -n` sets this to
     ** the generated, exported <Name>HostReduce wrapper so the push
     ** parser can run BASE-grammar reduce actions over the snapshot.
     ** NULL for recognition-only snapshots (and for tables emitted by

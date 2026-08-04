@@ -22,6 +22,8 @@
 #include "snapshot.h"
 #include "lime_compiler.h"
 #include "lime_threads.h"
+#include "parser.h"
+#include "snapshot_modify.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -431,6 +433,78 @@ int main(void) {
             parse_end(ctx);
             snapshot_release(s);
         }
+    }
+
+    /* ---- stable source-rule -> ruleno mapping (lime_snapshot_rule_by_id):
+    ** the fix for fragile positional (composed_ruleno - base_nrule)
+    ** reduce dispatch.  A rule's identity string is stable even when the
+    ** raw ruleno shifts because the grammar gained rules or a unit rule's
+    ** action/noCode status changed the two-pass action-first numbering. */
+    {
+        const char *ga =
+            "%name RIDA\n%token_type {void*}\n"
+            "%token ATTR COMMA.\n%start_symbol prog\n"
+            "prog ::= list.\n"
+            "list ::= attr.\n"
+            "list ::= list COMMA attr.\n"
+            "attr ::= ATTR.\n";
+        const char *gb =
+            "%name RIDB\n%token_type {void*}\n"
+            "%token ATTR COMMA SEMI.\n%start_symbol prog\n"
+            "prog ::= stmt.\n"               /* extra reachable construct */
+            "stmt ::= list.\n"               /* shifts attr's positional ruleno */
+            "stmt ::= list SEMI.\n"
+            "list ::= attr.\n"
+            "list ::= list COMMA attr.\n"
+            "attr ::= ATTR.\n";
+        ParserSnapshot *sa = NULL, *sb = NULL; char *e = NULL; int nc = 0;
+        int rca = lime_compile_grammar_in_process_ex(ga, strlen(ga), &sa, &e, &nc);
+        CHECK(rca == 0 && sa != NULL, "rule-id: compose grammar A"); free(e); e = NULL;
+        int rcb = lime_compile_grammar_in_process_ex(gb, strlen(gb), &sb, &e, &nc);
+        CHECK(rcb == 0 && sb != NULL, "rule-id: compose grammar B"); free(e); e = NULL;
+        if (sa && sb) {
+            const char *id = "attr ::= ATTR";
+            int ra = lime_snapshot_rule_by_id(sa, id);
+            int rb = lime_snapshot_rule_by_id(sb, id);
+            CHECK(ra >= 0, "rule-id: attr::=ATTR resolvable in A");
+            CHECK(rb >= 0, "rule-id: attr::=ATTR resolvable in B");
+            CHECK(lime_snapshot_rule_id(sa, ra) != NULL &&
+                  strcmp(lime_snapshot_rule_id(sa, ra), id) == 0,
+                  "rule-id: A ruleno -> identity round-trips");
+            CHECK(lime_snapshot_rule_id(sb, rb) != NULL &&
+                  strcmp(lime_snapshot_rule_id(sb, rb), id) == 0,
+                  "rule-id: B ruleno -> identity round-trips");
+            CHECK(lime_snapshot_rule_by_id(sa, "nope ::= NOPE") == -1,
+                  "rule-id: unknown identity -> -1");
+            CHECK(lime_snapshot_rule_id(sa, 99999) == NULL,
+                  "rule-id: out-of-range ruleno -> NULL");
+            ParserSnapshot *clone = clone_snapshot(sa);
+            CHECK(clone != NULL, "rule-id: clone A");
+            if (clone) {
+                CHECK(lime_snapshot_rule_by_id(clone, id) == ra,
+                      "rule-id: clone preserves identity->ruleno (no dropped field)");
+                snapshot_release(clone);
+            }
+            int attr_rule = ra;
+            LimeExtRuleBinding rid_binds[1];
+            rid_binds[0].reduce = rt_ext_attr;
+            rid_binds[0].user_data = NULL;
+            LimeHostReduceRouter rr;
+            rr.base = rt_base_hr;
+            rr.base_user = NULL;
+            rr.base_nrule = attr_rule;
+            rr.ext_rules = rid_binds;
+            rr.n_ext_rules = 1;
+            rr.extra_arg = NULL;
+            ParseContext *ctx = parse_begin(sa);
+            parse_set_host_reduce(ctx, lime_host_reduce_router, &rr);
+            parse_token(ctx, 1 /*ATTR*/, (void *)(intptr_t)5, 0);
+            CHECK(parse_token(ctx, 0, NULL, -1) == 1,
+                  "rule-id: router-by-identity accepts ATTR");
+            parse_end(ctx);
+        }
+        if (sa) snapshot_release(sa);
+        if (sb) snapshot_release(sb);
     }
 
     printf("test_multi_grammar: %s\n", fail ? "FAIL" : "PASS");

@@ -56,7 +56,7 @@ int lime_compile_grammar_in_process(const char *grammar_text,
 
 /**
  * @brief Like lime_compile_grammar_in_process, but also reports the
- *        number of LALR conflicts the compose resolved (Letter 35 Q1).
+ *        number of LALR conflicts the compose resolved.
  *
  * lemon resolves reduce/reduce conflicts (keep the earlier rule) and
  * shift/reduce conflicts (keep the shift) SILENTLY: they do not fail

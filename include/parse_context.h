@@ -60,7 +60,7 @@ struct ParseContext {
     bool borrowed_snapshot;
 
     /**
-     * Letter 30: optional per-session host-reduce override.  When
+     * Optional per-session host-reduce override.  When
      * non-NULL it takes precedence over snapshot->host_reduce, letting
      * a host bind or replace the base-reduce dispatch without mutating
      * the (shared, possibly multi-threaded) snapshot.  NULL by default
@@ -70,7 +70,7 @@ struct ParseContext {
     void *host_reduce_user;
 
     /**
-     * Letter 30: the LHS value the top-level (start-rule) reduce
+     * The LHS value the top-level (start-rule) reduce
      * produced, captured when the parse accepts.  parse_result()
      * returns it.  NULL until accept, or when no host-reduce ran.
      */
@@ -167,7 +167,7 @@ ParseContext *parse_begin_borrowed(ParserSnapshot *snap);
 int parse_token(ParseContext *ctx, int token_code, void *token_value, int location);
 
 /* ------------------------------------------------------------------ */
-/*  Host-reduce binding (Letter 30)                                    */
+/*  Host-reduce binding (runtime base-grammar reduce dispatch)         */
 /* ------------------------------------------------------------------ */
 
 /*

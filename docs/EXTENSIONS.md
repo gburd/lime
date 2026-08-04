@@ -167,17 +167,34 @@ The callback must write the LHS value into `*lhs_out` before returning.
 The extension owns any memory referenced from that value; Lime treats
 slot payloads as opaque.  See `docs/API.md` for the full contract.
 
-**Current status:** the `reduce` callback shape is type-checked and
-accepted at registration time, but the runtime engine does not yet
-invoke extension-supplied reduce callbacks at parse time -- the
-runtime engine performs the LR reductions on its stack but has no
-hook for executing extension code per reduction.  The action tables
-themselves include the rule data; only the user-callback dispatch
-is missing.  Writing extension code against `reduce` today still
-compiles and will light up transparently when dispatch lands.  In
-the meantime, use the `subprocess fallback` pattern (see
-`lime_modifications_to_grammar_text()` in `docs/API.md`) to validate
-extension-grammar designs end to end.
+**Current status: extension reduces run at parse time.** A composed
+snapshot dispatches reduces through two paths, unified at runtime by
+`lime_host_reduce_router` (`include/multi_grammar.h`):
+
+- **Base-grammar rules** (ruleno `< base_nrule`) run through the
+  generated, exported `<Name>HostReduce` wrapper (a `LimeHostReduceFn`,
+  wired by `lime -n --host-reduce`).
+- **Extension rules** (ruleno `>= base_nrule`) run through the per-rule
+  `LimeReduceFn` callback bound in the router's `LimeExtRuleBinding`
+  table.
+
+The embedder builds a `LimeHostReduceRouter`, points it at the base
+wrapper and the extension bindings, and installs it with
+`parse_set_host_reduce(ctx, lime_host_reduce_router, &router)`.  The
+router then dispatches each reduce to the correct callback by rule
+number.  This is proven end-to-end in `tests/test_multi_grammar.c`,
+where a real `LimeReduceFn` bound into an extension rule and the base
+rules both fire in one composed parse.
+
+`LimeHostReduceFn` and `LimeReduceFn` are *separate* ABIs with
+different signatures; the router bridges them so you do not hand-write
+the base-vs-extension dispatcher.  See `docs/HOST_REDUCE.md` for the
+host-reduce contract and `docs/REDUCE_DISPATCH.md` for a worked routing
+example.
+
+The subprocess `cc` pipeline is no longer required for extension
+reduces.  It remains available only as a design-validation aid (see
+`lime_modifications_to_grammar_text()` in `docs/API.md`).
 
 ### Modifying Precedence (`MOD_MODIFY_PRECEDENCE`)
 

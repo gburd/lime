@@ -3,10 +3,11 @@
 [![CI](https://codeberg.org/gregburd/lime/actions/workflows/ci.yml/badge.svg)](https://codeberg.org/gregburd/lime/actions)
 [![Pages](https://codeberg.org/gregburd/lime/actions/workflows/pages.yml/badge.svg)](https://gregburd.codeberg.page/lime/)
 
-> **Current LTS: v1.3.x** (cut June 2026, supported through June 2028).
-> Bug-fix and security backports land on the `v1.3.x` branch; all
-> consumers should track this line.  See [`docs/SUPPORT.md`](docs/SUPPORT.md)
-> for the full backport policy.
+> **Support policy:** this is a fast-moving, single-maintainer project;
+> the current release line (v1.9.x) gets the fixes.  Bug-fix and security
+> backports are best-effort on the most recent release branch, not a
+> multi-year LTS guarantee.  See [`docs/SUPPORT.md`](docs/SUPPORT.md) for
+> the backport policy and its limits.
 
 ## Overview
 
@@ -31,19 +32,31 @@ at runtime.  Conflict detection and disambiguation happen live.  The base
 parser runs at full speed when no extensions are loaded — the extension
 machinery has zero overhead until activated.
 
-This design is driven by a single observation: no existing parser
-generator supports runtime grammar modification.  Lime fills that gap.
+This design is driven by a single observation: runtime grammar
+extension has been explored mostly in more permissive engines (Earley,
+GLR, PEG) or via offline composition, not in deterministic in-process
+LALR(1) parsers.  Lime targets that gap.
 
 ## Why Lime over Yacc/Bison?
 
 - **Runtime extensibility** — Load and unload grammar extensions
   dynamically via a C API, with conflict detection and resolution callbacks.
-  No other parser generator offers this.
+  Runtime *load and unload* of extensions against a deterministic LALR(1)
+  table, in-process, with copy-on-write snapshots, is Lime's differentiated
+  niche; other systems reach runtime/modular composition through more
+  permissive algorithms or offline steps.  See
+  [docs/RELATED_WORK.md](docs/RELATED_WORK.md).
+  The base reduce actions and extension reduce callbacks run at parse time,
+  unified by the host-reduce router; see
+  [docs/REDUCE_DISPATCH.md](docs/REDUCE_DISPATCH.md).
 - **Performance** — SIMD-accelerated tokenization delivers a
   measured 1.5-2x speedup on the full tokenizer pipeline (the
   underlying character-classify primitive runs 4-8x on AVX2; the
-  loop overhead and emit path absorb the rest).  See
-  [docs/PERFORMANCE.md](docs/PERFORMANCE.md) and `bench/bench_simd_classify`.
+  loop overhead and emit path absorb the rest).  These figures are
+  from small friendly grammars; see
+  [docs/PERFORMANCE.md](docs/PERFORMANCE.md),
+  [docs/BENCHMARKS_VS_BISON.md](docs/BENCHMARKS_VS_BISON.md), and
+  `bench/bench_simd_classify` for the baselines and their limits.
   Optional LLVM JIT compiles the action-table lookup into native
   code, yielding ~2.3x speedup *on the lookup step itself* against
   the table-driven interpreter on `bench/jit_comparison`; overall
@@ -79,8 +92,8 @@ generator itself.  All commands work on the same `.lime` files.
 | `lime --diff-conflicts` | Symbolic LALR-conflict diff between two grammars (`base.lime ext.lime`).  Use in CI to catch dialect-overlay regressions.  See [docs/DIFF_CONFLICTS.md](docs/DIFF_CONFLICTS.md). |
 | `lime-lsp`           | Language Server Protocol implementation for editors.  Diagnostics from the linter, hover, goto-definition.  In-process diagnostic refresh path runs ~10% / 200 ms faster than the subprocess fallback on large grammars (since v0.10.0).  See [docs/LSP.md](docs/LSP.md) and [editors/lime-lsp-config.md](editors/lime-lsp-config.md). |
 | `--target=rust`      | Emit Rust output (since v0.8.0).  See above. |
-| `--target=c:bison`   | Emit a `bison`-compatible C skin (since v0.9.1).  Drop-in replacement for `bison -d` output, including `%union` and `YYDEBUG` (v0.9.2). |
-| `--target=c:flex`    | Emit a `flex`-compatible scanner skin (since v0.9.3).  Drop-in for `lex.yy.c`. |
+| `--target=c:bison`   | Emit a `bison`-shaped C skin (since v0.9.1).  Minimises call-site churn when porting a `bison` consumer (`yyparse`, `YYSTYPE`, `%union`, `YYDEBUG`); it is a skin, not a drop-in for `bison -d` output.  See [docs/BISON_COMPAT.md](docs/BISON_COMPAT.md) for the supported/emulated/unsupported matrix. |
+| `--target=c:flex`    | Emit a `flex`-shaped C scanner skin (since v0.9.3).  Exposes `yytext` / `yyleng` / `yylineno` / `yy_scan_string` for porting; it is a skin, not a drop-in for `lex.yy.c`.  See [docs/FLEX_COMPAT.md](docs/FLEX_COMPAT.md). |
 | `--target=rust:logos` | Emit a `logos`-compatible Rust scanner (since v0.9.3). |
 
 Grammar-composition directives:
@@ -414,8 +427,14 @@ per trial, 5 trials, median:
 | lime         | 260 | 2.60 µs | **1.81×** |
 
 This is the honest end-to-end comparison: both sides include
-lexing.  See [docs/BENCHMARKS_VS_BISON.md](docs/BENCHMARKS_VS_BISON.md)
-for methodology and the parser-only arithmetic benchmark.
+lexing.  **Caveat:** the 1.81× headline is a *small, friendly*
+JSON grammar, and the `flex`/`bison` baseline build flags are not
+disclosed here (no `flex -CF`/`-Cf` table-compression variant is
+stated), so the figure is not a claim about large real-world
+grammars such as PostgreSQL's.  See
+[docs/BENCHMARKS_VS_BISON.md](docs/BENCHMARKS_VS_BISON.md)
+for methodology, baseline flags, and the parser-only arithmetic
+benchmark.
 
 ### Parser-only throughput
 
@@ -466,7 +485,9 @@ unrolled-only path either timed out or took 186 s on the same input.
 | SIMD (best available) | 1784 ns |
 
 End-to-end tokenizer throughput holds at 99-101 MB/s across
-4 KB-256 KB inputs.
+4 KB-256 KB inputs (the scalar-path baseline for the same inputs is
+not stated here; see
+[docs/BENCHMARKS_VS_BISON.md](docs/BENCHMARKS_VS_BISON.md)).
 
 ### Extension framework overhead
 

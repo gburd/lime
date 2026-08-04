@@ -123,6 +123,37 @@ uint16_t lime_snapshot_first_token(const ParserSnapshot *snap);
 int lime_snapshot_token_code(const ParserSnapshot *snap, const char *name);
 
 /**
+ * @brief Map a stable source-rule identity to its ruleno in a snapshot.
+ *
+ * The identity is the rule's canonical text, "lhs ::= rhs1 rhs2 ...",
+ * which is stable across recompilation, added extensions, and unit-rule
+ * elimination -- unlike the raw ruleno, which those operations renumber.
+ *
+ * An embedder that supplies reduce callbacks (see lime_host_reduce_router
+ * in multi_grammar.h) should resolve each rule's ruleno ONCE by identity
+ * at setup, then dispatch by that ruleno.  This replaces the fragile
+ * positional `composed_ruleno - base_nrule` arithmetic that breaks when
+ * composition renumbers rules across the base/composed/extension spaces.
+ *
+ * @param snap     Snapshot to query (may be NULL -> -1).
+ * @param rule_id  Canonical rule text (may be NULL -> -1).
+ * @return The ruleno for that source rule, or -1 if unknown / no table.
+ */
+int lime_snapshot_rule_by_id(const ParserSnapshot *snap, const char *rule_id);
+
+/**
+ * @brief Inverse of lime_snapshot_rule_by_id: ruleno -> identity string.
+ *
+ * For diagnostics ("which source rule is ruleno N in this composed
+ * snapshot?").  The returned pointer is owned by the snapshot.
+ *
+ * @param snap    Snapshot to query (may be NULL -> NULL).
+ * @param ruleno  Rule number.
+ * @return The canonical identity string, or NULL if out of range / no table.
+ */
+const char *lime_snapshot_rule_id(const ParserSnapshot *snap, int ruleno);
+
+/**
  * @brief Create a base snapshot by parsing a grammar file.
  *
  * Runs the Lime parser generator on @p grammar_file and produces a
@@ -190,7 +221,7 @@ ParseContext *parse_begin(ParserSnapshot *snap);
  *                    %locations or the caller does not track positions.
  *                    Propagated to reduce actions when a host-reduce
  *                    hook is bound (see parse_set_host_reduce /
- *                    LimeHostReduceFn, Letter 30): the value/location
+ *                    LimeHostReduceFn): the value/location
  *                    of each shifted token is handed to the base
  *                    action as a $N slot.  Without a hook the parser
  *                    is recognition-only and the value is inert.

@@ -139,8 +139,8 @@ The generated parser uses five parallel arrays:
 |-------|------|---------|
 | `yy_action` | `uint16_t[]` | Combined shift and reduce actions |
 | `yy_lookahead` | `uint16_t[]` | Expected lookahead for each action entry |
-| `yy_shift_ofst` | `int16_t[]` | Per-state offset into yy_action for shifts |
-| `yy_reduce_ofst` | `int16_t[]` | Per-state offset into yy_action for reduces |
+| `yy_shift_ofst` | `int32_t[]` | Per-state offset into yy_action for shifts |
+| `yy_reduce_ofst` | `int32_t[]` | Per-state offset into yy_action for reduces |
 | `yy_default` | `uint16_t[]` | Default action when no lookahead matches |
 
 Action lookup: for state `S` and lookahead `T`, compute

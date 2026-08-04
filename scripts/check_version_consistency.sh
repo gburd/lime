@@ -8,6 +8,7 @@
 #   2. meson.build               project(... version : 'X.Y.Z' ...)
 #   3. src/version.c             LIME_VERSION_STRING "X.Y.Z" fallback
 #      (also mirrors the generator's macro)
+#   4. docs/Doxyfile             PROJECT_NUMBER = "X.Y.Z"
 #
 # CI runs this check to catch accidental drift when someone bumps
 # one location and forgets the others.  Exits non-zero and prints a
@@ -41,38 +42,52 @@ extract_version_c() {
         | sed -E 's/.*"([^"]+)".*/\1/'
 }
 
+extract_doxyfile() {
+    # PROJECT_NUMBER         = "0.1.0"
+    grep -E '^\s*PROJECT_NUMBER\s*=\s*"[^"]+"' docs/Doxyfile \
+        | head -1 \
+        | sed -E 's/.*"([^"]+)".*/\1/'
+}
+
 lime_c_version=$(extract_lime_c)
 meson_version=$(extract_meson_build)
 version_c_version=$(extract_version_c)
+doxyfile_version=$(extract_doxyfile)
 
 if [[ -z "$lime_c_version"    ]]; then echo "ERROR: could not extract LIME_VERSION_STRING from lime.c"    >&2; exit 2; fi
 if [[ -z "$meson_version"     ]]; then echo "ERROR: could not extract project version from meson.build"   >&2; exit 2; fi
 if [[ -z "$version_c_version" ]]; then echo "ERROR: could not extract LIME_VERSION_STRING from src/version.c" >&2; exit 2; fi
+if [[ -z "$doxyfile_version"  ]]; then echo "ERROR: could not extract PROJECT_NUMBER from docs/Doxyfile"    >&2; exit 2; fi
 
 echo "lime.c            : $lime_c_version"
 echo "meson.build       : $meson_version"
 echo "src/version.c     : $version_c_version"
+echo "docs/Doxyfile     : $doxyfile_version"
 
-if [[ "$lime_c_version" == "$meson_version" && "$meson_version" == "$version_c_version" ]]; then
+if [[ "$lime_c_version" == "$meson_version" \
+   && "$meson_version" == "$version_c_version" \
+   && "$version_c_version" == "$doxyfile_version" ]]; then
     echo
-    echo "OK: all three sources agree on version $lime_c_version"
+    echo "OK: all four sources agree on version $lime_c_version"
     exit 0
 fi
 
 cat <<EOF >&2
 
-ERROR: version strings disagree across the three sources of truth.
+ERROR: version strings disagree across the four sources of truth.
 
     lime.c            : $lime_c_version
     meson.build       : $meson_version
     src/version.c     : $version_c_version
+    docs/Doxyfile     : $doxyfile_version
 
-Bump all three together when cutting a release.  The canonical
+Bump all four together when cutting a release.  The canonical
 locations are:
 
     lime.c           line containing  #define LIME_VERSION_STRING "X.Y.Z"
     meson.build      line containing  version : 'X.Y.Z',
     src/version.c    line containing  #define LIME_VERSION_STRING "X.Y.Z"
+    docs/Doxyfile    line containing  PROJECT_NUMBER = "X.Y.Z"
 
 EOF
 exit 1

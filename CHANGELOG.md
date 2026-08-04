@@ -19,6 +19,54 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.10.0] -- 2026-06-11
+
+### Added
+
+- **`lime_snapshot_rule_by_id()` / `lime_snapshot_rule_id()` -- stable
+  source-rule <-> ruleno mapping.**  A rule's identity is its canonical
+  text (`"lhs ::= rhs1 rhs2 ..."`), which is stable across
+  recompilation, added extensions, and the two-pass action-first rule
+  numbering -- unlike the raw ruleno, which those operations renumber.
+  An embedder that dispatches reduce callbacks (see
+  `lime_host_reduce_router`) resolves each rule's ruleno ONCE by
+  identity at setup instead of computing the fragile positional
+  `composed_ruleno - base_nrule`, which breaks whenever composition
+  renumbers rules across the base/composed/extension spaces.  This is
+  the correctness fix the PostgreSQL Lime-port team needs before a
+  pgsql-hackers submission: it lets them drop the
+  `quel_attr_list_normalize` workaround and unpins them from v1.8.2.
+  The `v1.8.3` unit-production fix addressed a *symptom*; this exposes
+  and fixes the underlying composition-ABI gap.
+  Backed by a new `rule_ids[]` table on `ParserSnapshot` (mirrors the
+  v1.7.0 `token_names[]` wiring: emitted by `lime -n --host-reduce`,
+  always populated on the in-process compose path, deep-copied by
+  `clone_snapshot` with the v1.6.2 field-drift guard).  Additive,
+  trailing, COLD -- no hot-path cost, no ABI break.  Plain `lime -n`
+  output for non-host-reduce grammars is byte-identical.
+
+### Documentation & hygiene (independent design-review reconciliation)
+
+- Reconciled docs to shipped reality: `docs/EXTENSIONS.md` no longer
+  claims extension reduces "use the subprocess fallback" (they run via
+  `lime_host_reduce_router` since v1.9.0); `src/snapshot.h` corrected
+  (`lemon.c`->`lime.c`; the "share one ABI" comment now says the two
+  reduce ABIs are bridged by the router; `create_base_snapshot`
+  narrowed to the truth).  New `docs/REDUCE_DISPATCH.md`.
+- README "drop-in replacement" claims retitled to "bison-/flex-shaped
+  skin" with new `docs/BISON_COMPAT.md` and `docs/FLEX_COMPAT.md`
+  conformance matrices; "No other parser generator offers this"
+  softened with new `docs/RELATED_WORK.md`; benchmark and LTS claims
+  made honest.  `docs/ARCHITECTURE.md` table-offset types corrected to
+  match the header.  Internal "Letter N" jargon removed from public
+  header comments.
+- Added `LICENSE` (0BSD, public-domain-equivalent), `NOTICE`
+  (PostgreSQL-derived grammars attributed), `CONTRIBUTING.md`,
+  `SECURITY.md`.  `docs/Doxyfile` version fixed and added to the
+  version-consistency check.  New `contrib-grammars` CI job
+  smoke-tests the six contrib SQL dialects through `lime` so they
+  cannot silently rot.
+
 ## [1.9.0] -- 2026-06-10
 
 ### Added

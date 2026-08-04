@@ -225,6 +225,22 @@ ParserSnapshot *clone_snapshot(const ParserSnapshot *base) {
         }
     }
 
+    /* Rule-identity table -- deep copy so a cloned/composed snapshot can
+    ** still map a stable source-rule identity -> ruleno
+    ** (lime_snapshot_rule_by_id).  Dropping this is the v1.6.2 class of
+    ** bug (a composed snapshot that silently loses a field). */
+    if (base->rule_ids != NULL && base->rule_ids_count > 0) {
+        snap->rule_ids = calloc(base->rule_ids_count, sizeof(char *));
+        if (snap->rule_ids == NULL) goto fail;
+        snap->rule_ids_count = base->rule_ids_count;
+        for (uint32_t i = 0; i < base->rule_ids_count; i++) {
+            if (base->rule_ids[i] != NULL) {
+                snap->rule_ids[i] = dup_string(base->rule_ids[i]);
+                if (snap->rule_ids[i] == NULL) goto fail;
+            }
+        }
+    }
+
     /* Verify critical allocations succeeded */
     if (base->action_count > 0 && snap->yy_action == NULL) goto fail;
     if (base->lookahead_count > 0 && snap->yy_lookahead == NULL) goto fail;
@@ -259,6 +275,10 @@ fail:
     if (snap->token_names != NULL) {
         for (uint32_t i = 0; i < snap->token_names_count; i++) free(snap->token_names[i]);
         free(snap->token_names);
+    }
+    if (snap->rule_ids != NULL) {
+        for (uint32_t i = 0; i < snap->rule_ids_count; i++) free(snap->rule_ids[i]);
+        free(snap->rule_ids);
     }
     free(snap);
     return NULL;
