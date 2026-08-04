@@ -19,6 +19,41 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.9.0] -- 2026-06-10
+
+### Added
+
+- **`lime_host_reduce_router` -- built-in base/extension reduce
+  dispatch.**  A composed snapshot routes base-grammar rules through
+  the generated `<Name>HostReduce` (a `LimeHostReduceFn`) and extension
+  rules through per-rule `LimeReduceFn` callbacks; the two have
+  different ABIs, so every embedder (PostgreSQL included) hand-writes
+  the `ruleno < base_nrule ? base : ext[ruleno - base_nrule]` split.
+  `lime_host_reduce_router` (multi_grammar.h) is that dispatcher, once:
+  bind it with `parse_set_host_reduce(ctx, lime_host_reduce_router,
+  &router)` where the router carries the base fn, `base_nrule`, and an
+  array of `LimeExtRuleBinding`.  It bridges the ABIs (the void-return
+  `LimeReduceFn` maps to success; a NULL binding passes `$1` through to
+  `$$`) and threads the extension `extra_arg` (e.g. a scanner).
+  Removes the boilerplate without changing any existing path.
+
+### Changed
+
+- Documented the legacy `STRAT_FORK_RESOLVE` disambiguation vtable
+  (disambiguation.h, strategy_fork_resolve.c) as metadata + priority /
+  heuristic tiebreak only -- it resolves on `ConflictPoint`/`LimeContext`
+  metadata, which carries no snapshot, so it cannot run a real
+  per-candidate parse.  True full-statement fork-resolve is
+  `lime_mg_resolve` (multi_grammar.h, since v1.8.0); the docs and the
+  `feed_token_to_fork` comment now point there.  No behaviour change.
+
+### Tests
+
+- `tests/test_multi_grammar.c`: a composed grammar whose base rules go
+  through a `LimeHostReduceFn` (+1000) and whose "extension" rule goes
+  through a `LimeReduceFn` (+7), driven via `lime_host_reduce_router`;
+  asserts both dispatch by ruleno (single ATTR -> 1012).
+
 ## [1.8.3] -- 2026-06-10
 
 ### Fixed
