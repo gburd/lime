@@ -204,20 +204,20 @@ static bool feed_token_to_fork(ParseFork *fork, int token_code) {
     fork->tokens_consumed++;
 
     /*
-    ** TODO(ROADMAP item 1): When the in-process rebuild can drive
-    ** a parser-fork one step at a time against a mutated snapshot,
-    ** this will:
+    ** NOTE (Letter 37 follow-up): this vtable strategy operates on
+    ** ConflictPoint/LimeContext metadata (ext_id, token, state,
+    ** priority), which does NOT carry a ParserSnapshot -- so it cannot
+    ** run a real read-only parse of each candidate here.  It therefore
+    ** treats a fed token as accepted and resolves by the tiebreak
+    ** (reached-statement-end heuristic, then priority) below.
     **
-    **   void *parser = parse_fork_get_parser(fork);
-    **   if (parser != NULL) {
-    **       ParserSnapshot *snap = parse_fork_get_snapshot(fork);
-    **       // Use snap's action tables to drive one step of the parser.
-    **       // If the action table yields an error, mark fork as failed:
-    **       //   parse_fork_fail(fork);
-    **       //   return false;
-    **   }
-    **
-    ** For now, return true (token accepted).
+    ** The REAL full-statement fork-resolve -- simulate each candidate
+    ** snapshot over the actual upcoming token stream and prefer the one
+    ** that reaches accept -- is lime_mg_resolve() in multi_grammar.c,
+    ** built on the read-only lime_simulate_parse() engine primitive.
+    ** New code that needs true full-statement disambiguation should
+    ** call lime_mg_resolve() directly; this vtable path is retained for
+    ** the priority/heuristic contract its existing callers depend on.
     */
     (void)token_code;
     return true;

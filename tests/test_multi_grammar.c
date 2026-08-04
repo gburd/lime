@@ -123,6 +123,34 @@ static intptr_t ul_run(ParserSnapshot *snap, const int *toks, int n) {
     return res;
 }
 
+/* Host-reduce router test callbacks (RT grammar):
+**   base rules (LimeHostReduceFn):
+**     0 prog ::= list        -> $$ = $1              (passthrough)
+**     1 list ::= attr        -> $$ = $1 + 1000       (unit, +1000)
+**     2 list ::= list COMMA attr -> $$ = $1 + $3
+**   ext rule (LimeReduceFn):
+**     3 attr ::= ATTR        -> $$ = $1 + 7          (marks it ran) */
+static int rt_base_hr(void *u, int ruleno, const void *vals, const int *locs, int n,
+                      void *out, int *lo) {
+    (void)u; (void)locs; (void)lo; (void)n;
+    void *const *v = (void *const *)vals;
+    intptr_t r = 0;
+    switch (ruleno) {
+        case 0: r = (intptr_t)v[0]; break;
+        case 1: r = (intptr_t)v[0] + 1000; break;
+        case 2: r = (intptr_t)v[0] + (intptr_t)v[2]; break;
+        default: r = 0; break;
+    }
+    *(void **)out = (void *)r;
+    return 0;
+}
+static void rt_ext_attr(void *user_data, void *extra_arg, int nrhs, const void *rhs_values,
+                        const int *rhs_locs, void *lhs_out) {
+    (void)user_data; (void)extra_arg; (void)rhs_locs; (void)nrhs;
+    void *const *v = (void *const *)rhs_values;
+    *(void **)lhs_out = (void *)((intptr_t)v[0] + 7);
+}
+
 /* Q3 (Letter 35): per-backend snapshot safety.  Each thread parses a
 ** SHARED composed snapshot concurrently -- the "one snapshot per
 ** backend, swapped by pointer" model.  A ParserSnapshot is read-only
@@ -355,6 +383,52 @@ int main(void) {
             int two[] = { 1, 2 /*COMMA*/, 1 };
             CHECK(ul_run(s, two, 3) == 1010,
                   "L37: cons reads the List* the unit rule built (1005+5)");
+            snapshot_release(s);
+        }
+    }
+
+    /* ---- host-reduce router: base rules -> base HostReduce, ext
+    ** rules -> LimeReduceFn, dispatched by ruleno without hand-written
+    ** glue.  Grammar: prog(0) list(1) list::=list COMMA attr(2)
+    ** attr::=ATTR(3); treat rule 3 (attr) as the "extension" rule via
+    ** a LimeReduceFn, the rest via a base HostReduce. ------------------ */
+    {
+        const char *g =
+            "%name RT\n%token_type {void*}\n"
+            "%token ATTR COMMA.\n%start_symbol prog\n"
+            "prog ::= list.\n"                /* rule 0 (base) */
+            "list ::= attr.\n"                /* rule 1 (base, unit) */
+            "list ::= list COMMA attr.\n"     /* rule 2 (base) */
+            "attr ::= ATTR.\n";               /* rule 3 ("extension") */
+        ParserSnapshot *s = NULL; char *e = NULL; int nc = 0;
+        int rc = lime_compile_grammar_in_process_ex(g, strlen(g), &s, &e, &nc);
+        CHECK(rc == 0 && s != NULL, "router: compose grammar");
+        free(e);
+        if (s) {
+            /* base HostReduce: attr passes value through; list/prog sum. */
+            /* We route rules [0,3) to base, rule 3 to the ext binding. */
+            int base_nrule = 3;
+            /* ext rule 3 (attr ::= ATTR): mark by +7 so we can see it ran. */
+            LimeExtRuleBinding binds[1];
+            binds[0].reduce = rt_ext_attr; /* defined below */
+            binds[0].user_data = NULL;
+            LimeHostReduceRouter router;
+            router.base = rt_base_hr;      /* defined below */
+            router.base_user = NULL;
+            router.base_nrule = base_nrule;
+            router.ext_rules = binds;
+            router.n_ext_rules = 1;
+            router.extra_arg = NULL;
+
+            ParseContext *ctx = parse_begin(s);
+            parse_set_host_reduce(ctx, lime_host_reduce_router, &router);
+            /* single ATTR=5: attr(ext,+7)->12, list(base,+1000)->1012,
+            ** prog(base,passthrough)->1012 */
+            parse_token(ctx, 1 /*ATTR*/, (void *)(intptr_t)5, 0);
+            CHECK(parse_token(ctx, 0, NULL, -1) == 1, "router: accepts single ATTR");
+            CHECK((intptr_t)parse_result(ctx) == 1012,
+                  "router: ext rule (+7) AND base rules (+1000) both dispatched");
+            parse_end(ctx);
             snapshot_release(s);
         }
     }

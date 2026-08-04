@@ -71,7 +71,11 @@ struct ParseContext;
  */
 typedef enum LimeStrategy {
     STRAT_PRIORITY = 0,     /**< Resolve by extension priority metadata */
-    STRAT_FORK_RESOLVE = 1, /**< Fork parse, try each, pick survivor */
+    STRAT_FORK_RESOLVE = 1, /**< Metadata fork + priority/heuristic tiebreak.
+                             ** Does NOT run a real per-candidate parse
+                             ** (LimeContext carries no snapshot); for
+                             ** true full-statement fork-resolve use
+                             ** lime_mg_resolve() in multi_grammar.h. */
     STRAT_BAYESIAN = 2,     /**< Evidence accumulation (posterior probs) */
     STRAT_LLM = 3,          /**< Query LLM oracle for resolution advice */
     STRAT_CUSTOM = 4,       /**< User-provided vtable */

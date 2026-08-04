@@ -22,6 +22,46 @@
 #include <string.h>
 
 /* ================================================================== */
+/*  Host-reduce router                                                 */
+/* ================================================================== */
+
+int lime_host_reduce_router(void *user, int ruleno, const void *rhs_values,
+                            const int *rhs_locs, int nrhs, void *lhs_out,
+                            int *lhs_loc_out) {
+    const LimeHostReduceRouter *r = (const LimeHostReduceRouter *)user;
+    if (r == NULL || ruleno < 0) return -1;
+
+    /* Base grammar rule -> the generated <Name>HostReduce (same ABI). */
+    if (ruleno < r->base_nrule) {
+        if (r->base == NULL) return -1;
+        return r->base(r->base_user, ruleno, rhs_values, rhs_locs, nrhs, lhs_out,
+                       lhs_loc_out);
+    }
+
+    /* Extension rule -> a LimeReduceFn binding.  Bridge the ABIs: the
+    ** LimeReduceFn returns void and takes (user_data, extra_arg, nrhs,
+    ** rhs_values, rhs_locs, lhs_out) -- no lhs_loc_out.  A NULL binding
+    ** is a passthrough (value of $1 becomes $$). */
+    int idx = ruleno - r->base_nrule;
+    if (r->ext_rules == NULL || idx >= r->n_ext_rules) return -1;
+    if (lhs_loc_out != NULL) *lhs_loc_out = 0;
+
+    const LimeExtRuleBinding *b = &r->ext_rules[idx];
+    if (b->reduce == NULL) {
+        /* Passthrough: copy $1 (leftmost RHS) to $$, matching the
+        ** value-by-value ABI.  For an epsilon rule there is no $1, so
+        ** leave *lhs_out as the caller initialised it. */
+        if (nrhs > 0 && rhs_values != NULL && lhs_out != NULL) {
+            void *const *vals = (void *const *)rhs_values;
+            *(void **)lhs_out = vals[0];
+        }
+        return 0;
+    }
+    b->reduce(b->user_data, r->extra_arg, nrhs, rhs_values, rhs_locs, lhs_out);
+    return 0;
+}
+
+/* ================================================================== */
 /*  Tier 1: full-statement fork-resolve                                */
 /* ================================================================== */
 

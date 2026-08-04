@@ -105,6 +105,53 @@ int lime_mg_resolve(const LimeForkCandidate *cands, uint32_t ncands,
                     uint16_t bayes_token, LimeForkRank *out_ranks);
 
 /* ================================================================== */
+/*  Host-reduce router (removes the base-vs-extension dispatch that     */
+/*  every embedder otherwise hand-writes)                              */
+/* ================================================================== */
+
+/* Reduce a composed snapshot: the base grammar's rules run through the
+** generated <Name>HostReduce; the extension rules (ruleno >= base_nrule)
+** run through per-rule LimeReduceFn callbacks.  A LimeHostReduceType
+** and a LimeReduceFn have different signatures, so an embedder writes a
+** dispatcher by hand.  This is that dispatcher, once, in Lime. */
+
+/* One extension rule's callback binding (parallel to the composed
+** rulenos base_nrule .. base_nrule+n_ext_rules-1, index i == the rule
+** at ruleno base_nrule + i). */
+typedef struct LimeExtRuleBinding {
+    /* Extension reduce (LimeReduceFn, from extension.h): void return,
+    ** (user_data, extra_arg, nrhs, rhs_values, rhs_locs, lhs_out).
+    ** NULL for a rule with no action (value passes through). */
+    void (*reduce)(void *user_data, void *extra_arg, int nrhs,
+                   const void *rhs_values, const int *rhs_locs, void *lhs_out);
+    void *user_data; /* passed as the extension's user_data */
+} LimeExtRuleBinding;
+
+/* Router config; the address of one of these is the `user` you pass to
+** parse_set_host_reduce / snapshot host_reduce_user. */
+typedef struct LimeHostReduceRouter {
+    /* Base grammar's generated host-reduce (a LimeHostReduceFn). */
+    LimeHostReduceFn base;
+    void *base_user;
+    int base_nrule;          /* rulenos [0, base_nrule) route to base */
+    /* Extension rule bindings, indexed by (ruleno - base_nrule). */
+    const LimeExtRuleBinding *ext_rules;
+    int n_ext_rules;
+    void *extra_arg;         /* passed as LimeReduceFn's extra_arg (e.g. scanner) */
+} LimeHostReduceRouter;
+
+/* The router itself, as a LimeHostReduceFn.  Bind it with:
+**   parse_set_host_reduce(ctx, lime_host_reduce_router, &my_router);
+** It dispatches ruleno < base_nrule to router->base (the LimeHostReduceFn
+** ABI) and ruleno >= base_nrule to the matching LimeReduceFn binding
+** (bridging the two ABIs: the LimeReduceFn's void return maps to router
+** success 0; a NULL binding passes $1 through to $$ unchanged).
+** Returns non-zero only on an out-of-range ruleno or NULL router. */
+int lime_host_reduce_router(void *user, int ruleno,
+                            const void *rhs_values, const int *rhs_locs,
+                            int nrhs, void *lhs_out, int *lhs_loc_out);
+
+/* ================================================================== */
 /*  Tier 2: Bayesian tie-break with persistence                        */
 /* ================================================================== */
 
