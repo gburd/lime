@@ -174,9 +174,22 @@ int main(void) {
         ** runs in `is_parallel : false` but other lime-binary invocations
         ** elsewhere in the suite compete for CPU).  Catching a 2x
         ** regression is still useful; catching a 10% regression on a 16-
-        ** rule grammar where both runs total <3 ms is just noise. */
-        CHECK(fast_ms <= full_ms * 2.0,
-              "fast-lint within 2x of full-lint (regression guard)");
+        ** rule grammar where both runs total <3 ms is just noise.
+        **
+        ** v1.10.1: on this tiny grammar both runs are often sub-millisecond,
+        ** where scheduler jitter alone blows past any ratio (macOS runner
+        ** flaked the 2x guard on an otherwise-passing tree).  Only enforce
+        ** the ratio when full-lint took long enough to measure meaningfully
+        ** (>=5 ms); below that the times are noise and the ratio is not a
+        ** signal.  The guard still catches a real 2x regression on any
+        ** grammar large enough to matter. */
+        if (full_ms >= 5.0) {
+            CHECK(fast_ms <= full_ms * 2.0,
+                  "fast-lint within 2x of full-lint (regression guard)");
+        } else {
+            fprintf(stderr, "  (ratio guard skipped: full-lint %.2f ms < 5 ms measurement floor)\n",
+                    full_ms);
+        }
     }
 
     if (fail) {

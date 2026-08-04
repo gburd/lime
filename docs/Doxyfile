@@ -3,7 +3,7 @@
 
 # -- Project settings --
 PROJECT_NAME           = "Lime Parser Generator"
-PROJECT_NUMBER         = "1.9.0"
+PROJECT_NUMBER         = "1.10.1"
 PROJECT_BRIEF          = "Runtime-extensible LALR(1) parser with SIMD tokenization and LLVM JIT"
 PROJECT_LOGO           =
 OUTPUT_DIRECTORY       = api
