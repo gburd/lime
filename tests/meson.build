@@ -2839,6 +2839,9 @@ if host_machine.system() != 'windows'
       workdir : meson.project_source_root(),
       depends : [lime_exe],
       timeout : 60,
+      # Spawns gdb (ptrace); flakes under parallel-test CPU contention
+      # (seen red on CI while passing in isolation).  Run serially.
+      is_parallel : false,
     )
   endif
   # v1.2.0: LLDB equivalent of the gdb_pretty_printers smoke test.
@@ -2853,6 +2856,9 @@ if host_machine.system() != 'windows'
       workdir : meson.project_source_root(),
       depends : [lime_exe],
       timeout : 60,
+      # Spawns lldb (ptrace); flakes under parallel-test CPU contention
+      # (seen red on CI while passing in isolation).  Run serially.
+      is_parallel : false,
     )
   endif
 endif
