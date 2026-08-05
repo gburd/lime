@@ -1,10 +1,17 @@
 # Lime Parser Generator
 
-[![CI](https://codeberg.org/gregburd/lime/actions/workflows/ci.yml/badge.svg)](https://codeberg.org/gregburd/lime/actions)
-[![Pages](https://codeberg.org/gregburd/lime/actions/workflows/pages.yml/badge.svg)](https://gregburd.codeberg.page/lime/)
+[![CI](https://github.com/gburd/lime/actions/workflows/ci.yml/badge.svg)](https://github.com/gburd/lime/actions)
+[![Release](https://img.shields.io/github/v/release/gburd/lime)](https://github.com/gburd/lime/releases)
+
+> **Canonical source:** <https://github.com/gburd/lime> — clone from here
+> (`git clone https://github.com/gburd/lime`).  A mirror is kept at
+> <https://codeberg.org/gregburd/lime>, but GitHub is authoritative and is
+> where CI runs and releases are cut.  Automated tooling should use the
+> GitHub URL: Codeberg serves anti-scraper decoy content to automated
+> clients on some paths, so a bot fetching it may receive fabricated data.
 
 > **Support policy:** this is a fast-moving, single-maintainer project;
-> the current release line (v1.9.x) gets the fixes.  Bug-fix and security
+> the current release line (v1.10.x) gets the fixes.  Bug-fix and security
 > backports are best-effort on the most recent release branch, not a
 > multi-year LTS guarantee.  See [`docs/SUPPORT.md`](docs/SUPPORT.md) for
 > the backport policy and its limits.
