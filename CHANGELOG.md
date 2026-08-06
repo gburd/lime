@@ -19,6 +19,23 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.10.4] -- 2026-06-11
+
+### Fixed
+
+- **`random_composition` wall-clock perf gates made informational** (CI
+  reliability). The test had two timing thresholds -- a 1-second ceiling
+  on a 10-module composition and a merkle rel<200%/abs<10ms gate -- that
+  false-positive on contended/virtualised cloud CI runners (it tripped
+  on Windows-11-ARM on an otherwise-passing tree; the merkle gate's own
+  comment already documented 154% overhead on windows-2022 as
+  non-regression noise). Same shared-runner timing-flake class as the
+  v1.10.2 lint_fast fix. The latencies are now printed for a human
+  watching a real regression but do not fail the build; the test's
+  composition correctness (compose succeeds, stable merkle root, no
+  leak) is unchanged and still asserted. Not a code change to the
+  runtime -- test-only.
+
 ## [1.10.3] -- 2026-06-11
 
 ### Fixed
