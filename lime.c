@@ -106,7 +106,7 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
 ** mirrored by lime_parser_version() in src/version.c.
 */
 #ifndef LIME_VERSION_STRING
-#define LIME_VERSION_STRING "1.10.2"
+#define LIME_VERSION_STRING "1.10.3"
 #endif
 
 
@@ -12852,6 +12852,14 @@ void ReportTable(
     lemon_strcpy(hostReduceArgAssign, "  (void)user;\n");
   }
   fprintf(out,
+      "#include <stddef.h>  /* offsetof, for the host-reduce layout assert */\n"
+      "/* host-reduce memset-shrink invariant (letter-39 W1): the wrapper\n"
+      "** below zeroes only the header bytes before yystk0, relying on\n"
+      "** yystk0 being the LAST member of struct yyParser.  Lock it here so\n"
+      "** a struct reorder can never silently break the memset span. */\n"
+      "_Static_assert(offsetof(yyParser, yystk0)\n"
+      "               + sizeof(((yyParser *)0)->yystk0) == sizeof(yyParser),\n"
+      "               \"yystk0 must be last member for host-reduce memset-shrink\");\n"
       "/* Letter 30: exported adapter from the runtime push parser's\n"
       "** generic value stack to this grammar's static per-rule reduce\n"
       "** dispatch.  ruleno selects yy_rule_reduce_fn[ruleno]; rhs_values\n"
@@ -12876,7 +12884,9 @@ void ReportTable(
       "  if (nrhs < 0 || nrhs > YYNRHS_MAX) return -1;\n"
       "  /* yystk[0..nrhs-1] hold $1..$N; yystk[nrhs] is the LHS write\n"
       "  ** slot for an empty rule.  Zero the whole scratch first. */\n"
-      "  memset(yystk, 0, sizeof(yystk));\n"
+      "  /* host-reduce hot path: zero only the slots in play (yystk[0..nrhs]);\n"
+      "  ** the rest of the scratch is never read. */\n"
+      "  memset(yystk, 0, sizeof(yystk[0]) * (size_t)(nrhs + 1));\n"
       "  for (i = 0; i < nrhs; i++) {\n"
       "    void *v = vals ? vals[i] : (void *)0;\n"
       "    memcpy(&yystk[i].minor, &v, sizeof(void *) <= sizeof(yystk[i].minor)\n"
@@ -12889,7 +12899,12 @@ void ReportTable(
       "  ** action that fetches yypParser->ARG can read it.  `user`\n"
       "  ** (from parse_set_host_reduce / host_reduce_user) is stored\n"
       "  ** into the extra-argument slot when the grammar declares one. */\n"
-      "  memset(&yyp, 0, sizeof yyp);\n"
+      "  /* host-reduce hot path: zero only the header fields the reduce\n"
+      "  ** actions read, NOT the embedded yystk0[YYSTACKDEPTH] stack (no\n"
+      "  ** action touches it; only the driver does).  yystk0 is the last\n"
+      "  ** member of struct yyParser, so the byte span before it is exactly\n"
+      "  ** the header.  Drops the ~1.6 KB per-reduce memset. */\n"
+      "  memset(&yyp, 0, (size_t)((char *)&yyp.yystk0 - (char *)&yyp));\n"
       "%s"
       "  yy_ctx.yypParser = &yyp;\n"
       "  yy_ctx.yymsp = yymsp;\n"
@@ -12911,7 +12926,7 @@ void ReportTable(
       "  return 0;\n"
       "}\n",
       name, name, hostReduceArgAssign);
-    lineno += 40;
+    lineno += 55;
   }
 
   tplt_xfer(lemp->name,in,out,&lineno);

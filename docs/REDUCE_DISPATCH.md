@@ -64,6 +64,9 @@ the base host-reduce fired in one parse. This is the exact assertion in
 
 ## See also
 
+- `docs/PERFORMANCE_COMPOSED.md` — why a composed snapshot is slower than
+  the AOT parser, where the time goes, and why no existing knob (including
+  the LLVM JIT) closes the gap on x86_64.
 - `docs/HOST_REDUCE.md` — the base host-reduce contract, value
   representation, and unit-rule handling.
 - `docs/EXTENSIONS.md` — the extension `LimeReduceFn` contract.

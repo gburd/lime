@@ -19,6 +19,43 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.10.3] -- 2026-06-11
+
+### Fixed
+
+- **Host-reduce hot path: stop zeroing the whole parser stack on every
+  reduce.** The generated `<Name>HostReduce` wrapper did
+  `memset(&yyp, 0, sizeof yyp)` per reduce, but `yyParser` embeds
+  `yyStackEntry yystk0[YYSTACKDEPTH]` (~1.6 KB for an SQL-class grammar)
+  as its last member -- so every reduce zeroed the entire initial parse
+  stack that reduce actions never read (only the driver uses it). The
+  PostgreSQL Lime-port profiled this single `memset` at ~53% of push-path
+  parse time. The wrapper now zeros only the header bytes before
+  `yystk0` (`memset(&yyp, 0, (char *)&yyp.yystk0 - (char *)&yyp)`), and
+  the per-reduce `yystk` scratch zero is narrowed from the whole
+  `[YYNRHS_MAX+2]` array to `[0..nrhs]`. A `_Static_assert` locks the
+  invariant that `yystk0` remains the last member of `yyParser` so a
+  future reorder can't silently break the header-span trick.
+
+  Measured ~28% off the host-reduce hot path locally (~17.4 -> ~12.4
+  ns/reduce); the PG port measured ~30-40% off total push-path parse
+  time. Pure win, no behavior change: only the emitted host-reduce
+  wrapper changes, so plain `lime -n` output for non-host-reduce
+  grammars is byte-identical (bench binaries unchanged), and
+  `test_host_reduce` / `test_multi_grammar` pass byte-identically under
+  stock + ASan/UBSan/TSan.
+
+### Documentation
+
+- New `docs/PERFORMANCE_COMPOSED.md` (answering PG-port ASK 3): there is
+  no existing knob that makes a composed snapshot parse faster; the LLVM
+  JIT accelerates only the shift-action lookup (not reduce dispatch /
+  the host-reduce callback boundary / per-token value-stack boxing,
+  where the residual composed-vs-AOT cost actually lives) and loses to
+  the C compiler's static switch on x86_64. The real fix -- a non-LLVM
+  threaded-code interpreter for composed snapshots -- is planned. Linked
+  from `docs/REDUCE_DISPATCH.md`.
+
 ## [1.10.2] -- 2026-06-11
 
 ### Fixed
