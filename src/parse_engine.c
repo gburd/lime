@@ -48,6 +48,16 @@ typedef struct {
     int loc;
 } ParseStackEntry;
 
+/* Letter 39 W3: the value slot is a bare pointer-width `void *`, so
+** parse_token stores/returns a terminal or nonterminal payload with a
+** plain assignment -- no per-token memcpy boxing.  Lock the pointer-
+** width invariant the host-reduce ABI (LimeHostReduceFn) relies on:
+** each rhs_values[] element IS the payload by value, read as (Type)v,
+** never *(Type*)v.  A build where void* is not the natural payload
+** width would break that contract, so fail the compile loudly here. */
+_Static_assert(sizeof(((ParseStackEntry *)0)->value) == sizeof(void *),
+               "value slot must be pointer-width for zero-copy boxing");
+
 typedef struct {
     ParseStackEntry *base;
     ParseStackEntry *top; /* Points one past the deepest entry */
@@ -191,9 +201,39 @@ static inline uint16_t find_reduce_action(const ParserSnapshot * LIME_RESTRICT s
 ** on the LHS non-terminal from the new top state.  Mirrors yy_reduce
 ** in limpar.c.
 */
+/* Letter 39 W3: persistent per-reduce scratch, gathered once and
+** reused across every reduce in an engine instead of a fresh stack
+** buffer + a per-reduce malloc for wide rules.  Grows on demand
+** (host-reduce path only; stays NULL/0 for recognition-only parses). */
+typedef struct ReduceScratch {
+    void **vbuf;
+    int   *lbuf;
+    uint32_t cap;
+} ReduceScratch;
+
+/*
+** reduce_scratch_reserve -- ensure `sc` holds at least `n` RHS slots.
+** Returns false on OOM.  Buffers are allocated lazily (only a
+** host-reduce ever calls this) and reused across reduces, so the
+** common reduce pays no allocation.
+*/
+static bool reduce_scratch_reserve(ReduceScratch *sc, uint32_t n) {
+    if (n <= sc->cap) return true;
+    uint32_t cap = sc->cap ? sc->cap : 16;
+    while (cap < n) cap *= 2;
+    void **nv = realloc(sc->vbuf, (size_t)cap * sizeof(*nv));
+    if (nv == NULL) return false;
+    sc->vbuf = nv;
+    int *nl = realloc(sc->lbuf, (size_t)cap * sizeof(*nl));
+    if (nl == NULL) return false;
+    sc->lbuf = nl;
+    sc->cap = cap;
+    return true;
+}
+
 static int reduce(const ParserSnapshot * LIME_RESTRICT snap, ParseStack * LIME_RESTRICT stk,
                   uint32_t ruleno, LimeHostReduceFn host_reduce, void *host_user,
-                  void **out_start_value) {
+                  void **out_start_value, ReduceScratch * LIME_RESTRICT sc) {
     if (snap->yy_rule_info_nrhs == NULL || snap->yy_rule_info_lhs == NULL) {
         return -1;
     }
@@ -213,31 +253,17 @@ static int reduce(const ParserSnapshot * LIME_RESTRICT snap, ParseStack * LIME_R
     ** goto.  When no hook is bound this whole block is skipped and the
     ** engine stays recognition-only (historical behaviour).
     **
-    ** Slots are gathered into a small scratch array sized for the
-    ** common case; rules with more RHS symbols than the inline buffer
-    ** fall back to a heap array.  This runs only on a reduce with a
-    ** hook attached -- never on the shift hot path. */
+    ** Letter 39 W3: slots are gathered into the engine's persistent
+    ** reducer scratch (`sc`), grown once and reused across reduces
+    ** rather than a fresh stack buffer + a per-reduce malloc/free for
+    ** wide rules.  This runs only on a reduce with a hook attached --
+    ** never on the shift hot path. */
     void *lhs_value = NULL;
     int lhs_loc = 0;
     if (host_reduce != NULL && (uint32_t)nrhs <= stack_depth(stk)) {
-        enum { INLINE_RHS = 16 };
-        void *vbuf_inline[INLINE_RHS];
-        int   lbuf_inline[INLINE_RHS];
-        void **vbuf = vbuf_inline;
-        int   *lbuf = lbuf_inline;
-        void **vheap = NULL;
-        int   *lheap = NULL;
-        if (nrhs > INLINE_RHS) {
-            vheap = malloc((size_t)nrhs * sizeof(*vheap));
-            lheap = malloc((size_t)nrhs * sizeof(*lheap));
-            if (vheap == NULL || lheap == NULL) {
-                free(vheap);
-                free(lheap);
-                return -1;
-            }
-            vbuf = vheap;
-            lbuf = lheap;
-        }
+        if (!reduce_scratch_reserve(sc, (uint32_t)nrhs)) return -1;
+        void **vbuf = sc->vbuf;
+        int   *lbuf = sc->lbuf;
         ParseStackEntry *first_rhs = stk->top - nrhs;
         for (int i = 0; i < nrhs; i++) {
             vbuf[i] = first_rhs[i].value;
@@ -249,8 +275,6 @@ static int reduce(const ParserSnapshot * LIME_RESTRICT snap, ParseStack * LIME_R
         int rc = host_reduce(host_user, (int)ruleno,
                              nrhs > 0 ? vbuf : NULL, nrhs > 0 ? lbuf : NULL,
                              nrhs, &lhs_value, &lhs_loc);
-        free(vheap);
-        free(lheap);
         if (rc != 0) return -1;
         /* Default the LHS location to the leftmost RHS if the action
         ** didn't set one. */
@@ -318,6 +342,12 @@ typedef struct ParseEngine {
     bool initialised;
     bool accepted;
     bool errored;
+    /* Letter 39 W3: persistent per-reduce scratch, embedded so it is
+    ** gathered once and reused across every reduce in this engine
+    ** instead of a fresh stack buffer + a per-reduce malloc for wide
+    ** rules.  Grows on demand (host-reduce path only; stays NULL/0 for
+    ** recognition-only parses).  Freed by parse_engine_drop. */
+    ReduceScratch scratch;
 } ParseEngine;
 
 /* Hook called from parse_end (in parse_context.c) to free our engine. */
@@ -326,6 +356,8 @@ void parse_engine_drop(struct ParseContext *ctx) {
     if (ctx == NULL || ctx->engine == NULL) return;
     ParseEngine *eng = (ParseEngine *)ctx->engine;
     stack_destroy(&eng->stack);
+    free(eng->scratch.vbuf);
+    free(eng->scratch.lbuf);
     free(eng);
     ctx->engine = NULL;
 }
@@ -616,54 +648,110 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
     }
     bool retried_with_fallback = false;
 
+    /* Letter 39 W2: hoist the snapshot's action-table bases and range
+    ** constants into locals so the hot loop keeps them in registers
+    ** instead of reloading through `snap->` every step.  `snap` is not
+    ** mutated inside the loop (context-stack swaps happen before it),
+    ** so these stay valid for the whole call.  This mirrors the AOT
+    ** base_yyparse, which reads compiled-in table symbols the compiler
+    ** already holds in registers. */
+    const uint16_t * LIME_RESTRICT yy_action    = snap->yy_action;
+    const uint16_t * LIME_RESTRICT yy_lookahead = snap->yy_lookahead;
+    const int32_t  * LIME_RESTRICT yy_shift_ofst = snap->yy_shift_ofst;
+    const uint16_t * LIME_RESTRICT yy_default   = snap->yy_default;
+    const uint16_t * LIME_RESTRICT yy_fallback  = snap->yy_fallback;
+    const uint32_t lookahead_count   = snap->lookahead_count;
+    const uint32_t nfallback         = snap->nfallback;
+    const uint16_t yy_max_shift       = snap->yy_max_shift;
+    const uint16_t yy_max_shiftreduce = snap->yy_max_shiftreduce;
+    const uint16_t yy_min_reduce      = snap->yy_min_reduce;
+    const uint16_t yy_min_shiftreduce = snap->yy_min_shiftreduce;
+    const uint16_t yy_accept_action   = snap->yy_accept_action;
+    const uint16_t yy_error_action    = snap->yy_error_action;
+    const uint16_t yy_no_action       = snap->yy_no_action;
+    const lime_jit_shift_fn jit_fn    = (lime_jit_shift_fn)snap->jit_find_shift_fn;
+    ReduceScratch * LIME_RESTRICT sc  = &eng->scratch;
+
+    /* Threaded dispatch (Letter 39 W2): the pending-reduce check and
+    ** the action classification each jump DIRECTLY to the handler
+    ** label for their action class, and every handler ends in a
+    ** `return` or a `continue` that threads back to the top of the
+    ** loop -- no chain of range re-compares between handlers, no
+    ** per-token function-call boundary (the shift lookup is inlined
+    ** below).  Direct `goto`s keep the branch targets statically
+    ** resolved, which both gcc and clang lower to direct branches the
+    ** predictor handles well.  A computed-goto (&&label + goto *)
+    ** jump table was tried and rejected: it buys nothing here (the
+    ** handlers never fall through to one another, so there is no
+    ** dispatch to amortise) and regresses clang's recognition path
+    ** ~12% on arith by turning predictable branches into an indirect
+    ** jump.  This direct-goto form is portable to every compiler
+    ** (MSVC included) with no macro fallback needed. */
+
     for (;;) {
         uint16_t cur_state = eng->stack.top[-1].state;
+        uint16_t action;
+        uint32_t ruleno;
 
         /* If the top of stack is encoded as a pending reduce
         ** (shift-reduce), unpack and apply it before consuming the
         ** current lookahead.  This mirrors the early-return in
         ** yy_find_shift_action(). */
-        if (cur_state >= snap->yy_min_reduce) {
-            uint32_t ruleno = (uint32_t)(cur_state - snap->yy_min_reduce);
-            int r = reduce(snap, &eng->stack, ruleno, eff_host_reduce,
-                           eff_host_user, &ctx->result_value);
-            if (r == 1) {
-                eng->accepted = true;
-                if (eff_host_reduce && ctx->result_value == NULL)
-                    ctx->result_value = stack_top_value(&eng->stack);
-                return token_code == 0 ? 1 : 0;
-            }
-            if (r < 0) {
-                eng->errored = true;
-                return -1;
-            }
-            continue;
+        if (cur_state >= yy_min_reduce) {
+            ruleno = (uint32_t)(cur_state - yy_min_reduce);
+            goto do_reduce;
         }
 
-        uint16_t action = find_shift_action(snap, cur_state, (uint16_t)major);
+        /* Shift-action lookup, inlined + hoisted (was find_shift_action).
+        ** Preserves the JIT dispatch site and the exact table walk. */
+        if (LIME_UNLIKELY(jit_fn != NULL)) {
+            action = (uint16_t)jit_fn((uint32_t)cur_state, (uint32_t)major);
+        } else if (LIME_UNLIKELY(cur_state > yy_max_shift)) {
+            action = cur_state;
+        } else if (LIME_UNLIKELY(yy_shift_ofst == NULL)) {
+            action = yy_no_action;
+        } else {
+            int32_t idx = yy_shift_ofst[cur_state] + (int32_t)major;
+            action = (LIME_LIKELY(idx >= 0 && (uint32_t)idx < lookahead_count
+                                  && yy_lookahead[idx] == (uint16_t)major))
+                         ? yy_action[idx]
+                         : yy_default[cur_state];
+        }
 
+        /* Classify + thread directly to the handler -- byte-identical
+        ** ordering to the historical if-chain. */
+        if (action <= yy_max_shift)             goto do_shift;
+        if (action <= yy_max_shiftreduce)       goto do_shiftreduce;
+        if (action == yy_accept_action)         goto do_accept;
+        if (action >= yy_min_reduce && action != yy_error_action
+            && action != yy_no_action) {
+            ruleno = (uint32_t)(action - yy_min_reduce);
+            goto do_reduce;
+        }
+        goto do_error;
+
+    do_shift:
         /* Plain shift: push (action, major), wait for next token. */
-        if (action <= snap->yy_max_shift) {
-            if (token_code == 0) {
-                /* End-of-input shift means we're done if next reduce
-                ** is the accept rule.  Treat as accept. */
-                eng->accepted = true;
-                if (eff_host_reduce && ctx->result_value == NULL)
-                    ctx->result_value = stack_top_value(&eng->stack);
-                return 1;
-            }
-            if (!stack_push(&eng->stack, action, major)) {
-                eng->errored = true;
-                return -1;
-            }
-            /* Letter 30: carry this terminal's value+location so a
-            ** later reduce can hand it to the host-reduce action as a
-            ** $N slot.  No-op for recognition-only parses. */
-            eng->stack.top[-1].value = token_value;
-            eng->stack.top[-1].loc = location;
-            return 0;
+        if (token_code == 0) {
+            /* End-of-input shift means we're done if next reduce
+            ** is the accept rule.  Treat as accept. */
+            eng->accepted = true;
+            if (eff_host_reduce && ctx->result_value == NULL)
+                ctx->result_value = stack_top_value(&eng->stack);
+            return 1;
         }
+        if (!stack_push(&eng->stack, action, major)) {
+            eng->errored = true;
+            return -1;
+        }
+        /* Letter 30: carry this terminal's value+location so a
+        ** later reduce can hand it to the host-reduce action as a
+        ** $N slot.  No-op for recognition-only parses. */
+        eng->stack.top[-1].value = token_value;
+        eng->stack.top[-1].loc = location;
+        return 0;
 
+    do_shiftreduce:
         /* Shift-reduce: push the action encoded as a pending reduce
         ** state (shift+reduce).  The next call to parse_token will
         ** see the encoded state, fall into the reduce branch above,
@@ -671,33 +759,30 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
         ** the limpar.c convention where yy_shift adds
         ** (MIN_REDUCE - MIN_SHIFTREDUCE) to the new state when
         ** action > MAX_SHIFT. */
-        if (action <= snap->yy_max_shiftreduce) {
+        {
             uint16_t encoded =
-                (uint16_t)(action + (snap->yy_min_reduce - snap->yy_min_shiftreduce));
+                (uint16_t)(action + (yy_min_reduce - yy_min_shiftreduce));
             if (!stack_push(&eng->stack, encoded, major)) {
                 eng->errored = true;
                 return -1;
             }
-            /* Letter 30: the shifted terminal's value/location, read
-            ** by the pending reduce that fires on the next token. */
-            eng->stack.top[-1].value = token_value;
-            eng->stack.top[-1].loc = location;
-            return 0;
         }
+        /* Letter 30: the shifted terminal's value/location, read
+        ** by the pending reduce that fires on the next token. */
+        eng->stack.top[-1].value = token_value;
+        eng->stack.top[-1].loc = location;
+        return 0;
 
-        if (action == snap->yy_accept_action) {
-            eng->accepted = true;
-            if (eff_host_reduce && ctx->result_value == NULL)
-                ctx->result_value = stack_top_value(&eng->stack);
-            return 1;
-        }
+    do_accept:
+        eng->accepted = true;
+        if (eff_host_reduce && ctx->result_value == NULL)
+            ctx->result_value = stack_top_value(&eng->stack);
+        return 1;
 
-        /* Reduce */
-        if (action >= snap->yy_min_reduce && action != snap->yy_error_action &&
-            action != snap->yy_no_action) {
-            uint32_t ruleno = (uint32_t)(action - snap->yy_min_reduce);
+    do_reduce:
+        {
             int r = reduce(snap, &eng->stack, ruleno, eff_host_reduce,
-                           eff_host_user, &ctx->result_value);
+                           eff_host_user, &ctx->result_value, sc);
             if (r == 1) {
                 eng->accepted = true;
                 if (eff_host_reduce && ctx->result_value == NULL)
@@ -708,13 +793,14 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
                 eng->errored = true;
                 return -1;
             }
-            continue;
         }
+        continue;
 
+    do_error:
         /* Error path -- try the fallback table once. */
-        if (!retried_with_fallback && snap->yy_fallback != NULL && major >= 0 &&
-            (uint32_t)major < snap->nfallback && snap->yy_fallback[major] != 0) {
-            major = snap->yy_fallback[major];
+        if (!retried_with_fallback && yy_fallback != NULL && major >= 0 &&
+            (uint32_t)major < nfallback && yy_fallback[major] != 0) {
+            major = yy_fallback[major];
             retried_with_fallback = true;
             continue;
         }

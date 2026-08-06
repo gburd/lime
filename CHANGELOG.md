@@ -19,6 +19,43 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.11.0] -- 2026-06-11
+
+### Changed
+
+- **Composed-snapshot push parser is ~9% faster** (PostgreSQL Lime-port
+  letter-39 W2/W3). Two changes to `src/parse_engine.c`, both proven
+  parse-result-identical (the A/B bench asserts AOT == composed before
+  timing) and clean under ASan/UBSan/TSan:
+  - **Hoisted the composed table base pointers** (`yy_action`,
+    `yy_lookahead`, `yy_shift_ofst`, `yy_default`, `yy_fallback`, and the
+    scalar bounds) into `LIME_RESTRICT` locals at loop entry, so the hot
+    shift/reduce/goto loop keeps them in registers instead of reloading
+    through `snap->` each step.
+  - **Removed per-token value-stack boxing**: the value slot is now moved
+    by a direct pointer-width assignment instead of a `memcpy`, guarded by
+    a `_Static_assert` that the slot is pointer-width. A persistent
+    per-engine `ReduceScratch` (lazily grown, reused across reduces) also
+    replaces the per-reduce heap fallback for wide rules, so the common
+    reduce pays no allocation.
+
+  Measured on EC2 (c7i.4xlarge x86_64, median ns/parse over 200k iters,
+  arith grammar): composed+host_reduce **758 ns -> 688 ns** (1.79x ->
+  **1.61x** AOT); recognition-only 581 -> 564 ns (1.37x -> 1.32x AOT);
+  AOT unchanged (~425 ns).
+
+  **Honest scope:** this narrows the composed-vs-AOT gap but does not
+  close it to "within a few percent" (the letter-39 ASK 1 target). A
+  computed-goto / threaded-code dispatch was tried and **rejected**: it
+  regressed clang's recognition path ~12% because an LR shift/reduce loop
+  (unlike a bytecode VM) has no fall-through dispatch chain to amortise,
+  so the indirect jump only replaces well-predicted branches. The
+  residual 1.6x is structural (interpreter dispatch + the host-reduce
+  callback boundary); closing it fully would require emitting and
+  compiling C for the composed tables at load time, which reintroduces
+  the runtime toolchain dependency the in-process path deliberately
+  removed. New standalone A/B harness `bench/bench_composed_vs_aot.c`.
+
 ## [1.10.4] -- 2026-06-11
 
 ### Fixed
