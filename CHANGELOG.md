@@ -19,6 +19,30 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.11.3] -- 2026-06-11
+
+### Added
+
+- **Action-bound benchmark profile** (`bench/bench_heavy_grammar.y` +
+  `bench/bench_composed_vs_aot_heavy.c`), contributed by the PostgreSQL
+  Lime-port (letter-40/41). Same token stream and state-machine shape as
+  the arith bench, but every reduce action mallocs a tree node and
+  strdup's a label -- mimicking PostgreSQL's `makeNode`/`pstrdup`
+  per-reduction cost instead of arith's integer ops. It publishes the
+  tree node count through `%extra_argument` and asserts AOT == composed
+  before timing, exactly like the arith harness.
+
+  This gives `bench/` two profile shapes so future perf work is measured
+  against both dispatch-bound and action-bound workloads. Measured
+  contrast (local, median ns/parse) shows why one number can't stand in
+  for a real embedder: the composed push penalty is 1.61x on arith
+  (dispatch-bound, where table-base hoisting / value de-boxing move the
+  needle) but compresses to ~1.4x on the heavy grammar (action-bound,
+  where per-reduce malloc/strdup dominates and is identical on both
+  paths), and recognition-only drops below 1.0x AOT there because it does
+  no allocation. Standalone bench (build recipe in the file headers);
+  not wired into the meson build, consistent with the arith bench.
+
 ## [1.11.2] -- 2026-06-11
 
 ### Removed
