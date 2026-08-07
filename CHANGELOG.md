@@ -19,6 +19,42 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.11.2] -- 2026-06-11
+
+### Removed
+
+- **`lime_snapshot_grammar_source()` (added in v1.11.1) is removed.** It
+  existed only to enable an emit-C-at-load workflow: pull a composed
+  snapshot's merged grammar text, re-run `lime -n` on it, compile the
+  result with the embedder's toolchain, and dlopen it for AOT parse
+  speed. That workflow is rejected. The sole requester (the PostgreSQL
+  Lime-port) retracted the ask (letter-41): PostgreSQL invokes no C
+  compiler at runtime, emitting C into a writable dir and dlopen'ing it
+  inside the backend is a code-execution surface pgsql-hackers will not
+  accept, and compiling at load puts `cc` on a latency path that is
+  otherwise pure table-load. Emit-C-at-load reintroduces exactly the
+  runtime-toolchain dependency the in-process compose path
+  (`lime_compile_grammar_in_process`) was built to eliminate.
+
+  A public accessor whose only purpose is to feed a rejected pattern is
+  dead API surface, so it is removed rather than kept "for other
+  embedders that might want it." The internal `grammar_source` snapshot
+  field is unchanged (it backs the subprocess-recompile composition
+  path); only the v1.11.1 public accessor and its test are gone. Anyone
+  who genuinely needs the compiled text can still obtain it from the
+  grammar they compiled.
+
+### Notes
+
+- The composed table-driven push path is the supported runtime story:
+  loadable, composable, predictable grammars at a bounded, measured
+  ~1.6-2.0x vs the AOT parser (down from ~2.0-2.6x via the v1.10.3
+  memset fix and v1.11.0 hoist/de-box). The residual is structural --
+  the cost of interpreting composed tables at runtime -- with the
+  rejected LLVM JIT, computed-goto, and emit-C-at-load results as the
+  evidence that no cheaper runtime path exists. This is a boundary, not
+  a defect, and it is not a zero-cost claim.
+
 ## [1.11.1] -- 2026-06-11
 
 ### Added

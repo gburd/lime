@@ -154,34 +154,6 @@ int lime_snapshot_rule_by_id(const ParserSnapshot *snap, const char *rule_id);
 const char *lime_snapshot_rule_id(const ParserSnapshot *snap, int ruleno);
 
 /**
- * @brief Return the grammar source text carried by a snapshot.
- *
- * For a snapshot built by lime_compile_grammar_in_process[_ex] this is
- * the exact text compiled -- including, when an embedder composed a
- * grammar by concatenating base + extension text, the full merged
- * grammar. Feeding that text back through `lime -n` regenerates the AOT
- * parser C the generator would emit for these composed tables, which is
- * the route to AOT parse speed for a runtime-composed grammar WITHOUT
- * Lime owning a compiler: the embedder runs `lime -n` + its own
- * toolchain, compiles, and calls the generated base_yyparse directly
- * (e.g. caching the .so keyed by the snapshot merkle root). The default
- * in-process path stays cc-free.
- *
- * A snapshot produced by snapshot-level composition (compose_snapshots /
- * clone_snapshot) carries only the base grammar text, not a merged
- * reconstruction -- the merged-text route is the in-process text-compose
- * path.
- *
- * @param snap     Snapshot to query (may be NULL -> NULL).
- * @param len_out  If non-NULL, receives the text length (0 when NULL is
- *                 returned).
- * @return The grammar source text (owned by the snapshot; do not free),
- *         or NULL when the snapshot recorded none.
- */
-const char *lime_snapshot_grammar_source(const ParserSnapshot *snap,
-                                         uint32_t *len_out);
-
-/**
  * @brief Create a base snapshot by parsing a grammar file.
  *
  * Runs the Lime parser generator on @p grammar_file and produces a

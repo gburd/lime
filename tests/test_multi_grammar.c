@@ -507,41 +507,6 @@ int main(void) {
         if (sb) snapshot_release(sb);
     }
 
-    /* ---- lime_snapshot_grammar_source: the emit-C-at-load primitive
-    ** (letter-40 ASK-3-refined).  A composed in-process snapshot must
-    ** carry the MERGED grammar text so an embedder can feed it back
-    ** through `lime -n` to reach AOT speed without Lime owning a
-    ** compiler.  Verify the text round-trips and contains both the base
-    ** and the "extension" productions from the compiled text. */
-    {
-        const char *g =
-            "%name GS\n%token_type {void*}\n"
-            "%token ATTR COMMA.\n%start_symbol prog\n"
-            "prog ::= list.\n"
-            "list ::= attr.\n"
-            "list ::= list COMMA attr.\n"
-            "attr ::= ATTR.\n";
-        ParserSnapshot *s = NULL; char *e = NULL; int nc = 0;
-        int rc = lime_compile_grammar_in_process_ex(g, strlen(g), &s, &e, &nc);
-        CHECK(rc == 0 && s != NULL, "gsrc: compose in-process"); free(e);
-        if (s) {
-            uint32_t len = 0;
-            const char *src = lime_snapshot_grammar_source(s, &len);
-            CHECK(src != NULL && len == strlen(g),
-                  "gsrc: grammar_source present, correct length");
-            CHECK(src != NULL && memcmp(src, g, len) == 0,
-                  "gsrc: grammar_source byte-identical to compiled text");
-            /* NULL len_out is allowed. */
-            CHECK(lime_snapshot_grammar_source(s, NULL) != NULL,
-                  "gsrc: NULL len_out ok");
-            snapshot_release(s);
-        }
-        /* NULL snapshot -> NULL, len 0. */
-        uint32_t z = 123;
-        CHECK(lime_snapshot_grammar_source(NULL, &z) == NULL && z == 0,
-              "gsrc: NULL snapshot -> NULL, len 0");
-    }
-
     printf("test_multi_grammar: %s\n", fail ? "FAIL" : "PASS");
     return fail ? 1 : 0;
 }
