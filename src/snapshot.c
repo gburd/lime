@@ -265,6 +265,38 @@ const char *lime_snapshot_rule_id(const ParserSnapshot *snap, int ruleno) {
     return snap->rule_ids[ruleno];
 }
 
+/* Return the grammar SOURCE TEXT carried by this snapshot, or NULL when
+** none was recorded.  For a snapshot built by
+** lime_compile_grammar_in_process[_ex] this is the EXACT text that was
+** compiled -- including, when an embedder composed a grammar by
+** concatenating base + extension text, the full MERGED grammar.  Feeding
+** that text back through `lime -n` regenerates the same AOT parser C the
+** generator would emit for these composed tables.
+**
+** This is the primitive an embedder needs to reach AOT parse speed for a
+** runtime-composed grammar without Lime owning a compiler: take the
+** merged text here, run `lime -n` on it with your own toolchain, compile
+** the result, and call the generated base_yyparse directly (caching the
+** .so keyed by e.g. the snapshot merkle root).  The in-process compose
+** path stays cc-free by default; this just hands back the text so the
+** embedder can opt into an AOT-compile-and-cache layer on top.
+**
+** NOTE: a snapshot produced by snapshot-level composition
+** (compose_snapshots / clone_snapshot) carries only the BASE grammar
+** text, not a merged reconstruction -- there is no grammar-text form of a
+** table-level merge.  The merged-text route is the in-process
+** (text-compose) path.  On success *len_out (if non-NULL) receives the
+** length; the returned pointer is owned by the snapshot -- do not free. */
+const char *lime_snapshot_grammar_source(const ParserSnapshot *snap,
+                                         uint32_t *len_out) {
+    if (snap == NULL || snap->grammar_source == NULL) {
+        if (len_out) *len_out = 0;
+        return NULL;
+    }
+    if (len_out) *len_out = snap->grammar_source_len;
+    return snap->grammar_source;
+}
+
 ParserSnapshot *lime_snapshot_create(const char *grammar_file, char **error) {
     return create_base_snapshot(grammar_file, error);
 }

@@ -19,6 +19,39 @@ git show v0.10.0
 
 _Nothing yet._
 
+## [1.11.1] -- 2026-06-11
+
+### Added
+
+- **`lime_snapshot_grammar_source(snap, &len)`** -- the emit-C-at-load
+  primitive the PostgreSQL Lime-port asked for (letter-40). Returns the
+  grammar source text a snapshot was compiled from. For a snapshot built
+  by `lime_compile_grammar_in_process[_ex]` this is the exact compiled
+  text -- including, when an embedder composed a grammar by concatenating
+  base + extension text, the full **merged** grammar. Feeding that text
+  back through `lime -n` regenerates the AOT parser C the generator would
+  emit for those composed tables, which is the route to AOT parse speed
+  for a runtime-composed grammar **without Lime owning a compiler**: the
+  embedder runs `lime -n` + its own toolchain, compiles, and calls the
+  generated `base_yyparse` directly (e.g. caching the `.so` keyed by the
+  snapshot merkle root). The default in-process path stays cc-free; this
+  just hands back the text so an embedder can opt into an
+  AOT-compile-and-cache layer on top.
+
+  This is Lime's answer to letter-40's ASK-3-refined: Lime emits C from
+  grammar text (`lime -n`) and now exposes the composed snapshot's text,
+  so the embedder owns compile + cache + load behind its own flag. A
+  `lime_snapshot_emit_c(snap)` that reconstructs C from a snapshot's
+  internal table arrays was deliberately NOT built -- it would duplicate
+  the generator and reconstruct a `struct lime` from lossy snapshot
+  state; re-running `lime -n` on the retained merged text is exact and
+  reuses the trusted generator path.
+
+  Note: a snapshot produced by snapshot-level composition
+  (`compose_snapshots` / `clone_snapshot`) carries only the base grammar
+  text -- the merged-text route is the in-process text-compose path PG
+  uses.
+
 ## [1.11.0] -- 2026-06-11
 
 ### Changed
