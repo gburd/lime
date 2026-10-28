@@ -618,7 +618,19 @@ int parse_engine_seed_stack(struct ParseContext *ctx, const uint16_t *states, co
     }
 
     ParseEngine *eng = (ParseEngine *)ctx->engine;
-    if (eng != NULL && eng->initialised) return -1; /* already stepping */
+
+    /* "Already stepping" means a token has been consumed: the stack is
+    ** deeper than the lone state-0 sentinel, or the parse has finished.
+    ** It does NOT mean `initialised`.  parse_begin() may hand back a
+    ** context recycled from the thread-local pool (parse_context.c),
+    ** which parse_engine_reset() leaves initialised with the stack
+    ** rewound to just state 0 -- a fresh parse in every observable way.
+    ** Testing `initialised` here refused every pooled context, so forks
+    ** silently fell back to restarting at state 0. */
+    if (eng != NULL && eng->initialised) {
+        if (eng->accepted || eng->errored) return -1;
+        if (eng->stack.base == NULL || eng->stack.top - eng->stack.base != 1) return -1;
+    }
 
     if (eng == NULL) {
         eng = calloc(1, sizeof(ParseEngine));
@@ -626,11 +638,25 @@ int parse_engine_seed_stack(struct ParseContext *ctx, const uint16_t *states, co
         ctx->engine = eng;
     }
 
-    if (!stack_init(&eng->stack)) return -1;
+    /* Reuse a pooled stack buffer rather than leaking it under a fresh
+    ** stack_init(). */
+    bool fresh_stack = (eng->stack.base == NULL);
+    if (fresh_stack) {
+        if (!stack_init(&eng->stack)) return -1;
+    } else {
+        eng->stack.top = eng->stack.base;
+    }
 
     for (uint32_t i = 0; i < n; i++) {
         if (!stack_push(&eng->stack, states[i], symbols != NULL ? symbols[i] : 0)) {
-            stack_destroy(&eng->stack);
+            if (fresh_stack) {
+                stack_destroy(&eng->stack);
+                eng->initialised = false;
+            } else {
+                /* Restore the pooled context to a valid fresh-parse state. */
+                eng->stack.top = eng->stack.base;
+                (void)stack_push(&eng->stack, 0, 0);
+            }
             return -1;
         }
     }
