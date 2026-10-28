@@ -111,7 +111,15 @@ int main(void) {
     ** back to PATH if neither builddir variant exists. */
     struct stat st;
     bool have_lime = false;
-    if (stat("builddir/lime", &st) == 0) {
+    /* Honour LIME_BIN when the harness provides it (meson does, via
+    ** env:).  The builddir/ probes below only work when the build
+    ** directory happens to be named builddir/; any other name made
+    ** this test skip silently in every non-default build tree. */
+    const char *env_bin = getenv("LIME_BIN");
+    if (env_bin != NULL && env_bin[0] != '\0' && stat(env_bin, &st) == 0) {
+        /* already set; keep it */
+        have_lime = true;
+    } else if (stat("builddir/lime", &st) == 0) {
         setenv("LIME_BIN", "builddir/lime", 1);
         have_lime = true;
     } else if (stat("../builddir/lime", &st) == 0) {

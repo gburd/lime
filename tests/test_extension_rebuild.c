@@ -149,7 +149,14 @@ int main(void) {
     /* Locate the local lime binary the same way test_snapshot_create
     ** does, so we don't depend on a system install. */
     struct stat st;
-    if (stat("builddir/lime", &st) == 0) {
+    /* Honour LIME_BIN when the harness provides it (meson does, via
+    ** env:).  The builddir/ probes below only work when the build
+    ** directory happens to be named builddir/; any other name made
+    ** this test skip silently in every non-default build tree. */
+    const char *env_bin = getenv("LIME_BIN");
+    if (env_bin != NULL && env_bin[0] != '\0' && stat(env_bin, &st) == 0) {
+        /* already set; keep it */
+    } else if (stat("builddir/lime", &st) == 0) {
         setenv("LIME_BIN", "builddir/lime", 1);
     } else if (stat("../builddir/lime", &st) == 0) {
         setenv("LIME_BIN", "../builddir/lime", 1);

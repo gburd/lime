@@ -2432,6 +2432,14 @@ if host_machine.system() != 'windows'
   )
 
   test('snapshot_create', test_snapshot_create,
+    env : [
+      'LIME_BIN=' + lime_exe.full_path(),
+      'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
+      'LIME_INCLUDE=' + meson.project_source_root() / 'include',
+      'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
+      'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
+    ],
+    depends : [lime_exe],
     workdir : meson.project_source_root(),
     is_parallel : false,
   )
@@ -2473,6 +2481,14 @@ if host_machine.system() != 'windows'
   )
 
   test('extension_rebuild', test_extension_rebuild,
+    env : [
+      'LIME_BIN=' + lime_exe.full_path(),
+      'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
+      'LIME_INCLUDE=' + meson.project_source_root() / 'include',
+      'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
+      'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
+    ],
+    depends : [lime_exe],
     workdir : meson.project_source_root(),
     is_parallel : false,
   )
@@ -2529,6 +2545,14 @@ if host_machine.system() != 'windows'
   )
 
   test('extension_reduce_e2e', test_extension_reduce_e2e,
+    env : [
+      'LIME_BIN=' + lime_exe.full_path(),
+      'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
+      'LIME_INCLUDE=' + meson.project_source_root() / 'include',
+      'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
+      'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
+    ],
+    depends : [lime_exe],
     workdir : meson.project_source_root(),
     is_parallel : false,
   )
