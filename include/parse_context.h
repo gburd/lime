@@ -192,6 +192,40 @@ void parse_set_host_reduce(ParseContext *ctx, LimeHostReduceFn fn, void *user);
 ** lifetime is the host's responsibility (Lime never frees it).
 */
 void *parse_result(const ParseContext *ctx);
+/**
+ * @brief Seed the parse engine's LALR state stack (resume mid-parse).
+ *
+ * Normally the engine starts every parse at state 0.  This entry point
+ * installs a pre-existing stack instead, so the next parse_token()
+ * continues from where some other parser left off.  It exists for the
+ * fork-resolve disambiguation strategy, which clones a live
+ * grammar-specific parser at a conflict point and must step its forks
+ * forward from that point -- restarting at state 0 would answer a
+ * different question ("is this lookahead a valid whole sentence?").
+ *
+ * @param ctx     Parse context, not yet stepped.
+ * @param states  Stack entries bottom-first; states[0] is the state-0
+ *                sentinel.  Each value must be either a plain state
+ *                (<= the snapshot's yy_max_shift) or a pending
+ *                SHIFTREDUCE encoding (reduce action + YY_MIN_REDUCE -
+ *                YY_MIN_SHIFTREDUCE), matching exactly what the engine
+ *                pushes itself.  Any other value is rejected.
+ * @param symbols Per-entry symbol codes, or NULL.  Recorded for
+ *                debuggability only; the dispatch loop never reads them.
+ * @param n       Number of entries (must be >= 1).
+ *
+ * @retval 0  Stack installed.
+ * @retval -1 Rejected: NULL/empty input, a table-less snapshot, an
+ *            untranslatable state value, allocation failure, or a
+ *            context that has already consumed a token.  The context
+ *            is left unchanged, so the caller can fall back to plain
+ *            state-0 stepping.
+ *
+ * @note Not on the parse_token() hot path; nothing in
+ *       parse_engine_step() consults it.
+ */
+int parse_engine_seed_stack(ParseContext *ctx, const uint16_t *states, const int *symbols,
+                            uint32_t n);
 
 /*
 ** Sentinel value for `location` callers who do not track positions

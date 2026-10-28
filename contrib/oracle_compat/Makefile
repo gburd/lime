@@ -46,7 +46,7 @@ all: grammar $(STATIC_LIB) $(SHARED_LIB)
 grammar: $(GRAMMAR_C)
 
 $(GRAMMAR_C) $(GRAMMAR_H): $(GRAMMAR_SRC) $(LIME)
-	$(LIME) $(GRAMMAR_SRC)
+	$(LIME) -T../../limpar.c $(GRAMMAR_SRC)
 
 $(GRAMMAR_OBJ): $(GRAMMAR_C) $(GRAMMAR_H) oracle_semantics.h
 	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $(GRAMMAR_C)
@@ -64,7 +64,7 @@ $(STATIC_LIB): $(OBJS) $(GRAMMAR_OBJ)
 
 # Shared library (for dynamic loading via ParserManager)
 $(SHARED_LIB): $(SRCS) $(GRAMMAR_C) oracle_semantics.h oracle_compat.h
-	$(CC) $(CFLAGS) $(INCLUDES) -shared -fPIC -o $@ $(SRCS) $(GRAMMAR_C) $(LIBS)
+	$(CC) $(CFLAGS) $(INCLUDES) -shared -fPIC -o $@ $(SRCS) $(GRAMMAR_C) $(LDFLAGS) $(LIBS)
 
 # Test binary
 $(TEST_BIN): test_oracle.c $(STATIC_LIB) oracle_compat.h oracle_semantics.h

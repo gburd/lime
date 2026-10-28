@@ -114,6 +114,14 @@
 %left STAR SLASH PERCENT DIV_KW.
 %right UMINUS.
 
+/*
+ * MySQL's `expr IS [NOT] NULL` postfix clashes with binary-operator
+ * continuations of `expr` (same shape as PostgreSQL's grammar; see
+ * examples/pg/gram.lime).  Pinning %expect lets `lime` exit cleanly
+ * while still flagging any change in conflict count.
+ */
+%expect 19
+
 /* ================================================================== */
 /*  Top-level statement                                                 */
 /* ================================================================== */
@@ -147,6 +155,7 @@ select_stmt(A) ::= SELECT select_list(L) FROM from_list(F)
 }
 
 /* MySQL LIMIT clause variants */
+%type opt_limit {MysqlExpr*}
 opt_limit(A) ::= . { A = NULL; }
 
 /* LIMIT count */
@@ -514,9 +523,7 @@ opt_order(A) ::= ORDER BY order_list(L). { A = L; }
 
 %type order_list {MysqlOrderList*}
 order_list(A) ::= order_item(I). {
-    (void)pstate;
-    MysqlOrderList *l = mysql_select_list_new(pstate, NULL);
-    (void)l; (void)I;
+    (void)pstate; (void)I;
     A = NULL; /* Simplified */
 }
 order_list(A) ::= order_list(L) COMMA order_item(I). {

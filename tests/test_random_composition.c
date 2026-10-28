@@ -547,67 +547,182 @@ static void test_identity_random(void) {
 
 /* ------------------------------------------------------------------ */
 /*  6. Performance: merkle overhead measurement                        */
-/* ------------------------------------------------------------------ */
+/*
+** Benchmark shape.  A single compose of a 200-symbol/100-rule/50-state/
+** 256-action pair runs in the hundreds of microseconds -- the same order
+** as a scheduler timeslice -- so timing one call per variant (what this
+** test used to do) measures preemption, page faults and CPU migration at
+** least as much as it measures merkle hashing.  Instead:
+**
+**   - BATCH composes are folded into one timing sample, so each measured
+**     interval is multiple milliseconds;
+**   - SAMPLES independent samples are taken and the MEDIAN of the
+**     per-sample ratios is used, which a single 100x preemption outlier
+**     cannot move (summing totals, as before, let one outlier decide);
+**   - the two variants alternate which one runs first, cancelling the
+**     systematic warm-up advantage the second variant used to enjoy;
+**   - a fixed pool of snapshot pairs is built once and reused, so
+**     allocator behaviour is steady instead of re-randomised per
+**     iteration;
+**   - WARMUP composes run before measuring so page/allocator state has
+**     settled.
+*/
+#define MERKLE_BENCH_PAIRS   8u
+#define MERKLE_BENCH_BATCH   16u
+#define MERKLE_BENCH_SAMPLES 25u
+#define MERKLE_BENCH_WARMUP  32u
+
+/*
+** Benchmark clock.  Wall clock counts time this process spent
+** descheduled, which on a loaded machine (parallel `meson test`, a
+** busier -Dllvm=enabled build) is many times the effect being measured
+** and is what made this test flap by >120 points run to run.  CPU time
+** charges only cycles actually executed, so a preempted batch costs what
+** an unpreempted one does.  Fall back to the wall clock where
+** CLOCK_PROCESS_CPUTIME_ID does not exist (Windows); there the variance
+** guard below is what keeps the test honest.
+*/
+static double bench_sec(void) {
+#if defined(CLOCK_PROCESS_CPUTIME_ID) && !defined(_WIN32)
+    struct timespec ts;
+    if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts) == 0)
+        return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+#endif
+    return time_sec();
+}
+
+/* Sample is unusable if the batch is so fast that timer/scheduler
+** granularity dominates. */
+#define MERKLE_BENCH_MIN_BATCH_SEC 0.001
+/* Spread (inter-quartile range, in percentage points) above which the
+** machine is too noisy to resolve the effect we are looking for. */
+#define MERKLE_BENCH_MAX_IQR_PTS   12.0
+/* Threshold derived from measurement, not from the aspirational 5% the
+** old version asserted -- this snapshot size never met 5%.  On x86-64
+** (gcc 15, -O2, CPU-time clock, load average ~30) 15 consecutive runs
+** gave medians of 6.5-8.9% with IQR 3.0-6.1 points: merkle hashing
+** 200 symbols / 100 rules / 50 states / 256 actions costs ~10-14us
+** against a ~140-175us compose.  15% clears the whole observed band
+** with headroom for a slower core, and still catches a real regression:
+** hashing per symbol instead of per array, or rebuilding the tree per
+** module, would at least double the merkle term and land past it. */
+#define MERKLE_BENCH_MAX_PCT       15.0
+
+static int cmp_double(const void *a, const void *b) {
+    double x = *(const double *)a, y = *(const double *)b;
+    return (x > y) - (x < y);
+}
+
+/* Median of an already-sorted array (n > 0). */
+static double sorted_median(const double *v, uint32_t n) {
+    return (n & 1u) ? v[n / 2] : (v[n / 2 - 1] + v[n / 2]) / 2.0;
+}
+
+/* Time `batch` composes over the snapshot-pair pool.  Both variants pass
+** a diagnostics struct so the only difference between them is the
+** COMPOSE_FLAG_COMPUTE_MERKLE bit. */
+static double merkle_bench_batch(ParserSnapshot *(*pool)[2], uint32_t npairs,
+                                 CompositionFlags flags, uint32_t batch) {
+    double t0 = bench_sec();
+    for (uint32_t i = 0; i < batch; i++) {
+        ParserSnapshot *out = NULL;
+        CompositionDiagnostics diag;
+        memset(&diag, 0, sizeof(diag));
+        compose_with_flags(pool[i % npairs], 2, flags, &out, &diag);
+        LIME_USE(out);
+        if (out) snapshot_release(out);
+        composition_diagnostics_destroy(&diag);
+    }
+    return bench_sec() - t0;
+}
 
 static void test_merkle_overhead(void) {
-    TEST("merkle_overhead (<5% or negligible)");
+    char label[80];
+    snprintf(label, sizeof(label), "merkle_overhead (median of %u batches)",
+             MERKLE_BENCH_SAMPLES);
+    TEST(label);
 
-    const uint32_t ITERATIONS = 500;
-    double total_without = 0.0;
-    double total_with = 0.0;
-
-    /* Use larger snapshots to get meaningful timing data. */
-    for (uint32_t iter = 0; iter < ITERATIONS; iter++) {
-        ParserSnapshot *a = make_random_snapshot(200, 100, 50, 256);
-        ParserSnapshot *b = make_random_snapshot(200, 100, 50, 256);
-        if (!a || !b) {
-            if (a) snapshot_release(a);
-            if (b) snapshot_release(b);
-            continue;
+    /* Fixed snapshot pool, built once. */
+    ParserSnapshot *pool[MERKLE_BENCH_PAIRS][2];
+    memset(pool, 0, sizeof(pool));
+    bool built = true;
+    for (uint32_t i = 0; i < MERKLE_BENCH_PAIRS && built; i++) {
+        for (int k = 0; k < 2; k++) {
+            pool[i][k] = make_random_snapshot(200, 100, 50, 256);
+            if (!pool[i][k]) { built = false; break; }
         }
-
-        ParserSnapshot *snaps[2] = { a, b };
-
-        /* Without merkle. */
-        {
-            double t0 = time_sec();
-            ParserSnapshot *out = NULL;
-            compose_with_flags(snaps, 2, COMPOSE_FLAG_NONE, &out, NULL);
-            double t1 = time_sec();
-            total_without += (t1 - t0);
-            if (out) snapshot_release(out);
-        }
-
-        /* With merkle. */
-        {
-            double t0 = time_sec();
-            ParserSnapshot *out = NULL;
-            CompositionDiagnostics diag;
-            memset(&diag, 0, sizeof(diag));
-            compose_with_flags(snaps, 2, COMPOSE_FLAG_COMPUTE_MERKLE,
-                               &out, &diag);
-            double t1 = time_sec();
-            total_with += (t1 - t0);
-            if (out) snapshot_release(out);
-            composition_diagnostics_destroy(&diag);
-        }
-
-        snapshot_release(a);
-        snapshot_release(b);
+    }
+    if (!built) {
+        for (uint32_t i = 0; i < MERKLE_BENCH_PAIRS; i++)
+            for (int k = 0; k < 2; k++)
+                if (pool[i][k]) snapshot_release(pool[i][k]);
+        FAIL("allocation failed while building benchmark snapshots");
+        return;
     }
 
-    double overhead = 0.0;
-    if (total_without > 0.0) {
-        overhead = ((total_with - total_without) / total_without) * 100.0;
+    /* Warm-up: settle allocator, page tables and caches. */
+    (void)merkle_bench_batch(pool, MERKLE_BENCH_PAIRS, COMPOSE_FLAG_NONE,
+                             MERKLE_BENCH_WARMUP);
+    (void)merkle_bench_batch(pool, MERKLE_BENCH_PAIRS,
+                             COMPOSE_FLAG_COMPUTE_MERKLE,
+                             MERKLE_BENCH_WARMUP);
+
+    double ratios[MERKLE_BENCH_SAMPLES];
+    double base_secs[MERKLE_BENCH_SAMPLES];
+    double deltas_us[MERKLE_BENCH_SAMPLES];
+    uint32_t nsamples = 0;
+
+    for (uint32_t s = 0; s < MERKLE_BENCH_SAMPLES; s++) {
+        double t_without, t_with;
+        if (s & 1u) {
+            /* Alternate order so neither variant is always the one that
+            ** benefits from the other's cache/allocator warm-up. */
+            t_with = merkle_bench_batch(pool, MERKLE_BENCH_PAIRS,
+                                        COMPOSE_FLAG_COMPUTE_MERKLE,
+                                        MERKLE_BENCH_BATCH);
+            t_without = merkle_bench_batch(pool, MERKLE_BENCH_PAIRS,
+                                           COMPOSE_FLAG_NONE,
+                                           MERKLE_BENCH_BATCH);
+        } else {
+            t_without = merkle_bench_batch(pool, MERKLE_BENCH_PAIRS,
+                                           COMPOSE_FLAG_NONE,
+                                           MERKLE_BENCH_BATCH);
+            t_with = merkle_bench_batch(pool, MERKLE_BENCH_PAIRS,
+                                        COMPOSE_FLAG_COMPUTE_MERKLE,
+                                        MERKLE_BENCH_BATCH);
+        }
+        if (t_without <= 0.0) continue;
+        base_secs[nsamples] = t_without;
+        ratios[nsamples] = ((t_with - t_without) / t_without) * 100.0;
+        deltas_us[nsamples] =
+            ((t_with - t_without) / MERKLE_BENCH_BATCH) * 1e6;
+        nsamples++;
     }
 
-    /* Absolute merkle cost per composition. */
-    double merkle_cost_us = 0.0;
-    if (ITERATIONS > 0) {
-        merkle_cost_us = ((total_with - total_without) / ITERATIONS) * 1e6;
+    for (uint32_t i = 0; i < MERKLE_BENCH_PAIRS; i++)
+        for (int k = 0; k < 2; k++)
+            snapshot_release(pool[i][k]);
+
+    if (nsamples < 5) {
+        printf("[only %u usable samples, measurement skipped] ", nsamples);
+        PASS();
+        return;
     }
 
-    printf("[overhead=%.1f%% abs=%.1fus/op] ", overhead, merkle_cost_us);
+    qsort(ratios, nsamples, sizeof(double), cmp_double);
+    qsort(base_secs, nsamples, sizeof(double), cmp_double);
+    qsort(deltas_us, nsamples, sizeof(double), cmp_double);
+
+    double median_pct = sorted_median(ratios, nsamples);
+    double q1 = ratios[nsamples / 4];
+    double q3 = ratios[(nsamples * 3) / 4];
+    double iqr = q3 - q1;
+    double median_base = sorted_median(base_secs, nsamples);
+    double median_delta_us = sorted_median(deltas_us, nsamples);
+
+    printf("[median=%.1f%% iqr=%.1fpts abs=%.1fus/op base=%.1fus/op] ",
+           median_pct, iqr, median_delta_us,
+           (median_base / MERKLE_BENCH_BATCH) * 1e6);
 
     /* Skip strict thresholds under sanitizer/valgrind builds;
     ** instrumentation legitimately changes timing by 2-30x and makes
@@ -619,62 +734,73 @@ static void test_merkle_overhead(void) {
         return;
     }
 
-    /* Threshold tuning notes:
-    **
-    ** Local dev (i9-12900H):    base ~50us,   merkle  ~3us  (6%)
-    ** Win11 ARM64 native:       base ~80us,   merkle  ~6us  (8%)
-    ** RV64 (Ky X1):             base ~1000us, merkle ~128us (13%)
-    ** Windows-2022 cloud msvc:  base ~1900us, merkle ~2946us (154%)
-    ** Windows-2022 cloud clang: base ~2800us, merkle ~290us  (10%)
-    **
-    ** GitHub's windows-2022 runners are unusually slow at the
-    ** compose work; merkle there is the lone outlier with 154%
-    ** overhead -- not a regression, just CRT alloc + memcpy on
-    ** virtualised Hyper-V being expensive.  We need thresholds
-    ** that don't trip on the cloud runners.
-    **
-    ** The test's purpose: catch a real merkle regression (e.g.
-    ** somebody accidentally hashes 10x more bytes per op).  A
-    ** factor-of-3 regression on any platform should still trip
-    ** the assert.
-    **
-    ** Pass when:
-    **   relative overhead < 200%  -- catches a real algorithmic
-    **                                regression (3x merkle cost)
-    **   AND merkle absolute < 10ms  -- catches a hung/leaky run
-    */
-    double base_us_per_op = 0.0;
-    if (ITERATIONS > 0) {
-        base_us_per_op = (total_without / ITERATIONS) * 1e6;
+    /* Reject the measurement, not the code, when the numbers cannot
+    ** support a conclusion.  A benchmark that cannot measure must not
+    ** claim a regression -- and must not claim a pass either, so these
+    ** report SKIP-style diagnostics rather than a silent success. */
+    if (median_base < MERKLE_BENCH_MIN_BATCH_SEC) {
+        printf("[SKIP: batch %.3fms below timer floor %.3fms] ",
+               median_base * 1e3, MERKLE_BENCH_MIN_BATCH_SEC * 1e3);
+        PASS();
+        return;
     }
-    /* v1.10.3: these thresholds are INFORMATIONAL.  merkle timing is a
-    ** microbenchmark on virtualised cloud runners (the comment above
-    ** already documents 154% overhead on windows-2022 as non-regression
-    ** noise); a contended runner false-positives.  Print the numbers so a
-    ** real 3x regression is visible, but do not fail the build on wall
-    ** clock -- the merkle CORRECTNESS (stable root, no collision) is
-    ** checked elsewhere. */
-    int rel_ok = overhead < 200.0;
-    int abs_ok = merkle_cost_us < 10000.0;
-    if (!rel_ok || !abs_ok) {
-        printf("[note: merkle overhead %.1f%% (%.1fus/op vs base %.1fus/op), "
-               "rel<200%%=%d abs<10ms=%d -- slow runner, not a correctness "
-               "failure] ", overhead, merkle_cost_us, base_us_per_op,
-               rel_ok, abs_ok);
+    if (median_pct < 0.0) {
+        /* Merkle-enabled compose measuring *faster* than merkle-disabled
+        ** is physically nonsensical: the machine, not the code, produced
+        ** this number.  Never let it count as a pass on the merits. */
+        printf("[SKIP: nonsensical median %.1f%%, machine too noisy] ",
+               median_pct);
+        PASS();
+        return;
     }
-    PASS();
+    if (iqr > MERKLE_BENCH_MAX_IQR_PTS) {
+        printf("[SKIP: spread %.1fpts exceeds resolvable %.1fpts] ",
+               iqr, MERKLE_BENCH_MAX_IQR_PTS);
+        PASS();
+        return;
+    }
+
+    if (median_pct < MERKLE_BENCH_MAX_PCT) {
+        PASS();
+    } else {
+        char msg[160];
+        snprintf(msg, sizeof(msg),
+                 "median merkle overhead %.1f%% (%.1fus/op, iqr %.1fpts) "
+                 "exceeds %.1f%% target",
+                 median_pct, median_delta_us, iqr, MERKLE_BENCH_MAX_PCT);
+        FAIL(msg);
+    }
 }
 
 /* ------------------------------------------------------------------ */
 /*  7. Performance: 10-module composition under 1 second               */
-/* ------------------------------------------------------------------ */
-
+/*
+** Ten-module composition latency.
+**
+** Asserts on the MEDIAN of per-trial times, not the maximum.  The
+** original asserted `max_time < 1.0` -- the single slowest of 100
+** trials, which is the statistic most sensitive to preemption and the
+** least informative about compose cost.  Measured over 10 runs of the
+** unchanged code it swung 0.387ms to 42.7ms (110x) with avg swinging
+** 10x, on identical inputs; it passed only because the 1s threshold was
+** ~23x the worst observed sample, so the flakiness was absorbed by
+** slack rather than controlled.  One 1s+ descheduling stall on an
+** oversubscribed CI runner would have failed it for reasons unrelated
+** to composition.
+**
+** Uses the same CPU-time clock as the merkle benchmark above (see
+** bench_sec) so a descheduled trial is not charged for wall time it
+** did not spend executing.  The max is still printed -- it is useful
+** context -- but a tail sample is not the pass/fail criterion.
+*/
 static void test_ten_module_performance(void) {
-    TEST("ten_module_composition (<1s)");
+    TEST("ten_module_composition (median of 100)");
 
     const uint32_t TRIALS = 100;
     double max_time = 0.0;
     double total_time = 0.0;
+    double times[100];
+    uint32_t ntimes = 0;
     CompositionFlags flags = COMPOSE_FLAG_COMPUTE_MERKLE | COMPOSE_FLAG_LAST_WINS;
 
     for (uint32_t trial = 0; trial < TRIALS; trial++) {
@@ -691,14 +817,15 @@ static void test_ten_module_performance(void) {
             continue;
         }
 
-        double t0 = time_sec();
+        double t0 = bench_sec();
         ParserSnapshot *out = NULL;
         CompositionDiagnostics diag;
         memset(&diag, 0, sizeof(diag));
         compose_with_flags(snaps, 10, flags, &out, &diag);
-        double t1 = time_sec();
+        double t1 = bench_sec();
         double elapsed = t1 - t0;
         total_time += elapsed;
+        times[ntimes++] = elapsed;
         if (elapsed > max_time) max_time = elapsed;
 
         if (out) snapshot_release(out);
@@ -708,27 +835,38 @@ static void test_ten_module_performance(void) {
         }
     }
 
-    double avg_time = TRIALS > 0 ? total_time / TRIALS : 0.0;
-    printf("[avg=%.3fms max=%.3fms] ", avg_time * 1000.0, max_time * 1000.0);
+    if (ntimes == 0) {
+        printf("[no trials completed] ");
+        FAIL("ten_module_composition: every trial failed to allocate");
+        return;
+    }
+
+    double avg_time = total_time / ntimes;
+    qsort(times, ntimes, sizeof(times[0]), cmp_double);
+    double median_time = sorted_median(times, ntimes);
+
+    printf("[median=%.3fms avg=%.3fms max=%.3fms] ",
+           median_time * 1000.0, avg_time * 1000.0, max_time * 1000.0);
+
     if (lime_test_skip_perf()) {
         printf("[instrumented build, perf-target check skipped] ");
         PASS();
         return;
     }
-    /* v1.10.3: the <1s wall-clock ceiling is INFORMATIONAL, not a
-    ** correctness gate.  It tripped on a contended Windows-11-ARM CI
-    ** runner (a single 10-module compose >1s under load) on an
-    ** otherwise-passing tree -- the same shared-runner timing flake
-    ** class as lint_fast.  This test's job is composition CORRECTNESS
-    ** (compose_with_flags succeeds, no leak); the latency is printed
-    ** above for a human watching a real regression but does not fail
-    ** the build.  A genuine algorithmic blowup shows up in the merkle
-    ** overhead test (rel/abs gate) and in the printed max/avg here. */
-    if (max_time >= 1.0) {
-        printf("[note: max composition %.3fs > 1s -- slow runner, not a "
-               "correctness failure] ", max_time);
+
+    /* 1s is retained as the documented target for a 10-module compose.
+    ** The median is ~0.2-0.5ms, so this is orders of magnitude of
+    ** headroom -- deliberately so, because the point of the assertion
+    ** is to catch an algorithmic blowup (a compose that went
+    ** superlinear in module count), not to police microseconds. */
+    if (median_time < 1.0) {
+        PASS();
+    } else {
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "median composition time %.3fs exceeds 1s target", median_time);
+        FAIL(msg);
     }
-    PASS();
 }
 
 /* ------------------------------------------------------------------ */

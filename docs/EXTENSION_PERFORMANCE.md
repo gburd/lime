@@ -747,8 +747,8 @@ Approximate sizes of key structures (x86_64, 64-bit pointers):
 | `StrategyResult`             | ~32 B   | Plus malloc'd arrays          |
 | `ForkResolveContext`         | ~80 B   | Plus priority entries         |
 | `PriorityContext`            | ~24 B   | Plus priority entries         |
-| `ParseFork`                  | ~128 B  | Plus cloned state + stack     |
-| `ClonedParserState`          | ~48 B   | Plus malloc'd state + stack   |
+| `ParseFork`                  | ~144 B  | Plus cloned state + stack     |
+| `ClonedParserState`          | ~88 B   | Plus malloc'd state + stack   |
 | `ParseForkSet`               | ~24 B   | Plus fork pointer array       |
 | `ParserSnapshot`             | ~128 B  | Plus action tables            |
 

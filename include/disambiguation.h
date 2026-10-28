@@ -16,7 +16,7 @@
  *   | STRAT_PRIORITY    | Resolve by static priority ordering            |
  *   | STRAT_FORK_RESOLVE| Fork parse state, try both, pick winner        |
  *   | STRAT_BAYESIAN    | Accumulate evidence, pick most likely          |
- *   | STRAT_LLM         | Query an LLM oracle for guidance               |
+ *   | STRAT_LLM         | Unimplemented by design (see below)            |
  *   | STRAT_CUSTOM      | User-supplied vtable                           |
  *
  * @par Usage Example
@@ -77,7 +77,11 @@ typedef enum LimeStrategy {
                              ** true full-statement fork-resolve use
                              ** lime_mg_resolve() in multi_grammar.h. */
     STRAT_BAYESIAN = 2,     /**< Evidence accumulation (posterior probs) */
-    STRAT_LLM = 3,          /**< Query LLM oracle for resolution advice */
+    STRAT_LLM = 3,          /**< Unimplemented by design: disambiguation_create()
+                             *   returns NULL.  A non-deterministic oracle is
+                             *   inappropriate for a deterministic parser; see
+                             *   examples/llm_oracle/ for a research demo built
+                             *   on STRAT_CUSTOM. */
     STRAT_CUSTOM = 4,       /**< User-provided vtable */
 } LimeStrategy;
 

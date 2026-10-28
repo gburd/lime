@@ -243,8 +243,14 @@ When conflicts are detected, the disambiguation framework resolves them:
 | `STRAT_PRIORITY`     | Static ordering by extension priority       |
 | `STRAT_FORK_RESOLVE` | Fork parser state, try both, pick winner    |
 | `STRAT_BAYESIAN`     | Accumulate evidence over time               |
-| `STRAT_LLM`          | Query an LLM oracle for guidance            |
 | `STRAT_CUSTOM`       | User-supplied vtable                        |
+
+`STRAT_LLM` is unimplemented by design --
+`disambiguation_create(STRAT_LLM, ...)` returns NULL.  A
+non-deterministic disambiguator is inappropriate for a parser that
+must produce the same tree for the same input every time.  The
+`examples/llm_oracle/` research demo remains reachable via
+`STRAT_CUSTOM` with a user-supplied vtable.
 
 ### Example: Priority Strategy
 

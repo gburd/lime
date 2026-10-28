@@ -18,6 +18,7 @@
 #include "parse_context.h"
 #include "snapshot.h"
 #include "snapshot_modify.h"
+#include "jit_context.h"
 
 #include "bench_arith_grammar.h"
 
@@ -64,6 +65,15 @@ int main(void) {
     printf("Lime JIT-vs-table parse equivalence test\n");
     printf("========================================\n");
 
+    /* The arith grammar is tiny (11 states x 8 terminals), so on
+    ** x86_64 lime_jit_compile()'s cost model declines to JIT it --
+    ** the table interpreter is faster there.  That is a *perf*
+    ** decision, not an availability one, and it silently disabled
+    ** this entire test on x86_64 for its whole life.  Force the JIT
+    ** on so the equivalence assertions below actually compare two
+    ** different code paths. */
+    setenv("LIME_JIT", "1", 1);
+
     /* Build the base snapshot (table-driven) and a JIT-attached one. */
     ParserSnapshot *table_snap = ArithBuildSnapshot();
     CHECK(table_snap != NULL, "ArithBuildSnapshot for table-driven snap");
@@ -78,7 +88,10 @@ int main(void) {
 
     int rc = lime_jit_compile(jit_snap);
     if (rc != 0) {
-        printf("  [SKIP] lime_jit_compile returned %d (LLVM unavailable?)\n", rc);
+        /* lime_jit_compile() returns a JITStatus code cast to int, so
+        ** report the actual reason rather than guessing at one. */
+        printf("  [SKIP] lime_jit_compile returned %d: %s\n", rc,
+               jit_status_string((JITStatus)rc));
         snapshot_release(jit_snap);
         snapshot_release(table_snap);
         return 77;

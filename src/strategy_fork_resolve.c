@@ -40,6 +40,7 @@
 #include "extension.h"
 #include "conflict.h"
 #include "parser_fork.h"
+#include "parse_context.h"
 #include "snapshot.h"
 
 #include <stdlib.h>
@@ -173,23 +174,171 @@ static const char *tiebreak_name(TiebreakRule rule) {
 /* ================================================================== */
 
 /*
+** A fork can only be stepped for real if it has a snapshot whose
+** action tables were populated from an actual LALR construction.
+** These are exactly the fields parse_engine_step() guards on before
+** it will drive a snapshot, so agreeing with it here keeps the two
+** in sync: if parse_engine_step would refuse the snapshot, we treat
+** the fork as static-mode instead of handing it a context that can
+** only ever return -1.
+**
+** Returns the steppable snapshot, or NULL for a static-mode fork
+** (no snapshot at all, or a metadata-only snapshot such as the ones
+** built by the lightweight path in fork_resolve_resolve()).
+*/
+static ParserSnapshot *fork_steppable_snapshot(const ParseFork *fork) {
+    if (fork == NULL) return NULL;
+    ParserSnapshot *snap = fork->snapshot;
+    if (snap == NULL) return NULL;
+    if (snap->yy_action == NULL || snap->yy_default == NULL || snap->yy_rule_info_nrhs == NULL) {
+        return NULL;
+    }
+    return snap;
+}
+
+/* ================================================================== */
+/*  Seeding the stepping context from the cloned parser stack          */
+/* ================================================================== */
+
+/*
+** Translate the cloned (grammar-specific) yyParser stack into the
+** runtime engine's state stack and install it on `ctx`, so stepping
+** resumes from the point the parser was forked at instead of from
+** LALR state 0.
+**
+** How the layout is known: clone_parser_state_seedable() retains the
+** two facts that make this readable -- offsetof(yyStackEntry, stateno)
+** and sizeof(yyStackEntry::stateno).  Both are compile-time constants
+** where yyStackEntry is visible (see PARSER_FORK_LAYOUT_PARAMS_SEEDABLE)
+** and neither is derivable here: the generator picks YYACTIONTYPE as
+** the narrowest unsigned type covering the grammar's largest action
+** value (minimum_size_type() in lime.c yields unsigned char / unsigned
+** short int / unsigned int), and per-entry padding makes
+** sizeof(yyStackEntry) an ambiguous signal.  `stateno` is documented
+** as the first member of yyStackEntry, but the offset is recorded
+** rather than assumed.
+**
+** SHIFTREDUCE: per limpar.c, after the shift half of a SHIFTREDUCE
+** action `stateno` holds reduce_action + (YY_MIN_REDUCE -
+** YY_MIN_SHIFTREDUCE), not a plain state.  That is bit-for-bit the
+** same encoding parse_engine_step() pushes for the same situation, and
+** the engine's reduce branch already unpacks states >= yy_min_reduce,
+** so such an entry is carried across verbatim and behaves identically
+** to one the engine produced itself.  parse_engine_seed_stack()
+** re-validates each value against the fork's snapshot and rejects
+** anything that is neither a plain state nor a decodable pending
+** reduce, so an untranslatable stack fails cleanly here rather than
+** installing a wrong one.
+**
+** Returns true if the context was seeded, false if the fork carries no
+** usable layout / stack (caller then leaves the context to start at
+** state 0 as before).
+*/
+static bool seed_step_ctx_from_clone(ParseFork *fork, ParseContext *ctx) {
+    const ClonedParserState *cs = &fork->cloned_state;
+
+    /* stateno_size == 0 means the fork was created through the
+    ** non-seedable clone_parser_state() / fork_parser(), which do not
+    ** take the entry layout.  Nothing to translate from. */
+    if (cs->stateno_size == 0) return false;
+    if (cs->stack_data == NULL || cs->stack_depth == 0 || cs->stack_entry_size == 0) return false;
+
+    /* Bounds: every byte we are about to read must lie inside the
+    ** cloned stack buffer. */
+    size_t span = (size_t)cs->stack_depth * cs->stack_entry_size;
+    if (span > cs->stack_size) return false;
+    if (cs->stateno_offset + cs->stateno_size > cs->stack_entry_size) return false;
+
+    uint16_t *states = calloc(cs->stack_depth, sizeof(uint16_t));
+    if (states == NULL) return false;
+
+    bool ok = true;
+    const char *entry = (const char *)cs->stack_data + cs->stateno_offset;
+
+    for (uint32_t i = 0; i < cs->stack_depth; i++, entry += cs->stack_entry_size) {
+        uint32_t raw = 0;
+        switch (cs->stateno_size) {
+        case 1: {
+            uint8_t v;
+            memcpy(&v, entry, sizeof(v));
+            raw = v;
+            break;
+        }
+        case 2: {
+            uint16_t v;
+            memcpy(&v, entry, sizeof(v));
+            raw = v;
+            break;
+        }
+        default: { /* 4 -- the only other width clone_* accepts */
+            uint32_t v;
+            memcpy(&v, entry, sizeof(v));
+            raw = v;
+            break;
+        }
+        }
+
+        /* The engine's stack entries are uint16_t.  A 32-bit
+        ** YYACTIONTYPE grammar could in principle hold a state the
+        ** engine cannot represent; refuse rather than truncate. */
+        if (raw > UINT16_MAX) {
+            ok = false;
+            break;
+        }
+        states[i] = (uint16_t)raw;
+    }
+
+    /* Symbol codes are deliberately not carried: the engine records
+    ** them for debuggability only and never reads them in dispatch,
+    ** and recovering the grammar's `major` field would need a second
+    ** width (YYCODETYPE) for no observable gain. */
+    if (ok) {
+        ok = (parse_engine_seed_stack(ctx, states, NULL, cs->stack_depth) == 0);
+    }
+
+    free(states);
+    return ok;
+}
+
+/*
 ** Feed a single token to a fork.
 **
-** In a full runtime integration, this function calls the generated
-** Parse() entry point on the fork's cloned parser state.  Since the
-** fork-resolve strategy can also operate at grammar-analysis time
-** (during conflict resolution without a live parser), this function
-** supports two modes:
+** Two modes, chosen per fork by fork_steppable_snapshot():
 **
-**   - If the fork has a cloned parser state (state_data != NULL),
-**     the token could be fed to the actual parser engine.  Currently
-**     this increments tokens_consumed and returns true, pending
-**     integration with the parser-fork dispatch layer (ROADMAP item 1
-**     -- the in-process LALR rebuild that lets a fork drive a
-**     mutated snapshot one step at a time).
+** 1. Real mode -- the fork carries a snapshot with populated action
+**    tables (i.e. it came from fork_parser() with a snapshot produced
+**    by a real LALR construction).  The token is driven through the
+**    runtime LALR(1) stepper in src/parse_engine.c against *this
+**    fork's* snapshot, using a per-fork ParseContext (fork->step_ctx)
+**    created lazily on first use.  That context owns the fork's own
+**    LALR state stack, so each fork advances independently through its
+**    own grammar.  When the fork's cloned state retains the generated
+**    stack-entry layout (i.e. it came from fork_parser_seedable()),
+**    that stack is seeded from the cloned yyParser so stepping resumes
+**    at the conflict point -- which is the question fork-resolve is
+**    asking: "which interpretation continues correctly from HERE".
+**    Without the layout the context starts at state 0, the older
+**    behaviour, which instead asks whether the lookahead is a valid
+**    standalone parse.  A token the fork's grammar does not accept
+**    makes parse_token() return -1 and this function return false, so
+**    the caller marks the fork failed -- which is what makes
+**    fork-resolve an empirical test of "which grammar actually parses
+**    this input" rather than a priority comparison.  Reaching accept
+**    marks the fork FORK_COMPLETED (see is_statement_end()).
 **
-**   - If the fork has no parser state (static mode), the token is
-**     assumed to be accepted.
+**    Token codes are the externally-visible ones; parse_token()
+**    applies the snapshot's %first_token offset itself.
+**
+** 2. Static mode -- the fork has no snapshot, or a metadata-only
+**    snapshot with NULL action tables.  This is the
+**    grammar-analysis-time path: fork_resolve_resolve() builds
+**    lightweight forks from ConflictPoint metadata alone, with no live
+**    parser and no tables to step against.  There is nothing to test
+**    the token against, so it is counted and accepted.  Being
+**    permissive here is deliberate: every candidate survives and the
+**    tiebreaker decides on priority metadata, which is the best a
+**    table-less fork can do.  Failing instead would reject every
+**    candidate and make the strategy unable to resolve anything.
 **
 ** Returns true if the fork is still alive after consuming the token,
 ** false if it failed.
@@ -200,26 +349,67 @@ static bool feed_token_to_fork(ParseFork *fork, int token_code) {
         return false;
     }
 
+    ParserSnapshot *snap = fork_steppable_snapshot(fork);
+
+    if (snap == NULL) {
+        /* Static mode: no tables, so the token is accepted. */
+        fork->status = FORK_RUNNING;
+        fork->tokens_consumed++;
+        (void)token_code;
+        return true;
+    }
+
+    /* Real mode.  Seed this fork's stepping context from the cloned
+    ** parser's stack so it resumes at the conflict point; forks whose
+    ** cloned state carries no retained entry layout (created via the
+    ** non-seedable fork_parser()) fall back to starting at state 0.
+    **
+    ** Residual limitations of the seeded resume:
+    **   - Only state numbers cross over.  Semantic values (YYMINORTYPE
+    **     `minor`) and, when %locations is active, per-entry
+    **     YYLOCATIONTYPE are left in the clone: the runtime engine is
+    **     value-free by design (see the header comment in
+    **     src/parse_engine.c), so a fork answers "does this parse"
+    **     and never rebuilds the semantic result.
+    **   - Per-entry symbol codes are dropped (the engine keeps them
+    **     only for debuggability and never dispatches on them).
+    **   - State numbers are only meaningful against a snapshot that
+    **     shares the forked parser's state numbering.  A fork whose
+    **     grammar was rebuilt with added rules can renumber states, in
+    **     which case a seeded state is a valid-but-wrong index; the
+    **     range check in parse_engine_seed_stack() catches gross
+    **     mismatches only.  Today's callers fork same-numbering
+    **     snapshots; a fork against a renumbered grammar needs a state
+    **     mapping carried alongside the modification. */
+    if (fork->step_ctx == NULL) {
+        fork->step_ctx = parse_begin(snap);
+        if (fork->step_ctx == NULL) return false;
+        (void)seed_step_ctx_from_clone(fork, (ParseContext *)fork->step_ctx);
+    }
+
     fork->status = FORK_RUNNING;
     fork->tokens_consumed++;
 
-    /*
-    ** NOTE (Letter 37 follow-up): this vtable strategy operates on
-    ** ConflictPoint/LimeContext metadata (ext_id, token, state,
-    ** priority), which does NOT carry a ParserSnapshot -- so it cannot
-    ** run a real read-only parse of each candidate here.  It therefore
-    ** treats a fed token as accepted and resolves by the tiebreak
-    ** (reached-statement-end heuristic, then priority) below.
-    **
-    ** The REAL full-statement fork-resolve -- simulate each candidate
-    ** snapshot over the actual upcoming token stream and prefer the one
-    ** that reaches accept -- is lime_mg_resolve() in multi_grammar.c,
-    ** built on the read-only lime_simulate_parse() engine primitive.
-    ** New code that needs true full-statement disambiguation should
-    ** call lime_mg_resolve() directly; this vtable path is retained for
-    ** the priority/heuristic contract its existing callers depend on.
-    */
-    (void)token_code;
+    /* Real-mode stepping against this fork's own snapshot.  The
+    ** vtable entry point fork_resolve_resolve() still builds
+    ** table-less forks from ConflictPoint metadata (static mode,
+    ** above); callers that hold real snapshots and want full-
+    ** statement disambiguation can also use lime_mg_resolve() in
+    ** src/multi_grammar.c, built on lime_simulate_parse(). */
+    int rc = parse_token((ParseContext *)fork->step_ctx, token_code, NULL, LIME_LOC_UNKNOWN);
+
+    if (rc < 0) {
+        /* Genuine syntax error for this fork's grammar. */
+        fork->error_count++;
+        return false;
+    }
+
+    if (rc == 1) {
+        /* Accept: record it so is_statement_end() can report it
+        ** without mutating the fork. */
+        fork->status = FORK_COMPLETED;
+    }
+
     return true;
 }
 
@@ -228,14 +418,19 @@ static bool feed_token_to_fork(ParseFork *fork, int token_code) {
 /* ================================================================== */
 
 /*
-** Check if a fork has reached a statement boundary / accept state.
+** Check whether a fork has reached a statement boundary / accept state.
 **
-** In a full integration this would inspect the parser stack to see if
-** the parser is in an accept state or at a recognized statement
-** boundary (e.g., semicolon consumed, end-of-input processed).
+** Real mode (fork has a steppable snapshot): the fork is complete once
+** its LALR stepping has reached accept.  feed_token_to_fork() records
+** that by setting FORK_COMPLETED when parse_token() returns 1, which is
+** the same condition parse_engine_step() uses to set its `accepted`
+** flag.  This predicate is const, so the state is read rather than
+** recomputed.
 **
-** For the static resolution path, a fork is considered "complete" if
-** it has consumed at least one token without error.
+** Static mode (no steppable snapshot): there is no parser state to
+** inspect, so the historical heuristic stands -- any running fork that
+** consumed at least one token without error counts as complete, which
+** lets the tiebreaker rank candidates on priority metadata.
 **
 ** Returns true if the fork should be marked FORK_COMPLETED.
 */
@@ -245,17 +440,10 @@ static bool is_statement_end(const ParseFork *fork) {
         return false;
     }
 
-    /*
-    ** TODO(ROADMAP item 1): Check the cloned parser's stack for an accept state.
-    **
-    **   void *parser = parse_fork_get_parser((ParseFork*)fork);
-    **   if (parser != NULL) {
-    **       // Inspect yy_action[...] for the accept action.
-    **       return parser_is_in_accept_state(parser, snap);
-    **   }
-    */
+    if (fork_steppable_snapshot(fork) != NULL) {
+        return fork->status == FORK_COMPLETED;
+    }
 
-    /* Static path: any running fork that has consumed tokens is "complete" */
     return (fork->status == FORK_RUNNING && fork->tokens_consumed > 0);
 }
 
@@ -408,8 +596,10 @@ static void *fork_resolve_init(const Extension *const *extensions, uint32_t next
 **     to simulate forking.  Creates lightweight forks with priority
 **     and token-count metadata for the tiebreaker.
 **   - Runtime mode (parse_ctx != NULL): Creates real parser forks
-**     via fork_parser() and feeds tokens.  (Requires ROADMAP item 1
-**     -- in-process LALR rebuild for fork-side parser stepping.)
+**     via fork_parser() and feeds tokens through the runtime LALR
+**     stepper against each fork's own snapshot (see
+**     feed_token_to_fork()), so forks whose grammar rejects the input
+**     genuinely fail.
 */
 static bool fork_resolve_resolve(void *strategy_context, const ConflictPoint *conflict,
                                  struct ParseContext *parse_ctx, int lookahead,
@@ -691,13 +881,19 @@ const DisambiguationStrategyVTable strategy_fork_resolve_vtable = {
 **
 ** Returns a fork set with one fork per context, or NULL on failure.
 ** Caller must destroy the set with parse_fork_set_destroy().
+**
+** The _seedable() variant additionally takes
+** offsetof(yyStackEntry, stateno) and sizeof(...->stateno), which lets
+** each fork's stepping context resume from the forked parser's stack
+** rather than restarting at LALR state 0.  See
+** seed_step_ctx_from_clone() for why those two values must be supplied
+** rather than derived.
 */
-ParseForkSet *fork_resolve_create_forks(const ConflictPoint *conflict, const void *parser,
-                                        size_t parser_size, size_t stack_entry_size,
-                                        size_t inline_stack_offset, uint32_t inline_stack_count,
-                                        size_t stack_field_offset, size_t tos_field_offset,
-                                        size_t stack_end_offset, struct ParserSnapshot **snapshots,
-                                        uint32_t max_forks) {
+ParseForkSet *fork_resolve_create_forks_seedable(
+    const ConflictPoint *conflict, const void *parser, size_t parser_size, size_t stack_entry_size,
+    size_t inline_stack_offset, uint32_t inline_stack_count, size_t stack_field_offset,
+    size_t tos_field_offset, size_t stack_end_offset, size_t stateno_offset, size_t stateno_size,
+    struct ParserSnapshot **snapshots, uint32_t max_forks) {
     if (conflict == NULL || parser == NULL || snapshots == NULL) {
         return NULL;
     }
@@ -717,9 +913,10 @@ ParseForkSet *fork_resolve_create_forks(const ConflictPoint *conflict, const voi
         const LimeContext *ctx = &conflict->contexts[i];
         int priority = ctx->priority;
 
-        ParseFork *fork = fork_parser(parser, parser_size, stack_entry_size, inline_stack_offset,
-                                      inline_stack_count, stack_field_offset, tos_field_offset,
-                                      stack_end_offset, snapshots[i], priority);
+        ParseFork *fork = fork_parser_seedable(
+            parser, parser_size, stack_entry_size, inline_stack_offset, inline_stack_count,
+            stack_field_offset, tos_field_offset, stack_end_offset, stateno_offset, stateno_size,
+            snapshots[i], priority);
 
         if (fork == NULL) {
             /* Skip contexts we can't fork for (allocation failure) */
@@ -738,6 +935,24 @@ ParseForkSet *fork_resolve_create_forks(const ConflictPoint *conflict, const voi
     }
 
     return fset;
+}
+
+/*
+** Layout-free variant: forks created here carry no stack-entry layout,
+** so their stepping contexts start at LALR state 0 (pre-existing
+** behaviour).  Callers that can supply offsetof/sizeof for
+** yyStackEntry::stateno should use fork_resolve_create_forks_seedable()
+** instead, which makes each fork resume from the captured stack.
+*/
+ParseForkSet *fork_resolve_create_forks(const ConflictPoint *conflict, const void *parser,
+                                        size_t parser_size, size_t stack_entry_size,
+                                        size_t inline_stack_offset, uint32_t inline_stack_count,
+                                        size_t stack_field_offset, size_t tos_field_offset,
+                                        size_t stack_end_offset, struct ParserSnapshot **snapshots,
+                                        uint32_t max_forks) {
+    return fork_resolve_create_forks_seedable(
+        conflict, parser, parser_size, stack_entry_size, inline_stack_offset, inline_stack_count,
+        stack_field_offset, tos_field_offset, stack_end_offset, 0, 0, snapshots, max_forks);
 }
 
 /*

@@ -92,15 +92,14 @@ pg_infer, pg_mentat, ... composed at backend startup).
 
 Composition is the primary consumer of this work.
 
-**Open follow-ups.**  All blocking items are closed.  The remaining
-item is bookkeeping:
-
-- **Thread-local active-context storage.**  The active
-  `LimeCompilerContext` pointer is currently process-global, not
-  `_Thread_local`, so two concurrent `lime_compile_grammar_in_process`
-  calls in different threads race.  Sequential calls in one thread
-  are fully isolated.  Thread-local promotion is tracked as phase 5;
-  no consumer has reported a need yet.
+**Open follow-ups.**  None blocking.  The previously listed
+"thread-local active-context storage" item is done: the active
+`LimeCompilerContext` pointer is declared
+`static LIME_THREAD_LOCAL LimeCompilerContext *lime_active_ctx`
+in `lime.c` (`_Thread_local` under C11), so concurrent
+`lime_compile_grammar_in_process` calls on different threads are
+isolated.  dlopen-handle cleanup for subprocess-built snapshots is
+also done (`snapshot_dlopen_release`, `tests/test_snapshot_dlopen_cleanup.c`).
 
 **Source-tree references.**
 
@@ -194,7 +193,7 @@ grammar):
 
 ---
 
-## 3. Bayesian and LLM disambiguation strategies
+## 3. Bayesian disambiguation strategy (LLM: not planned)
 
 **What works today.**  Priority-based, fork-resolve, and Bayesian
 (Beta-Bernoulli) disambiguation strategies are fully implemented
@@ -203,21 +202,26 @@ and exercised by tests.  See `src/strategy_bayesian.c` and
 cold-start, biased feedback, independence across conflict points,
 and posterior-mean closed-form match).
 
-**What is missing.**  `STRAT_LLM` still binds to the stub vtable.
-Bayesian uses greedy posterior-mean selection; Thompson sampling
-would be a natural exploration upgrade.
+**What is missing.**  Bayesian uses greedy posterior-mean selection;
+Thompson sampling would be a natural exploration upgrade.
 
-**What it would take.**  A generic LLM HTTP client honouring a
-configurable model endpoint (the `examples/llm_oracle/` directory
-has a sketch).  Thompson sampling for Bayesian is ~50 lines of
-additional code in `strategy_bayesian.c`.
+**Not planned: `STRAT_LLM`.**  Deliberately unimplemented.  A parser
+must produce the same tree for the same input every time, so a
+non-deterministic disambiguator is a disqualifying design choice, not
+missing work.  `disambiguation_create(STRAT_LLM, ...)` now returns
+NULL instead of binding a silent stub.  `examples/llm_oracle/` remains
+available as a research demo through the `STRAT_CUSTOM`
+user-supplied-vtable path.
+
+**What it would take.**  Thompson sampling for Bayesian is ~50 lines
+of additional code in `strategy_bayesian.c`.
 
 **Source-tree references.**
 
 - `src/strategy_bayesian.c` -- working Beta-Bernoulli
   implementation.
-- `src/disambiguation.c::stub_vtable` -- the stub binding that
-  STRAT_LLM still uses.
+- `src/disambiguation.c::get_builtin_vtable` -- the STRAT_LLM case
+  returning NULL.
 
 ---
 

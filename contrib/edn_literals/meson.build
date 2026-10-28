@@ -13,7 +13,7 @@
 edn_grammar = custom_target('edn_grammar',
   input : 'edn_grammar.lime',
   output : ['edn_grammar.c', 'edn_grammar.h'],
-  command : [lime_exe, '@INPUT@', '-d', '@OUTDIR@'],
+  command : [lime_exe, '-T' + meson.project_source_root() / 'limpar.c', '@INPUT@', '-d@OUTDIR@'],
 )
 
 edn_sources = [

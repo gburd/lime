@@ -80,6 +80,7 @@
 #include "parse_context.h"
 #include "snapshot.h"
 #include "snapshot_build.h"
+#include "jit_context.h"   /* jit_status_string() -- see the JIT half below */
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -488,7 +489,17 @@ int main(void) {
         int jit_rc = lime_jit_compile(snap);
         clock_gettime(CLOCK_MONOTONIC, &t1);
         if (jit_rc != 0) {
-            printf("  [SKIP] lime_jit_compile returned %d (LLVM unavailable?)\n", jit_rc);
+            /* Report the actual status, never a guess.  A bare numeric
+            ** code here is ambiguous: JIT_ERR_NO_LLVM and the cost
+            ** model's JIT_SKIPPED_BY_POLICY are distinct conditions
+            ** that used to both surface as "1", which is exactly how a
+            ** policy skip masqueraded as "LLVM unavailable" in
+            ** test_jit_parse_equivalence and hid that test never
+            ** running.  This grammar (3842 states) clears the cost
+            ** model's threshold so it should not skip at all -- if it
+            ** does, the reason needs to be legible. */
+            printf("  [SKIP] lime_jit_compile returned %d: %s\n",
+                   jit_rc, jit_status_string((JITStatus)jit_rc));
         } else {
             printf("  JIT compiled in %.2f ms\n", time_diff_ms(t0, t1));
             T_CHECK(snap->jit_ctx != NULL, "JIT context attached after compile");

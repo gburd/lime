@@ -22,6 +22,7 @@
 #include "edn_semantics.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 /* Pull in the extension registry and grammar context APIs */

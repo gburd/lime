@@ -50,3 +50,15 @@ option('lime_lsp_in_process',
   value       : 'enabled',
   description : 'Link lime-lsp against liblime_compiler.a so the diagnostics path runs in-process (Lime-Letter-27 fix). Default: enabled. Disable to keep the v0.5.0 fork+exec subprocess path (smaller binary, ~6-20s/request on large grammars).',
 )
+
+option('contrib',
+  type        : 'feature',
+  value       : 'auto',
+  description : 'Build the contrib/ SQL-dialect extension demos ' +
+                '(Goal B: runtime grammar composition showcases). ' +
+                'auto: build only the subdirectories that are ' +
+                'currently buildable against the extension API ' +
+                '(see contrib/meson.build); enabled: same set, but ' +
+                'hard error if meson.build wiring for a subdirectory ' +
+                'is missing; disabled: skip contrib/ entirely.',
+)

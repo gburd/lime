@@ -106,6 +106,16 @@ static XQueryNode *xq_node(XQueryNodeType type, const char *val,
 %left STAR DIV MOD.
 %right UMINUS.
 
+/*
+ * XQuery's `expr COMMA expr` sequence constructor is ambiguous with
+ * comma-separated lists in FLWOR clauses (for/let bindings, order
+ * specs, RETURN, function-call args, IF branches): the parser must
+ * choose between continuing the current comma-list or wrapping the
+ * next expr into a sequence.  Pinning %expect lets `lime` exit
+ * cleanly while still flagging any change in conflict count.
+ */
+%expect 11
+
 /* Non-terminal types */
 %type expr { XQueryNode* }
 %type flwor_expr { XQueryNode* }

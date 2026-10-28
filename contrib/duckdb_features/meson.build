@@ -13,7 +13,7 @@
 duckdb_grammar = custom_target('duckdb_grammar',
   input : 'duckdb_grammar.lime',
   output : ['duckdb_grammar.c', 'duckdb_grammar.h'],
-  command : [lime_exe, '@INPUT@', '-d', '@OUTDIR@'],
+  command : [lime_exe, '-T' + meson.project_source_root() / 'limpar.c', '@INPUT@', '-d@OUTDIR@'],
 )
 
 duckdb_sources = [

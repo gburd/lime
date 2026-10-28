@@ -289,17 +289,11 @@ static void compute_basename(const char *grammar_file, char *out, size_t out_sz)
 ** when the snapshot is released so long-running processes don't
 ** accumulate library mappings.
 **
-** We register an atexit-style hook by storing the dlopen handle in
-** snap->jit_ctx (we don't use that field for actual JIT contexts in
-** the lime_snapshot_create-built case) -- but jit_ctx is the right
-** "opaque finalizer slot" to use.  Actually, we'd be racing with the
-** JIT's own user.  Use a side-channel instead.
-**
-** A cleaner approach is a small parallel registry keyed by
-** ParserSnapshot*; on snapshot_release the snapshot's destructor
-** calls back here to dlclose.  For v0 we leak the handle (acceptable
-** since most processes load grammars during init) and document this
-** in the ROADMAP.  TODO entry tracked there.
+** Handles are closed on snapshot release: the registry below pairs
+** each snapshot with its dlopen handle, and destroy_snapshot in
+** src/snapshot.c calls the snapshot_dlopen_release hook (declared
+** weak there, defined strong here) to dlclose the match.
+** Covered by tests/test_snapshot_dlopen_cleanup.c.
 */
 
 /* ------------------------------------------------------------------ */

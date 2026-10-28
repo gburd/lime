@@ -135,9 +135,9 @@ static void test_create_stub_strategies(void) {
 
     ExtensionRegistry *reg = create_test_registry();
 
-    /* Fork-resolve has its own implementation; LLM is still a stub.
-    ** Bayesian is a real strategy now (see test_strategy_bayesian.c)
-    ** -- here we just verify creation/destruction works. */
+    /* Fork-resolve has its own implementation.  Bayesian is a real
+    ** strategy now (see test_strategy_bayesian.c) -- here we just
+    ** verify creation/destruction works. */
     DisambiguationContext *ctx_fork = disambiguation_create(STRAT_FORK_RESOLVE, reg);
     ASSERT(ctx_fork != NULL, "STRAT_FORK_RESOLVE should create");
     disambiguation_destroy(ctx_fork);
@@ -146,9 +146,10 @@ static void test_create_stub_strategies(void) {
     ASSERT(ctx_bayes != NULL, "STRAT_BAYESIAN should create");
     disambiguation_destroy(ctx_bayes);
 
+    /* STRAT_LLM is unimplemented by design: creation must fail loudly
+    ** with NULL rather than hand back a context that never resolves. */
     DisambiguationContext *ctx_llm = disambiguation_create(STRAT_LLM, reg);
-    ASSERT(ctx_llm != NULL, "STRAT_LLM should create");
-    disambiguation_destroy(ctx_llm);
+    ASSERT(ctx_llm == NULL, "STRAT_LLM should fail to create (unimplemented by design)");
 
     destroy_extension_registry(reg);
 }

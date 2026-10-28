@@ -439,19 +439,7 @@ bool oracle_compat_register(ExtensionRegistry *reg) {
 ** supports get_modifications/on_conflict/on_unload callbacks.
 */
 bool oracle_compat_register_ext(void *ext_registry, uint32_t *id_out) {
-    /* Import the internal registry type */
-    typedef struct ExtensionRegistry ExtReg;
-    typedef struct {
-        const char *name;
-        const char *version;
-        bool (*get_modifications)(void *, const struct ParserSnapshot *,
-                                  GrammarModification **, uint32_t *);
-        ConflictResolution (*on_conflict)(void *, const ConflictInfo *);
-        void (*on_unload)(void *);
-        void *user_data;
-    } ExtInfo;
-
-    ExtInfo info = {
+    ExtensionInfo info = {
         .name = "oracle_compat",
         .version = "1.0.0",
         .get_modifications = oracle_get_modifications,
@@ -460,9 +448,7 @@ bool oracle_compat_register_ext(void *ext_registry, uint32_t *id_out) {
         .user_data = NULL,
     };
 
-    /* Use the external symbol if available */
-    extern bool register_extension(void *, const void *, uint32_t *);
-    return register_extension(ext_registry, &info, id_out);
+    return register_extension((ExtensionRegistry *)ext_registry, &info, id_out);
 }
 
 /*

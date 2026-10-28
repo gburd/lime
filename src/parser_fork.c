@@ -31,6 +31,7 @@
 **    (with appropriate refcounting) or deep-copied after cloning.
 */
 #include "parser_fork.h"
+#include "parse_context.h"
 #include "snapshot.h"
 
 #include <stdlib.h>
@@ -71,22 +72,14 @@ static inline void write_ptr(void *base, size_t offset, void *val) {
 /*  Cloning implementation                                             */
 /* ================================================================== */
 
-bool clone_parser_state(const void *parser, size_t parser_size, size_t stack_entry_size,
-                        size_t inline_stack_offset, uint32_t inline_stack_count,
-                        size_t stack_field_offset, size_t tos_field_offset, size_t stack_end_offset,
-                        ClonedParserState *out) {
+bool clone_parser_state_seedable(const void *parser, size_t parser_size, size_t stack_entry_size,
+                                 size_t inline_stack_offset, uint32_t inline_stack_count,
+                                 size_t stack_field_offset, size_t tos_field_offset,
+                                 size_t stack_end_offset, size_t stateno_offset,
+                                 size_t stateno_size, ClonedParserState *out) {
     if (parser == NULL || out == NULL || parser_size == 0 || stack_entry_size == 0) {
         return false;
     }
-
-    /* inline_stack_count describes the capacity of the source parser's
-    ** inline yystk0[] buffer.  inline_stack_offset points to that buffer
-    ** within the parser struct.  The clone always heap-allocates its
-    ** stack (see Step 2 below), so we don't consume these values here;
-    ** they remain part of the public API for symmetry with fork_parser()
-    ** and potential future use (e.g. sizing heuristics). */
-    (void)inline_stack_offset;
-    (void)inline_stack_count;
 
     memset(out, 0, sizeof(*out));
 
@@ -167,7 +160,39 @@ bool clone_parser_state(const void *parser, size_t parser_size, size_t stack_ent
     out->stack_capacity = capacity;
     out->stack_is_inline = false; /* We always heap-allocate the clone */
 
+    /* Retain the layout description.  inline_stack_offset /
+    ** inline_stack_count describe the *source* parser's embedded
+    ** yystk0[]; the clone never uses it (see Step 2) but recording
+    ** them keeps the cloned state a complete description of what was
+    ** forked, and they cost nothing. */
+    out->stack_entry_size = stack_entry_size;
+    out->inline_stack_offset = inline_stack_offset;
+    out->inline_stack_count = inline_stack_count;
+
+    /* Only accept a stateno width the generator can actually emit
+    ** (minimum_size_type in lime.c yields 1, 2 or 4 bytes).  Anything
+    ** else -- including the 0 that clone_parser_state() passes to mean
+    ** "not supplied" -- is recorded as unknown, and consumers must
+    ** then treat the cloned stack as unreadable rather than guess. */
+    if ((stateno_size == 1 || stateno_size == 2 || stateno_size == 4) &&
+        stateno_offset + stateno_size <= stack_entry_size) {
+        out->stateno_offset = stateno_offset;
+        out->stateno_size = (uint8_t)stateno_size;
+    }
+
     return true;
+}
+
+bool clone_parser_state(const void *parser, size_t parser_size, size_t stack_entry_size,
+                        size_t inline_stack_offset, uint32_t inline_stack_count,
+                        size_t stack_field_offset, size_t tos_field_offset, size_t stack_end_offset,
+                        ClonedParserState *out) {
+    /* stateno_size 0 == "layout not supplied": the clone is produced
+    ** exactly as before, and consumers that want to read the cloned
+    ** stack must fall back to their no-layout path. */
+    return clone_parser_state_seedable(parser, parser_size, stack_entry_size, inline_stack_offset,
+                                       inline_stack_count, stack_field_offset, tos_field_offset,
+                                       stack_end_offset, 0, 0, out);
 }
 
 void cloned_parser_state_destroy(ClonedParserState *cloned) {
@@ -189,19 +214,21 @@ void cloned_parser_state_destroy(ClonedParserState *cloned) {
 /*  Fork lifecycle                                                     */
 /* ================================================================== */
 
-ParseFork *fork_parser(const void *parser, size_t parser_size, size_t stack_entry_size,
-                       size_t inline_stack_offset, uint32_t inline_stack_count,
-                       size_t stack_field_offset, size_t tos_field_offset, size_t stack_end_offset,
-                       struct ParserSnapshot *snapshot, int priority) {
+ParseFork *fork_parser_seedable(const void *parser, size_t parser_size, size_t stack_entry_size,
+                                size_t inline_stack_offset, uint32_t inline_stack_count,
+                                size_t stack_field_offset, size_t tos_field_offset,
+                                size_t stack_end_offset, size_t stateno_offset, size_t stateno_size,
+                                struct ParserSnapshot *snapshot, int priority) {
     if (parser == NULL) return NULL;
 
     ParseFork *fork = calloc(1, sizeof(ParseFork));
     if (fork == NULL) return NULL;
 
     /* Clone the parser state. */
-    bool ok = clone_parser_state(parser, parser_size, stack_entry_size, inline_stack_offset,
-                                 inline_stack_count, stack_field_offset, tos_field_offset,
-                                 stack_end_offset, &fork->cloned_state);
+    bool ok = clone_parser_state_seedable(parser, parser_size, stack_entry_size,
+                                          inline_stack_offset, inline_stack_count,
+                                          stack_field_offset, tos_field_offset, stack_end_offset,
+                                          stateno_offset, stateno_size, &fork->cloned_state);
 
     if (!ok) {
         free(fork);
@@ -222,8 +249,26 @@ ParseFork *fork_parser(const void *parser, size_t parser_size, size_t stack_entr
     return fork;
 }
 
+ParseFork *fork_parser(const void *parser, size_t parser_size, size_t stack_entry_size,
+                       size_t inline_stack_offset, uint32_t inline_stack_count,
+                       size_t stack_field_offset, size_t tos_field_offset, size_t stack_end_offset,
+                       struct ParserSnapshot *snapshot, int priority) {
+    return fork_parser_seedable(parser, parser_size, stack_entry_size, inline_stack_offset,
+                                inline_stack_count, stack_field_offset, tos_field_offset,
+                                stack_end_offset, 0, 0, snapshot, priority);
+}
+
 void free_parse_fork(ParseFork *fork) {
     if (fork == NULL) return;
+
+    /* Release the lazily-created LALR stepping context (see the
+    ** step_ctx docs in parser_fork.h).  parse_end() drops the snapshot
+    ** reference that parse_begin() acquired, which is separate from the
+    ** fork's own reference released below. */
+    if (fork->step_ctx != NULL) {
+        parse_end((ParseContext *)fork->step_ctx);
+        fork->step_ctx = NULL;
+    }
 
     /* Free semantic result. */
     if (fork->semantic_result != NULL) {

@@ -372,6 +372,9 @@ const char *jit_status_string(JITStatus status) {
         return "invalid argument";
     case JIT_ERR_ALREADY_COMPILED:
         return "already compiled";
+    case JIT_SKIPPED_BY_POLICY:
+        return "skipped by cost model (small grammar on x86_64, or LIME_JIT=0);"
+               " set LIME_JIT=1 to force";
     }
     return "unknown JIT error";
 }
@@ -512,7 +515,7 @@ int lime_jit_compile(ParserSnapshot *snap) {
     */
     const char *env = getenv("LIME_JIT");
     if (env != NULL) {
-        if (env[0] == '0') return 1; /* user-forced skip */
+        if (env[0] == '0') return JIT_SKIPPED_BY_POLICY; /* user-forced skip */
         /* env[0] == '1' (or anything else): fall through, JIT */
     } else {
 #if defined(__x86_64__) || defined(_M_X64)
@@ -522,7 +525,7 @@ int lime_jit_compile(ParserSnapshot *snap) {
             if (ir_size_estimate < 500000) {
                 /* On x86_64, small-grammar JIT loses to the
                 ** interpreter; skip and let the table path run. */
-                return 1;
+                return JIT_SKIPPED_BY_POLICY;
             }
         }
 #endif

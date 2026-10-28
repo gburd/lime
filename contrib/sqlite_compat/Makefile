@@ -15,6 +15,7 @@
 
 CC      ?= cc
 CFLAGS  ?= -Wall -Wextra -std=c11 -g -O2
+INCLUDES := -I. -I../../include -I../../src
 LDFLAGS ?=
 
 # Source files
@@ -31,11 +32,11 @@ all: $(LIB)
 
 # Build shared library (needs full extension system headers)
 $(LIB): $(SRCS)
-	$(CC) $(CFLAGS) -shared -fPIC -I. -o $@ $(SRCS) $(LDFLAGS) -lpthread
+	$(CC) $(CFLAGS) -shared -fPIC $(INCLUDES) -o $@ $(SRCS) $(LDFLAGS) -lpthread
 
 # Build object files (for static linking into a larger project)
 %.o: %.c
-	$(CC) $(CFLAGS) -I. -c -o $@ $<
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
 # Build and run tests (standalone, does not require the extension library)
 test: $(TEST)

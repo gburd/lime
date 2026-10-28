@@ -13,7 +13,7 @@
 oracle_grammar = custom_target('oracle_grammar',
   input : 'oracle_grammar.lime',
   output : ['oracle_grammar.c', 'oracle_grammar.h'],
-  command : [lime_exe, '@INPUT@', '-d', '@OUTDIR@'],
+  command : [lime_exe, '-T' + meson.project_source_root() / 'limpar.c', '@INPUT@', '-d@OUTDIR@'],
 )
 
 oracle_sources = [
@@ -25,7 +25,7 @@ oracle_sources = [
 # Static library
 oracle_compat_lib = static_library('oracle_compat',
   oracle_sources,
-  include_directories : [inc, include_directories('.')],
+  include_directories : [inc, include_directories('.'), include_directories('../../src')],
   dependencies : [lime_parser_dep],
   install : false,
 )
@@ -33,7 +33,7 @@ oracle_compat_lib = static_library('oracle_compat',
 # Shared library (for dynamic plugin loading)
 oracle_compat_shared = shared_library('oracle_compat',
   oracle_sources,
-  include_directories : [inc, include_directories('.')],
+  include_directories : [inc, include_directories('.'), include_directories('../../src')],
   dependencies : [lime_parser_dep],
   install : false,
 )
@@ -41,7 +41,7 @@ oracle_compat_shared = shared_library('oracle_compat',
 # Test executable
 test_oracle_exe = executable('test_oracle',
   'test_oracle.c',
-  include_directories : [inc, include_directories('.')],
+  include_directories : [inc, include_directories('.'), include_directories('../../src')],
   link_with : oracle_compat_lib,
   dependencies : [lime_parser_dep],
   install : false,

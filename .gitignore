@@ -126,6 +126,22 @@ examples/json/json_parser
 !examples/json/json_tokenize.h
 !examples/json/main.c
 
+# contrib/ dialect demos: generated parser sources + built binaries
+# (mirrors the examples/*/*.c pattern above -- ship the .lime
+# grammars and hand-written semantics, not the lime-generated output).
+contrib/*/*_grammar.c
+contrib/*/*_grammar.h
+contrib/*/xquery_grammar.c
+contrib/*/xquery_grammar.h
+contrib/*/xpath_grammar.c
+contrib/*/xpath_grammar.h
+contrib/*/test_duckdb
+contrib/*/test_edn
+contrib/*/test_mysql
+contrib/*/test_oracle
+contrib/*/test_sqlite_compat
+contrib/*/xml_query_demo
+
 # Top-level dist tarballs from make dist
 build-dist/
 bench-runs/

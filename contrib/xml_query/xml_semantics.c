@@ -289,11 +289,15 @@ void xml_error_destroy(XmlQueryError *err) {
 /* ------------------------------------------------------------------ */
 
 /*
-** Evaluate an xmlquery() expression.
-** This is a stub that demonstrates the integration pattern between
-** the SQL parser, grammar context switching, and the XQuery evaluator.
+** NON-FUNCTIONAL DEMO STUB.  Parses and evaluates nothing; returns a
+** fabricated string, not an evaluation result.  It exists only to show
+** the call shape between the SQL parser, grammar context switching,
+** and a hypothetical XQuery evaluator.
 **
-** In a real implementation:
+** For real, working parsers of these languages see examples/xpath/
+** and examples/xquery/ (standalone Lime grammars + drivers).
+**
+** A real implementation would:
 **   1. SQL parser encounters xmlquery(...)
 **   2. Grammar context switches to MODE_XQUERY
 **   3. XQuery expression is parsed into an AST
@@ -316,15 +320,17 @@ XmlValue *xmlquery_evaluate(const char *xquery_text,
         return xml_value_null();
     }
 
-    /* Stub: return a string describing what would be evaluated */
+    /* Fabricated sentinel, self-identifying so anything depending on it
+    ** is obvious in output.  Not an evaluation result. */
     char buf[256];
-    snprintf(buf, sizeof(buf), "[xmlquery result: %s]", xquery_text);
+    snprintf(buf, sizeof(buf), "[STUB-NOT-EVALUATED xmlquery: %s]", xquery_text);
     return xml_value_string(buf);
 }
 
 /*
-** Evaluate an xpath() expression.
-** Stub implementation following the same pattern as xmlquery_evaluate.
+** NON-FUNCTIONAL DEMO STUB.  Same as xmlquery_evaluate above: evaluates
+** nothing, returns a fabricated string.  Real XPath parsing lives in
+** examples/xpath/.
 */
 XmlValue *xpath_evaluate(const char *xpath_text,
                          const XmlValue *xml_document,
@@ -338,8 +344,8 @@ XmlValue *xpath_evaluate(const char *xpath_text,
         return xml_value_null();
     }
 
-    /* Stub: return a string describing what would be evaluated */
+    /* Fabricated sentinel, self-identifying.  Not an evaluation result. */
     char buf[256];
-    snprintf(buf, sizeof(buf), "[xpath result: %s]", xpath_text);
+    snprintf(buf, sizeof(buf), "[STUB-NOT-EVALUATED xpath: %s]", xpath_text);
     return xml_value_string(buf);
 }

@@ -368,6 +368,18 @@ subdir('bench')
 # stays compiled and the .lex -> .c+.h codegen path is
 # exercised on every CI run.
 subdir('examples/pg_bootscanner')
+
+# contrib/ Goal-B demos (runtime grammar composition showcases).
+# Off by default in the sense that only the subset which currently
+# builds cleanly against the extension API is wired -- see
+# contrib/meson.build for the per-directory rationale.  `disabled`
+# skips contrib/ entirely; `auto`/`enabled` build that buildable
+# subset (there is currently nothing in contrib/ that hard-errors
+# when explicitly `enabled`, so the two behave the same today).
+if not get_option('contrib').disabled()
+  subdir('contrib')
+endif
+
 doxygen = find_program('doxygen', required : false)
 if doxygen.found()
   custom_target('doxygen',

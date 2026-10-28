@@ -62,6 +62,29 @@
 #include <time.h>
 #include <unistd.h>
 
+/* Sanitizer / instrumented-environment detection.  Same idiom (and
+** same rationale) as tests/test_random_composition.c: -fsanitize=*
+** instrumentation legitimately changes timing by 2-10x, and valgrind
+** by 10-30x, so the wall-clock thresholds in the perf sub-tests below
+** would fail for reasons unrelated to dispatch latency.  When
+** instrumented, those sub-tests print their measurement and skip the
+** assertion rather than reporting a bogus regression. */
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) || defined(__SANITIZE_UNDEFINED__)
+#  define LIME_BUILT_WITH_SANITIZER 1
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+#    define LIME_BUILT_WITH_SANITIZER 1
+#  endif
+#endif
+#ifndef LIME_BUILT_WITH_SANITIZER
+#  define LIME_BUILT_WITH_SANITIZER 0
+#endif
+
+static int lime_test_skip_perf(void) {
+    const char *e = getenv("LIME_TEST_SKIP_PERF");
+    return LIME_BUILT_WITH_SANITIZER || (e != NULL && e[0] != '\0' && e[0] != '0');
+}
+
 /* ------------------------------------------------------------------ */
 /*  Test harness                                                       */
 /* ------------------------------------------------------------------ */
@@ -176,8 +199,13 @@ static void test_default_fast_path(void) {
     ** ASan / UBSan instrument the compiler with extra checks, so we
     ** allow up to 5 ms here -- still two orders of magnitude under
     ** the subprocess path's ~150-300 ms baseline. */
-    CHECK(per < 5.0,
-          "default_fast_path: < 5 ms/compile (subprocess would be ~200ms)");
+    if (lime_test_skip_perf()) {
+        printf("  default_fast_path: [instrumented build, perf-target check "
+               "skipped]\n");
+    } else {
+        CHECK(per < 5.0,
+              "default_fast_path: < 5 ms/compile (subprocess would be ~200ms)");
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -380,9 +408,15 @@ static void test_composition_perf(void) {
     if (snap != NULL) snapshot_release(snap);
 
     /* Generous threshold: in-process is ~0.1 ms; subprocess would be
-    ** 200+ ms; ASan adds 3-5x. */
-    CHECK(elapsed < 50.0,
-          "composition_perf: < 50 ms (subprocess would be ~200+ ms)");
+    ** 200+ ms.  Skipped outright under instrumentation, where the
+    ** multiplier is unbounded in practice. */
+    if (lime_test_skip_perf()) {
+        printf("  composition_perf: [instrumented build, perf-target check "
+               "skipped]\n");
+    } else {
+        CHECK(elapsed < 50.0,
+              "composition_perf: < 50 ms (subprocess would be ~200+ ms)");
+    }
 
     free(merged);
 }

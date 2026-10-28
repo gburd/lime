@@ -1232,10 +1232,17 @@ test_parser_fork = executable('test_parser_fork',
 
 test('parser_fork', test_parser_fork)
 
-# Fork-resolve disambiguation strategy tests
+# Fork-resolve disambiguation strategy tests.
+#
+# Links lime_compiler_dep so the real-snapshot sub-tests can compile
+# two small, genuinely disagreeing grammars in-process via
+# lime_compile_grammar_in_process and prove that a fork whose grammar
+# rejects the token stream actually FAILS.  The static-mode sub-tests
+# (table-less snapshots) need no compiler and skip cleanly if the
+# in-process compile is unavailable.
 test_fork_resolve = executable('test_fork_resolve',
   'test_fork_resolve.c',
-  dependencies : lime_parser_dep,
+  dependencies : [lime_parser_dep, lime_compiler_dep],
   include_directories : include_directories('../src'),
 )
 
@@ -2504,6 +2511,27 @@ if host_machine.system() != 'windows'
     workdir : meson.project_source_root(),
     is_parallel : false,
   )
+
+  # Known-gap canary: does an extension's LimeReduceFn actually run at
+  # parse time?  docs/EXTENSIONS.md says it does not (the callback shape
+  # is type-checked at registration only), and this test proves that end
+  # to end with a real grammar, extension, and parse.  It is EXPECTED TO
+  # FAIL until the runtime engine dispatches extension reduce callbacks;
+  # the failure is the canary, so do not "fix" it by relaxing the
+  # assertion.  Same subprocess-rebuild pipeline (and therefore the same
+  # Windows skip) as test_extension_rebuild above.
+  test_extension_reduce_e2e = executable('test_extension_reduce_e2e',
+    'test_extension_reduce_e2e.c',
+    test_runtime_arith_gen,
+    include_directories : include_directories('../src'),
+    dependencies : lime_parser_dep,
+    export_dynamic : true,
+  )
+
+  test('extension_reduce_e2e', test_extension_reduce_e2e,
+    workdir : meson.project_source_root(),
+    is_parallel : false,
+  )
 endif
 
 # Equivalence test: the JIT-armed parse_token path produces the same
@@ -2739,9 +2767,18 @@ endif
 # Property-based tests via Hegel (gated on libhegel availability)
 # ====================================================================
 #
-# Hegel is a Hypothesis-backed property-based testing protocol; the
-# C99 binding ships at https://github.com/gburd/hegel-c.  When
-# present, four PBTs land here, exercising:
+# Hegel property-based tests
+# ====================================================================
+#
+# libhegel is Hegel's native property-based testing engine, exposed
+# over a C ABI by the `hegeltest-c` crate in
+# https://github.com/hegeldev/hegel-rust.  It runs entirely
+# in-process: no server binary, no subprocess, no socket.  (The
+# predecessor, github.com/gburd/hegel-c, spoke a socket protocol that
+# upstream has since removed; that mismatch is why all four PBTs below
+# skipped at runtime for their entire existence.)
+#
+# Four PBTs land here when the library is present, exercising:
 #
 #   1. parser-table roundtrip (test_runtime_pbt)
 #   2. snapshot acquire/release refcount stateful test
@@ -2750,15 +2787,14 @@ endif
 #      (test_jit_pbt)
 #   4. JSON allocator-mode equivalence (test_json_pbt)
 #
-# The targets and methodology live in
-# .agent/skills/hegel/references/c/reference.md.  Each test exits
-# 77 (meson skip code) when hegel_session_new() returns NULL so
-# the rest of the suite still runs on hosts without the hegel
-# server binary on PATH.
+# The shared run-loop harness is tests/hegel_pbt.h.  Each test exits
+# 77 (meson skip code) only if libhegel itself fails to initialise
+# (or, for jit_pbt, if there is no JIT to compare against), so the
+# rest of the suite still runs on hosts without libhegel.
 hegel_dep = dependency('hegel', required : false)
 
 if hegel_dep.found()
-  message('Hegel property-based tests: ENABLED (hegel ' +
+  message('Hegel property-based tests: ENABLED (libhegel ' +
           hegel_dep.version() + ')')
 
   # Reuse the runtime arith snapshot generated above by the
@@ -2785,7 +2821,12 @@ if hegel_dep.found()
     include_directories : include_directories('../src'),
     dependencies : [lime_parser_dep, hegel_dep],
   )
-  test('jit_pbt', test_jit_pbt, timeout : 120)
+  # LIME_JIT=1 forces lime_jit_compile past its x86_64 size/arch
+  # policy, which otherwise declines to JIT the small arith grammar
+  # and would leave this test with nothing to compare the interpreter
+  # against.  Without LLVM the test still skips, via
+  # lime_jit_compile's JIT_ERR_NO_LLVM.
+  test('jit_pbt', test_jit_pbt, timeout : 120, env : {'LIME_JIT' : '1'})
 
   # JSON allocator-mode PBT consumes the JSON example's parser
   # sources directly (json.h, json_helpers.c, json_tokenize.c) and
@@ -2822,8 +2863,9 @@ if hegel_dep.found()
   endif
 else
   message('Hegel property-based tests: SKIPPED ' +
-          '(install hegel-c to enable; see ' +
-          '.agent/skills/hegel/references/c/reference.md)')
+          '(no libhegel found; `nix develop` provides it, or install ' +
+          'libhegel + hegel.h from ' +
+          'https://github.com/hegeldev/hegel-rust/releases)')
 endif
 # v1.0.0: smoke test for scripts/lime-gdb.py.  Verifies the
 # pretty-printer + lime-* commands load and produce expected

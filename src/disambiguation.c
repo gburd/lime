@@ -38,41 +38,6 @@ extern const DisambiguationStrategyVTable strategy_fork_resolve_vtable;
 /* Defined in strategy_bayesian.c */
 extern const DisambiguationStrategyVTable strategy_bayesian_vtable;
 
-/* Placeholder vtables for strategies not yet implemented.
-** These return "unresolved" for every conflict. */
-static void *stub_init(const Extension *const *extensions, uint32_t n) {
-    (void)extensions;
-    (void)n;
-    return (void *)(uintptr_t)1; /* Non-NULL sentinel */
-}
-
-static bool stub_resolve(void *ctx, const ConflictPoint *conflict, struct ParseContext *parse_ctx,
-                         int lookahead, StrategyResult *result) {
-    (void)ctx;
-    (void)conflict;
-    (void)parse_ctx;
-    (void)lookahead;
-    strategy_result_init(result);
-    return false; /* Could not resolve */
-}
-
-static void stub_update(void *ctx, struct ExtensionRegistry *reg, bool success) {
-    (void)ctx;
-    (void)reg;
-    (void)success;
-}
-
-static void stub_destroy(void *ctx) {
-    (void)ctx;
-}
-
-static const DisambiguationStrategyVTable stub_vtable = {
-    .init = stub_init,
-    .resolve = stub_resolve,
-    .update = stub_update,
-    .destroy = stub_destroy,
-};
-
 /* ------------------------------------------------------------------ */
 /*  Strategy result helpers                                             */
 /* ------------------------------------------------------------------ */
@@ -108,8 +73,13 @@ static const DisambiguationStrategyVTable *get_builtin_vtable(LimeStrategy strat
     case STRAT_BAYESIAN:
         return &strategy_bayesian_vtable;
     case STRAT_LLM:
-        /* Not yet implemented -- return stub */
-        return &stub_vtable;
+        /* Unimplemented by design: a non-deterministic disambiguator has
+        ** no place in a parser that must produce the same tree for the
+        ** same input every time.  disambiguation_create(STRAT_LLM, ...)
+        ** therefore fails with NULL rather than silently resolving
+        ** nothing.  examples/llm_oracle/ remains available as a research
+        ** demo via the STRAT_CUSTOM user-supplied-vtable path. */
+        return NULL;
     case STRAT_CUSTOM:
         /* STRAT_CUSTOM requires user vtable via disambiguation_create_custom */
         return NULL;

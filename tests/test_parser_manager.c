@@ -5,8 +5,12 @@
 ** management, enumeration, hot-swap, version utilities, and concurrent
 ** access patterns.
 **
-** Dynamic loading tests (dlopen) are skipped when no test plugin .so is
-** available; the core registry logic is exercised via static plugins.
+** Dynamic loading tests are limited: the real load-a-plugin path is
+** covered by tests/test_composition_e2e.c and tests/test_parse_manager.c
+** (both of which build .so fixtures, POSIX-only).  Here we cover the
+** platform loader shim's error branches, including one case that
+** actually opens a library on Windows so the LoadLibrary/
+** GetProcAddress/FreeLibrary path is exercised in CI.
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -1238,6 +1242,57 @@ static void test_load_nonexistent_library(void) {
     PASS();
 }
 
+/*
+** Open a real library that exists but does not export
+** lime_plugin_entry, and assert we get NO_ENTRY_POINT rather than
+** DLOPEN_FAILED.  This is the only test here that drives a successful
+** platform-loader open + symbol miss + close, so it is what keeps the
+** Windows LoadLibrary/GetProcAddress/FreeLibrary mapping honest in CI
+** (where no .dll plugin fixture is built).
+*/
+static void test_load_library_without_entry_point(void) {
+    TEST("load: real library missing lime_plugin_entry");
+
+    /* A library guaranteed present and loadable on the platform. */
+#if defined(_WIN32)
+    const char *lib = "kernel32.dll";
+#elif defined(__APPLE__)
+    const char *lib = "/usr/lib/libSystem.B.dylib";
+#elif defined(__GLIBC__)
+    const char *lib = "libm.so.6";
+#else
+    const char *lib = NULL; /* no portable answer (musl, BSDs) */
+#endif
+
+    if (lib == NULL) {
+        printf("SKIP (no known entry-point-free library on this platform)\n");
+        tests_passed++;
+        return;
+    }
+
+    ParserManager *mgr = parser_manager_create(NULL);
+    LimePluginHandle h = LIME_PLUGIN_HANDLE_INVALID;
+    ParserManagerStatus st = parser_manager_load(mgr, lib, NULL, &h);
+
+    if (st != PM_ERR_NO_ENTRY_POINT) {
+        char buf[160];
+        snprintf(buf, sizeof(buf), "expected NO_ENTRY_POINT for %s, got %s", lib,
+                 parser_manager_status_string(st));
+        FAIL(buf);
+        parser_manager_destroy(mgr);
+        return;
+    }
+
+    if (parser_manager_plugin_count(mgr) != 0) {
+        FAIL("failed load must not register a plugin");
+        parser_manager_destroy(mgr);
+        return;
+    }
+
+    parser_manager_destroy(mgr);
+    PASS();
+}
+
 static void test_load_null_args(void) {
     TEST("load: NULL arguments");
     ParserManager *mgr = parser_manager_create(NULL);
@@ -1594,6 +1649,7 @@ int main(void) {
 
     printf("\n[Dynamic Loading]\n");
     test_load_nonexistent_library();
+    test_load_library_without_entry_point();
     test_load_null_args();
 
     printf("\n[Concurrency]\n");

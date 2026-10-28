@@ -31,6 +31,22 @@
  *
  * @see disambiguation.h for the fork-resolve strategy.
  * @see snapshot.h for ParserSnapshot reference counting.
+ *
+ * @par ABI note
+ * `ClonedParserState` and `ParseFork` are defined in this installed
+ * public header, and both gained trailing fields in v0.6.x (layout
+ * retention for stack seeding, and the per-fork stepping context).
+ * `sizeof(ClonedParserState)` therefore changed (~48 -> ~88 bytes on
+ * LP64).  This is safe for Lime's build model because
+ * `liblime_parser` ships as a **static** library only (see
+ * `src/meson.build`) -- consumers relink against the same headers
+ * they compile with, so there is no scenario where an object built
+ * against an older layout meets a newer library at run time.  If a
+ * shared-library build is ever added, these structs must either move
+ * behind an opaque handle or gain a `struct_size` stamp plus a
+ * `soversion` bump; do not rely on appending fields staying safe.
+ * Note `bench/BENCHMARK_RESULTS.md` and
+ * `docs/EXTENSION_PERFORMANCE.md` still quote the old ~48 B figure.
  */
 #ifndef PARSER_FORK_H
 #define PARSER_FORK_H
@@ -90,6 +106,44 @@ typedef struct ClonedParserState {
     uint32_t stack_capacity; /**< Total entry slots in the cloned stack */
 
     bool stack_is_inline; /**< True if stack lives inside state_data (yystk0) */
+
+    /* --- Retained layout description -------------------------------
+    **
+    ** The caller-supplied layout parameters are kept rather than
+    ** discarded, so consumers can walk the cloned (grammar-specific)
+    ** stack without re-deriving anything.  In particular
+    ** src/strategy_fork_resolve.c reads the per-entry `stateno` field
+    ** out of the clone to seed the runtime LALR engine's own state
+    ** stack, which is what lets a fork resume from the conflict point
+    ** instead of restarting at state 0.
+    */
+    size_t stack_entry_size;     /**< sizeof(yyStackEntry) */
+    size_t inline_stack_offset;  /**< offsetof(yyParser, yystk0) */
+    uint32_t inline_stack_count; /**< YYSTACKDEPTH of the source parser */
+
+    /**
+     * @brief offsetof(yyStackEntry, stateno).
+     *
+     * Zero in practice (`stateno` is the first member of
+     * yyStackEntry) but recorded rather than assumed.  Only
+     * meaningful when @ref stateno_size is non-zero.
+     */
+    size_t stateno_offset;
+
+    /**
+     * @brief sizeof(yyStackEntry::stateno), i.e. sizeof(YYACTIONTYPE).
+     *
+     * 1, 2 or 4 -- the generator picks the narrowest unsigned type
+     * that can hold the grammar's largest action value, so this is
+     * grammar-dependent and cannot be inferred from
+     * @ref stack_entry_size (padding makes that ambiguous).
+     *
+     * Zero means "not supplied": the clone came in through
+     * clone_parser_state() / fork_parser(), which do not take the
+     * field layout.  Consumers must then fall back to not reading the
+     * cloned stack at all.
+     */
+    uint8_t stateno_size;
 } ClonedParserState;
 
 /** @} */ /* end cloned_state */
@@ -143,6 +197,24 @@ typedef struct ParseFork {
     uint32_t error_count;     /**< Cumulative error count */
 
     uint64_t fork_id; /**< Unique identifier for tracing/debugging */
+
+    /**
+     * @brief Owned LALR stepping context (a `ParseContext *`).
+     *
+     * Created lazily by the fork-resolve strategy the first time a
+     * token is fed to a fork whose snapshot carries real action
+     * tables; it holds this fork's independent LALR state stack so
+     * each fork advances through its own grammar without disturbing
+     * the others.  NULL for lightweight / static-mode forks that have
+     * no tables to step against.  Declared `void *` so this header
+     * stays free of parse_context.h.  Released by free_parse_fork().
+     *
+     * Trailing field on purpose: ParseFork is only ever heap-allocated
+     * by library code (fork_parser(), calloc in
+     * src/strategy_fork_resolve.c) and no caller embeds or copies it
+     * by value, so appending here does not disturb existing users.
+     */
+    void *step_ctx;
 } ParseFork;
 
 /** @} */ /* end parse_fork */
@@ -202,6 +274,37 @@ bool clone_parser_state(const void *parser, size_t parser_size, size_t stack_ent
                         ClonedParserState *out);
 
 /**
+ * @brief clone_parser_state() plus the stack-entry `stateno` layout.
+ *
+ * Identical to clone_parser_state() except that it also records where
+ * within each yyStackEntry the `stateno` field lives and how wide it
+ * is.  With those two values retained in the ClonedParserState, a
+ * consumer can translate the cloned grammar-specific stack into the
+ * runtime engine's own state stack -- which is what lets a fork resume
+ * stepping from the point it was forked at rather than from state 0.
+ *
+ * The widths cannot be derived: the generator emits YYACTIONTYPE as
+ * the narrowest unsigned type covering the grammar's largest action
+ * value (`unsigned char`, `unsigned short int` or `unsigned int`), and
+ * per-entry padding makes sizeof(yyStackEntry) an ambiguous signal.
+ * They are compile-time constants where yyStackEntry is visible, so
+ * the caller passes them; use PARSER_FORK_LAYOUT_PARAMS_SEEDABLE().
+ *
+ * @param stateno_offset offsetof(yyStackEntry, stateno).
+ * @param stateno_size   sizeof(((yyStackEntry*)0)->stateno); must be
+ *                       1, 2 or 4.  Any other value (including 0) is
+ *                       recorded as "unknown", which degrades to the
+ *                       behaviour of plain clone_parser_state().
+ *
+ * @see PARSER_FORK_LAYOUT_PARAMS_SEEDABLE()
+ */
+bool clone_parser_state_seedable(const void *parser, size_t parser_size, size_t stack_entry_size,
+                                 size_t inline_stack_offset, uint32_t inline_stack_count,
+                                 size_t stack_field_offset, size_t tos_field_offset,
+                                 size_t stack_end_offset, size_t stateno_offset,
+                                 size_t stateno_size, ClonedParserState *out);
+
+/**
  * @brief Free a cloned parser state.
  *
  * After this call, the ClonedParserState is zeroed and must not be used.
@@ -245,6 +348,26 @@ ParseFork *fork_parser(const void *parser, size_t parser_size, size_t stack_entr
                        size_t inline_stack_offset, uint32_t inline_stack_count,
                        size_t stack_field_offset, size_t tos_field_offset, size_t stack_end_offset,
                        struct ParserSnapshot *snapshot, int priority);
+
+/**
+ * @brief fork_parser() plus the stack-entry `stateno` layout.
+ *
+ * Same as fork_parser() but clones via clone_parser_state_seedable(),
+ * so the resulting fork's cloned state records enough of the entry
+ * layout for the fork-resolve strategy to seed the runtime LALR
+ * engine from the captured stack (resume mid-parse) instead of
+ * restarting the fork at state 0.
+ *
+ * @param stateno_offset offsetof(yyStackEntry, stateno).
+ * @param stateno_size   sizeof(((yyStackEntry*)0)->stateno).
+ *
+ * @see PARSER_FORK_LAYOUT_PARAMS_SEEDABLE()
+ */
+ParseFork *fork_parser_seedable(const void *parser, size_t parser_size, size_t stack_entry_size,
+                                size_t inline_stack_offset, uint32_t inline_stack_count,
+                                size_t stack_field_offset, size_t tos_field_offset,
+                                size_t stack_end_offset, size_t stateno_offset, size_t stateno_size,
+                                struct ParserSnapshot *snapshot, int priority);
 
 /**
  * @brief Destroy a fork and release all resources.
@@ -424,6 +547,27 @@ uint32_t parse_fork_set_active_count(const ParseForkSet *set);
         (uint32_t)(sizeof(((ParserType *)0)->yystk0) / sizeof(StackEntryType)),                    \
         offsetof(ParserType, yystack), offsetof(ParserType, yytos),                                \
         offsetof(ParserType, yystackEnd)
+
+/**
+ * @brief PARSER_FORK_LAYOUT_PARAMS() extended with the `stateno`
+ *        field layout, for the _seedable() entry points.
+ *
+ * The two extra values describe where each stack entry's state number
+ * lives.  Both are compile-time constants wherever yyStackEntry is
+ * visible, which is the only place that knows how wide YYACTIONTYPE
+ * came out for this grammar.
+ *
+ * @par Example
+ * @code
+ *   ParseFork *f = fork_parser_seedable(
+ *       myParser,
+ *       PARSER_FORK_LAYOUT_PARAMS_SEEDABLE(yyParser, yyStackEntry),
+ *       snapshot, priority);
+ * @endcode
+ */
+#define PARSER_FORK_LAYOUT_PARAMS_SEEDABLE(ParserType, StackEntryType)                             \
+    PARSER_FORK_LAYOUT_PARAMS(ParserType, StackEntryType), offsetof(StackEntryType, stateno),      \
+        sizeof(((StackEntryType *)0)->stateno)
 
 /** @} */ /* end fork_macro */
 

@@ -316,7 +316,6 @@ pragma_value(A) ::= IDENT(X).  { A = X; }
 pragma_value(A) ::= SCONST(X). { A = X; }
 pragma_value(A) ::= ICONST(X). { A = X; }
 pragma_value(A) ::= ON.  { A = sqlite_make_ident(pstate, "ON"); }
-pragma_value(A) ::= IDENT(X). { A = X; }
 
 /* ======================================================================
  * JSON functions (SQLite 3.38+)

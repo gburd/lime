@@ -559,6 +559,89 @@ LimeTokenAdmissibility parse_context_token_admissible(
 }
 
 /*
+** parse_engine_seed_stack -- install a pre-existing LALR state stack
+** so the next parse_token() resumes from it instead of from state 0.
+**
+** This exists for the fork-resolve strategy (src/strategy_fork_resolve.c):
+** a fork clones a live grammar-specific yyParser at a conflict point and
+** needs its stepping context to continue from that parser's stack, not
+** to re-parse the lookahead as a fresh sentence.  The translation from
+** the grammar's yyStackEntry[] to the (states, symbols) pair happens in
+** the caller, which is the only place that knows the generated layout.
+**
+** `states` are stack entries bottom-first; states[0] is the sentinel
+** the generated parser initialises to 0 (see ParseInit in limpar.c).
+** Each value must be in exactly the encoding parse_engine_step itself
+** pushes:
+**
+**   - a plain state number, <= snap->yy_max_shift; or
+**   - a pending SHIFTREDUCE, i.e. reduce-action + (YY_MIN_REDUCE -
+**     YY_MIN_SHIFTREDUCE), which is what limpar.c's yy_shift() leaves
+**     in `stateno` after the shift half of a SHIFTREDUCE action.  Such
+**     an entry is unpacked by the reduce branch at the top of
+**     parse_engine_step's loop, so a seeded stack carrying one behaves
+**     identically to one this engine pushed itself.
+**
+** Anything else is rejected rather than pushed, so a stack that cannot
+** be translated faithfully surfaces as a failure the caller can fall
+** back from.
+**
+** `symbols` may be NULL.  The engine records a per-entry symbol code
+** for debuggability only -- nothing in the dispatch loop reads it --
+** so callers that cannot recover the grammar's `major` field pass NULL
+** and lose nothing observable.
+**
+** Must be called before the first parse_token() on this context;
+** returns -1 if the engine has already started.
+**
+** Returns 0 on success, -1 on failure.  Not on any hot path: nothing in
+** parse_engine_step() calls or checks this.
+*/
+int parse_engine_seed_stack(struct ParseContext *ctx, const uint16_t *states, const int *symbols,
+                            uint32_t n) {
+    if (ctx == NULL || ctx->snapshot == NULL || states == NULL || n == 0) return -1;
+
+    const ParserSnapshot *snap = ctx->snapshot;
+    if (snap->yy_action == NULL || snap->yy_default == NULL || snap->yy_rule_info_nrhs == NULL) {
+        return -1;
+    }
+
+    /* Validate every entry before allocating anything, so a rejected
+    ** stack leaves the context exactly as it was. */
+    for (uint32_t i = 0; i < n; i++) {
+        uint16_t s = states[i];
+        if (s <= snap->yy_max_shift) continue;
+        if (s >= snap->yy_min_reduce && (uint32_t)(s - snap->yy_min_reduce) < snap->nrule) {
+            continue; /* pending SHIFTREDUCE */
+        }
+        return -1;
+    }
+
+    ParseEngine *eng = (ParseEngine *)ctx->engine;
+    if (eng != NULL && eng->initialised) return -1; /* already stepping */
+
+    if (eng == NULL) {
+        eng = calloc(1, sizeof(ParseEngine));
+        if (eng == NULL) return -1;
+        ctx->engine = eng;
+    }
+
+    if (!stack_init(&eng->stack)) return -1;
+
+    for (uint32_t i = 0; i < n; i++) {
+        if (!stack_push(&eng->stack, states[i], symbols != NULL ? symbols[i] : 0)) {
+            stack_destroy(&eng->stack);
+            return -1;
+        }
+    }
+
+    eng->initialised = true;
+    eng->accepted = false;
+    eng->errored = false;
+    return 0;
+}
+
+/*
 ** parse_token implementation.  Returns:
 **   0  -- token consumed, parse continues
 **   1  -- end-of-input token (0) accepted, parse complete

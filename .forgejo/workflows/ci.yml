@@ -63,6 +63,35 @@ jobs:
         run: meson test -C builddir --print-errorlogs
 
   # =====================================================================
+  # contrib/ Goal-B demos (runtime grammar composition showcases).
+  # Explicitly `-Dcontrib=enabled` so a future subdirectory that fails
+  # to build hard-errors here instead of silently dropping out the way
+  # `auto` would.  Single job, single OS/compiler combo -- the demos
+  # link the same lime_parser_lib already exercised by every other job
+  # in this matrix, so there is no portability signal to gain from
+  # running them on the full OS matrix.
+  # =====================================================================
+  contrib:
+    runs-on: codeberg-medium
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc meson ninja-build pkg-config
+
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Setup meson
+        run: meson setup builddir -Dllvm=disabled -Dcontrib=enabled
+
+      - name: Build
+        run: ninja -C builddir
+
+      - name: Test
+        run: meson test -C builddir --print-errorlogs
+
+  # =====================================================================
   # Sanitizers: address, thread, undefined.
   # =====================================================================
   sanitizers:

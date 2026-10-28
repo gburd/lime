@@ -25,6 +25,7 @@ LIB_SRC   = ../../src/extension_registry.c \
             ../../src/grammar_context.c \
             ../../src/context_switch.c \
             ../../src/snapshot.c \
+            ../../src/snapshot_create.c \
             ../../src/token_table.c \
             ../../src/merkle_tree.c \
             ../../src/jit_context.c \

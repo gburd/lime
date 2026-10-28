@@ -5,26 +5,21 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
 
-    # Hegel-core: the Python implementation of the Hegel
-    # property-based testing protocol.  Provides the `hegel`
-    # server binary that the C99 binding (hegel-c, built below
-    # as an in-flake derivation) talks to over the Hegel wire
-    # protocol.  The flake lives in the repo's nix/ subdir.
-    hegel-core = {
-      url = "github:hegeldev/hegel-core?dir=nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
-    # Hegel-c source: the C99 client-library bindings.  Pinned as a
-    # raw GitHub source (no flake.nix upstream); the nix derivation
-    # below builds it via the upstream CMake.
-    hegel-c-src = {
-      url = "github:gburd/hegel-c";
-      flake = false;
-    };
+    # NOTE: hegel no longer has a server component.  The old
+    # `hegel-core` (Python server) + `gburd/hegel-c` (socket client)
+    # pair is gone: gburd/hegel-c is deprecated/read-only and its
+    # socket protocol was removed upstream, and hegel-core's `hegel`
+    # binary speaks stdio, not sockets -- so the two never actually
+    # talked to each other and every PBT skipped at runtime.
+    #
+    # The replacement, libhegel from hegeldev/hegel-rust, is a pure
+    # in-process C-ABI shared library: no subprocess, no socket, no
+    # server binary.  It is consumed below as the official prebuilt
+    # release artifacts (see the hegel-c derivation for why prebuilt
+    # rather than a source build).
   };
 
-  outputs = { self, nixpkgs, flake-utils, hegel-core, hegel-c-src }:
+  outputs = { self, nixpkgs, flake-utils }:
     let
       # Supported systems. flake-utils' eachDefaultSystem only covers
       # Linux/Darwin x86_64+aarch64; extend explicitly for FreeBSD and
@@ -61,76 +56,101 @@
         # ----------------------------------------------------------------
         #  Hegel: property-based testing
         # ----------------------------------------------------------------
-        # Two pieces are wired in:
+        # libhegel (hegeldev/hegel-rust, crate `hegeltest-c`) is the
+        # official C-ABI binding to Hegel's native engine.  It runs
+        # entirely in-process: generation, shrinking and the example
+        # database all live inside the shared library, so there is no
+        # server process and nothing to put on PATH.  The only thing
+        # the dev shell has to provide is the header plus the shared
+        # library, and a hegel.pc so meson's
+        # `dependency('hegel', required : false)` in tests/meson.build
+        # resolves.
         #
-        #   * hegel-server -- the Hypothesis-backed Hegel protocol
-        #                     server, a Python application from the
-        #                     hegel-core flake input.  Provides the
-        #                     `hegel` binary that hegel-c spawns as
-        #                     a subprocess (HEGEL_SERVER_COMMAND).
-        #   * hegel-c      -- the C99 client-library bindings, built
-        #                     in-flake via the upstream CMakeLists.
-        #                     We synthesise a hegel.pc file at install
-        #                     time so meson's pkg-config lookup
-        #                     (`dependency('hegel', required : false)`
-        #                     in tests/meson.build) works.
-        #
-        # When this flake's devShell is in use, `nix develop` puts
-        # the `hegel` server on PATH, the libhegel headers and shared
-        # library on the right include / link paths, and meson picks
-        # up the hegel.pc so the Hegel-gated PBTs (tests/test_*_pbt.c)
-        # build and run.
-        hegel-server =
-          if (hegel-core.packages.${system} or { }) ? default
-          then hegel-core.packages.${system}.default
-          else null;
+        # Prebuilt release artifacts rather than a source build:
+        # upstream's nix/flake.nix exposes lib.mkLibhegel via
+        # rustPlatform.buildRustPackage, which would cover every system
+        # in `systems` above -- but it needs ~140 crates fetched from
+        # crates.io at eval/build time, which is exactly the kind of
+        # dependency that makes an offline or restricted-network `nix
+        # develop` fail.  The published libhegel-<os>-<arch> assets are
+        # a single pinned hash each and cost nothing to fetch.  The
+        # tradeoff is per-platform coverage: only the platforms upstream
+        # publishes are supported, and the rest degrade to "no hegel",
+        # which tests/meson.build already handles.
+        hegelVersion = "0.36.5";
+        hegelBase =
+          "https://github.com/hegeldev/hegel-rust/releases/download/v${hegelVersion}";
 
-        hegel-c = pkgs.stdenv.mkDerivation {
-          pname = "hegel-c";
-          version = "0.1.0-dev";
-          src = hegel-c-src;
-          nativeBuildInputs = with pkgs; [ cmake pkg-config ];
-          buildInputs = with pkgs; [ libcbor zlib ];
-          # Skip the test suite (cmocka-dependent) and the
-          # conformance binaries -- we only need the library to
-          # link against from the Lime PBTs.
-          cmakeFlags = [
-            "-DHEGEL_BUILD_TESTS=OFF"
-            "-DHEGEL_BUILD_CONFORMANCE=OFF"
-          ];
-          # Synthesise a hegel.pc so meson's pkg-config-driven
-          # `dependency('hegel', required : false)` resolves to
-          # this build.
-          postInstall = ''
-            mkdir -p "$out/lib/pkgconfig"
-            cat > "$out/lib/pkgconfig/hegel.pc" <<EOF
-            prefix=$out
-            exec_prefix=$out
-            libdir=$out/lib
-            includedir=$out/include
-
-            Name: hegel
-            Description: Hegel C99 property-based testing client library
-            Version: 0.1.0
-            Requires.private: libcbor zlib
-            Libs: -L$out/lib -lhegel
-            Cflags: -I$out/include
-            EOF
-          '';
-          # hegel-c uses -Werror by default; soften so future
-          # Nix toolchain bumps don't fail us on a new warning.
-          NIX_CFLAGS_COMPILE = "-Wno-error";
+        # Platforms upstream publishes a libhegel artifact for, keyed
+        # by nix system.  windows-{amd64,arm64} are also published but
+        # are not in `systems`.  Missing here: riscv64-linux,
+        # x86_64-darwin, *-freebsd -- those get the graceful skip.
+        hegelArtifacts = {
+          "x86_64-linux" = {
+            file = "libhegel-linux-amd64.so";
+            hash = "sha256-MJzKFaazWIibe6ytz7rf9MzTLElm58/KZkXAsBb8j5I=";
+          };
+          "aarch64-linux" = {
+            file = "libhegel-linux-arm64.so";
+            hash = "sha256-U0VfJDNb7Y63H55CWHq6i/rOnPwudK1gswItglU0Lt0=";
+          };
+          "aarch64-darwin" = {
+            file = "libhegel-darwin-arm64.dylib";
+            hash = "sha256-9YHZTATM/nm6NRhvSIhHzYUqFOhWrrZ0lSx/UkRsicY=";
+          };
         };
 
-        # Whether the Hegel pieces are actually buildable on this
-        # system.  hegel-core's flake exposes packages on
-        # lib.systems.flakeExposed; not every system in our list
-        # is in that set (FreeBSD / RISC-V).  hegel-c needs cmake
-        # + libcbor which are available everywhere we test.
-        hegelInputs = lib.optionals (hegel-server != null) [
-          hegel-server
-          hegel-c
-        ];
+        hegelArtifact = hegelArtifacts.${system} or null;
+
+        hegel-c =
+          if hegelArtifact == null then null else
+          pkgs.stdenv.mkDerivation {
+            pname = "hegel-c";
+            version = hegelVersion;
+            dontUnpack = true;
+            nativeBuildInputs = lib.optionals isLinux [ pkgs.patchelf ];
+
+            header = pkgs.fetchurl {
+              url = "${hegelBase}/hegel.h";
+              hash = "sha256-iJbxepWn+55g0/8ASFROyEW+KqbtZUGreRwhnH585/k=";
+            };
+            libhegel = pkgs.fetchurl {
+              url = "${hegelBase}/${hegelArtifact.file}";
+              inherit (hegelArtifact) hash;
+            };
+
+            soname = "libhegel${stdenv.hostPlatform.extensions.sharedLibrary}";
+
+            installPhase = ''
+              mkdir -p "$out/lib/pkgconfig" "$out/include"
+              cp "$header" "$out/include/hegel.h"
+              install -m755 "$libhegel" "$out/lib/$soname"
+            ''
+            # The released .so carries no SONAME and no RPATH, so on
+            # NixOS it would not find libgcc_s / libc at load time.
+            + lib.optionalString isLinux ''
+              patchelf --set-soname "$soname" \
+                --set-rpath "${stdenv.cc.cc.lib}/lib" "$out/lib/$soname"
+            '' + lib.optionalString isDarwin ''
+              install_name_tool -id "$out/lib/$soname" "$out/lib/$soname"
+            '' + ''
+              chmod 555 "$out/lib/$soname"
+              cat > "$out/lib/pkgconfig/hegel.pc" <<EOF
+              prefix=$out
+              exec_prefix=$out
+              libdir=$out/lib
+              includedir=$out/include
+
+              Name: hegel
+              Description: libhegel -- Hegel's native property-based testing engine (C ABI)
+              Version: ${hegelVersion}
+              Libs: -L$out/lib -lhegel -Wl,-rpath,$out/lib
+              Cflags: -I$out/include
+              EOF
+            '';
+          };
+
+        hegelInputs = lib.optional (hegel-c != null) hegel-c;
 
         commonTools = with pkgs; [
           meson
@@ -209,17 +229,14 @@
             export LLVM_CONFIG="${llvmPkgs.libllvm.dev}/bin/llvm-config"
           '' + lib.optionalString (!hasLLVM) ''
             echo "  llvm:          not available on ${system} (JIT disabled)"
-          '' + lib.optionalString (hegel-server != null) ''
-            echo "  hegel-server:  $(hegel --version 2>/dev/null || echo 'on PATH')"
-            echo "  hegel-c:       $(pkg-config --modversion hegel 2>/dev/null || echo 'on PATH')"
+          '' + lib.optionalString (hegel-c != null) ''
             export PKG_CONFIG_PATH="${hegel-c}/lib/pkgconfig:''${PKG_CONFIG_PATH:-}"
-            # hegel-c spawns the Hegel server as a subprocess; we
-            # provide it via the hegel-core flake input so the PBTs
-            # work without any additional install steps.  The library
-            # searches PATH by default; HEGEL_SERVER_COMMAND overrides.
-            export HEGEL_SERVER_COMMAND="${hegel-server}/bin/hegel"
-          '' + lib.optionalString (hegel-server == null) ''
-            echo "  hegel:         not available on ${system}"
+            # libhegel runs in-process: there is no hegel server binary
+            # to report or to put on PATH.  The whole engine is the
+            # shared library the PBTs link against.
+            echo "  libhegel:      $(pkg-config --modversion hegel 2>/dev/null || echo '${hegelVersion}') (in-process, no server)"
+          '' + lib.optionalString (hegel-c == null) ''
+            echo "  libhegel:      not available on ${system} (no upstream prebuilt artifact; PBTs skip)"
           '';
         };
 

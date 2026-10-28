@@ -41,7 +41,13 @@ typedef enum JITStatus {
     JIT_ERR_COMPILE_FAILED,  /* JIT compilation failed                 */
     JIT_ERR_LOOKUP_FAILED,   /* Symbol lookup in JIT module failed     */
     JIT_ERR_INVALID_ARG,     /* NULL or invalid argument               */
-    JIT_ERR_ALREADY_COMPILED /* Snapshot already has JIT code          */
+    JIT_ERR_ALREADY_COMPILED, /* Snapshot already has JIT code         */
+    /* Not an error: lime_jit_compile()'s cost model (or LIME_JIT=0)
+    ** elected not to JIT this snapshot.  Appended last so existing
+    ** error codes keep their values.  Needed because the policy skip
+    ** used to return a bare 1, which aliases JIT_ERR_NO_LLVM and
+    ** made callers report "LLVM unavailable" on healthy LLVM builds. */
+    JIT_SKIPPED_BY_POLICY
 } JITStatus;
 
 /* ------------------------------------------------------------------ */

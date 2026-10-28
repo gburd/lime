@@ -127,6 +127,17 @@
 %right PRIOR.
 %left OUTER_JOIN_OP.
 
+/*
+ * Oracle's grammar has real shift/reduce and reduce/reduce ambiguity:
+ * the trailing "IS [NOT] NULL" postfix clashes with binary-operator
+ * continuations of `expr` (same pattern as PostgreSQL's grammar, see
+ * examples/pg/gram.lime), and ROWNUM / DUAL are simultaneously
+ * pseudo-columns and ordinary identifiers.  Pinning %expect lets
+ * `lime` exit cleanly while still flagging any change in conflict
+ * count.
+ */
+%expect 21
+
 %start_symbol oracle_stmt
 
 /* ======================================================================

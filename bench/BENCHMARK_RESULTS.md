@@ -189,8 +189,8 @@ framework involvement.
 | StrategyResult | 24 |
 | ExecutionPolicyConfig | 24 |
 | ExecutionResult | 24 |
-| ParseFork | 96 |
-| ClonedParserState | 48 |
+| ParseFork | 144 |
+| ClonedParserState | 88 |
 | ParseForkSet | 24 |
 
 **Per-extension overhead:** ~144 bytes (Extension struct + name/version strings)

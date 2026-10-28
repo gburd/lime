@@ -94,6 +94,15 @@ static XPathASTNode *xp_node(XPathNodeKind kind, const char *val,
 %left STAR DIV MOD.
 %right UMINUS.
 
+/*
+ * XPath's `location_path ::= SLASH` (root-only path) is ambiguous
+ * with `SLASH STAR` (root-then-wildcard step) when the wildcard is
+ * used as the multiplication operator's STAR token in the same
+ * lookahead position.  Pinning %expect lets `lime` exit cleanly
+ * while still flagging any change in conflict count.
+ */
+%expect 1
+
 /* Non-terminal types */
 %type expr { XPathASTNode* }
 %type or_expr { XPathASTNode* }

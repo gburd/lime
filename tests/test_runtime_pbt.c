@@ -2,8 +2,7 @@
 ** test_runtime_pbt.c -- property-based tests for the runtime
 ** push parser engine.
 **
-** Targets two of the five Lime-specific Hegel targets identified
-** in .agent/skills/hegel/references/c/reference.md:
+** Targets two of the five Lime-specific Hegel targets:
 **
 **   1. Parser-table roundtrip: parse_engine_step driven against
 **      randomly generated token sequences over a snapshot's
@@ -15,19 +14,18 @@
 **      and must produce indices that pass the bounds check or
 **      cleanly fall back to yy_default[s].
 **
-** Skipped at runtime when libhegel or its server binary is not
-** available -- exit code 77 is the standard meson "skip" code.
+** Ported from the old gburd/hegel-c socket API to libhegel's
+** in-process C ABI; see tests/hegel_pbt.h for the mapping.  The
+** properties are unchanged.
 */
 
 #include "parser.h"
 #include "parse_context.h"
 #include "snapshot.h"
 
-#include <hegel/hegel.h>
-#include <hegel/generators.h>
+#include "hegel_pbt.h"
 
 #include <inttypes.h>
-#include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,47 +47,44 @@ static ParserSnapshot *g_snap;
 ** crash, hang, or assert -- it must reach parse_end cleanly even
 ** when the input is garbage.
 */
-static void prop_parser_no_crash(hegel_test_case *tc, void *user_data) {
+static void prop_parser_no_crash(hpbt_case *c, void *user_data) {
     (void)user_data;
     ParserSnapshot *snap = g_snap;
+    ParseContext *ctx;
+    int64_t n, i;
 
     /* Draw token-stream length up to 1000.  Drawing the size
     ** separately gives Hegel a knob to shrink down to the
     ** smallest stream that exhibits a failure. */
-    int64_t n = hegel_draw_int(tc, hegel_integers(0, 1000));
+    n = hpbt_int(c, 0, 1000);
 
-    ParseContext *ctx = parse_begin(snap);
+    ctx = parse_begin(snap);
     if (ctx == NULL) {
         /* OOM during begin: not the property under test.  Mark
         ** the test case as invalid so Hegel discards it but
         ** doesn't count it as a failure. */
-        hegel_assume(0);
+        hpbt_assume(c, 0);
         return;
     }
 
-    for (int64_t i = 0; i < n; i++) {
+    for (i = 0; i < n && !hpbt_done(c); i++) {
         /* Draw a random token in the snapshot's terminal range.
         ** Token 0 is reserved for EOF; allow it (parser must
         ** handle premature EOF gracefully). */
-        int64_t tok = hegel_draw_int(tc, hegel_integers(0, snap->yy_ntoken));
+        int64_t tok = hpbt_int(c, 0, snap->yy_ntoken);
         int rc = parse_token(ctx, (int)tok, NULL, -1);
         /* The contract: rc in {-1, 0, >=1}.  -1 means error and
         ** the parser is expected to refuse further tokens; 0
         ** means continue; >=1 means accepted (start symbol
         ** reduced).  Anything else is a runtime-engine bug. */
         if (rc < -1 || rc > (int)(snap->yy_ntoken + snap->nrule + 4)) {
-            hegel_note("parse_token returned out-of-range rc");
-            assert(0 && "parse_token rc out of range");
+            HPBT_FAIL(c, "parse_token rc out of range: rc=%d at token %lld (code %lld) of %lld", rc,
+                      (long long)i, (long long)tok, (long long)n);
+            break;
         }
-        if (rc < 0) {
-            /* Once errored, further tokens should not crash. */
-            continue;
-        }
-        if (rc > 0) {
-            /* Accepted -- further tokens should fall through
-            ** without crashing.  Don't break; keep feeding. */
-            continue;
-        }
+        /* rc < 0: errored -- further tokens should not crash.
+        ** rc > 0: accepted -- further tokens should fall through
+        ** without crashing.  Either way keep feeding. */
     }
 
     /* Final EOF.  Must not crash regardless of what happened
@@ -114,17 +109,20 @@ static void prop_parser_no_crash(hegel_test_case *tc, void *user_data) {
 ** it's fast and shrinks aggressively to the minimal pair that
 ** fails (or passes for every drawable pair).
 */
-static void prop_offset_arithmetic(hegel_test_case *tc, void *user_data) {
+static void prop_offset_arithmetic(hpbt_case *c, void *user_data) {
     (void)user_data;
     ParserSnapshot *snap = g_snap;
+    int64_t state, lookahead, sum;
+    int32_t ofst;
 
-    int64_t state     = hegel_draw_int(tc, hegel_integers(0, (int64_t)snap->nstate - 1));
-    int64_t lookahead = hegel_draw_int(tc, hegel_integers(0, (int64_t)snap->yy_ntoken));
+    state = hpbt_int(c, 0, (int64_t)snap->nstate - 1);
+    lookahead = hpbt_int(c, 0, (int64_t)snap->yy_ntoken);
+    if (hpbt_done(c)) return;
 
-    int32_t ofst = snap->yy_shift_ofst[state];
+    ofst = snap->yy_shift_ofst[state];
     /* Use int64_t for the sum so overflow in the test code itself
     ** can't mask a real overflow in the runtime engine. */
-    int64_t sum = (int64_t)ofst + (int64_t)lookahead;
+    sum = (int64_t)ofst + lookahead;
 
     /* The runtime engine treats this as int32_t in find_shift_action.
     ** Assert the value would survive the int32 arithmetic correctly:
@@ -136,13 +134,25 @@ static void prop_offset_arithmetic(hegel_test_case *tc, void *user_data) {
         uint16_t at = snap->yy_lookahead[sum];
         /* The lookahead value at that index is bounded by
         ** yy_ntoken (terminals + accept/error sentinels). */
-        assert(at <= snap->yy_ntoken + 4);
+        if (at > snap->yy_ntoken + 4) {
+            HPBT_FAIL(c,
+                      "yy_lookahead[%lld] = %u exceeds yy_ntoken+4 = %u "
+                      "(state=%lld la=%lld ofst=%d)",
+                      (long long)sum, (unsigned)at, (unsigned)(snap->yy_ntoken + 4),
+                      (long long)state, (long long)lookahead, (int)ofst);
+        }
     } else {
         /* Out-of-range case.  find_shift_action will fall back to
         ** yy_default[state].  Just assert that fallback is itself
         ** a valid action code. */
         uint16_t def = snap->yy_default[state];
-        assert(def <= snap->nstate + snap->nrule + 4);
+        if (def > snap->nstate + snap->nrule + 4) {
+            HPBT_FAIL(c,
+                      "yy_default[%lld] = %u exceeds nstate+nrule+4 = %u "
+                      "(la=%lld ofst=%d sum=%lld)",
+                      (long long)state, (unsigned)def, (unsigned)(snap->nstate + snap->nrule + 4),
+                      (long long)lookahead, (int)ofst, (long long)sum);
+        }
     }
 }
 
@@ -151,42 +161,25 @@ static void prop_offset_arithmetic(hegel_test_case *tc, void *user_data) {
 /* ------------------------------------------------------------------ */
 
 int main(void) {
-    hegel_session *s = hegel_session_new();
-    if (s == NULL) {
-        fprintf(stderr, "hegel: server unavailable -- skipping PBT\n");
+    const char *ver = hpbt_version();
+    int rc = 0;
+
+    if (ver == NULL) {
+        fprintf(stderr, "libhegel failed to initialise -- skipping PBT\n");
         return 77; /* meson skip */
     }
+    printf("libhegel %s (in-process engine)\n", ver);
 
     g_snap = ArithBuildSnapshot();
     if (g_snap == NULL) {
         fprintf(stderr, "ArithBuildSnapshot returned NULL\n");
-        hegel_session_free(s);
         return 1;
     }
 
-    int rc = 0;
-    {
-        hegel_settings settings = HEGEL_DEFAULT_SETTINGS;
-        settings.max_examples = 200;
-        hegel_results r = hegel_run_test(s, prop_parser_no_crash, NULL, &settings);
-        printf("prop_parser_no_crash: %s (%u valid / %u interesting)\n",
-               r.passed ? "PASS" : "FAIL",
-               r.valid_test_cases, r.interesting_test_cases);
-        if (!r.passed) rc = 1;
-        hegel_results_free(&r);
-    }
-    {
-        hegel_settings settings = HEGEL_DEFAULT_SETTINGS;
-        settings.max_examples = 1000; /* pure arithmetic; cheap */
-        hegel_results r = hegel_run_test(s, prop_offset_arithmetic, NULL, &settings);
-        printf("prop_offset_arithmetic: %s (%u valid / %u interesting)\n",
-               r.passed ? "PASS" : "FAIL",
-               r.valid_test_cases, r.interesting_test_cases);
-        if (!r.passed) rc = 1;
-        hegel_results_free(&r);
-    }
+    if (hpbt_run("prop_parser_no_crash", prop_parser_no_crash, NULL, 200) != 0) rc = 1;
+    /* Pure arithmetic; cheap -- run more examples. */
+    if (hpbt_run("prop_offset_arithmetic", prop_offset_arithmetic, NULL, 1000) != 0) rc = 1;
 
     snapshot_release(g_snap);
-    hegel_session_free(s);
     return rc;
 }
