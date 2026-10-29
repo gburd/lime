@@ -677,7 +677,8 @@ char *SetNew(void);               /* A new set for element 0..N */
 void  SetFree(char*);             /* Deallocate a set */
 int SetAdd(char*,int);            /* Add element to a set */
 int SetUnion(char *,char *);    /* A <- A U B, thru element N */
-#define SetFind(X,Y) (X[Y])       /* True if Y is in set X */
+/* True if Y is in set X.  Sets are bitsets: element e is bit e%8 of byte e/8. */
+#define SetFind(X,Y) ((((const unsigned char*)(X))[(Y)>>3]>>((Y)&7))&1)
 
 /********** From the file "struct.h" *************************************/
 /*
@@ -14974,7 +14975,13 @@ done:
 
 /* Set ops `size` moved to LimeCompilerContext as `set_size`.
 ** Renamed (rather than macro-redirected) because the bare
-** identifier `size` collides with struct s_x1/2/3/4 members. */
+** identifier `size` collides with struct s_x1/2/3/4 members.
+**
+** A set holds elements 0..set_size-1 as bits, one per element, padded
+** to whole 64-bit words (SetUnion works a word at a time).  A byte per
+** element made the follow sets most of a PostgreSQL build's memory:
+** 590k configs x 562 bytes. */
+#define SET_BYTES() ((size_t)((lime_active_ctx->set_size + 63) / 64) * 8)
 
 /* Set the set size */
 void SetSize(int n)
@@ -14985,7 +14992,7 @@ void SetSize(int n)
 /* Allocate a new set */
 char *SetNew(void){
   char *s;
-  s = (char*)lime_calloc( lime_active_ctx->set_size, 1);
+  s = (char*)lime_calloc( SET_BYTES(), 1);
   if( s==0 ){
     memory_error();
   }
@@ -15002,37 +15009,34 @@ void SetFree(char *s)
 ** and FALSE if it was already there. */
 int SetAdd(char *s, int e)
 {
+  unsigned char *b = (unsigned char *)s + (e>>3);
+  unsigned char bit = (unsigned char)(1u << (e&7));
   int rv;
   assert( e>=0 && e<lime_active_ctx->set_size );
-  rv = s[e];
-  s[e] = 1;
+  rv = (*b & bit)!=0;
+  *b |= bit;
   return !rv;
 }
 
 /* Add every element of s2 to s1.  Return TRUE if s1 changes.
 **
-** Sets are byte arrays of 0/1 (see SetAdd), so the union is a bytewise OR
-** and "changed" means some byte of s2 was set where s1's was clear.  Done
-** a word at a time: FindFollowSets() calls this to a fixed point over
-** every propagation link, and the byte loop was the single largest cost
-** of building the PostgreSQL grammar once acttab_insert() was fixed.
-** memcpy() keeps the word loads/stores free of alignment and aliasing
-** assumptions; byte semantics (each byte stays 0 or 1) are unchanged. */
+** A word-wide OR; "changed" means some bit of s2 was set where s1's was
+** clear.  FindFollowSets() calls this to a fixed point over every
+** propagation link.  Sets are whole words (SET_BYTES), so there is no
+** tail; memcpy() keeps the loads and stores free of alignment and
+** aliasing assumptions. */
 int SetUnion(char *s1, char *s2)
 {
-  int n = lime_active_ctx->set_size;
-  int i = 0;
+  size_t n = SET_BYTES();
+  size_t i;
   uint64_t changed = 0;
-  for(; i + 8 <= n; i += 8){
+  for(i = 0; i < n; i += 8){
     uint64_t a, b;
     memcpy(&a, s1 + i, 8);
     memcpy(&b, s2 + i, 8);
     changed |= b & ~a;
     a |= b;
     memcpy(s1 + i, &a, 8);
-  }
-  for(; i < n; i++){
-    if( s2[i] && !s1[i] ){ s1[i] = 1; changed = 1; }
   }
   return changed != 0;
 }
