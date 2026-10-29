@@ -497,7 +497,13 @@ int lime_jit_compile(ParserSnapshot *snap) {
     ** branch predictor walks the static switch better than the
     ** indirect-call sequence the JIT produces).  Measured on
     ** docs/BENCHMARK_RESULTS.md: -8 to -12 % on JSON / arith
-    ** grammars.  On aarch64 the relationship reverses: JIT wins.
+    ** grammars.  The aarch64 branch below still JITs by default on
+    ** the assumption that "the relationship reverses: JIT wins" --
+    ** measured NOT to hold (v1.11.3 review, Graviton4/Neoverse-V2,
+    ** LLVM 19): JIT 7-9% slower on the PostgreSQL grammar and on JSON,
+    ** 3% faster only on the 12-rule arith grammar.  See
+    ** docs/JIT_ANALYSIS.md.  Left as-is pending a maintainer decision
+    ** (declining on aarch64 too is the evidence-backed default).
     **
     ** Honour an explicit user request via the LIME_JIT env var:
     **   LIME_JIT=1   -- force JIT regardless of architecture

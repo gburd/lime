@@ -66,9 +66,25 @@ every smaller grammar the cost model already declines to compile, for
 the same reason stated in `src/jit_context.c`: on x86_64 the
 C compiler's code for the table lookup beats the JIT's.
 
-**What this does not cover:** aarch64, where the cost model assumes
-the JIT wins (not measured here); other LLVM versions; grammars between
-the tree's small ones and PostgreSQL's.
+**aarch64 (the case the cost model bets on).**  `src/jit_context.c`
+skips the JIT on x86_64 for small grammars but JITs *everything* on
+aarch64, on the stated assumption that "on aarch64 the relationship
+reverses: JIT wins."  Same harness on AWS c8g.4xlarge (Graviton4,
+Neoverse-V2), Debian 13, LLVM 19, release, pinned core:
+
+| Workload (aarch64) | table | JIT | JIT speedup |
+|---|---:|---:|---:|
+| PostgreSQL grammar, 3 runs (ns/token) | 16.5-17.0 | 18.1-18.3 | **0.911x / 0.921x / 0.934x** |
+| JSON lex+parse, 100k docs x 5, 3 runs (min ms) | 196.4-197.8 | 213.0-216.2 | **~0.91x** |
+| arithmetic, 500k parses x 5, 3 runs (min ms) | 170.7-171.5 | 165.5-166.8 | **1.03x** |
+
+The JIT is 7-9% slower on the PostgreSQL grammar and on JSON, and 3%
+faster only on the 12-rule arithmetic grammar.  The aarch64 premise does
+not hold for any realistic grammar measured; the cost model's aarch64
+branch should JIT nothing by default either.
+
+**Not covered:** other LLVM versions; grammars between the tree's small
+ones and PostgreSQL's; Apple silicon.
 
 **Reproduce:** `LIME_PG_BENCH=21 tests/test_pg_grammar`.
 
@@ -427,12 +443,14 @@ The two questions a reviewer would ask have answers now:
    `src/parse_engine.c`).  The interpreter is not leaving an easy win on
    the table.
 
-So: keep `-Dllvm=disabled` the default for any embedding (it already is
-the CI default), and treat the JIT as an experiment until it is shown to
-win somewhere -- aarch64 is the untested case the cost model bets on.
-If an aarch64 measurement with the same harness
-(`LIME_PG_BENCH=21 tests/test_pg_grammar`) also shows no win, the JIT
-(four source files, the LLVM 14-21 compat shim, the cost-model policy,
-three CI jobs, and a background compile thread that a PostgreSQL backend
-cannot host) is a removal candidate.  That decision is the maintainer's;
-this section only records the evidence.
+Both architectures are now measured, and the JIT loses on every
+realistic grammar on both: 4-6% slower on x86_64 (Xeon 8488C), 7-9%
+slower on aarch64 (Graviton4), never breaking even.  Its only win was 3%
+on a 12-rule toy grammar on aarch64.
+
+Recommendation: the JIT (four source files, the LLVM 14-21 compat shim,
+the cost-model policy, three CI jobs, and a background compile thread a
+PostgreSQL backend cannot host) is a removal candidate.  At minimum, make
+the cost model decline on aarch64 as it already does on x86_64, so no
+user gets a slower parser by default.  Removal is the maintainer's call;
+this section records the evidence for it.

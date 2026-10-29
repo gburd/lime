@@ -69,8 +69,9 @@ LALR(1) parsers.  Lime targets that gap.
   tree big enough for the JIT's cost model to engage -- JIT-armed
   parsing is **0.94-0.96x** the speed of the table-driven interpreter
   (i.e. 4-6% *slower*), after a 16-34 ms compile, so it never breaks
-  even.  On every smaller grammar the cost model declines to JIT at
-  all.  See [docs/JIT_ANALYSIS.md](docs/JIT_ANALYSIS.md).
+  even; on aarch64 (Graviton4) it is 7-9% slower.  On smaller grammars
+  the x86_64 cost model declines to JIT at all.  See
+  [docs/JIT_ANALYSIS.md](docs/JIT_ANALYSIS.md).
 - **Thread-safe by design** — Copy-on-write snapshots with atomic reference
   counting allow concurrent parsing with zero shared mutable state.
 - **Modern memory safety** — `%destructor` directives prevent semantic
