@@ -2729,7 +2729,7 @@ test('parse_reset', test_parse_reset)
 # The PG SQL grammar is the largest LR(1) machine Lime hosts.  The
 # fixture is examples/pg/pg_grammar.lime = tokens.lime + gram.lime
 # minus gram.lime's standalone %expect block:
-#   - 3,841 states, 3,584 rules, 561 terminals, 0 conflicts (gram.lime
+#   - 3,841 states, 3,600 rules, 561 terminals, 0 conflicts (gram.lime
 #     alone has no precedence declarations and 1,665 unresolved S/R
 #     conflicts hidden by %expect; the test asserts 0 on pg_grammar.lime)
 #   - ~147k-entry action table (which exposes int16_t overflow on

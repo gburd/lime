@@ -1,7 +1,7 @@
 /*
 ** test_pg_grammar.c -- Stress-test the runtime against the
 ** full PostgreSQL SQL grammar, examples/pg/pg_grammar.lime (~3,841 LR
-** states, ~3,584 rules, ~561 terminals, ~147,000 action-table entries,
+** states, ~3,600 rules, ~561 terminals, ~147,000 action-table entries,
 ** 0 conflicts).
 **
 ** Why this test exists
@@ -55,16 +55,20 @@
 **     path and lost (docs/JIT_ANALYSIS.md); LIME_PG_BENCH below now
 **     times the table path alone.
 **
-** Known issue (driver-side)
-** -------------------------
-**   The hand-rolled SQL tokenizer + this snapshot reject SELECT
-**   statements.  A single-token diagnostic (SELECT then ICONST)
-**   shows that state-after-SELECT in this snapshot does not accept
-**   ICONST -- yet ICONST works in INSERT INTO ... VALUES (1, 2, 3)
-**   contexts.  The most likely cause is that this snapshot was
-**   built without action callbacks (lime -n only), and SELECT's
-**   opt_target_list reduction depends on a precedence resolution
-**   that requires the action layer.  Investigation is a follow-up.
+** SELECT used to be rejected
+** ---------------------------
+**   Every SELECT failed: gram.lime had lost the empty alternative of
+**   opt_all_clause (and of 15 more optional nonterminals gram.y has
+**   with an EMPTY alternative), so after SELECT only ALL or DISTINCT
+**   could shift.  UPDATE also needed tokens.lime's precedence and a SET
+**   keyword in the tokenizer below.  All three are fixed; the
+**   corpus below now asserts every kAccept accepts and every kReject
+**   rejects.  Two expectations were wrong against PostgreSQL (checked
+**   with REL_18 gram.y and a PG 17 server): "CREATE TABLE t (a, b, c)"
+**   is 42601 (columnDef needs a Typename, gram.y:3814) and
+**   "SELECT FROM t" is valid syntax (opt_target_list is empty-able,
+**   gram.y:17242); they are now "CREATE TABLE t (a int, b text, c int)"
+**   and "SELECT a FROM ;" (42601).
 */
 
 #define _POSIX_C_SOURCE 200809L
@@ -121,9 +125,10 @@ typedef struct {
 static const Keyword kKeywords[] = {
     {"AND", AND},        {"AS", AS},     {"BY", BY},        {"CREATE", CREATE},
     {"DELETE", DELETE_P}, {"FROM", FROM}, {"GROUP", GROUP_P}, {"HAVING", HAVING},
-    {"INSERT", INSERT},  {"INTO", INTO}, {"JOIN", JOIN},    {"LIMIT", LIMIT},
+    {"INSERT", INSERT},  {"INT", INT_P}, {"INTO", INTO},   {"JOIN", JOIN},
+    {"LIMIT", LIMIT},
     {"NOT", NOT},        {"OR", OR},     {"ORDER", ORDER},  {"SELECT", SELECT},
-    {"TABLE", TABLE},    {"UPDATE", UPDATE},               {"VALUES", VALUES},
+    {"SET", SET},        {"TABLE", TABLE}, {"UPDATE", UPDATE}, {"VALUES", VALUES},
     {"WHERE", WHERE},
 };
 static const int kNumKeywords = sizeof(kKeywords) / sizeof(kKeywords[0]);
@@ -467,11 +472,11 @@ int main(int argc, char **argv) {
         "INSERT INTO t (a, b) VALUES (1, 2);",
         "UPDATE t SET a = 1 WHERE b = 2;",
         "DELETE FROM t WHERE a > 100;",
-        "CREATE TABLE t (a, b, c);",
+        "CREATE TABLE t (a int, b text, c int);",
         NULL,
     };
     static const char *kReject[] = {
-        "SELECT FROM t;",   /* no select target */
+        "SELECT a FROM ;",  /* FROM with no table */
         "SELECT a, , b;",   /* double comma */
         "INSERT INTO ;",    /* no values */
         NULL,
@@ -506,31 +511,18 @@ int main(int argc, char **argv) {
         free(toks);
     }
 
-    /* What we have asserted: the runtime engine accepts at least
-    ** one well-formed SQL form (INSERT INTO ... VALUES ...) and
-    ** rejects every malformed input we tried.
-    **
-    ** Known issue documented in tests/test_pg_grammar.c: SELECT
-    ** statements are currently rejected by this snapshot+driver
-    ** combination -- a diagnostic feed of just (SELECT, ICONST)
-    ** shows that state-after-SELECT does not accept ICONST, which
-    ** is unexpected.  The same diagnostic shows ICONST works
-    ** elsewhere (INSERT INTO t VALUES(1,2,3) accepts).  The most
-    ** likely cause is that this snapshot was built from gram.lime
-    ** with `-n` only (no action callbacks linked) and SELECT'\''s
-    ** opt_target_list reduction depends on a precedence resolution
-    ** that the table-only path hits differently.  Tracking as a
-    ** follow-up.
-    */
     int table_accepted = 0, table_rejected = 0;
     for (int i = 0; kAccept[i] != NULL; i++)
         if (table_outcomes_a[i] == 1) table_accepted++;
     for (int i = 0; kReject[i] != NULL; i++)
         if (table_outcomes_r[i] == -1) table_rejected++;
-    T_CHECK(table_accepted >= 1, "table path accepts >= 1 valid SQL form (got %d)",
-            table_accepted);
-    T_CHECK(table_rejected >= 3, "table path rejects every malformed query (got %d)",
-            table_rejected);
+    int n_accept = 0, n_reject = 0;
+    while (kAccept[n_accept] != NULL) n_accept++;
+    while (kReject[n_reject] != NULL) n_reject++;
+    T_CHECK(table_accepted == n_accept, "table path accepts every valid query (%d of %d)",
+            table_accepted, n_accept);
+    T_CHECK(table_rejected == n_reject, "table path rejects every malformed query (%d of %d)",
+            table_rejected, n_reject);
 
     /* Throughput of the table-driven engine on the PG grammar.
     ** Opt-in (it takes seconds):

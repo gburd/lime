@@ -780,7 +780,7 @@
 %token RBRACE.
 /*
  * PostgreSQL Grammar for Lime Parser Generator
- * Converted from gram.y: 782 non-terminals, 3584 alternatives.
+ * Converted from gram.y: 782 non-terminals, 3600 alternatives.
  *
  * Conversion conventions:
  *   Bison $$  -> A    (LHS result)
@@ -2438,6 +2438,8 @@ createRoleStmt(A) ::= CREATE ROLE roleId(D) opt_with(E) optRoleList(F). {
 opt_with(A) ::= WITH.
 
 opt_with(A) ::= WITH_LA.
+
+opt_with ::= .
 
 /* ----- optRoleList ----- */
 optRoleList(A) ::= optRoleList(B) createOptRoleElem(C). {
@@ -4739,6 +4741,8 @@ copy_delimiter(A) ::= . {
 /* ----- opt_using ----- */
 opt_using(A) ::= USING.
 
+opt_using ::= .
+
 /* ----- copy_generic_opt_list ----- */
 copy_generic_opt_list(A) ::= copy_generic_opt_elem(B). {
     A = list_make1(B);
@@ -6290,6 +6294,8 @@ seqOptElem(A) ::= UNLOGGED. {
 /* ----- opt_by ----- */
 opt_by(A) ::= BY.
 
+opt_by ::= .
+
 /* ----- numericOnly ----- */
 numericOnly(A) ::= FCONST. {
     A = (Node *) makeFloat(B);
@@ -6388,6 +6394,8 @@ opt_validator(A) ::= . {
 
 /* ----- opt_procedural ----- */
 opt_procedural(A) ::= PROCEDURAL.
+
+opt_procedural ::= .
 
 /* ----- createTableSpaceStmt ----- */
 createTableSpaceStmt(A) ::= CREATE TABLESPACE name(D) optTableSpaceOwner(E) LOCATION sconst(G) opt_reloptions(H). {
@@ -7340,6 +7348,8 @@ triggerForSpec(A) ::= . {
 
 /* ----- triggerForOptEach ----- */
 triggerForOptEach(A) ::= EACH.
+
+triggerForOptEach ::= .
 
 /* ----- triggerForType ----- */
 triggerForType(A) ::= ROW. {
@@ -8894,6 +8904,8 @@ from_in(A) ::= IN_P.
 /* ----- opt_from_in ----- */
 opt_from_in(A) ::= from_in(B).
 
+opt_from_in ::= .
+
 /* ----- grantStmt ----- */
 grantStmt(A) ::= GRANT privileges(C) ON privilege_target(E) TO grantee_list(G) opt_grant_grant_option(H) opt_granted_by(I). {
     grantStmt *n = makeNode(grantStmt);
@@ -10184,6 +10196,8 @@ alterfunc_opt_list(A) ::= alterfunc_opt_list(B) common_func_opt_item(C). {
 
 /* ----- opt_restrict ----- */
 opt_restrict(A) ::= RESTRICT.
+
+opt_restrict ::= .
 
 /* ----- removeFuncStmt ----- */
 removeFuncStmt(A) ::= DROP FUNCTION function_with_argtypes_list(D) opt_drop_behavior(E). {
@@ -11523,6 +11537,8 @@ renameStmt(A) ::= ALTER TYPE_P any_name(D) RENAME ATTRIBUTE name(G) TO name(I) o
 /* ----- opt_column ----- */
 opt_column(A) ::= COLUMN.
 
+opt_column ::= .
+
 /* ----- opt_set_data ----- */
 opt_set_data(A) ::= SET DATA_P. {
     A = 1;
@@ -12827,6 +12843,8 @@ opt_transaction(A) ::= WORK.
 
 opt_transaction(A) ::= TRANSACTION.
 
+opt_transaction ::= .
+
 /* ----- transaction_mode_item ----- */
 transaction_mode_item(A) ::= ISOLATION LEVEL iso_level(D). {
     A = makeDefElem("transaction_isolation",
@@ -13046,6 +13064,8 @@ createdb_opt_name(A) ::= TEMPLATE. {
 /* ----- opt_equal ----- */
 opt_equal(A) ::= EQ.
 
+opt_equal ::= .
+
 /* ----- alterDatabaseStmt ----- */
 alterDatabaseStmt(A) ::= ALTER DATABASE name(D) WITH createdb_opt_list(F). {
     alterDatabaseStmt *n = makeNode(alterDatabaseStmt);
@@ -13241,6 +13261,8 @@ alterDomainStmt(A) ::= ALTER DOMAIN_P any_name(D) VALIDATE CONSTRAINT name(G). {
 
 /* ----- opt_as ----- */
 opt_as(A) ::= AS.
+
+opt_as ::= .
 
 /* ----- alterTSDictionaryStmt ----- */
 alterTSDictionaryStmt(A) ::= ALTER TEXT_P SEARCH DICTIONARY any_name(F) definition(G). {
@@ -14646,6 +14668,8 @@ optTempTableName(A) ::= qualified_name(B). {
 /* ----- opt_table ----- */
 opt_table(A) ::= TABLE.
 
+opt_table ::= .
+
 /* ----- set_quantifier ----- */
 set_quantifier(A) ::= ALL. {
     A = SET_QUANTIFIER_ALL;
@@ -14670,6 +14694,8 @@ distinct_clause(A) ::= DISTINCT ON LPAREN expr_list(E) RPAREN. {
 
 /* ----- opt_all_clause ----- */
 opt_all_clause(A) ::= ALL.
+
+opt_all_clause ::= .
 
 /* ----- opt_distinct_clause ----- */
 opt_distinct_clause(A) ::= distinct_clause(B). {
@@ -15358,6 +15384,8 @@ join_type(A) ::= INNER_P. {
 /* ----- opt_outer ----- */
 opt_outer(A) ::= OUTER_P.
 
+opt_outer ::= .
+
 /* ----- join_qual ----- */
 join_qual(A) ::= USING LPAREN name_list(D) RPAREN opt_alias_clause_for_join_using(F). {
     A = (Node *) list_make2(D, F);
@@ -15865,6 +15893,8 @@ json_table_column_definition(A) ::= NESTED path_opt(C) sconst(D) AS name(F) COLU
 
 /* ----- path_opt ----- */
 path_opt(A) ::= PATH.
+
+path_opt ::= .
 
 /* ----- json_table_column_path_clause_opt ----- */
 json_table_column_path_clause_opt(A) ::= PATH sconst(C). {
@@ -18447,6 +18477,8 @@ opt_indirection(A) ::= opt_indirection(B) indirection_el(C). {
 
 /* ----- opt_asymmetric ----- */
 opt_asymmetric(A) ::= ASYMMETRIC.
+
+opt_asymmetric ::= .
 
 /* ----- json_passing_clause_opt ----- */
 json_passing_clause_opt(A) ::= PASSING json_arguments(C). {
@@ -21387,4 +21419,4 @@ bare_label_keyword(A) ::= YES_P.
 bare_label_keyword(A) ::= ZONE.
 
 
-/* End of grammar: 782 non-terminals, 3584 alternatives */
+/* End of grammar: 782 non-terminals, 3600 alternatives */

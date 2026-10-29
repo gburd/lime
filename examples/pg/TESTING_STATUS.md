@@ -17,7 +17,7 @@ Command used:
 |---------------------------|----------------:|----------------:|
 | Terminal symbols          | 561             | 557             |
 | Non-terminal symbols      | 782             | 782             |
-| Production rules          | 3,584           | 3,584           |
+| Production rules          | 3,600           | 3,600           |
 | Parser states             | 3,841           | 3,842           |
 | Conflicts                 | **0**           | 1,665           |
 | Action table entries      | 146,743         | 145,227         |
@@ -51,9 +51,9 @@ A Python validation script verified:
 | Undeclared tokens             | 0      |
 | Non-terminals without %type   | 24     |
 | Total defined non-terminals   | 782    |
-| Total production alternatives | 3,584  |
+| Total production alternatives | 3,600  |
 | Rules with semantic actions   | 2,406  |
-| Empty rules                   | 195    |
+| Empty rules                   | 211    |
 | Precedence annotations        | 59     |
 
 The 24 non-terminals without `%type` are intentionally typeless -- they
