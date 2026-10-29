@@ -1,0 +1,26 @@
+/* Independent Lime transcription of the grammar in bison-3.8.2/examples/c/calc/calc.y.  `error NL` uses
+** Lemon-style recovery; bison's `{ yyerrok; }` has no Lime spelling. ** Only the grammar shape is reproduced; no bison source (GPL) is copied --
+** run_diff.sh compiles the example's own epilogue from the bison tree at
+** test time. */
+%name Calc
+%token_prefix TK_
+%token_type {double}
+%include { #include <stdio.h>
+void yyerror(char const *); extern int lime_syntax_errors, lime_accepted; }
+%syntax_error { (void)yymajor; (void)yyminor; lime_syntax_errors++; yyerror("syntax error"); }
+%parse_accept { lime_accepted = 1; }
+%token NUM NL PLUS MINUS STAR SLASH LP RP.
+start ::= input.
+input ::= .
+input ::= input line.
+line ::= NL.
+line ::= expr(E) NL.           { printf("%.10g\n", E); }
+line ::= error NL.
+expr(A) ::= expr(B) PLUS term(C).  { A = B + C; }
+expr(A) ::= expr(B) MINUS term(C). { A = B - C; }
+expr(A) ::= term(B).               { A = B; }
+term(A) ::= term(B) STAR fact(C).  { A = B * C; }
+term(A) ::= term(B) SLASH fact(C). { A = B / C; }
+term(A) ::= fact(B).               { A = B; }
+fact(A) ::= NUM(B).                { A = B; }
+fact(A) ::= LP expr(B) RP.         { A = B; }

@@ -1725,10 +1725,12 @@ void FindStates(struct lime *lemp)
     int i;
     for(i=0; i<rp->nrhs; i++){
       if( rp->rhs[i]==sp ){   /* FIX ME:  Deal with multiterminals */
-        ErrorMsg(lemp->filename,0,
+        ErrorMsg(lemp->filename,rp->ruleline,
           "The start symbol \"%s\" occurs on the "
           "right-hand side of a rule. This will result in a parser which "
-          "does not work properly.",sp->name);
+          "does not work properly.  (yacc adds a start rule for you; in "
+          "Lime add one: `start ::= %s.` and `%%start_symbol start`.)",
+          sp->name, sp->name);
         lemp->errorcnt++;
       }
     }
@@ -2143,11 +2145,15 @@ static int resolve_conflict(
       apy->type==RD_RESOLVED ||
       apy->type==SSCONFLICT ||
       apy->type==SRCONFLICT ||
-      apy->type==RRCONFLICT
+      apy->type==RRCONFLICT ||
+      apy->type==ACCEPT
     );
     /* The REDUCE/SHIFT case cannot happen because SHIFTs come before
     ** REDUCEs on the list.  If we reach this point it must be because
-    ** the parser conflict had already been resolved. */
+    ** the parser conflict had already been resolved -- or apy is the
+    ** ACCEPT on a start symbol that also appears on some RHS, which
+    ** FindStates already reported as an error.  (Lemon aborts on the
+    ** assert there; the yacc idiom `input: | input line;` hits it.) */
   }
   return errcnt;
 }
@@ -5955,7 +5961,9 @@ int main(int argc, char **argv){
 
   /* Parse the input file */
   Parse(&lem);
-  if( lem.printPreprocessed || lem.errorcnt ) exit(lem.errorcnt);
+  /* Exit 1, not the error count: exit(256) is 0 to the shell. */
+  if( lem.errorcnt ) exit(1);
+  if( lem.printPreprocessed ) exit(0);
 
   /* Command-line -P overrides %name from the grammar file. Useful for
   ** linking multiple generated parsers without symbol collisions. */
@@ -7650,8 +7658,9 @@ static void parseonetoken(struct pstate *psp)
         psp->state = LHS_ALIAS_1;
       }else{
         ErrorMsg(psp->filename,psp->tokenlineno,
-          "Expected to see a \":\" following the LHS symbol \"%s\".",
-          psp->lhs->name);
+          "Expected to see \"::=\" following the LHS symbol \"%s\"%s.",
+          psp->lhs->name, (x[0]==':' && x[1]==0)
+            ? " (Lime spells yacc's `lhs : a | b ;` as `lhs ::= a | b.`)" : "");
         psp->errorcnt++;
         psp->state = RESYNC_AFTER_RULE_ERROR;
       }
@@ -7765,8 +7774,17 @@ static void parseonetoken(struct pstate *psp)
         psp->errorcnt++;
         psp->state = RESYNC_AFTER_RULE_ERROR;
       }else{
+        /* Name the two yacc RHS forms people paste in: 'c' / "str"
+        ** literal tokens and bison's %empty. */
         ErrorMsg(psp->filename,psp->tokenlineno,
-          "Illegal character on RHS of rule: \"%s\".",x);
+          "Illegal character on RHS of rule: \"%s\".%s", x,
+          (x[0]=='\'' || x[0]=='"')
+            ? "  Lime has no character or string literal tokens (yacc's "
+              "'+' / bison's \"+\"); declare a named token such as PLUS "
+              "and have the lexer return it."
+          : (x[0]=='%' && x[1]==0)
+            ? "  If this is bison's %empty, write nothing: `a ::= .`"
+          : "");
         psp->errorcnt++;
         psp->state = RESYNC_AFTER_RULE_ERROR;
       }
@@ -8657,7 +8675,11 @@ static void parseonetoken(struct pstate *psp)
         psp->state = WAITING_FOR_DECL_OR_RULE;
       }else{
         ErrorMsg(psp->filename,psp->tokenlineno,
-          "Expected integer argument to %%expect but got \"%s\".",x);
+          "Expected integer argument to %%expect but got \"%s\".%s",x,
+          (x[0]=='-' && x[1]==0)
+            ? "  (bison's %expect-rr is not supported: Lime's %expect N "
+              "counts shift/reduce and reduce/reduce conflicts together.)"
+            : "");
         psp->errorcnt++;
         psp->state = RESYNC_AFTER_DECL_ERROR;
       }
@@ -9683,6 +9705,20 @@ static void parse_lime_buffer_recursive(struct pstate *psp,
   for(cp=body_start; (c= *cp)!=0; ){
     if( c=='\n' ) lineno++;
     if( ISSPACE(c) ){ cp++; continue; }
+    /* yacc/lex section markers at column 0 are never valid Lime (no
+    ** Lime token starts `%%` or `%{`).  Name the problem once and stop,
+    ** instead of a cascade of "%token argument "%"" errors. */
+    if( c=='%' && (cp[1]=='%' || cp[1]=='{')
+        && (cp==filebuf || cp[-1]=='\n') ){
+      ErrorMsg(filename, lineno,
+        "\"%c%c\" at the start of a line: this looks like a yacc/bison "
+        "(or lex/flex) file.  Lime reads its own grammar syntax "
+        "(`lhs ::= A b. { ... }`), not yacc's `%%%%` sections or "
+        "`%%{ ... %%}` prologue; see docs/MIGRATION_FROM_BISON.md "
+        "(for a .l scanner, docs/MIGRATION_FROM_FLEX.md).", c, cp[1]);
+      psp->errorcnt++;
+      break;
+    }
     if( c=='/' && cp[1]=='/' ){
       if( comment_region_start==0 ) comment_region_start = cp;
       cp+=2;

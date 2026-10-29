@@ -13,12 +13,19 @@ porting a flex+bison pair.
 ## Overview
 
 Lime's lexer subsystem is a from-scratch design, not a flex translator.
-It does not consume `.l` files; you rewrite the scanner in `.lex` syntax.
-Most flex idioms have direct equivalents.  A few (REJECT, yymore, trailing
-context, PCRE features) have no equivalent and the design rejects them as
-out-of-scope for v1; flex's `.l` corpus across the PostgreSQL tree (six
-scanners, ~5,300 lines, audited in `LEXER_SCANNER_AUDIT.md`) shows zero
-uses of any of them, so this is not a hardship.
+It does not consume `.l` files: `lime -X scan.l` stops at the first `%{`,
+`%option` or `%%` with `unexpected ERROR at top level`.  You rewrite the
+scanner in `.lex` syntax.  Most flex idioms have direct equivalents.  A
+few (REJECT, yymore, trailing context, PCRE features) have no equivalent
+and the design rejects them as out-of-scope for v1.  The six PostgreSQL
+scanners (~5,300 lines, audited in `LEXER_SCANNER_AUDIT.md`) use none of
+REJECT, yymore or trailing context.  A wider 22-scanner corpus (flex's
+own scanner and manual examples, bison's scanner, bc, C11, PostgreSQL;
+`tests/compat/census.py`) finds REJECT in 1, yymore in 1 and trailing
+context in 0.  But the constructs with **no** Lime action-body spelling are
+more common: `unput()`/`input()` in 8, `ECHO` in 4, `yy_push_state` in 2,
+and `"quoted"` pattern literals, which Lime patterns do not accept, in 13.
+See [FLEX_COMPAT.md](FLEX_COMPAT.md).
 
 The mechanical work per scanner is roughly:
 
@@ -35,10 +42,10 @@ The mechanical work per scanner is roughly:
    with a single `LexFeedBytes(...)` call whose emit callback feeds
    the parser.
 
-There is no automated translator and there will not be one.  The cost of
-writing a translator that handles flex's full surface area is higher than
-porting the ~17 PG scanners by hand, and the result would be an
-unmaintainable mess.
+There is no automated translator.  (Whether Lime should read `.l` files
+directly is an open roadmap question.  The compatibility report sizes a
+lex front end at roughly 1.5k lines for the syntax plus 0.8k for the
+`yytext`/`BEGIN`/`yyless`/`%option` surface.)
 
 ## Directive Mapping
 

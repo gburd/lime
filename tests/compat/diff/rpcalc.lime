@@ -1,0 +1,26 @@
+/* Independent Lime transcription of the grammar in bison-3.8.2/examples/c/rpcalc/rpcalc.y to Lime, for the
+** differential in run_diff.sh.  `input` is recursive, so it gets the
+** wrapper start rule yacc would synthesise. ** Only the grammar shape is reproduced; no bison source (GPL) is copied --
+** run_diff.sh compiles the example's own epilogue from the bison tree at
+** test time. */
+%name Rp
+%token_prefix TK_
+%token_type {double}
+%include { #include <stdio.h>
+#include <math.h>
+void yyerror(char const *); extern int lime_syntax_errors, lime_accepted; }
+%syntax_error { (void)yymajor; (void)yyminor; lime_syntax_errors++; yyerror("syntax error"); }
+%parse_accept { lime_accepted = 1; }
+%token NUM NL PLUS MINUS STAR SLASH CARET N.
+start ::= input.
+input ::= .
+input ::= input line.
+line ::= NL.
+line ::= exp(E) NL.            { printf("%.10g\n", E); }
+exp(A) ::= NUM(B).             { A = B; }
+exp(A) ::= exp(B) exp(C) PLUS.  { A = B + C; }
+exp(A) ::= exp(B) exp(C) MINUS. { A = B - C; }
+exp(A) ::= exp(B) exp(C) STAR.  { A = B * C; }
+exp(A) ::= exp(B) exp(C) SLASH. { A = B / C; }
+exp(A) ::= exp(B) exp(C) CARET. { A = pow(B, C); }
+exp(A) ::= exp(B) N.           { A = -B; }

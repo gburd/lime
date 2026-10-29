@@ -1,0 +1,38 @@
+/* Independent Lime transcription of the grammar in bison-3.8.2/examples/c/mfcalc/mfcalc.y.  %precedence
+** becomes %nonassoc (same effect for precedence-only tokens). ** Only the grammar shape is reproduced; no bison source (GPL) is copied --
+** run_diff.sh compiles the example's own epilogue from the bison tree at
+** test time. */
+%name Mf
+%token_prefix TK_
+%token_type {YYSTYPE}
+%type exp {double}
+%include { #include <stdio.h>
+#include <math.h>
+#include "calc.h"
+typedef union { double NUM; symrec *VAR; symrec *FUN; } YYSTYPE;
+void yyerror(char const *); extern int lime_syntax_errors, lime_accepted; }
+%syntax_error { (void)yymajor; (void)yyminor; lime_syntax_errors++; yyerror("syntax error"); }
+%parse_accept { lime_accepted = 1; }
+%token NUM VAR FUN NL LP RP.
+%nonassoc EQ.
+%left MINUS PLUS.
+%left STAR SLASH.
+%nonassoc NEG.
+%right CARET.
+start ::= input.
+input ::= .
+input ::= input line.
+line ::= NL.
+line ::= exp(E) NL.            { printf("%.10g\n", E); }
+line ::= error NL.
+exp(A) ::= NUM(B).             { A = B.NUM; }
+exp(A) ::= VAR(B).             { A = B.VAR->value.var; }
+exp(A) ::= VAR(B) EQ exp(C).   { A = C; B.VAR->value.var = C; }
+exp(A) ::= FUN(B) LP exp(C) RP. { A = B.FUN->value.fun(C); }
+exp(A) ::= exp(B) PLUS exp(C).  { A = B + C; }
+exp(A) ::= exp(B) MINUS exp(C). { A = B - C; }
+exp(A) ::= exp(B) STAR exp(C).  { A = B * C; }
+exp(A) ::= exp(B) SLASH exp(C). { A = B / C; }
+exp(A) ::= MINUS exp(B). [NEG]  { A = -B; }
+exp(A) ::= exp(B) CARET exp(C). { A = pow(B, C); }
+exp(A) ::= LP exp(B) RP.        { A = B; }

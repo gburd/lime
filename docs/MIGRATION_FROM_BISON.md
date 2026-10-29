@@ -5,13 +5,22 @@ This guide walks through the process of converting a Bison grammar file
 syntax differences, and common pitfalls, with a worked example based on the
 PostgreSQL bootstrap parser in `examples/bootstrap/`.
 
-> **Tip: keep your existing `yyparse()` driver code.**  If you don't
-> want to rewrite the calling code that drives `yyparse()` /
-> `yylex()` / `yyerror()` / `yylval`, generate Lime with
-> `--target=c:bison` to also emit a bison-API skin alongside the
-> standard Lime parser.  Your driver compiles unchanged; only the
-> grammar file moves from `.y` to `.lime`.  See [SKINS.md](SKINS.md)
-> for the full API and example.
+> **`lime` does not read `.y` files.**  Run on a yacc or bison grammar,
+> it stops at the first `%{` or `%%` with "this looks like a yacc/bison
+> file" and points here.  There is no converter in this repository
+> (`examples/pg/convert_gram.py` is a one-off for PostgreSQL's gram.y and
+> handles none of the other grammars in the compatibility corpus).  The
+> grammar has to be rewritten in Lime syntax, which is what the rest of
+> this guide covers.  See [BISON_COMPAT.md](BISON_COMPAT.md) for the
+> construct-by-construct status.
+
+> **Tip: keep most of your `yyparse()` driver code.**  Generate Lime
+> with `--target=c:bison` to also emit a bison-API skin
+> (`yyparse()` / `yylval` / `enum yytokentype`) alongside the standard
+> Lime parser.  Call sites change little, with two exceptions: the
+> skin rejects token codes below 258, so a `yylex()` that returns
+> characters (`return '+';`) must return named tokens instead, and
+> `yylloc` is not threaded through.  See [SKINS.md](SKINS.md).
 
 ## Directive Mapping
 
@@ -26,7 +35,7 @@ PostgreSQL bootstrap parser in `examples/bootstrap/`.
 | `%parse-param { T *p }` | `%extra_argument {T *p}` | Passed as parameter to all parse calls |
 | `%lex-param { T *p }` | (none) | Lime uses push parsing; caller manages the lexer |
 | `%pure-parser` | (default) | Lime parsers are always reentrant |
-| `%expect N` | `%expect N.` | Supported.  Lime treats the count as an **exact-match assertion** (unlike Bison's loose "at most N"): if the actual conflict count differs, `lime` exits non-zero.  Currently reports a combined shift/reduce + reduce/reduce total; distinct `%expect_shift_reduce` / `%expect_reduce_reduce` counters are not yet separated. |
+| `%expect N` | `%expect N.` | Supported.  An **exact-match assertion**, as in bison 3.8 (bison 3.8.2 also fails when it finds 1 conflict and expects 2): if the actual conflict count differs, `lime` exits non-zero.  Lime counts shift/reduce and reduce/reduce together; `%expect-rr` is rejected with a diagnostic. |
 | `%locations` | `%locations` | Supported.  Combine with `%location_type {T}` to declare the type. |
 | `#define YYLLOC_DEFAULT(C, R, N) ...` | `#define YYLLOC_DEFAULT(C, R, N) ...` | Supported.  Bison-compatible signature; see [Location override](#location-override-yylloc_default) below. |
 | `%destructor { ... } sym` | `%destructor sym { ... }` | Order is reversed |
@@ -368,8 +377,10 @@ boot_openStmt(A) ::= OPEN boot_ident(B). {
 2. **Token declarations need periods too**: Write `%token FOO.` not
    `%token FOO`.
 
-3. **No `|` alternatives**: Each production is a separate `LHS ::= RHS.`
-   rule. There is no shorthand for alternatives.
+3. **`|` alternatives share one action**: `lhs ::= a B | c.` is accepted,
+   but the trailing `{ action }` is copied to every alternative.  When the
+   alternatives need different actions (the usual yacc case), write
+   separate `lhs ::= ... .` rules.
 
 4. **`%union` is supported (since v0.9.2)**: The bison `%union { ... }`
    body is parsed verbatim and emitted as YYSTYPE in both the
@@ -385,12 +396,11 @@ boot_openStmt(A) ::= OPEN boot_ident(B). {
    write the token-feeding loop yourself. This is actually an advantage
    for integration but requires rethinking the control flow.
 
-6. **`%expect` is an exact-match assertion**: Unlike Bison's loose
-   "at most N" semantics, Lime's `%expect N.` fails the build when the
-   actual conflict count differs from N (in either direction).  Use
-   `lime -p` to see which conflicts were resolved by precedence rules.
-   Lime currently reports a single combined count rather than separate
-   shift/reduce and reduce/reduce totals.
+6. **`%expect` is an exact-match assertion**, as in bison 3.8:
+   `%expect N.` fails the build when the actual conflict count differs
+   from N (in either direction).  Use `lime -p` to see which conflicts
+   were resolved by precedence rules.  Lime reports a single combined
+   count rather than separate shift/reduce and reduce/reduce totals.
 
 7. **Extra argument scope**: The `%extra_argument` value is available in
    all action blocks as the variable name you declared. In Bison,
@@ -410,6 +420,28 @@ boot_openStmt(A) ::= OPEN boot_ident(B). {
    write `@$` inherits the default unchanged.  This is what the
    ecpg `@$ = cat_str(...)` source-text-accumulation pattern
    relies on.
+
+10. **A recursive start symbol needs a wrapper rule**: yacc's
+    `input: %empty | input line ;` has `input` on its own right-hand
+    side.  yacc silently adds `$accept: input $end`; Lime reports "The
+    start symbol "input" occurs on the right-hand side of a rule" and
+    stops.  Add `start ::= input.` and `%start_symbol start`.  (Lemon
+    itself aborts on an assertion here.)
+
+11. **Character-literal tokens and `%empty`**: `'+'`, `"+"` and `%empty`
+    on a right-hand side are rejected with a diagnostic that names them.
+    Declare a named token (`PLUS`) and have the lexer return it; write an
+    empty alternative as `a ::= .`
+
+12. **Error recovery is Lemon's, not yacc's**: an `error` token in a
+    rule works as in yacc (the bison calc/mfcalc examples behave
+    identically).  But with **no** `error` rule, yacc's `yyparse()`
+    returns 1 at the first syntax error, while Lime discards the bad
+    token, keeps parsing, and may still accept.  If callers depend on
+    abort-on-first-error, stop feeding tokens once `%syntax_error` has
+    fired.  There are no `yyerrok`, `yyclearin`, `YYABORT` or
+    `YYACCEPT` macros; `Parse_clear_lookahead()` is the `yyclearin`
+    equivalent.
 
 ## Location override (`YYLLOC_DEFAULT`)
 
