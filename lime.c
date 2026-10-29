@@ -850,6 +850,8 @@ struct config {
   enum cfgstatus status;   /* used during followset and shift computations */
   struct config *next;     /* Next configuration in the state */
   struct config *bp;       /* The next basis configuration */
+  struct config *nextsame; /* Next in this state with the same symbol after
+                           ** the dot (buildshifts only; not multiterminals) */
 };
 
 enum e_action {
@@ -1693,6 +1695,9 @@ void FindFirstSets(struct lime *lemp)
 ** can be computed later.
 */
 PRIVATE struct state *getstate(struct lime *);  /* forward reference */
+/* buildshifts() scratch, live during FindStates(): per symbol index, the
+** last config seen with that symbol after the dot. */
+static LIME_THREAD_LOCAL struct config **shift_last;
 void FindStates(struct lime *lemp)
 {
   struct symbol *sp;
@@ -1749,7 +1754,10 @@ void FindStates(struct lime *lemp)
   /* Compute the first state.  All other states will be
   ** computed automatically during the computation of the first one.
   ** The returned pointer to the first state is not used. */
+  shift_last = (struct config **)lime_calloc(lemp->nsymbol+1, sizeof(*shift_last));
   (void)getstate(lemp);
+  lime_free(shift_last);
+  shift_last = 0;
   return;
 }
 
@@ -1830,6 +1838,26 @@ PRIVATE void buildshifts(struct lime *lemp, struct state *stp)
   ** state.  Initially, all configurations are incomplete */
   for(cfp=stp->cfp; cfp; cfp=cfp->next) cfp->status = INCOMPLETE;
 
+  /* Chain the configs that have the same (non-multiterminal) symbol after
+  ** the dot, in list order, so the inner loop below visits only those:
+  ** the same configs in the same order as scanning the whole list, so the
+  ** states are unchanged.  shortcut: multiterminals keep the full scan
+  ** (same_symbol() equates distinct ones, and inline A|B symbols have no
+  ** index); chain them by a canonical id if a grammar uses many. */
+  for(cfp=stp->cfp; cfp; cfp=cfp->next){
+    cfp->nextsame = 0;
+    if( cfp->dot>=cfp->rp->nrhs ) continue;
+    sp = cfp->rp->rhs[cfp->dot];
+    if( sp->type!=MULTITERMINAL ) shift_last[sp->index] = 0;
+  }
+  for(cfp=stp->cfp; cfp; cfp=cfp->next){
+    if( cfp->dot>=cfp->rp->nrhs ) continue;
+    sp = cfp->rp->rhs[cfp->dot];
+    if( sp->type==MULTITERMINAL ) continue;
+    if( shift_last[sp->index] ) shift_last[sp->index]->nextsame = cfp;
+    shift_last[sp->index] = cfp;
+  }
+
   /* Loop through all configurations of the state "stp" */
   for(cfp=stp->cfp; cfp; cfp=cfp->next){
     if( cfp->status==COMPLETE ) continue;    /* Already used by inner loop */
@@ -1840,7 +1868,8 @@ PRIVATE void buildshifts(struct lime *lemp, struct state *stp)
     /* For every configuration in the state "stp" which has the symbol "sp"
     ** following its dot, add the same configuration to the basis set under
     ** construction but with the dot shifted one symbol to the right. */
-    for(bcfp=cfp; bcfp; bcfp=bcfp->next){
+    for(bcfp=cfp; bcfp;
+        bcfp=(sp->type==MULTITERMINAL ? bcfp->next : bcfp->nextsame)){
       if( bcfp->status==COMPLETE ) continue;    /* Already used */
       if( bcfp->dot>=bcfp->rp->nrhs ) continue; /* Can't shift this one */
       bsp = bcfp->rp->rhs[bcfp->dot];           /* Get symbol after dot */
