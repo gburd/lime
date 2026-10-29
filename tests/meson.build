@@ -2528,6 +2528,29 @@ if host_machine.system() != 'windows'
     is_parallel : false,
   )
 
+  # Is a composed grammar a function of the extension SET, or of the
+  # order load_extension() was called in?  Composes 3 extensions in all
+  # 6 orders and compares parse tables and assigned token codes.
+  test_compose_order = executable('test_compose_order',
+    'test_compose_order.c',
+    test_runtime_arith_gen,
+    include_directories : include_directories('../src'),
+    dependencies : lime_parser_dep,
+    export_dynamic : true,
+  )
+  test('compose_order', test_compose_order,
+    env : [
+      'LIME_BIN=' + lime_exe.full_path(),
+      'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
+      'LIME_INCLUDE=' + meson.project_source_root() / 'include',
+      'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
+      'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
+    ],
+    depends : [lime_exe],
+    workdir : meson.project_source_root(),
+    is_parallel : false,
+  )
+
   # Goal B end to end: an extension's MOD_ADD_RULE `reduce` callback runs
   # at parse time on a snapshot rebuilt by publish_modified_snapshot(),
   # with no host_reduce bound, and its LHS value reaches parse_result()

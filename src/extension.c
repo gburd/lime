@@ -363,16 +363,54 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
             if (error) *error = strdup("publish_modified_snapshot: out of memory");
             return false;
         }
+        /* Canonical order: by extension NAME, not by registry (load)
+        ** order.  The merged grammar text -- and therefore the token
+        ** numbering lime assigns to extension terminals -- is built by
+        ** concatenating modifications in this order, so iterating the
+        ** registry made the composed grammar depend on the order
+        ** load_extension() was called in: the same three extensions
+        ** loaded in different orders got different token codes for the
+        ** same keyword (tests/test_compose_order.c).  The parse tables
+        ** happened to agree; the token codes, which a scanner and any
+        ** cached token value depend on, did not.  Names are unique in a
+        ** registry; ties on name fall back to id for a total order. */
+        uint32_t nloaded = 0;
+        for (uint32_t i = 0; i < reg->count; i++)
+            if (reg->extensions[i].state == EXT_LOADED) nloaded++;
+        const Extension **order = malloc((nloaded ? nloaded : 1) * sizeof(*order));
+        if (order == NULL) {
+            free(combined);
+            free(ext_id_per_mod);
+            LIME_RWLOCK_RDUNLOCK(&reg->lock);
+            if (error) *error = strdup("publish_modified_snapshot: out of memory");
+            return false;
+        }
+        uint32_t no = 0;
+        for (uint32_t i = 0; i < reg->count; i++)
+            if (reg->extensions[i].state == EXT_LOADED) order[no++] = &reg->extensions[i];
+        /* insertion sort: extension sets are small (a handful to tens) */
+        for (uint32_t a = 1; a < no; a++) {
+            const Extension *x = order[a];
+            uint32_t b = a;
+            while (b > 0) {
+                const Extension *y = order[b - 1];
+                int c = strcmp(y->name ? y->name : "", x->name ? x->name : "");
+                if (c < 0 || (c == 0 && y->id <= x->id)) break;
+                order[b] = y;
+                b--;
+            }
+            order[b] = x;
+        }
         uint32_t k = 0;
-        for (uint32_t i = 0; i < reg->count; i++) {
-            const Extension *e = &reg->extensions[i];
-            if (e->state != EXT_LOADED) continue;
+        for (uint32_t i = 0; i < no; i++) {
+            const Extension *e = order[i];
             for (uint32_t m = 0; m < e->nmodifications; m++) {
                 combined[k] = e->modifications[m];
                 ext_id_per_mod[k] = e->id;
                 k++;
             }
         }
+        free(order);
     }
     LIME_RWLOCK_RDUNLOCK(&reg->lock);
 
