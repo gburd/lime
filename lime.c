@@ -7752,6 +7752,18 @@ static void parseonetoken(struct pstate *psp)
         }
       }else if( x[0]=='(' && psp->nrhs>0 ){
         psp->state = RHS_ALIAS_1;
+      }else if( x[0]=='{' ){
+        /* Bison mid-rule action: `a ::= B { code } C.`.  Lemon/Lime have
+        ** no mid-rule actions; name the construct and the fix rather than
+        ** reporting an "illegal character". */
+        ErrorMsg(psp->filename,psp->tokenlineno,
+          "mid-rule action: Lime does not support actions in the middle of "
+          "a rule (bison's `{...}` before the end of the RHS).  Split the "
+          "rule: introduce a nonterminal for the prefix, e.g. "
+          "`a ::= a_head C.` with `a_head ::= B. { code }`.  "
+          "See docs/MIGRATION_FROM_BISON.md#mid-rule-actions");
+        psp->errorcnt++;
+        psp->state = RESYNC_AFTER_RULE_ERROR;
       }else{
         ErrorMsg(psp->filename,psp->tokenlineno,
           "Illegal character on RHS of rule: \"%s\".",x);
@@ -8176,8 +8188,44 @@ static void parseonetoken(struct pstate *psp)
             psp->state = WAITING_FOR_EMBED_NAME;
           }
         }else{
-          ErrorMsg(psp->filename,psp->tokenlineno,
-            "Unknown declaration keyword: \"%%%s\".",x);
+          /* Bison directives Lime does not accept get a pointer to the
+          ** Lime equivalent instead of a bare "unknown keyword".  The
+          ** tokenizer splits on '-', so `%parse-param` arrives as "parse". */
+          static const struct { const char *kw; const char *hint; } bison_hints[] = {
+            {"precedence", "use %nonassoc (same effect for precedence-only "
+                           "tokens: it assigns a level without associativity)"},
+            {"define",     "Lime has no %define variables; api.pure is the "
+                           "default (Lime parsers are reentrant), parse.error "
+                           "verbose maps to %syntax_error { ... }"},
+            {"parse",      "%parse-param: use %extra_argument { Type name } "
+                           "(a single parameter)"},
+            {"lex",        "%lex-param: Lime is push-driven; the caller owns "
+                           "the scanner and passes tokens to Parse()"},
+            {"printer",    "%printer is not supported; %destructor is"},
+            {"glr",        "%glr-parser: use the separate glr_parse() API "
+                           "(docs/GLR.md)"},
+            {"pure",       "%pure-parser: not needed, Lime parsers are "
+                           "already reentrant -- delete it"},
+            {"locations",  "use %locations / %location_type (docs/API.md)"},
+            {"union",      "use %union { ... } (supported) or %token_type"},
+            {"skeleton",   "use -T<template> on the command line"},
+            {"verbose",    "use lime -s / the .out report"},
+            {"debug",      "compile with -DNDEBUG off and call <Name>Trace()"},
+            {0, 0}
+          };
+          const char *hint = 0;
+          int hi;
+          for(hi=0; bison_hints[hi].kw; hi++){
+            if( strcmp(x, bison_hints[hi].kw)==0 ){ hint = bison_hints[hi].hint; break; }
+          }
+          if( hint ){
+            ErrorMsg(psp->filename,psp->tokenlineno,
+              "Unknown declaration keyword: \"%%%s\" (a bison directive): %s.  "
+              "See docs/BISON_COMPAT.md", x, hint);
+          }else{
+            ErrorMsg(psp->filename,psp->tokenlineno,
+              "Unknown declaration keyword: \"%%%s\".",x);
+          }
           psp->errorcnt++;
           psp->state = RESYNC_AFTER_DECL_ERROR;
         }
@@ -11091,6 +11139,27 @@ PRIVATE int translate_code(struct lime *lemp, struct rule *rp){
         lemp->errorcnt++;
       }
       cp += 1; /* skip the '$'; outer loop increments past '@' */
+      continue;
+    }
+    /* Bison positional values ($$, $1, $<type>2, $-1) in an action body.
+    ** Lemon/Lime name values by alias (`a(A) ::= b(B). { A = B; }`), so
+    ** these would pass through as raw C and only fail later, at cc time,
+    ** with an opaque "'$$' undeclared".  Catch them here, where string
+    ** literals and comments have already been skipped by the lexical
+    ** state machine above, and say exactly what to write instead.
+    ** Only flagged when followed by $, a digit, '<' or '-': a lone '$'
+    ** is legal in some C dialects' identifiers and is left alone. */
+    if( *cp=='$' && (cp[1]=='$' || ISDIGIT(cp[1]) || cp[1]=='<' || cp[1]=='-') ){
+      ErrorMsg(lemp->filename, rp->ruleline,
+        "bison-style positional value \"$%c...\" in the action for rule "
+        "\"%s ::= ...\": Lime names values by alias.  Write "
+        "`%s(L) ::= x(X) y(Y). { L = X; }` instead of `$$ = $1`.  "
+        "See docs/MIGRATION_FROM_BISON.md#rule-syntax",
+        cp[1], rp->lhs->name, rp->lhs->name);
+      lemp->errorcnt++;
+      /* Copy it through so the error count, not a cascade of follow-on
+      ** C errors, is what the user sees. */
+      append_str(cp, 1, 0, 0);
       continue;
     }
     if( ISALPHA(*cp) && (cp==rp->code || (!ISALNUM(cp[-1]) && cp[-1]!='_')) ){

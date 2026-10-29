@@ -2890,6 +2890,18 @@ else
           'libhegel + hegel.h from ' +
           'https://github.com/hegeldev/hegel-rust/releases)')
 endif
+# Every row docs/BISON_COMPAT.md marks **Rejected** must be refused with a
+# diagnostic that names the construct and its Lime equivalent (not a bare
+# "illegal character" / "unknown keyword"), and the forms Lime does accept
+# must still generate.  Keeps the compat matrix and the binary honest.
+if host_machine.system() != 'windows'
+  test('bison_diagnostics',
+    find_program('test_bison_diagnostics.sh'),
+    args : [lime_exe.full_path(), meson.project_source_root() / 'limpar.c'],
+    depends : [lime_exe],
+  )
+endif
+
 # v1.0.0: smoke test for scripts/lime-gdb.py.  Verifies the
 # pretty-printer + lime-* commands load and produce expected
 # output against a debug-built bench_parse_fanout.  Skipped when
