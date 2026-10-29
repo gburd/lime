@@ -254,6 +254,75 @@ uint32_t get_loaded_extension_count(ExtensionRegistry *reg) {
 #include "snapshot_modify.h"
 #include "mod_serialize.h"
 
+extern int lime_snapshot_rule_by_id(const ParserSnapshot *snap, const char *rule_id);
+
+/* The snapshot carries extension callbacks in a struct spelled out in
+** snapshot.h (to keep that header free of extension.h).  Guarantee the
+** two function-pointer types stay identical, so the assignment in
+** bind_ext_reduce_callbacks() can never become a silent ABI mismatch. */
+#if defined(__GNUC__) || defined(__clang__)
+_Static_assert(__builtin_types_compatible_p(LimeReduceFn,
+                                            __typeof__(((LimeExtReduceBinding *)0)->reduce)),
+               "LimeReduceFn and LimeExtReduceBinding.reduce must be the same type");
+#endif
+
+/*
+** Build "lhs ::= rhs1 rhs2 ..." -- the canonical rule identity that
+** lime.c's ruleIdentityString() writes into snapshot->rule_ids[] and that
+** lime_snapshot_rule_by_id() matches on.  Caller frees.  NULL on OOM or
+** a malformed modification.
+*/
+static char *mod_rule_identity(const GrammarModification *mod) {
+    const char *lhs = mod->u.add_rule.lhs;
+    if (lhs == NULL) return NULL;
+    size_t len = strlen(lhs) + 4; /* " ::=" */
+    for (int i = 0; i < mod->u.add_rule.nrhs; i++) {
+        const char *r = mod->u.add_rule.rhs ? mod->u.add_rule.rhs[i] : NULL;
+        if (r == NULL) return NULL;
+        len += 1 + strlen(r);
+    }
+    char *buf = malloc(len + 1);
+    if (buf == NULL) return NULL;
+    char *p = buf;
+    p += sprintf(p, "%s ::=", lhs);
+    for (int i = 0; i < mod->u.add_rule.nrhs; i++) p += sprintf(p, " %s", mod->u.add_rule.rhs[i]);
+    return buf;
+}
+
+/*
+** Attach each MOD_ADD_RULE's runtime `reduce` callback to the composed
+** snapshot, keyed by rule identity -- not by (ruleno - base_nrule), which
+** shifts whenever the extension set or unit-rule elimination renumbers
+** rules.  Rules with no callback, or whose identity the rebuilt grammar
+** doesn't contain (e.g. eliminated as a unit rule), are left unbound:
+** they still parse, they just run no extension action.  Best-effort by
+** design -- a binding failure must not fail an otherwise-good publish.
+*/
+static void bind_ext_reduce_callbacks(ParserSnapshot *snap, const GrammarModification *mods,
+                                      uint32_t nmods) {
+    if (snap == NULL || snap->rule_ids == NULL || snap->nrule == 0) return;
+    LimeExtReduceBinding *tab = NULL;
+    for (uint32_t m = 0; m < nmods; m++) {
+        if (mods[m].type != MOD_ADD_RULE || mods[m].u.add_rule.reduce == NULL) continue;
+        char *id = mod_rule_identity(&mods[m]);
+        if (id == NULL) continue;
+        int ruleno = lime_snapshot_rule_by_id(snap, id);
+        free(id);
+        if (ruleno < 0 || (uint32_t)ruleno >= snap->nrule) continue;
+        if (tab == NULL) {
+            tab = calloc(snap->nrule, sizeof(*tab));
+            if (tab == NULL) return;
+        }
+        tab[ruleno].reduce = mods[m].u.add_rule.reduce;
+        tab[ruleno].user_data = mods[m].u.add_rule.reduce_user;
+    }
+    if (tab != NULL) {
+        free(snap->ext_reduce);
+        snap->ext_reduce = tab;
+        snap->ext_reduce_count = snap->nrule;
+    }
+}
+
 bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapshot *base,
                                struct ParserSnapshot **out_snap,
                                struct ConflictSet **out_conflicts, char **error) {
@@ -457,6 +526,11 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
         free(cm_err);
         if (cs_inner != NULL) conflict_set_destroy(cs_inner);
     } else {
+        /* Path A (real recompile): bind each extension rule's runtime
+        ** reduce callback onto the new snapshot BY RULE IDENTITY, so it
+        ** runs at parse time.  Must happen before `combined` is freed --
+        ** it is the only place the callback pointers survive. */
+        bind_ext_reduce_callbacks(new_snap, combined, total);
         free(combined);
         free(ext_id_per_mod);
         free(cm_err);

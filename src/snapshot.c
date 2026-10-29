@@ -93,6 +93,10 @@ static void destroy_snapshot(ParserSnapshot *snap) {
         free(snap->rule_ids);
     }
 
+    /* Extension reduce bindings (array owned; callbacks/user_data are
+    ** the extension's and are not freed here). */
+    free(snap->ext_reduce);
+
     /* JIT context (if any).  jit_detach_from_snapshot is declared
     ** weak in jit_context.h so this snapshot.c file can be bundled
     ** into the dynamically-built .so produced by lime_snapshot_create

@@ -167,9 +167,39 @@ The callback must write the LHS value into `*lhs_out` before returning.
 The extension owns any memory referenced from that value; Lime treats
 slot payloads as opaque.  See `docs/API.md` for the full contract.
 
-**Current status: extension reduces run at parse time.** A composed
-snapshot dispatches reduces through two paths, unified at runtime by
-`lime_host_reduce_router` (`include/multi_grammar.h`):
+**Current status: extension reduces run at parse time.** There are two
+ways to get an extension rule's action to execute.
+
+**1. Directly, from `MOD_ADD_RULE.reduce` (no router).** When
+`publish_modified_snapshot()` rebuilds the grammar (the recompile path,
+taken whenever the base snapshot carries its grammar source, i.e. it was
+built with `lime -n`), it binds every `MOD_ADD_RULE` that supplied a
+`reduce` callback onto the new snapshot, keyed by the rule's *identity*
+(`lhs ::= rhs1 rhs2 ...`, see `lime_snapshot_rule_by_id`) rather than
+by a positional rule number.  A plain `parse_begin` / `parse_token` on
+that snapshot then calls the callback on every reduce of that rule.
+Rules with no action pass `$1` through to `$$`, so the extension's value
+reaches `parse_result()` through the base grammar's unit rules.
+`tests/test_extension_reduce_e2e.c` checks this end to end: the callback
+fires once with `nrhs=2` for `expr ::= expr BANG`, and its sentinel value
+is what `parse_result()` returns.
+
+Limits of the direct path:
+
+- It runs only when **no** `host_reduce` is bound on the session or
+  snapshot.  A bound `host_reduce` owns dispatch for every rule, so the
+  snapshot binding steps aside instead of running the action twice --
+  use path 2 if you also need base-grammar actions.
+- Base-grammar rules run no action on this path (there is no base
+  reduce function to call); they only pass values through.
+- `extra_arg` is passed as NULL.
+- The metadata-only fallback (base snapshot without grammar source) does
+  not rebuild tables and does not bind callbacks.
+
+**2. Through `lime_host_reduce_router`**, when you also want the base
+grammar's own actions.  A composed snapshot dispatches reduces through
+two paths, unified at runtime by `lime_host_reduce_router`
+(`include/multi_grammar.h`):
 
 - **Base-grammar rules** (ruleno `< base_nrule`) run through the
   generated, exported `<Name>HostReduce` wrapper (a `LimeHostReduceFn`,

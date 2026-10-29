@@ -85,6 +85,19 @@ typedef int (*LimeHostReduceFn)(void *user, int ruleno,
                                 const void *rhs_values, const int *rhs_locs,
                                 int nrhs, void *lhs_out, int *lhs_loc_out);
 
+/*
+ * One extension rule's runtime reduce callback, as carried on a
+ * composed snapshot (ParserSnapshot.ext_reduce).  `reduce` has the
+ * extension ABI (LimeReduceFn in src/extension.h): void return,
+ * (user_data, extra_arg, nrhs, rhs_values, rhs_locs, lhs_out).  It is
+ * spelled out here so snapshot.h stays free of extension.h.
+ */
+typedef struct LimeExtReduceBinding {
+    void (*reduce)(void *user_data, void *extra_arg, int nrhs,
+                   const void *rhs_values, const int *rhs_locs, void *lhs_out);
+    void *user_data;
+} LimeExtReduceBinding;
+
 /* ------------------------------------------------------------------ */
 /*  Semantic versioning                                                */
 /* ------------------------------------------------------------------ */
@@ -336,6 +349,23 @@ typedef struct ParserSnapshot {
     LimeHostReduceFn host_reduce;
     void *host_reduce_user;
 
+    /* --- Extension reduce bindings (owned) ---------------------------
+    ** Populated by publish_modified_snapshot(): one entry per composed
+    ** ruleno whose source rule came from an extension MOD_ADD_RULE that
+    ** supplied a runtime `reduce` callback.  Indexed by ruleno, length
+    ** nrule; NULL entries mean "no extension callback for this rule".
+    ** Bound by rule IDENTITY (lime_snapshot_rule_by_id), not by a
+    ** positional offset, so recomposition that renumbers rules cannot
+    ** misroute a callback.  Consulted only inside the reduce branch.
+    **
+    ** The engine calls these through the same value-slot ABI the
+    ** host-reduce path already gathers, so an extension rule's action
+    ** runs at parse time even when no host_reduce is bound -- which is
+    ** what makes runtime extensibility mean "the extension's code runs",
+    ** not merely "the extension's syntax is accepted".  Freed by
+    ** destroy_snapshot.  Additive trailing field. */
+    struct LimeExtReduceBinding *ext_reduce;  /* [nrule] or NULL */
+    uint32_t ext_reduce_count;
     /* --- Token-name table (name -> code lookup) ---------------------
     ** Optional copy of the generated yyTokenName[], indexed by internal
     ** symbol index ([0]="$", terminals then nonterminals).  Lets

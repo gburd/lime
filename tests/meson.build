@@ -2528,14 +2528,13 @@ if host_machine.system() != 'windows'
     is_parallel : false,
   )
 
-  # Known-gap canary: does an extension's LimeReduceFn actually run at
-  # parse time?  docs/EXTENSIONS.md says it does not (the callback shape
-  # is type-checked at registration only), and this test proves that end
-  # to end with a real grammar, extension, and parse.  It is EXPECTED TO
-  # FAIL until the runtime engine dispatches extension reduce callbacks;
-  # the failure is the canary, so do not "fix" it by relaxing the
-  # assertion.  Same subprocess-rebuild pipeline (and therefore the same
-  # Windows skip) as test_extension_rebuild above.
+  # Goal B end to end: an extension's MOD_ADD_RULE `reduce` callback runs
+  # at parse time on a snapshot rebuilt by publish_modified_snapshot(),
+  # with no host_reduce bound, and its LHS value reaches parse_result()
+  # through the base grammar's rules.  This was a known-gap canary (exit
+  # 2) until callbacks were bound onto the snapshot by rule identity; it
+  # is now a regression test.  Same subprocess-rebuild pipeline (and
+  # therefore the same Windows skip) as test_extension_rebuild above.
   test_extension_reduce_e2e = executable('test_extension_reduce_e2e',
     'test_extension_reduce_e2e.c',
     test_runtime_arith_gen,

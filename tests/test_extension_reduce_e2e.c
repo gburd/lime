@@ -71,6 +71,7 @@
 
 #include "bench_arith_grammar.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -114,7 +115,10 @@ static void counting_reduce(void *user_data, void *extra_arg, int nrhs, const vo
     g_last_nrhs = nrhs;
     g_lhs_out_seen = lhs_out;
     if (lhs_out != NULL) {
-        *(int *)lhs_out = REDUCE_SENTINEL;
+        /* Value-slot ABI is pointer-width (*(void **)lhs_out), see
+        ** LimeHostReduceFn in snapshot.h.  Writing an int through it
+        ** would only set the low 4 bytes of an 8-byte slot. */
+        *(void **)lhs_out = (void *)(uintptr_t)REDUCE_SENTINEL;
     }
 }
 
@@ -300,6 +304,12 @@ int main(void) {
     int rc = parse_token(ctx, TOK_NUM, NULL, -1);
     if (rc == 0) rc = parse_token(ctx, TOK_BANG, NULL, -1);
     if (rc == 0) rc = parse_token(ctx, 0, NULL, -1); /* EOF */
+    /* The extension rule's LHS value must survive the remaining base
+    ** reduces (expr -> program) up to the accept.  Base rules run no
+    ** action here (no host_reduce bound), so they pass the value of the
+    ** goto entry through; an extension action whose OUTPUT is dropped
+    ** would still bump the counter, so check the value, not just entry. */
+    void *result = parse_result(ctx);
     parse_end(ctx);
 
     bool parse_accepted = (rc == 1);
@@ -308,6 +318,7 @@ int main(void) {
     printf("\n  parse result: rc=%d (%s)\n", rc, parse_accepted ? "ACCEPT" : "REJECT/ERROR");
     printf("  reduce callback fired: %s (count=%d, ext_counter=%d, last_nrhs=%d)\n",
            callback_fired ? "YES" : "NO", g_reduce_fire_count, g_ext_counter, g_last_nrhs);
+    printf("  parse_result(): %p (sentinel %#x)\n", result, REDUCE_SENTINEL);
 
     snapshot_release(modified);
     destroy_extension_registry(reg);
@@ -327,19 +338,33 @@ int main(void) {
     }
 
     if (callback_fired) {
+        if (g_last_nrhs != 2) {
+            fprintf(stderr, "\n  [BROKEN] callback ran with nrhs=%d, expected 2 "
+                    "(expr BANG)\n", g_last_nrhs);
+            return 1;
+        }
         printf("\n  RESULT: extension reduce callback WAS invoked by the runtime "
-               "engine.\n");
-        printf("  Goal B semantic-action dispatch appears to be wired up -- if you "
-               "see\n  this message, update docs/EXTENSIONS.md's LimeReduceFn "
-               "\"Current status\"\n  paragraph, it is now stale.\n");
+               "engine (nrhs=2, as the rule expr ::= expr BANG requires).\n");
+        if (result != (void *)(uintptr_t)REDUCE_SENTINEL) {
+            /* The action ran but its output was dropped before accept --
+            ** that is a dead action in all but name.  Fail it. */
+            fprintf(stderr, "\n  [BROKEN] the extension action's LHS value did "
+                    "not reach parse_result() (got %p, want %#x): its output "
+                    "was lost on the way to accept.\n",
+                    result, REDUCE_SENTINEL);
+            return 1;
+        }
+        printf("  and its LHS value reached parse_result() through the base "
+               "grammar's program ::= expr.\n");
         return 0;
     }
 
-    printf("\n  CONFIRMED GAP: extension reduce callback was never invoked "
-          "(Goal B semantic-action dispatch not yet wired). Parse accepted via "
-          "the table-driven engine alone; src/parse_engine.c's reduce() has no "
-          "path to a GrammarModification's `reduce`/`reduce_user` pair -- that "
-          "data isn't even retained on the ParserSnapshot after "
-          "publish_modified_snapshot() runs. See docs/REDUCE_DISPATCH.md.\n");
-    return 2;
+    /* Regression: the action was dropped.  Was a known gap (exit 2)
+    ** until publish_modified_snapshot() started binding MOD_ADD_RULE
+    ** callbacks onto the snapshot by rule identity; now it is a bug. */
+    fprintf(stderr, "\n  [BROKEN] extension reduce callback was never invoked. "
+            "Check that the rebuilt snapshot carries rule_ids (lime -n emits "
+            "them) and that bind_ext_reduce_callbacks() in src/extension.c "
+            "matched the rule identity. See docs/REDUCE_DISPATCH.md.\n");
+    return 1;
 }

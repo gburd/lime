@@ -8,6 +8,7 @@ This page states which paths are shipped and gives one worked example.
 
 | Path | Callback ABI | Which rules | Wired by |
 |------|--------------|-------------|----------|
+| **Snapshot-bound extension reduce** | `LimeReduceFn` (via `LimeExtReduceBinding`, `src/snapshot.h`) | each rule a `MOD_ADD_RULE` gave a `reduce` | automatic: `publish_modified_snapshot()` binds by rule identity; runs only when no `host_reduce` is bound |
 | **Base host-reduce** | `LimeHostReduceFn` (`src/snapshot.h`) | ruleno `< base_nrule` | `lime -n --host-reduce` emits `<Name>HostReduce`; bound as `snap->host_reduce` |
 | **Extension reduce** | `LimeReduceFn` (`src/extension.h`) | ruleno `>= base_nrule` | embedder binds one per rule in `LimeExtRuleBinding.reduce` |
 | **Router** | `LimeHostReduceFn` (it *is* one) | all rules | `lime_host_reduce_router` (`include/multi_grammar.h`) |

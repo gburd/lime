@@ -13370,11 +13370,17 @@ void ReportSnapshotInit(struct lime *lemp)
   fprintf(out, "};\n");
 
   /* Rule-identity table: canonical rule text ("lhs ::= rhs...") indexed
-  ** by ruleno, for lime_snapshot_rule_by_id().  Only emitted under
-  ** --host-reduce: it is only meaningful when a host dispatches reduce
-  ** callbacks by rule, and gating it keeps plain `lime -n` output
-  ** byte-identical for grammars that do not use host-reduce. */
-  if( g_host_reduce ){
+  ** by ruleno, for lime_snapshot_rule_by_id().  Emitted for every -n
+  ** snapshot, not just --host-reduce ones: publish_modified_snapshot()
+  ** binds an extension MOD_ADD_RULE's runtime `reduce` callback onto the
+  ** recompiled snapshot by rule IDENTITY, and the subprocess rebuild
+  ** invokes plain `lime -n`.  Gating this on --host-reduce left that
+  ** path with rule_ids == NULL, so extension actions silently never ran
+  ** while the in-process path (which always fills rule_ids) worked --
+  ** the two rebuild paths disagreed.  Pure metadata: no table or parse
+  ** behaviour changes.  (Unit-rule elimination is still gated on
+  ** --host-reduce; an eliminated rule simply has no identity to bind.) */
+  {
     struct rule *rp_id;
     fprintf(out, "static const char *const s_rule_ids[] = {\n");
     for(rp_id=lemp->rule; rp_id; rp_id=rp_id->next){
@@ -13444,14 +13450,13 @@ void ReportSnapshotInit(struct lime *lemp)
   {
   char hostReduceExpr[256];
   const char *ruleIdsInit;
+  ruleIdsInit =
+    "        .rule_ids             = s_rule_ids,\n"
+    "        .rule_ids_count       = sizeof(s_rule_ids)/sizeof(s_rule_ids[0]),\n";
   if( g_host_reduce ){
     lemon_sprintf(hostReduceExpr, "%sHostReduce", name);
-    ruleIdsInit =
-      "        .rule_ids             = s_rule_ids,\n"
-      "        .rule_ids_count       = sizeof(s_rule_ids)/sizeof(s_rule_ids[0]),\n";
   }else{
     lemon_strcpy(hostReduceExpr, "NULL");
-    ruleIdsInit = "";
   }
   fprintf(out,
     "    LimeParserTables tables = {\n"
@@ -13523,7 +13528,7 @@ void ReportSnapshotInit(struct lime *lemp)
     lemp->accAction,
     lemp->noAction,
     lemp->minReduce,
-    ruleIdsInit,                                /* .rule_ids block (host-reduce only) or "" */
+    ruleIdsInit,                                /* .rule_ids block (always emitted) */
     hostReduceExpr,                             /* .host_reduce = <name>HostReduce or NULL */
     name
   );

@@ -260,6 +260,47 @@ static int reduce(const ParserSnapshot * LIME_RESTRICT snap, ParseStack * LIME_R
     ** never on the shift hot path. */
     void *lhs_value = NULL;
     int lhs_loc = 0;
+
+    /* Extension reduce bound on the snapshot itself (populated by
+    ** publish_modified_snapshot from MOD_ADD_RULE's `reduce`).  Fires
+    ** only when NO host_reduce is bound: a host that installs a
+    ** host_reduce (e.g. lime_host_reduce_router) owns dispatch for every
+    ** rule and has bound its extension callbacks itself, so running the
+    ** snapshot binding as well would execute the action twice.  Without
+    ** this, an extension rule's code never ran in the common case where
+    ** the embedder just calls parse_begin/parse_token on a composed
+    ** snapshot -- the syntax was accepted but the action was dead. */
+    const LimeExtReduceBinding *ext_b = NULL;
+    if (LIME_UNLIKELY(snap->ext_reduce != NULL) && host_reduce == NULL
+        && ruleno < snap->ext_reduce_count && snap->ext_reduce[ruleno].reduce != NULL
+        && (uint32_t)nrhs <= stack_depth(stk)) {
+        ext_b = &snap->ext_reduce[ruleno];
+    }
+    if (ext_b != NULL) {
+        if (!reduce_scratch_reserve(sc, (uint32_t)nrhs)) return -1;
+        void **vbuf = sc->vbuf;
+        int   *lbuf = sc->lbuf;
+        ParseStackEntry *first_rhs = stk->top - nrhs;
+        for (int i = 0; i < nrhs; i++) {
+            vbuf[i] = first_rhs[i].value;
+            lbuf[i] = first_rhs[i].loc;
+        }
+        ext_b->reduce(ext_b->user_data, NULL, nrhs, nrhs > 0 ? vbuf : NULL,
+                      nrhs > 0 ? lbuf : NULL, &lhs_value);
+        if (nrhs > 0) lhs_loc = first_rhs[0].loc;
+    } else if (LIME_UNLIKELY(snap->ext_reduce != NULL) && host_reduce == NULL && nrhs > 0
+               && (uint32_t)nrhs <= stack_depth(stk)) {
+        /* A rule with no action on a snapshot that carries extension
+        ** bindings: pass $1 through to $$, so an extension action's value
+        ** propagates up through base unit rules (e.g. program ::= expr) to
+        ** the accept instead of being overwritten by NULL.  Same default
+        ** lime_host_reduce_router applies to an unbound rule.  Gated on
+        ** ext_reduce so recognition-only snapshots are untouched. */
+        ParseStackEntry *first_rhs = stk->top - nrhs;
+        lhs_value = first_rhs[0].value;
+        lhs_loc = first_rhs[0].loc;
+    }
+
     if (host_reduce != NULL && (uint32_t)nrhs <= stack_depth(stk)) {
         if (!reduce_scratch_reserve(sc, (uint32_t)nrhs)) return -1;
         void **vbuf = sc->vbuf;
@@ -845,7 +886,7 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
             /* End-of-input shift means we're done if next reduce
             ** is the accept rule.  Treat as accept. */
             eng->accepted = true;
-            if (eff_host_reduce && ctx->result_value == NULL)
+            if ((eff_host_reduce || snap->ext_reduce) && ctx->result_value == NULL)
                 ctx->result_value = stack_top_value(&eng->stack);
             return 1;
         }
@@ -884,7 +925,7 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
 
     do_accept:
         eng->accepted = true;
-        if (eff_host_reduce && ctx->result_value == NULL)
+        if ((eff_host_reduce || snap->ext_reduce) && ctx->result_value == NULL)
             ctx->result_value = stack_top_value(&eng->stack);
         return 1;
 
@@ -894,7 +935,7 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
                            eff_host_user, &ctx->result_value, sc);
             if (r == 1) {
                 eng->accepted = true;
-                if (eff_host_reduce && ctx->result_value == NULL)
+                if ((eff_host_reduce || snap->ext_reduce) && ctx->result_value == NULL)
                     ctx->result_value = stack_top_value(&eng->stack);
                 return token_code == 0 ? 1 : 0;
             }
