@@ -15634,7 +15634,10 @@ void Configtable_clear(int(*f)(struct config *))
   int i;
   if( x4a==0 || x4a->count==0 ) return;
   if( f ) for(i=0; i<x4a->count; i++) (*f)(x4a->tbl[i].data);
-  for(i=0; i<x4a->size; i++) x4a->ht[i] = 0;
+  /* Clear only the buckets in use: buildshifts() calls this once per
+  ** successor state, and a table grown for one large state stays big
+  ** for the thousands of small ones after it. */
+  for(i=0; i<x4a->count; i++) x4a->ht[confighash(x4a->tbl[i].data) & (x4a->size-1)] = 0;
   x4a->count = 0;
   return;
 }
