@@ -1356,6 +1356,15 @@ struct acttab {
   int nLookaheadAlloc;         /* Slots allocated in aLookahead[] */
   int nterminal;               /* Number of terminal symbols */
   int nsymbol;                 /* total number of symbols */
+  /* nAtOfst[d + ofstBias] = number of filled slots j in aAction[] with
+  ** j - aAction[j].lookahead == d, i.e. slots placed by an earlier
+  ** transaction at offset d.  Lets acttab_insert() answer "does offset i
+  ** collide with an existing transaction?" in O(1) instead of scanning all
+  ** nAction slots -- that scan was ~50% of a full PostgreSQL-grammar
+  ** build.  d ranges over [-nsymbol, nActionAlloc), hence the bias. */
+  int *nAtOfst;
+  int nAtOfstAlloc;
+  int ofstBias;
 };
 
 /* Return the number of entries in the yy_action table */
@@ -1369,6 +1378,7 @@ struct acttab {
 
 /* Free all memory associated with the given acttab */
 void acttab_free(acttab *p){
+  lime_free( p->nAtOfst );
   lime_free( p->aAction );
   lime_free( p->aLookahead );
   lime_free( p );
@@ -1456,6 +1466,25 @@ int acttab_insert(acttab *p, int makeItSafe){
       p->aAction[i].action = -1;
     }
   }
+  {
+    /* d = j - lookahead, with j < nActionAlloc and 0 <= lookahead <= nsymbol */
+    int need = p->nActionAlloc + p->nsymbol + 1;
+    if( need > p->nAtOfstAlloc ){
+      int *nb = (int*)lime_calloc((size_t)need, sizeof(int));
+      if( nb==0 ){ fprintf(stderr,"malloc failed\n"); exit(1); }
+      if( p->nAtOfst ){
+        /* re-bias: old index o maps to o - oldBias + newBias */
+        int o;
+        for(o=0; o<p->nAtOfstAlloc; o++){
+          if( p->nAtOfst[o] ) nb[o - p->ofstBias + (p->nsymbol + 1)] = p->nAtOfst[o];
+        }
+        lime_free(p->nAtOfst);
+      }
+      p->nAtOfst = nb;
+      p->nAtOfstAlloc = need;
+      p->ofstBias = p->nsymbol + 1;
+    }
+  }
 
   /* Scan the existing action table looking for an offset that is a
   ** duplicate of the current transaction set.  Fall out of the loop
@@ -1479,11 +1508,9 @@ int acttab_insert(acttab *p, int makeItSafe){
 
       /* No possible lookahead value that is not in the aLookahead[]
       ** transaction is allowed to match aAction[i] */
-      n = 0;
-      for(j=0; j<p->nAction; j++){
-        if( p->aAction[j].lookahead<0 ) continue;
-        if( p->aAction[j].lookahead==j+p->mnLookahead-i ) n++;
-      }
+      /* Count of filled slots j with aAction[j].lookahead == j+mnLookahead-i,
+      ** i.e. with j - lookahead == i - mnLookahead.  O(1) via nAtOfst[]. */
+      n = p->nAtOfst[(i - p->mnLookahead) + p->ofstBias];
       if( n==p->nLookahead ){
         break;  /* An exact match is found at offset i */
       }
@@ -1508,11 +1535,18 @@ int acttab_insert(acttab *p, int makeItSafe){
           if( p->aAction[k].lookahead>=0 ) break;
         }
         if( j<p->nLookahead ) continue;
-        for(j=0; j<p->nAction; j++){
-          if( p->aAction[j].lookahead==j+p->mnLookahead-i ) break;
-        }
-        if( j==p->nAction ){
-          break;  /* Fits in empty slots */
+        /* No filled slot may already sit at offset i - mnLookahead.  The
+        ** original loop also matched EMPTY slots whose -1 lookahead happened
+        ** to equal j+mnLookahead-i (only when j == i - mnLookahead - 1, i.e.
+        ** one unused slot); reproduce that exactly so tables stay
+        ** byte-identical. */
+        {
+          int d = i - p->mnLookahead;
+          int jj = d - 1;
+          int emptyHit = (jj>=0 && jj<p->nAction && p->aAction[jj].lookahead<0);
+          if( p->nAtOfst[d + p->ofstBias]==0 && !emptyHit ){
+            break;  /* Fits in empty slots */
+          }
         }
       }
     }
@@ -1527,7 +1561,11 @@ int acttab_insert(acttab *p, int makeItSafe){
 #endif
   for(j=0; j<p->nLookahead; j++){
     k = p->aLookahead[j].lookahead - p->mnLookahead + i;
+    if( p->aAction[k].lookahead>=0 ){
+      p->nAtOfst[(k - p->aAction[k].lookahead) + p->ofstBias]--;
+    }
     p->aAction[k] = p->aLookahead[j];
+    p->nAtOfst[(k - p->aAction[k].lookahead) + p->ofstBias]++;
     if( k>=p->nAction ) p->nAction = k+1;
   }
   if( makeItSafe && i+p->nterminal>=p->nAction ) p->nAction = i+p->nterminal+1;
@@ -14762,19 +14800,32 @@ int SetAdd(char *s, int e)
   return !rv;
 }
 
-/* Add every element of s2 to s1.  Return TRUE if s1 changes. */
+/* Add every element of s2 to s1.  Return TRUE if s1 changes.
+**
+** Sets are byte arrays of 0/1 (see SetAdd), so the union is a bytewise OR
+** and "changed" means some byte of s2 was set where s1's was clear.  Done
+** a word at a time: FindFollowSets() calls this to a fixed point over
+** every propagation link, and the byte loop was the single largest cost
+** of building the PostgreSQL grammar once acttab_insert() was fixed.
+** memcpy() keeps the word loads/stores free of alignment and aliasing
+** assumptions; byte semantics (each byte stays 0 or 1) are unchanged. */
 int SetUnion(char *s1, char *s2)
 {
-  int i, progress;
-  progress = 0;
-  for(i=0; i<lime_active_ctx->set_size; i++){
-    if( s2[i]==0 ) continue;
-    if( s1[i]==0 ){
-      progress = 1;
-      s1[i] = 1;
-    }
+  int n = lime_active_ctx->set_size;
+  int i = 0;
+  uint64_t changed = 0;
+  for(; i + 8 <= n; i += 8){
+    uint64_t a, b;
+    memcpy(&a, s1 + i, 8);
+    memcpy(&b, s2 + i, 8);
+    changed |= b & ~a;
+    a |= b;
+    memcpy(s1 + i, &a, 8);
   }
-  return progress;
+  for(; i < n; i++){
+    if( s2[i] && !s1[i] ){ s1[i] = 1; changed = 1; }
+  }
+  return changed != 0;
 }
 /********************** From the file "table.c" ****************************/
 /*

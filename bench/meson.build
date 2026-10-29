@@ -74,6 +74,17 @@ bench_jit_real_parser = executable('bench_jit_real_parser',
   dependencies : [lime_parser_dep, math_dep],
 )
 
+# In-process LALR(1) rebuild cost of a whole grammar (default: the full
+# PostgreSQL grammar).  The number the runtime-composition design rests
+# on -- every extension-set change rebuilds the tables.  Not a test.
+#   ./bench/bench_pg_rebuild ../examples/pg/gram.lime 5
+bench_pg_rebuild = executable('bench_pg_rebuild',
+  'bench_pg_rebuild.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+  c_args : ['-DLIME_HAVE_SNAPSHOT_BUILD'],
+)
+
 # v0.9.x: multi-thread parse-server fan-out benchmark.  Measures
 # parse throughput as the parser-thread count scales from 1..N
 # against a single shared ParserSnapshot.  Used to evaluate cache-
