@@ -24,8 +24,8 @@ on:
 #
 # When Codeberg adds hosted ARM runners (tracked at
 # codeberg.org/actions/meta), uncomment the ubuntu-24.04-arm
-# matrix entries in build below and the mirroring sanitizer /
-# llvm-matrix jobs.
+# matrix entries in build below and the mirroring sanitizer
+# jobs.
 
 jobs:
   # =====================================================================
@@ -54,7 +54,7 @@ jobs:
       - name: Setup meson
         env:
           CC: ${{ matrix.compiler }}
-        run: meson setup builddir -Dllvm=disabled
+        run: meson setup builddir
 
       - name: Build
         run: ninja -C builddir
@@ -83,7 +83,7 @@ jobs:
         uses: https://code.forgejo.org/actions/checkout@v4
 
       - name: Setup meson
-        run: meson setup builddir -Dllvm=disabled -Dcontrib=enabled
+        run: meson setup builddir -Dcontrib=enabled
 
       - name: Build
         run: ninja -C builddir
@@ -112,7 +112,6 @@ jobs:
       - name: Build with ${{ matrix.sanitizer }} sanitizer
         run: |
           meson setup builddir-${{ matrix.sanitizer }} \
-            -Dllvm=disabled \
             -Db_sanitize=${{ matrix.sanitizer }}
           ninja -C builddir-${{ matrix.sanitizer }}
 
@@ -135,7 +134,7 @@ jobs:
 
       - name: Build
         run: |
-          meson setup builddir -Dllvm=disabled
+          meson setup builddir
           ninja -C builddir
 
       - name: Valgrind check
@@ -178,55 +177,6 @@ jobs:
         run: scripts/check_version_consistency.sh
 
   # =====================================================================
-  # Exercise the three LLVM/JIT linkage paths so the compat shim,
-  # static-link option, and stub mode all stay green on PRs.  Each
-  # variant builds Lime + LLVM (Ubuntu apt) and runs the test suite.
-  # =====================================================================
-  llvm-matrix:
-    runs-on: codeberg-medium
-    strategy:
-      fail-fast: false
-      matrix:
-        config:
-          - name: shared
-            args: "-Dllvm=enabled"
-          - name: static
-            args: "-Dllvm=enabled -Dllvm-static=true"
-          - name: disabled
-            args: "-Dllvm=disabled"
-    steps:
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc meson ninja-build pkg-config \
-                                  llvm-dev libllvm18 zlib1g-dev \
-                                  libxml2-dev libffi-dev libtinfo-dev
-
-      - name: Checkout
-        uses: https://code.forgejo.org/actions/checkout@v4
-
-      - name: Setup
-        run: meson setup builddir-${{ matrix.config.name }} ${{ matrix.config.args }}
-
-      - name: Build
-        run: ninja -C builddir-${{ matrix.config.name }}
-
-      - name: Test
-        run: meson test -C builddir-${{ matrix.config.name }} --print-errorlogs
-
-      - name: Verify libLLVM linkage matches config
-        run: |
-          binary=builddir-${{ matrix.config.name }}/tests/test_jit
-          refs=$(ldd "$binary" 2>&1 | grep -cE libLLVM || true)
-          case "${{ matrix.config.name }}" in
-            shared)
-              test "$refs" -ge 1 || { echo "shared expected libLLVM, got $refs"; exit 1; } ;;
-            static|disabled)
-              test "$refs" -eq 0 || { echo "${{ matrix.config.name }} expected 0 libLLVM, got $refs"; exit 1; } ;;
-          esac
-          echo "OK: ${{ matrix.config.name }} has $refs libLLVM dependencies"
-
-  # =====================================================================
   # LTO (Link-Time Optimization) build verification.
   #
   # Mirrors .github/workflows/ci.yml's lto-build job.  Validates that
@@ -247,7 +197,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y meson ninja-build pkg-config \
                                   gcc binutils \
-                                  llvm-dev libllvm18 zlib1g-dev \
+                                  zlib1g-dev \
                                   libxml2-dev libffi-dev libtinfo-dev
 
       - name: Install dependencies (clang)
@@ -256,7 +206,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y meson ninja-build pkg-config \
                                   clang lld llvm \
-                                  llvm-dev libllvm18 zlib1g-dev \
+                                  zlib1g-dev \
                                   libxml2-dev libffi-dev libtinfo-dev
 
       - name: Checkout

@@ -1,317 +1,112 @@
 # Benchmarking and Performance Testing
 
-This document explains how to benchmark the Extensible SQL Parser, specifically comparing JIT-compiled vs interpreted performance.
+This document lists the benchmarks under `bench/`, what each one
+measures, and how to run them so the numbers mean something.
 
-## Quick Start
-
-### 1. Setup Development Environment
-
-```bash
-cd /home/gburd/ws/lime
-nix develop
-```
-
-This provides:
-- GCC 13
-- LLVM 14-21 (verified on 14.0.6 and 21.1.8) with development libraries
-- Meson and Ninja build tools
-- Code coverage tools (lcov, gcovr)
-
-### 2. Build with LLVM Support
+## Setup
 
 ```bash
-# Clean build
-rm -rf builddir
-meson setup builddir
+nix develop                       # meson, ninja, gcc/clang, flex, bison
+meson setup builddir --buildtype=release
 ninja -C builddir
 ```
 
-Verify LLVM is detected:
-```bash
-ninja -C builddir reconfigure 2>&1 | grep -i llvm
-```
+Every benchmark below is built by `ninja`; none is run by
+`meson test`.  The flex/bison and simdjson harnesses are skipped at
+configure time when those tools are missing.
 
-You should see:
-```
-LLVM JIT compilation: enabled (<version>, shared link)
-```
+## The benchmarks
 
-(the older message `LLVM found -- JIT compilation enabled` was used
-before the `-Dllvm=`/`-Dllvm-static=` options landed.)
+All binaries land in `builddir/bench/`.
 
-If not, ensure pkg-config can find LLVM:
-```bash
-pkg-config --modversion llvm
-# Should output: 14.x.x or later
-```
+| Executable | Measures | Arguments |
+|------------|----------|-----------|
+| `parser_bench` | Tokenizer throughput (SIMD vs scalar classify), table-driven action lookup, snapshot acquire/release and creation, token-table lookup.  CSV on stdout, commentary on stderr. | `[iters] [warmup]` |
+| `extension_overhead` | Extension framework cost against a no-extension baseline: registry ops, conflict detection, disambiguation, execution policy, parser fork, grammar-context switching, and the full pipeline.  CSV on stdout. | `[iters] [warmup]` |
+| `bench_pg_rebuild` | CPU time, wall time and peak-RSS growth of one in-process LALR(1) rebuild of a whole grammar (default: the PostgreSQL grammar).  The cost every extension-set change pays. | `<grammar.lime> [iterations]` |
+| `bench_parse_fanout` | Parse throughput as parser threads scale 1..N over one shared `ParserSnapshot`; the false-sharing check for the snapshot layout.  POSIX only. | `[thread counts...]` or `THREADS=N` |
+| `bench_simd_classify` | SIMD vs scalar character classification in `src/tokenize_simd.c`, ns per 32-byte block.  Backs the README's SIMD claim. | `[bytes] [iters]` |
+| `glr_overhead` | The LALR push parser vs the GLR engine on the same unambiguous arithmetic input: the fixed cost of the GLR step machinery. | `[iters] [trials]` |
+| `bench_flex_bison_compare` | Lime vs bison + flex (default `-Cem` tables) on an arithmetic grammar and a JSON document.  Both sides are checked to accept the input before timing. | `[iters] [trials]` |
+| `bench_flex_bison_compare_cf` | The same harness with the JSON lexer built by `flex -CF` (full tables), flex's fastest mode. | `[iters] [trials]` |
+| `bench_runtime_lime`, `bench_runtime_bison` | One pre-tokenised stream through a 250-rule SQL-shaped grammar (`bench_grammar.{lime,y}`), built once per tool.  Needs flex and bison. | `[iterations]` |
+| `bench_simdjson_compare` | Lime (malloc, malloc-leak, arena) vs simdjson on JSON at steady state.  Orientation only: simdjson is not a general parser generator.  Needs simdjson. | none |
+| `bench_lex_vec`, `bench_lex_novec` | A lime-generated C lexer emitted with `--lex-vectorize` (default) vs `--lex-no-vectorize`, on the same fixture. | `<fixture.json>` |
+| `bench_lsc_small`, `bench_lsc_medium`, `bench_lsc_large` | Lexer throughput across DFA sizes (small JSON, medium JSON, PostgreSQL bootscanner), to find where transition-table memory starts to dominate. | none |
 
-### 3. Run Benchmarks
+Also in `bench/` but not wired into meson (build recipes are in each
+file's header comment): `bench_composed_vs_aot.c` and
+`bench_composed_vs_aot_heavy.c` (composed snapshot vs AOT parser on
+the same tokens, dispatch-bound and action-bound grammars), and
+`rust_compare/` (Lime's Rust emit vs hand-written lexers; see its
+README).
 
-#### Basic Benchmark Suite
+The PostgreSQL grammar parse benchmark lives in the test suite:
+build with `-Dpg_grammar=true` and run
+`LIME_PG_BENCH=21 builddir/tests/test_pg_grammar`.
 
-```bash
-./builddir/bench/parser_bench
-```
+## Measuring correctly
 
-This runs:
-- Tokenizer throughput tests
-- SIMD classification benchmarks
-- Token table lookup performance
-- Snapshot operations
-- JIT compilation benchmarks
-- Memory usage analysis
+- **Check output before timing.**  The comparison harnesses assert
+  that both sides accept (or compute the same result for) the input
+  before they time anything.  Keep that property when you add one.
+- **Use CPU time, repeat, report the median and the spread.**  A mean
+  of noisy runs hides the noise.
+- **Pin to one core** for single-thread benchmarks:
+  `taskset -c 2 ./builddir/bench/bench_flex_bison_compare`.
+- **Alternate A and B** rather than running all of A then all of B,
+  so drift (thermal, frequency) hits both sides equally.
 
-Output is CSV format to stdout, with commentary on stderr.
+Low coefficient of variation (CV) means a usable number:
 
-#### Comprehensive JIT Comparison
+- **CV < 5%**: consistent
+- **CV 5-10%**: usable with care
+- **CV > 10%**: investigate system load or thermal throttling first
 
-```bash
-./builddir/bench/jit_comparison
-```
-
-This benchmark:
-1. **Tests multiple grammar sizes** (64, 256, 512 states)
-2. **Proper warmup phase** ensures JIT compilation completes
-3. **Statistical analysis** with mean, median, P95, P99, stddev
-4. **Direct comparison** showing speedup ratios
-5. **Amortization analysis** calculating break-even point
-
-Example output:
-```
-=================================================================
-  Grammar: 256 states, 100 terminals
-  Parse length: 100 tokens
-  Warmup: 500 parses, Benchmark: 5000 parses
-=================================================================
-
---- INTERPRETED (TABLE-DRIVEN) ---
-Interpreted:
-  Samples:  5000
-  Mean:     1243.56 ns
-  Median:   1240.00 ns
-  StdDev:   45.23 ns (3.6%)
-
---- JIT COMPILATION ---
-JIT compilation successful!
-  Compiled: 256/256 states
-  Compile time: 4.23 ms
-
-JIT-compiled:
-  Samples:  5000
-  Mean:     412.34 ns
-  Median:   410.00 ns
-  StdDev:   18.56 ns (4.5%)
-
---- COMPARISON ---
-Speedup (mean): 3.02x
-Speedup (median): 3.02x
-✓ SUCCESS: JIT achieves target speedup (≥2x)
-
-Break-even: 328 parses
-  (After 328 parses, JIT has paid for itself)
-  ✓ Good: Reasonable break-even
-```
-
-## Performance Targets
-
-Based on the original implementation plan:
-
-| Metric | Target | How to Verify |
-|--------|--------|---------------|
-| Static parsing | 1-10 µs/query | `parser_bench` tokenizer tests |
-| Extension overhead | ≤2x slowdown | Compare w/ and w/o extensions |
-| SIMD speedup | 3-10x | `parser_bench` SIMD tests |
-| JIT speedup | 2-5x | `jit_comparison` benchmark |
-
-## Interpreting Results
-
-### JIT Speedup Analysis
-
-**Expected Results:**
-- **Small grammars (64 states)**: 2-3x speedup
-- **Medium grammars (256 states)**: 3-4x speedup
-- **Large grammars (512 states)**: 4-5x speedup
-
-**Why JIT is faster:**
-1. **No table lookups**: Direct branches instead of array indexing
-2. **Better cache locality**: Smaller working set per state
-3. **CPU optimizations**: Branch prediction, instruction pipelining
-4. **Constant folding**: Default actions compiled as immediates
-
-**Break-Even Analysis:**
-The "break-even" point indicates how many parses are needed before JIT compilation cost is recovered. Lower is better.
-
-- **< 100 parses**: Excellent - use JIT even for short sessions
-- **100-1000 parses**: Good - worthwhile for typical server workloads
-- **> 1000 parses**: High - only beneficial for very long-running processes
-
-### SIMD Tokenization
-
-**Expected Results:**
-- **AVX2 (x86-64)**: 5-10x faster than scalar
-- **NEON (ARM)**: 3-5x faster than scalar
-- **Scalar fallback**: Baseline performance
-
-To check which SIMD implementation is active:
-```bash
-./builddir/bench/parser_bench 2>&1 | grep "simd: best"
-```
-
-### Variability Analysis
-
-Low coefficient of variation (CV) indicates consistent performance:
-- **CV < 5%**: Excellent consistency
-- **CV 5-10%**: Good consistency
-- **CV > 10%**: High variability (investigate system load, thermal throttling)
-
-## Advanced Benchmarking
-
-### Custom Iteration Counts
+To reduce variability on Linux:
 
 ```bash
-# 50,000 iterations with 1,000 warmup
-./builddir/bench/parser_bench 50000 1000
+sudo cpupower frequency-set -g performance
+echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
+taskset -c 2 ./builddir/bench/parser_bench
 ```
 
-### Profiling with perf
+## Profiling
 
 ```bash
-# Build with debug symbols
-meson setup builddir-prof -Dbuildtype=debugoptimized
+meson setup builddir-prof --buildtype=debugoptimized
 ninja -C builddir-prof
-
-# Profile JIT compilation
-perf record -g ./builddir-prof/bench/jit_comparison
+perf record -g ./builddir-prof/bench/parser_bench
 perf report
-
-# Look for:
-#   - Time in jit_find_shift_action (should be low with JIT)
-#   - Time in JIT-compiled functions (should be high)
-#   - Cache miss rates (perf stat -e cache-misses)
 ```
 
-### Comparing Builds
+Heap profile:
 
 ```bash
-# Baseline (no optimizations)
-meson setup builddir-baseline -Dbuildtype=debug -Doptimization=0
-ninja -C builddir-baseline
-./builddir-baseline/bench/jit_comparison > baseline.txt
-
-# Optimized
-meson setup builddir-opt -Dbuildtype=release -Doptimization=3
-ninja -C builddir-opt
-./builddir-opt/bench/jit_comparison > optimized.txt
-
-# Compare
-diff baseline.txt optimized.txt
-```
-
-### Memory Profiling
-
-```bash
-# Massif heap profiler
 valgrind --tool=massif --massif-out-file=massif.out \
-    ./builddir/bench/jit_comparison
-
-# Visualize
+    ./builddir/bench/bench_pg_rebuild examples/pg/gram.lime 1
 ms_print massif.out
 ```
 
-## Troubleshooting
-
-### "JIT compilation not available"
-
-**Symptom:**
-```
-JIT available: NO (stub mode)
-```
-
-**Solutions:**
-
-1. **Check LLVM installation:**
-   ```bash
-   pkg-config --libs --cflags llvm
-   ```
-
-2. **Verify PKG_CONFIG_PATH:**
-   ```bash
-   echo $PKG_CONFIG_PATH
-   # Should include path to llvm.pc
-   ```
-
-3. **Reinstall LLVM:**
-   ```bash
-   # On NixOS (from flake.nix)
-   nix develop --rebuild
-
-   # On Ubuntu/Debian (any LLVM 14+ works)
-   apt install llvm-dev libllvm21
-
-   # On macOS
-   brew install llvm
-   ```
-
-4. **Check build log:**
-   ```bash
-   ninja -C builddir reconfigure 2>&1 | grep -A5 -B5 llvm
-   ```
-
-### JIT Slower Than Interpreted
-
-**Possible causes:**
-
-1. **Not enough warmup**: JIT needs time to compile
-   - Increase warmup_parses in benchmark
-
-2. **Small grammar**: Compilation overhead too high
-   - JIT best for grammars with >100 states
-
-3. **Thermal throttling**: CPU downclocking under load
-   - Check: `cat /proc/cpuinfo | grep MHz`
-   - Run shorter benchmarks, let CPU cool between runs
-
-4. **LLVM optimization level**: Default is O2
-   - Check JITContext creation in jit_context.c
-   - Increase to O3 if needed
-
-### High Variability
-
-**Causes:**
-- Background processes consuming CPU
-- Power management (frequency scaling)
-- Thermal throttling
-- Cache pollution from other processes
-
-**Solutions:**
-```bash
-# Pin to performance governor (Linux)
-sudo cpupower frequency-set -g performance
-
-# Disable turbo boost (for consistency)
-echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
-
-# Isolate CPU cores
-taskset -c 0,1 ./builddir/bench/jit_comparison
-```
-
-## Continuous Integration
-
-For CI systems, use:
+## Comparing builds
 
 ```bash
-# Quick smoke test (fast)
-./builddir/bench/jit_comparison | grep "SUCCESS"
-
-# Full benchmark with machine-readable output
-./builddir/bench/parser_bench > results.csv
-
-# Check performance regression
-python3 scripts/check_performance.py results.csv baseline.csv
+meson setup builddir-a --buildtype=release
+meson setup builddir-b --buildtype=release   # with your change applied
+ninja -C builddir-a && ninja -C builddir-b
+for i in 1 2 3 4 5; do
+    taskset -c 2 ./builddir-a/bench/parser_bench > a.$i.csv
+    taskset -c 2 ./builddir-b/bench/parser_bench > b.$i.csv
+done
 ```
+
+## No JIT benchmarks
+
+Earlier releases shipped `jit_comparison` and `bench_jit_real_parser`
+for the LLVM JIT.  The JIT was removed after measurement showed it
+slower than the table interpreter; see `docs/JIT_ANALYSIS.md`.
 
 ## References
 
-- [LLVM ORC JIT Documentation](https://llvm.org/docs/ORCv2.html)
 - [SIMD Intrinsics Guide](https://www.intel.com/content/www/us/en/docs/intrinsics-guide/)
 - [Linux perf Examples](https://www.brendangregg.com/perf.html)

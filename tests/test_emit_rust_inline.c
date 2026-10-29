@@ -1,7 +1,7 @@
 /*
  * test_emit_rust_inline.c
  *
- * Verifies the Rust output emitter wires jit_can_inline_rule_text()
+ * Verifies the Rust output emitter wires rule_can_inline_text()
  * into the per-rule `fn yy_rule_N` reducer emission: action bodies
  * classified as inlinable (empty, passthrough, single small
  * expression with no calls or control flow) get
@@ -224,7 +224,7 @@ static void test_rust_emit_inline(void) {
     ** decorates `top_state` / `find_shift_action` / `find_goto`
     ** with `#[inline(always)]`, so a global count would overcount
     ** for our purposes -- only the per-rule reducers are governed
-    ** by jit_can_inline_rule_text. */
+    ** by rule_can_inline_text. */
     int total_rules = 0;
     int total_inline = 0;
     {

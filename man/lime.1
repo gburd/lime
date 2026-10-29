@@ -755,17 +755,6 @@ the template lookup that backs
 .BR \-T .
 v0.4.1.
 .TP
-.B LIME_JIT
-Forces JIT-compilation policy at runtime when read by the
-generated parser binary.  Set to
-.B 1
-to force eager compile, or
-.B 0
-to disable.  Has no effect on
-.B lime
-itself; consumed only by parsers compiled with
-.BR \-Dllvm=enabled .
-.TP
 .B LIME_BIN
 Used by the runtime extension framework when rebuilding a
 merged snapshot from a grammar source.  Overrides the binary

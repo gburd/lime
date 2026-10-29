@@ -2,7 +2,6 @@
 ** Comprehensive test suite to boost code coverage to 95%+.
 ** Targets functions with low coverage in:
 ** - snapshot_modify.c (25%)
-** - jit_policy.c (38%)
 ** - token_table.c (56%)
 ** - conflict.c (69%)
 */
@@ -14,7 +13,6 @@
 #include <assert.h>
 
 #include "parser.h"
-#include "jit_policy.h"
 #include "token_table.h"
 
 #include "../src/snapshot.h"
@@ -211,116 +209,6 @@ static void test_token_table_many_tokens(void) {
     }
 
     destroy_token_table(tt);
-    PASS();
-}
-
-/* ============================================================== */
-/*  JIT Policy Tests                                             */
-/* ============================================================== */
-
-static void test_jit_policy_init(void) {
-    TEST("jit_metrics_init and default_config");
-
-    JITMetrics m;
-    jit_metrics_init(&m);
-
-    JITPolicyConfig cfg = jit_policy_default_config();
-
-    /* Verify defaults */
-    if (cfg.min_parse_count != 200) {
-        FAIL("Default min_parse_count should be 200");
-        return;
-    }
-    if (!cfg.enabled) {
-        FAIL("Default enabled should be true");
-        return;
-    }
-
-    PASS();
-}
-
-static void test_jit_policy_null_safety(void) {
-    TEST("jit_policy NULL safety");
-
-    /* These should not crash */
-    jit_metrics_init(NULL);
-    jit_metrics_record_parse(NULL, 100, 50);
-    jit_metrics_record_tokens(NULL, 10);
-
-    bool result = jit_should_compile(NULL, NULL);
-    if (result) {
-        FAIL("jit_should_compile on NULL should return false");
-        return;
-    }
-
-    JITMetrics m;
-    jit_metrics_init(&m);
-    result = jit_should_compile(&m, NULL);
-    if (result) {
-        FAIL("jit_should_compile with NULL config should return false");
-        return;
-    }
-
-    JITPolicyConfig cfg = jit_policy_default_config();
-    result = jit_should_compile(NULL, &cfg);
-    if (result) {
-        FAIL("jit_should_compile with NULL metrics should return false");
-        return;
-    }
-
-    PASS();
-}
-
-static void test_jit_policy_record_and_decide(void) {
-    TEST("jit_metrics record parse and decide");
-
-    JITMetrics m;
-    jit_metrics_init(&m);
-
-    JITPolicyConfig cfg = jit_policy_default_config();
-
-    /* Record many parses to attempt triggering compilation decision */
-    for (int i = 0; i < 250; i++) {
-        jit_metrics_record_parse(&m, 100000, 200);  /* 100us, 200 lookups */
-        jit_metrics_record_tokens(&m, 300);
-    }
-
-    /* Evaluate policy - result depends on JIT availability */
-    bool should_compile = jit_should_compile(&m, &cfg);
-
-    /* Whether or not JIT is available, verify no crash */
-    (void)should_compile;
-
-    PASS();
-}
-
-static void test_jit_policy_thresholds(void) {
-    TEST("jit_policy respects thresholds");
-
-    JITMetrics m;
-    jit_metrics_init(&m);
-
-    JITPolicyConfig cfg = jit_policy_default_config();
-
-    /* With only a few parses, should not compile regardless of JIT availability */
-    jit_metrics_record_parse(&m, 1000, 50);
-    jit_metrics_record_parse(&m, 1000, 50);
-    jit_metrics_record_tokens(&m, 10);
-
-    bool should_compile = jit_should_compile(&m, &cfg);
-    if (should_compile) {
-        FAIL("Should not compile with only 2 parses");
-        return;
-    }
-
-    /* With enabled=false, should never compile */
-    cfg.enabled = false;
-    should_compile = jit_should_compile(&m, &cfg);
-    if (should_compile) {
-        FAIL("Should not compile when disabled");
-        return;
-    }
-
     PASS();
 }
 
@@ -646,12 +534,6 @@ int main(void) {
     test_token_table_add_lookup();
     test_token_table_duplicate_add();
     test_token_table_many_tokens();
-
-    /* JIT Policy Tests */
-    test_jit_policy_init();
-    test_jit_policy_null_safety();
-    test_jit_policy_record_and_decide();
-    test_jit_policy_thresholds();
 
     /* Conflict Tests */
     test_conflict_set_create_destroy();

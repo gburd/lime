@@ -83,8 +83,8 @@ if conflicts are surfaced loudly, not auto-resolved by load order -- see
 **Parse speed** is roughly a wash at this level and argues for neither
 design: Lime's runtime engine is within ~15% of bison on the benchmarks
 in `docs/BENCHMARKS_VS_BISON.md` (slower against `flex -CF`, faster
-against default flex), and the LLVM JIT does not change that on x86_64
-(`docs/JIT_ANALYSIS.md`).
+against default flex).  Lime has no JIT; the LLVM JIT it once had was
+slower than the table interpreter (`docs/JIT_ANALYSIS.md`).
 
 **Bottom line.**  Choose runtime PEG when grammar edits are frequent and
 silent overlap is tolerable; choose Lime's LALR when edits are rare (load

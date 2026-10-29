@@ -3,7 +3,7 @@
 ## Option 1: Generator Only (No Extension Framework)
 
 If you only need to generate parsers from grammars — no runtime
-extension, no SIMD, no JIT — embed two files:
+extension, no SIMD — embed two files:
 
 ```
 your_project/
@@ -31,7 +31,7 @@ the C standard library.
 
 ## Option 2: Generator + Extension Framework (Meson)
 
-To use runtime extensions, SIMD tokenization, or JIT, link against the
+To use runtime extensions or SIMD tokenization, link against the
 Lime extension library.
 
 ### As a Meson subproject
@@ -88,7 +88,6 @@ LIME_SRC = snapshot.c snapshot_modify.c extension.c extension_registry.c \
            parser_operations.c parser_plugin.c \
            tokenize.c tokenize_simd.c token_table.c \
            parse_context.c merkle_tree.c dependency_resolver.c \
-           jit_context.c jit_codegen.c jit_policy.c jit_tokenizer.c \
            glr.c utf8.c lime_ast.c version.c
 
 LIME_OBJ = $(LIME_SRC:%.c=lime/src/%.o)
@@ -123,7 +122,6 @@ The extension framework requires:
 | `pthreads` | Yes | Thread-safe registry, snapshot refcounting |
 | `libdl` | Yes (Linux) | `dlopen`/`dlsym` for shared library extensions |
 | `libm` | Optional | Math functions in benchmarks |
-| `libLLVM` | Optional | JIT compilation (link with `llvm-config --libs`, or `--link-static` for a self-contained binary; see `-Dllvm-static` in GETTING_STARTED.md) |
 
 On macOS, `dlopen` is in `libSystem` (no `-ldl` needed).
 

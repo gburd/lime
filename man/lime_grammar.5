@@ -976,8 +976,7 @@ never call
 pay zero cost for GLR support being present in the runtime --
 the LALR fast path
 .RB ( src/parse_engine.c ,
-.BR src/snapshot.c ,
-.BR src/jit_codegen.c )
+.BR src/snapshot.c )
 is byte-identical to the pre-GLR tree.  Measured GLR overhead
 vs LALR on unambiguous input is 5--8\(mu (see
 .BR docs/GLR.md ).

@@ -6,6 +6,10 @@ person-days), expected impact (measured or estimated), and known
 risk.  Items are ordered roughly by impact-per-effort, easiest
 wins at the top.
 
+Runtime code generation is not on this list: the LLVM JIT was removed
+after it measured slower than the table interpreter
+(`JIT_ANALYSIS.md`).
+
 ## 1. Inline `parse_token` into `parse_engine_step` for the hot path
 
   * **Effort:** 0.5 day
@@ -46,21 +50,7 @@ wins at the top.
     prefetch `yy_action[idx + 1]` and `yy_lookahead[idx + 1]`
     (best-effort speculation that the next token will hit nearby).
 
-## 4. Compact JIT codegen: tighter IR than the current six-block form
-
-  * **Effort:** 1-2 days
-  * **Impact:** 10-30 % on JIT'd large-grammar parse throughput.
-    The current compact path emits two loads + two compares + two
-    branches.  Combining the bounds check with the lookahead
-    match into a single subtract-and-test could save one branch.
-  * **Risk:** medium.  Subtle in IR; changes that look right on
-    paper sometimes regress.
-  * **How:** experiment with branchless variants in
-    `src/jit_codegen.c::generate_find_shift_action_compact`.
-    Verify correctness with `tests/test_pg_grammar` (the JIT vs
-    table cross-check already in place catches regressions).
-
-## 5. Specialise the engine for snapshots with no extensions loaded
+## 4. Specialise the engine for snapshots with no extensions loaded
 
   * **Effort:** 1 day
   * **Impact:** 5-10 % on the no-extension fast path.
@@ -72,7 +62,7 @@ wins at the top.
     short-circuit to the simpler loop.  See
     `bench/extension_overhead.c` for the per-call cost we'd elide.
 
-## 6. SIMD action-table lookup for very small grammars
+## 5. SIMD action-table lookup for very small grammars
 
   * **Effort:** 3-5 days
   * **Impact:** 20-50 % on grammars with `nterminal <= 32`
@@ -87,7 +77,7 @@ wins at the top.
     shows small-grammar workloads dominate -- which they don't for
     most production users.
 
-## 7. Reduce snapshot allocation traffic with arena pool
+## 6. Reduce snapshot allocation traffic with arena pool
 
   * **Effort:** 2 days
   * **Impact:** unclear; depends on allocation pattern.  Could be
@@ -98,7 +88,7 @@ wins at the top.
   * **How:** replace `malloc`/`free` calls in `snapshot_build.c`
     with a pool allocator scoped to the snapshot's lifetime.
 
-## 8. Persist Bayesian disambiguation posterior to disk
+## 7. Persist Bayesian disambiguation posterior to disk
 
   * **Effort:** 2 days
   * **Impact:** quality-of-life, not throughput.  Avoids cold-start
@@ -108,7 +98,7 @@ wins at the top.
   * **How:** add `bayesian_save(path)` /
     `bayesian_load(path)` in `src/strategy_bayesian.c`.
 
-## 9. Token-stream prefetching from the lexer
+## 8. Token-stream prefetching from the lexer
 
   * **Effort:** 3-5 days
   * **Impact:** 5-15 % end-to-end on lex+parse benchmarks
@@ -121,7 +111,7 @@ wins at the top.
     parse cost (true on the JSON benchmark; less true on
     arithmetic).
 
-## 10. Co-locate snapshot tables in a single allocation
+## 9. Co-locate snapshot tables in a single allocation
 
   * **Effort:** 1 day
   * **Impact:** 2-5 %.  Cache-line affinity: `yy_shift_ofst`,
@@ -134,28 +124,11 @@ wins at the top.
     `total_bytes`; carve up into the four arrays via
     pointer arithmetic.
 
-## 11. JIT compile in a background thread
-
-  * **Effort:** 1-2 days
-  * **Impact:** wall-clock latency-to-first-parse, not steady-state
-    throughput.  For a server that's about to handle a flood of
-    parse jobs on a never-before-seen grammar, this is meaningful.
-  * **Risk:** medium.  Thread-safety of LLVM contexts in OrcJIT.
-  * **How:** spawn a dedicated worker that owns the LLVM context;
-    submit `lime_jit_compile_async(snap)` and the caller continues
-    on the interpreted path until the JIT is ready.
-
 ## What would make things much faster but is out of scope here
 
   * **GLR with shared packed forest:** would let Lime accept the
     same family of grammars Bison's `%glr-parser` does, at the
     cost of substantially more engine complexity.
-  * **JITed action callbacks:** today the JIT compiles only the
-    shift/reduce dispatch.  Compiling the user-supplied action
-    bodies via Clang at runtime would give end-to-end speedups
-    on grammars where the action work dominates.  This is a major
-    project (clang-as-library, header dependency tracking, ABI
-    questions).
   * **Incremental parsing:** edit-tree-style reparse on small
     text edits.  Tree-sitter does this; Lime doesn't have the
     machinery for it.
@@ -171,6 +144,5 @@ For any item above, the rule is:
      than 2× the run-to-run variance.
 
 `bench/bench_flex_bison_compare` is the right harness for items
-that affect the parser inner loop.  `bench/jit_comparison` is
-right for JIT codegen changes.  `bench/parser_bench` is right for
+that affect the parser inner loop.  `bench/parser_bench` is right for
 SIMD tokenizer changes.  Profile first, optimise second.

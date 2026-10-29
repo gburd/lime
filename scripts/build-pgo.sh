@@ -18,7 +18,6 @@
 #   bench_lsc_medium:   +46% throughput
 #   bench_lsc_large:    +26% throughput
 #   bench_parse_fanout: +14% throughput (8 threads, borrowed snapshot)
-#   bench_jit_real_parser: -7% (regression -- workload mismatch)
 #
 # IMPORTANT: PGO + LTO do not currently compose with static archives
 # (gcc-ar plugin conflict).  Use one or the other, not both.
@@ -44,7 +43,7 @@ meson test -C "$build_dir" --num-processes 4 || {
     echo "build-pgo: WARNING: some tests failed during training; continuing"
 }
 # Run benches if they exist (smoke test for profile coverage).
-for b in bench/parser_bench bench/bench_jit_real_parser \
+for b in bench/parser_bench \
          bench/lex_state_count/bench_lsc_small \
          bench/lex_state_count/bench_lsc_medium \
          bench/lex_state_count/bench_lsc_large; do

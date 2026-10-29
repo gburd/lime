@@ -200,12 +200,10 @@ where a stale handle accidentally refers to a different plugin.
 3. If `grammar_file` is non-NULL, call `plugin->create_snapshot(grammar_file, &error)`.
 4. If `config.validate_on_load` and `plugin->validate_snapshot` is non-NULL,
    validate the snapshot.
-5. If `config.auto_jit` and the plugin advertises `LIME_CAP_JIT`, call
-   `lime_jit_compile(snap)`.
-6. Atomically store the new snapshot pointer.
-7. Release the old snapshot reference (if any).
-8. Update `active_handle`.
-9. Release write lock.
+5. Atomically store the new snapshot pointer.
+6. Release the old snapshot reference (if any).
+7. Update `active_handle`.
+8. Release write lock.
 
 ### Hot-Swap Guarantee
 
@@ -333,13 +331,6 @@ parser_manager_set_snapshot(mgr, modified);
 lime_snapshot_release(modified);
 lime_snapshot_release(base);
 ```
-
-### JIT Compilation
-
-Plugins that advertise `LIME_CAP_JIT` produce snapshots whose action
-tables are suitable for JIT compilation via `jit_attach_to_snapshot()`.
-If `config.auto_jit` is true, the manager automatically triggers JIT
-compilation after snapshot creation.
 
 ### Tokenizer
 

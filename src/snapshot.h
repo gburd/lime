@@ -17,7 +17,7 @@
 ** via snapshot_build_from_tables.  Bumped on any layout-breaking
 ** change to the struct. */
 #define LIME_SNAPSHOT_MAGIC       0x4C494D45U   /* L,I,M,E */
-#define LIME_SNAPSHOT_ABI_VERSION 2
+#define LIME_SNAPSHOT_ABI_VERSION 3  /* 3: JIT fields removed */
 
 
 /* Atomic refcount type.
@@ -197,18 +197,11 @@ typedef struct ParserSnapshot {
     **
     ** Every parse_token call reads from these.  Layout-critical: do
     ** not move fields around within this block without rerunning
-    ** bench/bench_parse_fanout (the layout was chosen so all 8
-    ** pointers occupy exactly one 64-byte cacheline on x86_64 +
-    ** aarch64).  L1 data prefetcher pulls the whole line in as a
-    ** unit on the first miss.
+    ** bench/bench_parse_fanout (the 7 table pointers occupy bytes
+    ** 0..55 on LP64 x86_64 + aarch64, and lookahead_count shares the
+    ** same 64-byte line).  L1 data prefetcher pulls the whole line in
+    ** as a unit on the first miss.
     ** ================================================================ */
-
-    /** Cached pointer to the JIT'd jit_find_shift_action function, or
-    ** NULL if no JIT is attached.  Read FIRST in find_shift_action --
-    ** taking the JIT path skips the rest of the snapshot reads.  Type
-    ** is uint32_t (*)(uint32_t state, uint32_t lookahead) -- declared
-    ** as void* so this header doesn't need to pull in jit_context.h. */
-    void *jit_find_shift_fn;
 
     uint16_t *yy_action;       /**< Combined shift+reduce action array */
     uint16_t *yy_lookahead;    /**< Lookahead values parallel to yy_action */
@@ -225,7 +218,7 @@ typedef struct ParserSnapshot {
     int8_t   *yy_rule_info_nrhs;/**< Negative number of RHS symbols per rule */
 
     /* ================================================================
-    ** CACHELINE 1 (bytes 64..127): hot scalars + counts.
+    ** CACHELINE 0/1 (bytes 56..111): hot scalars + counts.
     **
     ** Action-table dispatch constants the parse_engine_step hot path
     ** consults to classify action-table entries (shift vs reduce vs
@@ -251,8 +244,8 @@ typedef struct ParserSnapshot {
     ** define in generated parsers (limpar.c template). */
     uint16_t yy_first_token;
 
-    /* Cacheline 1 has 6 bytes of padding here to land yy_fallback on
-    ** an 8-byte boundary.  Compiler inserts implicitly. */
+    /* 6 bytes of padding here land yy_fallback on an 8-byte
+    ** boundary.  Compiler inserts implicitly. */
 
     /** Optional fallback table (length = nfallback, may be NULL). */
     uint16_t *yy_fallback;
@@ -260,7 +253,8 @@ typedef struct ParserSnapshot {
     uint32_t reserved_pad;       /**< Padding -- atomics on next line. */
 
     /* ================================================================
-    ** CACHELINE 2 (bytes 128..191): refcount + magic.
+    ** magic/version (bytes 112..127), then CACHELINE 2 from byte 128:
+    ** refcount.
     **
     ** Refcount is the only WRITTEN field on the parse path (via
     ** atomic_fetch_add/sub in snapshot_acquire/release).  Keep it
@@ -321,9 +315,6 @@ typedef struct ParserSnapshot {
 
     /** Nanosecond-precision wall-clock time when this snapshot was created. */
     uint64_t create_time_ns;
-
-    /** JIT compilation context. */
-    void *jit_ctx;
 
     /* --- Host-reduce hook (runtime base-grammar reduce dispatch) ----
     ** Optional callback that runs a BASE-grammar reduce action over

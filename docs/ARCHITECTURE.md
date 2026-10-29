@@ -6,8 +6,7 @@ built on top of the Lemon LALR(1) parser generator.
 ## Overview
 
 The system extends a traditional Lemon-generated parser with runtime grammar
-modification, SIMD-accelerated tokenization, optional LLVM JIT compilation,
-and copy-on-write snapshots for safe concurrent access. Extensions can add
+modification, SIMD-accelerated tokenization, and copy-on-write snapshots for safe concurrent access. Extensions can add
 tokens, rules, and precedence changes without restarting the parser.
 
 ```
@@ -38,12 +37,7 @@ tokens, rules, and precedence changes without restarting the parser.
      | Modified Snapshot|            | SIMD Tokenizer  |
      | (clone + apply   |            | (AVX2/NEON/     |
      |  + rebuild)      |            |  scalar)        |
-     +---------+--------+            +-----------------+
-               |
-      +--------v--------+
-      | JIT Compilation  |
-      | (optional LLVM)  |
-      +-----------------+
+     +-----------------+            +-----------------+
 ```
 
 ## Component Overview
@@ -58,8 +52,6 @@ tokens, rules, and precedence changes without restarting the parser.
 | Token Table | `include/token_table.h`, `src/token_table.c` | Thread-safe, RCU-versioned keyword lookup |
 | SIMD Tokenizer | `src/tokenize_simd.{h,c}`, `src/tokenize.c` | SIMD character classification for lexing |
 | Parse Context | `include/parse_context.h`, `src/parse_context.c` | Snapshot-indirected parser runtime |
-| JIT Context | `include/jit_context.h`, `src/jit_context.c` | LLVM-based compilation of action tables |
-| JIT Policy | `include/jit_policy.h`, `src/jit_policy.c` | Metrics-driven decision for when to JIT |
 | Public API | `include/parser.h` | Stable external interface to all subsystems |
 
 ## Copy-on-Write Snapshot Architecture
@@ -75,7 +67,7 @@ of a parser at a point in time:
 - **Grammar data**: symbols, rules, states (deep copies)
 - **Action tables**: `yy_action`, `yy_lookahead`, `yy_shift_ofst`,
   `yy_reduce_ofst`, `yy_default` (the compact arrays that drive parsing)
-- **Bookkeeping**: monotonic version number, creation timestamp, JIT context
+- **Bookkeeping**: monotonic version number, creation timestamp
 - **Refcount**: atomic `uint_fast32_t` for safe concurrent sharing
 
 ### Lifecycle
@@ -257,57 +249,12 @@ lookup using:
 - **Extension tracking**: each `TokenDefinition` records which `ExtensionID`
   added it, enabling `remove_tokens_by_extension()` for clean unloading
 
-## LLVM JIT Integration
+## No JIT
 
-### Architecture
-
-The JIT subsystem compiles parser action table lookups into native machine
-code using LLVM's C API. It has three layers:
-
-1. **JIT Context** (`src/jit_context.c`): Manages LLVM module, execution
-   engine, and compiled function pointers. Creates specialized
-   `find_shift_action` functions for each parser state where the action
-   table logic is baked into the instruction stream rather than driven
-   by table lookups.
-
-2. **JIT Code Generation** (`src/jit_codegen.c`): Generates LLVM IR for
-   each parser state. Translates the `yy_action`/`yy_lookahead` table
-   structure into a series of comparisons and direct returns, which LLVM
-   then optimizes into efficient branch sequences.
-
-3. **JIT Policy** (`src/jit_policy.c`): Decides when compilation is
-   worthwhile based on runtime metrics (parse count, cumulative parse
-   time, action lookup frequency).
-
-### Graceful Degradation
-
-When LLVM is not available (`LIME_NO_JIT` defined at compile time),
-all JIT functions compile as stubs:
-- `jit_is_available()` returns `false`
-- `jit_create()` returns `JIT_ERR_NO_LLVM`
-- `jit_find_shift_action()` falls through to the table-driven path
-
-### Compilation Trigger
-
-The policy uses three thresholds (configurable via `JITPolicyConfig`):
-
-| Threshold | Default | Purpose |
-|-----------|---------|---------|
-| `min_parse_count` | 50 | Avoid compiling rarely-used grammars |
-| `min_total_parse_time_ns` | 10 ms | Ensure enough time spent parsing |
-| `min_avg_lookups_per_parse` | 100 | Ensure complex enough grammars |
-
-When all thresholds are met, `jit_maybe_compile()` spawns a detached
-background thread that compiles and atomically publishes the JIT context
-to `snap->jit_ctx`. Active parsers transparently pick up the JIT path
-on their next action lookup.
-
-### Runtime Dispatch
-
-`jit_find_shift_action()` checks if a compiled function exists for the
-given state. If yes, it calls the compiled function directly. If no, it
-falls back to the standard table-driven `snap_find_shift_action()` from
-the parse context.
+Lime once had an optional LLVM JIT for the shift-action lookup.  It was
+removed because it measured slower than the table-driven interpreter on
+both x86_64 and aarch64; see [JIT_ANALYSIS.md](JIT_ANALYSIS.md).  Action
+lookup is always the table-driven `snap_find_shift_action()`.
 
 ## Thread Safety
 
@@ -318,8 +265,6 @@ the parse context.
 | Snapshots | Atomic refcount | Lock-free acquire/release | N/A (immutable) |
 | Extension Registry | `pthread_rwlock` | Concurrent read lock | Exclusive write lock |
 | Token Table | RCU versioning + `pthread_rwlock` | Lock-free with retry | Write lock |
-| JIT Metrics | `atomic_uint_fast64_t` counters | Lock-free | Lock-free |
-| JIT Compilation | `atomic_int` flag + detached thread | Lock-free | Single background thread |
 
 ### Key Invariants
 
@@ -354,10 +299,6 @@ the parse context.
 - **Token table** owns all `TokenDefinition` entries and the hash table
   array. Lexeme strings are copied during `add_token()`.
 
-- **JIT context** owns the LLVM module, execution engine, and compiled
-  function pointer array. Freed by `jit_destroy()` or automatically when
-  the owning snapshot is released via `jit_detach_from_snapshot()`.
-
 - **Conflict sets** own all `Conflict` structs and their description
   strings. Freed by `conflict_set_destroy()`.
 
@@ -380,14 +321,11 @@ reproducible development environments.
 | `lime` | Executable | Parser generator (`lime.c`) |
 | `liblime_parser.a` | Static library | Core library (snapshot, extension, tokenizer, etc.) |
 | `libtokenize_simd.a` | Static library | SIMD character classification |
-| `liblime_jit.a` | Static library | JIT compilation (LLVM or stubs) |
 
 ### Conditional Compilation
 
 - **`_GNU_SOURCE`**: Defined project-wide for POSIX extensions
   (`pthread_rwlock_t`, `clock_gettime`, etc.)
-- **`LIME_NO_JIT`**: Defined when LLVM is not available; activates stub
-  implementations in the JIT library
 - **AVX2**: Uses `__attribute__((target("avx2")))` per-function, not
   global compiler flags
 

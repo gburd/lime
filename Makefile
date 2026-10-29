@@ -7,7 +7,7 @@
 #                            compiler into the same binary)
 #   lib/liblime_parser.a  -- runtime library (snapshot, parse_engine,
 #                            extension framework, conflict detection,
-#                            disambiguation, JIT stubs)
+#                            disambiguation)
 #   build/test/*          -- the runtime-parse, destructor and
 #                            claims-proof tests
 #
@@ -24,8 +24,6 @@
 #   CFLAGS       -- extra C flags appended to the default set
 #   LDFLAGS      -- extra link flags
 #   LEX=1        -- include the .lex compiler in the lime binary
-#   JIT=0        -- disable LLVM JIT and build with stubs (default
-#                   auto-detects llvm-config)
 #   PREFIX       -- install prefix, default /usr/local
 #
 # This Makefile coexists with meson.build / ninja; pick whichever
@@ -47,23 +45,6 @@ COPT     := -O2 -g
 CINCS    := -Iinclude -Isrc -Isrc/lex
 CFLAGS_ALL := $(CSTD) $(CWARN) $(COPT) $(CINCS) $(CFLAGS)
 LDFLAGS_ALL := -lpthread $(LDFLAGS)
-
-# JIT: try llvm-config unless explicitly disabled.
-JIT ?= auto
-ifeq ($(JIT),0)
-  CFLAGS_JIT  := -DLIME_NO_JIT
-  LDFLAGS_JIT :=
-else
-  ifeq ($(shell command -v llvm-config 2>/dev/null),)
-    # No llvm-config -- silently fall back to stubs.
-    CFLAGS_JIT  := -DLIME_NO_JIT
-    LDFLAGS_JIT :=
-  else
-    CFLAGS_JIT  := $(shell llvm-config --cflags)
-    LDFLAGS_JIT := $(shell llvm-config --ldflags --libs core executionengine \
-                    mcjit native analysis passes orcjit)
-  endif
-endif
 
 # -------------------------------------------------------------------
 # Layout
@@ -110,10 +91,6 @@ LIB_SRC := \
   src/grammar_context.c    \
   src/context_switch.c     \
   src/lime_error.c         \
-  src/jit_context.c        \
-  src/jit_codegen.c        \
-  src/jit_policy.c         \
-  src/jit_tokenizer.c      \
 
 LIB_OBJ := $(LIB_SRC:%.c=$(BUILD)/%.o)
 
@@ -165,7 +142,7 @@ $(LIME_LIB): $(LIB_OBJ) | $(LIB)
 	$(AR) rcs $@ $^
 
 $(BUILD)/src/%.o: src/%.c | $(BUILD)/src
-	$(CC) $(CFLAGS_ALL) $(CFLAGS_JIT) -c $< -o $@
+	$(CC) $(CFLAGS_ALL) -c $< -o $@
 
 # -------------------------------------------------------------------
 # Tests
@@ -178,8 +155,8 @@ $(BUILD)/src/%.o: src/%.c | $(BUILD)/src
 # -------------------------------------------------------------------
 
 $(BUILD)/test/test_claims_proof: tests/test_claims_proof.c $(LIME_LIB) | $(BUILD)/test
-	$(CC) $(CFLAGS_ALL) $(CFLAGS_JIT) -o $@ $< $(LIME_LIB) \
-	  $(LDFLAGS_ALL) $(LDFLAGS_JIT)
+	$(CC) $(CFLAGS_ALL) -o $@ $< $(LIME_LIB) \
+	  $(LDFLAGS_ALL)
 
 $(BUILD)/test/bench_arith_grammar.c \
 $(BUILD)/test/bench_arith_grammar.h \
@@ -190,21 +167,21 @@ $(BUILD)/test/test_runtime_parse: tests/test_runtime_parse.c \
     $(BUILD)/test/bench_arith_grammar.c \
     $(BUILD)/test/bench_arith_grammar_snapshot.c \
     $(LIME_LIB) | $(BUILD)/test
-	$(CC) $(CFLAGS_ALL) $(CFLAGS_JIT) -I$(BUILD)/test -o $@ \
+	$(CC) $(CFLAGS_ALL) -I$(BUILD)/test -o $@ \
 	  tests/test_runtime_parse.c \
 	  $(BUILD)/test/bench_arith_grammar.c \
 	  $(BUILD)/test/bench_arith_grammar_snapshot.c \
-	  $(LIME_LIB) $(LDFLAGS_ALL) $(LDFLAGS_JIT)
+	  $(LIME_LIB) $(LDFLAGS_ALL)
 
 $(BUILD)/test/test_extension_e2e: tests/test_extension_e2e.c \
     $(BUILD)/test/bench_arith_grammar.c \
     $(BUILD)/test/bench_arith_grammar_snapshot.c \
     $(LIME_LIB) | $(BUILD)/test
-	$(CC) $(CFLAGS_ALL) $(CFLAGS_JIT) -I$(BUILD)/test -o $@ \
+	$(CC) $(CFLAGS_ALL) -I$(BUILD)/test -o $@ \
 	  tests/test_extension_e2e.c \
 	  $(BUILD)/test/bench_arith_grammar.c \
 	  $(BUILD)/test/bench_arith_grammar_snapshot.c \
-	  $(LIME_LIB) $(LDFLAGS_ALL) $(LDFLAGS_JIT)
+	  $(LIME_LIB) $(LDFLAGS_ALL)
 
 $(BUILD)/test/test_destructor_grammar.c \
 $(BUILD)/test/test_destructor_grammar.h: tests/test_destructor_grammar.y $(LIME_BIN) | $(BUILD)/test
@@ -213,10 +190,10 @@ $(BUILD)/test/test_destructor_grammar.h: tests/test_destructor_grammar.y $(LIME_
 $(BUILD)/test/test_destructor: tests/test_destructor.c \
     $(BUILD)/test/test_destructor_grammar.c \
     $(LIME_LIB) | $(BUILD)/test
-	$(CC) $(CFLAGS_ALL) $(CFLAGS_JIT) -I$(BUILD)/test -Itests -o $@ \
+	$(CC) $(CFLAGS_ALL) -I$(BUILD)/test -Itests -o $@ \
 	  tests/test_destructor.c \
 	  $(BUILD)/test/test_destructor_grammar.c \
-	  $(LIME_LIB) $(LDFLAGS_ALL) $(LDFLAGS_JIT)
+	  $(LIME_LIB) $(LDFLAGS_ALL)
 
 # -------------------------------------------------------------------
 # Phony targets
@@ -234,8 +211,7 @@ format:
 	  src/*.c src/*.h src/lex/*.c src/lex/*.h \
 	  include/*.h \
 	  tests/test_claims_proof.c tests/test_runtime_parse.c \
-	  tests/test_destructor.c tests/test_extension_e2e.c \
-	  bench/bench_jit_real_parser.c
+	  tests/test_destructor.c tests/test_extension_e2e.c
 
 install: $(LIME_BIN) $(LIME_LIB)
 	install -d $(DESTDIR)$(PREFIX)/bin
@@ -259,7 +235,7 @@ help:
 	@echo "  install   -- install to PREFIX (default /usr/local)"
 	@echo "  dist      -- create lime-parser-VERSION.tar.gz release tarball"
 	@echo "  clean     -- remove build artifacts"
-	@echo "Knobs: CC, CFLAGS, LDFLAGS, LEX=1, JIT=0, PREFIX"
+	@echo "Knobs: CC, CFLAGS, LDFLAGS, LEX=1, PREFIX"
 
 # -------------------------------------------------------------------
 # Distribution tarball

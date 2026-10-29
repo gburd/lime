@@ -1,5 +1,10 @@
 # Benchmark Results — multi-host, multi-run
 
+> **Historical record.**  The JIT rows and the JIT discussion below
+> were measured with the LLVM JIT that has since been removed (see
+> [JIT_ANALYSIS.md](JIT_ANALYSIS.md)).  The table-interpreter, Bison and
+> simdjson numbers still describe the current code path.
+
 This document records measured benchmark numbers with proper
 statistical methodology.  Per-host: 11 outer runs, each binary
 internally does 5 inner trials of 100,000 iterations.  CPU pinned
@@ -284,9 +289,9 @@ walking the C interpreter's compact code than the LLVM ORC JIT's
 generated dispatch stub.  Apple Silicon's wider front-end and
 different branch predictor architecture benefits more from
 LLVM's specialisation.  Whatever the cause, the practical
-implication is that the JIT default behaviour should probably
-gate on `__aarch64__` or do a startup micro-bench on first use,
-rather than always-on.
+implication at the time was to gate the JIT on `__aarch64__`.
+Later measurement on Graviton4 showed it slower there too on
+realistic grammars, and it was removed.
 
 ### 2. Leak mode is slower than malloc on FreeBSD/jemalloc
 
@@ -366,11 +371,10 @@ Cross-host signal:
     faster than Bison on these workloads on x86 Intel and
     1.10-2.01× on Apple Silicon — same relative ordering across
     platforms.  The Bison comparison is robust.
-  * The JIT helps on Apple Silicon but hurts on x86 Intel for
-    grammars below the size threshold.  Consider a per-arch
-    `IR_SIZE_THRESHOLD` in `src/jit_codegen.c` so x86 doesn't
-    pay the JIT penalty on small grammars.  Tracking as a
-    follow-up.
+  * The JIT helped on Apple Silicon but hurt on x86 Intel for
+    grammars below the size threshold.  (Later measurement on the
+    PostgreSQL grammar showed it slower on aarch64 too, and the JIT
+    was removed.)
   * Switching the example's allocator from malloc-per-node to a
     single-arena bump allocator gives a 23-37 % speedup on
     end-to-end JSON parsing.  This matches simdjson's own

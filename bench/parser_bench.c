@@ -3,10 +3,9 @@
 **
 ** Benchmarks cover:
 **   1. Tokenizer throughput (SIMD vs scalar classification)
-**   2. Action table lookup (JIT vs interpreted)
+**   2. Action table lookup (table-driven)
 **   3. Snapshot operations (acquire/release, creation)
 **   4. Token table lookup performance
-**   5. JIT policy overhead
 **
 ** Output is CSV-formatted for easy consumption by analysis tools.
 ** Each benchmark is run for multiple iterations with warmup.
@@ -19,8 +18,7 @@
 #include <stdbool.h>
 
 #include "parser.h"
-#include "jit_context.h"
-#include "jit_policy.h"
+#include "parse_context.h"
 #include "snapshot.h"
 #include "token_table.h"
 #include "tokenize.h"
@@ -409,7 +407,7 @@ static void run_snapshot_benchmarks(uint64_t warmup, uint64_t iters) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  JIT action table lookup benchmarks                                 */
+/*  Action table lookup benchmarks                                     */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -459,111 +457,49 @@ static ParserSnapshot *make_bench_snapshot(uint32_t nstates,
         }
     }
 
-    snap->jit_ctx = NULL;
     return snap;
 }
 
-typedef struct JitBenchCtx {
+typedef struct LookupBenchCtx {
     ParserSnapshot *snap;
     uint32_t nstates;
     uint32_t nterminals;
-} JitBenchCtx;
+} LookupBenchCtx;
 
 static void bench_action_lookup_table(void *arg) {
-    JitBenchCtx *ctx = (JitBenchCtx *)arg;
+    LookupBenchCtx *ctx = (LookupBenchCtx *)arg;
     /* Look up action for every state+terminal combination */
     for (uint32_t s = 0; s < ctx->nstates; s++) {
         for (uint32_t t = 0; t < ctx->nterminals; t++) {
-            uint16_t action = jit_find_shift_action(ctx->snap,
-                                                    (uint16_t)s,
-                                                    (uint16_t)t);
+            uint16_t action = snap_find_shift_action(ctx->snap,
+                                                     (uint16_t)s,
+                                                     (uint16_t)t);
             (void)action;
         }
     }
 }
 
-static void run_jit_benchmarks(uint64_t warmup, uint64_t iters) {
+static void run_lookup_benchmarks(uint64_t warmup, uint64_t iters) {
     uint32_t nstates = 64;
     uint32_t nterminals = 32;
 
     ParserSnapshot *snap = make_bench_snapshot(nstates, nterminals);
     if (!snap) {
-        fprintf(stderr, "# jit: failed to create benchmark snapshot\n");
+        fprintf(stderr, "# lookup: failed to create benchmark snapshot\n");
         return;
     }
 
-    JitBenchCtx ctx;
+    LookupBenchCtx ctx;
     ctx.snap = snap;
     ctx.nstates = nstates;
     ctx.nterminals = nterminals;
 
-    /* Table-driven (interpreted) path */
-    BenchResult r = run_bench("jit", "action_lookup_interpreted_64x32",
+    BenchResult r = run_bench("lookup", "action_lookup_table_64x32",
                               bench_action_lookup_table, &ctx,
                               warmup, iters);
     bench_result_print(&r);
 
-    /* Try JIT compilation */
-    JITStatus st = jit_attach_to_snapshot(snap);
-
-    if (st == JIT_OK) {
-        r = run_bench("jit", "action_lookup_jit_64x32",
-                      bench_action_lookup_table, &ctx,
-                      warmup, iters);
-        bench_result_print(&r);
-
-        JITStats stats = jit_get_stats((JITContext *)snap->jit_ctx);
-        fprintf(stderr, "# jit: compiled %u/%u states in %lu ns\n",
-                stats.states_compiled, stats.states_total,
-                (unsigned long)stats.compile_time_ns);
-    } else {
-        fprintf(stderr, "# jit: LLVM not available, skipping JIT benchmark"
-                " (status: %s)\n", jit_status_string(st));
-    }
-
     snapshot_release(snap);
-}
-
-/* ------------------------------------------------------------------ */
-/*  JIT policy overhead benchmarks                                     */
-/* ------------------------------------------------------------------ */
-
-static void bench_metrics_record(void *arg) {
-    JITMetrics *m = (JITMetrics *)arg;
-    jit_metrics_record_parse(m, 1000, 200);
-}
-
-typedef struct PolicyEvalCtx {
-    JITMetrics *metrics;
-    JITPolicyConfig *config;
-} PolicyEvalCtx;
-
-static void bench_policy_eval(void *arg) {
-    PolicyEvalCtx *ctx = (PolicyEvalCtx *)arg;
-    bool result = jit_should_compile(ctx->metrics, ctx->config);
-    (void)result;
-}
-
-static void run_policy_benchmarks(uint64_t warmup, uint64_t iters) {
-    JITMetrics m;
-    jit_metrics_init(&m);
-
-    /* Benchmark metrics recording overhead */
-    BenchResult r = run_bench("policy", "metrics_record",
-                              bench_metrics_record, &m,
-                              warmup, iters);
-    bench_result_print(&r);
-
-    /* Benchmark policy evaluation overhead */
-    JITPolicyConfig cfg = jit_policy_default_config();
-    PolicyEvalCtx eval_ctx;
-    eval_ctx.metrics = &m;
-    eval_ctx.config = &cfg;
-
-    r = run_bench("policy", "should_compile_eval",
-                  bench_policy_eval, &eval_ctx,
-                  warmup, iters);
-    bench_result_print(&r);
 }
 
 /* ------------------------------------------------------------------ */
@@ -574,18 +510,12 @@ static void report_memory_usage(void) {
     fprintf(stderr, "\n# Memory usage estimates:\n");
     fprintf(stderr, "#   ParserSnapshot struct:  %zu bytes\n",
             sizeof(ParserSnapshot));
-    fprintf(stderr, "#   JITMetrics struct:      %zu bytes\n",
-            sizeof(JITMetrics));
-    fprintf(stderr, "#   JITPolicyConfig struct: %zu bytes\n",
-            sizeof(JITPolicyConfig));
     fprintf(stderr, "#   TokenTable struct:      %zu bytes\n",
             sizeof(TokenTable));
     fprintf(stderr, "#   TokenDefinition struct: %zu bytes\n",
             sizeof(TokenDefinition));
     fprintf(stderr, "#   Token struct:           %zu bytes\n",
             sizeof(Token));
-    fprintf(stderr, "#   JITStats struct:        %zu bytes\n",
-            sizeof(JITStats));
 
     /* Estimate action table memory for a realistic grammar */
     uint32_t nstates = 500;
@@ -714,8 +644,6 @@ int main(int argc, char **argv) {
     fprintf(stderr, "# Parser benchmark suite\n");
     fprintf(stderr, "# Iterations: %lu  Warmup: %lu\n",
             (unsigned long)iters, (unsigned long)warmup);
-    fprintf(stderr, "# JIT available: %s\n",
-            jit_is_available() ? "yes" : "no (stub mode)");
     fprintf(stderr, "#\n");
 
     bench_result_print_header();
@@ -724,8 +652,7 @@ int main(int argc, char **argv) {
     run_simd_benchmarks(warmup, iters);
     run_token_table_benchmarks(warmup, iters);
     run_snapshot_benchmarks(warmup, iters);
-    run_jit_benchmarks(warmup, iters);
-    run_policy_benchmarks(warmup, iters);
+    run_lookup_benchmarks(warmup, iters);
     run_throughput_benchmarks(warmup, iters);
 
     report_memory_usage();

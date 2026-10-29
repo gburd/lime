@@ -5,7 +5,7 @@
 | Document | Description |
 |----------|-------------|
 | [GETTING_STARTED.md](GETTING_STARTED.md) | Build Lime, write your first grammar, generate a parser |
-| [CONCEPTS.md](CONCEPTS.md) | Snapshots, extensions, conflicts, disambiguation, JIT |
+| [CONCEPTS.md](CONCEPTS.md) | Snapshots, extensions, conflicts, disambiguation |
 | [INTEGRATION.md](INTEGRATION.md) | Embed Lime in your project (Meson, Make, CMake) |
 | [EXAMPLES.md](EXAMPLES.md) | All examples: calculators, PostgreSQL, query languages |
 
@@ -33,7 +33,7 @@
 | [MIGRATION_FROM_BISON.md](MIGRATION_FROM_BISON.md) | Porting Bison grammars to Lime |
 | [MIGRATION_FROM_YACC.md](MIGRATION_FROM_YACC.md) | Porting Yacc grammars to Lime |
 | [MIGRATION_FROM_FLEX.md](MIGRATION_FROM_FLEX.md) | Porting flex scanners to Lime `.lex` grammars |
-| [JIT_ANALYSIS.md](JIT_ANALYSIS.md) | JIT compilation cost-benefit analysis |
+| [JIT_ANALYSIS.md](JIT_ANALYSIS.md) | Why Lime has no JIT: the measurements behind its removal |
 | [GLR.md](GLR.md) | Generalized-LR parser support: API, performance, when to use |
 | [PARSER_PLUGIN_DESIGN.md](PARSER_PLUGIN_DESIGN.md) | Plugin system design |
 | [LEXER_DESIGN.md](LEXER_DESIGN.md) | Lexer component design |

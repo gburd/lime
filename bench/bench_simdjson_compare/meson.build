@@ -1,6 +1,6 @@
 # bench_simdjson_compare/meson.build
 #
-# Steady-state Lime+JIT vs simdjson throughput comparison.
+# Steady-state Lime vs simdjson throughput comparison.
 # Skipped at configure time when simdjson is not on the system.
 
 simdjson_dep = dependency('simdjson', required : false)

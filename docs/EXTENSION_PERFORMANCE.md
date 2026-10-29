@@ -3,7 +3,7 @@
 This document provides a comprehensive analysis of the performance impact of the
 extensible grammar framework in the Lime parser generator.  It covers overhead
 breakdowns by component, memory costs, CPU costs per token, scaling behavior
-with increasing extension counts, JIT interaction, and tuning recommendations.
+with increasing extension counts, and tuning recommendations.
 
 All measurements referenced in this document were collected on a Linux x86_64
 system (GCC 14.3, C11, `-O2`) using the benchmark suites in `bench/`.  Numbers
@@ -35,19 +35,15 @@ are representative; your hardware will vary.
    - [Priority Strategy](#priority-strategy)
    - [Fork-Resolve Strategy](#fork-resolve-strategy)
    - [Strategy Comparison](#strategy-comparison)
-7. [JIT Interaction with Extensions](#jit-interaction-with-extensions)
-   - [JIT Invalidation on Extension Load](#jit-invalidation-on-extension-load)
-   - [Break-Even Analysis with Extensions](#break-even-analysis-with-extensions)
-   - [JIT Compilation Cost by Grammar Size](#jit-compilation-cost-by-grammar-size)
-8. [Scaling Behavior](#scaling-behavior)
+7. [Scaling Behavior](#scaling-behavior)
    - [1 Extension](#1-extension)
    - [5 Extensions](#5-extensions)
    - [10 Extensions](#10-extensions)
    - [50 Extensions](#50-extensions)
    - [Scaling Summary](#scaling-summary)
-9. [Tiebreaker Rule Overhead](#tiebreaker-rule-overhead)
-10. [Performance Tuning Recommendations](#performance-tuning-recommendations)
-11. [Benchmark Reproduction](#benchmark-reproduction)
+8. [Tiebreaker Rule Overhead](#tiebreaker-rule-overhead)
+9. [Performance Tuning Recommendations](#performance-tuning-recommendations)
+10. [Benchmark Reproduction](#benchmark-reproduction)
 
 ---
 
@@ -73,9 +69,8 @@ The extension framework adds four major subsystems to the parsing pipeline:
        v                           v
  +------------------+       +---------------------+
  | Parser Engine    |       | Parser Forking      |
- | (Table-Driven    |       | (State Cloning)     |
- |  or JIT)         |       +---------------------+
- +------------------+
+ | (Table-Driven)   |       | (State Cloning)     |
+ +------------------+       +---------------------+
 ```
 
 Each subsystem introduces overhead that is only incurred when extensions are
@@ -254,11 +249,10 @@ For a deployment with N extensions and F concurrent fork sets:
 | Disambiguation context             | ~100 B per strategy           | ~100 B                      |
 | Fork set (peak)                    | ~40 KB * 16 * F               | ~640 KB                     |
 | Snapshot (action tables)           | ~150-300 KB per snapshot      | ~300 KB                     |
-| JIT context (if compiled)          | ~50-500 KB per snapshot       | ~200 KB                     |
-| **Total extension overhead**       |                               | **~1.15 MB**                |
+| **Total extension overhead**       |                               | **~0.95 MB**                |
 
 Compare this to the base parser memory (no extensions): ~500 KB - 1 MB
-for a typical deployment with 1 snapshot, 1 JIT context, and 4 parser
+for a typical deployment with 1 snapshot and 4 parser
 threads (see `docs/PERFORMANCE.md`).  Extensions roughly double the
 memory footprint at peak, but the fork memory is transient.
 
@@ -269,15 +263,16 @@ memory footprint at peak, but the fork memory is transient.
 ### Baseline (No Extensions)
 
 When no extensions are loaded, the parser follows the standard
-table-driven (or JIT-compiled) path with zero extension overhead:
+table-driven path with zero extension overhead:
 
-| Grammar Size   | Interpreted (ns/token) | JIT (ns/token) |
-|---------------|------------------------|-----------------|
-| Small (64 states, 32 terminals) | ~8-12 | ~3-5 |
-| Medium (256 states, 100 terminals) | ~12-18 | ~4-6 |
-| Large (512 states, 150 terminals) | ~15-25 | ~4-7 |
+| Grammar Size   | Table-driven (ns/token) |
+|---------------|------------------------|
+| Small (64 states, 32 terminals) | ~8-12 |
+| Medium (256 states, 100 terminals) | ~12-18 |
+| Large (512 states, 150 terminals) | ~15-25 |
 
-These numbers are derived from the `jit_comparison` benchmark:
+These numbers are derived from the since-removed `jit_comparison`
+benchmark's interpreted rows:
 - Small grammar: 424 ns / 50 tokens = ~8.5 ns/token (interpreted)
 - Medium grammar: 1,244 ns / 100 tokens = ~12.4 ns/token (interpreted)
 - Large grammar: 2,890 ns / 200 tokens = ~14.5 ns/token (interpreted)
@@ -449,61 +444,6 @@ completed forks:
 
 ---
 
-## JIT Interaction with Extensions
-
-### JIT Invalidation on Extension Load
-
-Loading an extension creates a new `ParserSnapshot` with modified action
-tables.  The JIT context is bound to a specific snapshot, so:
-
-1. The old snapshot's JIT code remains valid for parsers still using it.
-2. The new snapshot starts with no JIT code.
-3. The JIT policy system begins accumulating metrics for the new snapshot.
-4. After the policy threshold is met, JIT compilation triggers for the
-   new snapshot.
-
-This means there is a **warmup period** after each extension load
-during which parsing runs on the interpreted path.
-
-### Break-Even Analysis with Extensions
-
-The JIT break-even point depends on the compilation cost and the
-per-parse savings.  Loading extensions affects both:
-
-| Scenario                     | Compile Cost | Per-Parse Savings | Break-Even    |
-|------------------------------|-------------|-------------------|---------------|
-| Baseline (no extensions)     | ~10-50 ms   | ~1-5 us           | ~5K-50K parses |
-| After 1 extension load       | ~10-50 ms   | ~1-5 us           | ~5K-50K parses |
-| After 5 extension loads      | ~15-60 ms   | ~1-5 us           | ~6K-60K parses |
-| Frequent extension loads     | Repeated    | Reduced window     | May not break even |
-
-**Key insight**: If extensions are loaded/unloaded frequently, the JIT
-never reaches break-even because each load resets the warmup period.
-For best JIT utilization:
-
-- Load all extensions at startup.
-- Use synchronous JIT compilation after the final extension load.
-- Avoid dynamic extension loading in latency-sensitive paths.
-
-### JIT Compilation Cost by Grammar Size
-
-Extension loading increases the effective grammar size (more states,
-more terminals).  JIT compilation cost scales with grammar complexity:
-
-| Grammar Config         | States | Terminals | Compile Time | Code Size  |
-|------------------------|--------|-----------|-------------|------------|
-| Base grammar           | 64     | 32        | ~5-10 ms    | ~6-12 KB   |
-| + 1 small extension    | 80     | 40        | ~7-14 ms    | ~8-16 KB   |
-| + 5 extensions         | 150    | 80        | ~15-30 ms   | ~15-30 KB  |
-| + 10 extensions        | 256    | 100       | ~25-50 ms   | ~25-50 KB  |
-| Full SQL + 10 ext      | 512    | 150       | ~40-80 ms   | ~50-100 KB |
-
-Compilation cost is approximately linear in `nstate * nterminal`
-because the JIT generates one function per state, each with a switch
-over terminal values.
-
----
-
 ## Scaling Behavior
 
 ### 1 Extension
@@ -514,7 +454,6 @@ over terminal values.
 | Snapshot size                | ~300 KB     | ~0% (tables merged) |
 | Conflict detection           | ~5 us       | One-time             |
 | Per-token overhead (no conflict) | < 1 ns  | ~0%                 |
-| JIT recompilation            | ~10-50 ms   | One-time             |
 
 ### 5 Extensions
 
@@ -607,7 +546,7 @@ evaluation completes.  It operates on the completed-forks subset
 ### Extension Loading
 
 1. **Load all extensions at startup**.  This amortizes conflict detection
-   and JIT compilation over the entire process lifetime rather than
+   and table rebuilds over the entire process lifetime rather than
    disrupting the hot parsing path.
 
 2. **Order extensions by dependency**.  Use `extension_registry_get_order()`
@@ -615,7 +554,7 @@ evaluation completes.  It operates on the completed-forks subset
    avoids redundant conflict re-evaluation.
 
 3. **Avoid frequent load/unload cycles**.  Each load creates a new
-   snapshot, invalidates JIT, and triggers conflict detection.
+   snapshot, rebuilds the tables, and triggers conflict detection.
 
 ### Disambiguation Strategy Selection
 
@@ -633,42 +572,28 @@ evaluation completes.  It operates on the completed-forks subset
    Reducing it to 4-8 significantly reduces peak memory and resolution
    time with minimal accuracy loss.
 
-### JIT Integration
-
-7. **Use synchronous JIT after final extension load**.  Call the JIT
-   compilation function directly on the final snapshot to ensure JIT is
-   active before the first query.
-
-8. **Lower JIT thresholds for extension-heavy grammars**.  Larger
-   grammars (more states from extensions) benefit more from JIT because
-   the table-lookup overhead is proportionally higher.
-
-9. **Monitor JIT metrics per snapshot**.  Each new snapshot starts with
-   fresh metrics.  If extensions are loaded infrequently, the JIT will
-   eventually trigger.  If loaded frequently, consider forced compilation.
-
 ### Conflict Reduction
 
-10. **Use `conflicts_with` declarations**.  Declaring known conflicts in
+7. **Use `conflicts_with` declarations**.  Declaring known conflicts in
     extension metadata allows the registry to reject incompatible
     combinations at registration time, before expensive conflict
     detection runs.
 
-11. **Set `conflict_threshold` appropriately**.  Extensions with
+8. **Set `conflict_threshold` appropriately**.  Extensions with
     `conflict_threshold = 0.0` reject any conflict; `1.0` tolerates all.
     Tuning this per-extension avoids unnecessary fork-resolve invocations.
 
-12. **Minimize overlapping token definitions**.  Token-level conflicts
+9. **Minimize overlapping token definitions**.  Token-level conflicts
     are the most common and easiest to avoid.  Use unique token names
     across extensions, or define shared tokens in a base extension.
 
 ### Memory Management
 
-13. **Release old snapshots promptly**.  After an extension load, parsers
+10. **Release old snapshots promptly**.  After an extension load, parsers
     that finish with the old snapshot should release it to free the old
     action tables.
 
-14. **Pin snapshots during batch processing**.  Acquire a snapshot
+11. **Pin snapshots during batch processing**.  Acquire a snapshot
     reference at the start of a batch and release it at the end, rather
     than per-query, to reduce atomic refcount traffic.
 
@@ -686,8 +611,8 @@ ninja -C builddir
 # General parser benchmarks (CSV output)
 ./builddir/bench/parser_bench 10000 200 > results.csv 2> diag.txt
 
-# JIT vs Interpreted comparison (with statistical analysis)
-./builddir/bench/jit_comparison
+# Extension framework overhead vs a no-extension baseline
+./builddir/bench/extension_overhead 10000 200 > overhead.csv
 ```
 
 ### Measuring Extension Overhead
@@ -711,7 +636,6 @@ results (no extensions) against results with extensions loaded:
 | Conflict detection time  | Instrument `detect_all_multi_grammar_conflicts()` |
 | Fork-resolve time        | Instrument `fork_resolve_resolve()`     |
 | Snapshot clone time      | Instrument `clone_parser_state()`       |
-| JIT break-even           | Compare total interpreted vs JIT time   |
 
 ### Memory Profiling
 

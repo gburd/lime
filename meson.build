@@ -102,7 +102,7 @@ endif
 #   /experimental:c11atomics
 #       -- enable <stdatomic.h> support; default-off in MSVC's
 #          C frontend without this flag, and our snapshot
-#          refcount + JIT policy code rely on it.
+#          refcount code relies on it.
 #   /D_CRT_SECURE_NO_WARNINGS
 #       -- silence the C4996 warnings for posix-style names
 #          (strerror, strdup, sprintf, etc.) that map to
@@ -152,9 +152,6 @@ lime_public_headers = [
   'include/execution_policy.h',
   'include/extension_registry.h',
   'include/grammar_context.h',
-  'include/jit_context.h',
-  'include/jit_llvm_compat.h',
-  'include/jit_policy.h',
   'include/lime_ast.h',
   'include/lime_compiler.h',
   'include/lime_error.h',
@@ -195,7 +192,7 @@ lime_exe = executable('lime',
   'src/emit_rust_skin_pest.c',
   'src/emit_rust_skin_chumsky.c',
   'src/emit_c_skin_bison.c',
-  'src/jit_inline.c',
+  'src/rule_inline.c',
   link_with : [lime_lex_compiler_lib],
   include_directories : [inc, include_directories('src/lex')],
   c_args : ['-DLIME_HAS_LEX_COMPILER', '-DLIME_HAS_RUST_OUTPUT',

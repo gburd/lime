@@ -180,7 +180,7 @@ builds the right value with no normalize-at-consumer workaround.
 
 Zero on the recognition-only path: `host_reduce == NULL` skips the entire
 block, and the per-entry value/location stores are cheap. Benchmarks
-(`parser_bench`, `bench_jit_real_parser`) show no measurable change versus the
+(`parser_bench` and the since-removed `bench_jit_real_parser`) showed no measurable change versus the
 recognition-only engine. The hook is consulted only inside a reduce, never on
 the shift hot path.  Keeping unit reductions affects only `--host-reduce`
 snapshots; a non-host-reduce build's tables are unchanged.

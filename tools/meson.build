@@ -3,8 +3,7 @@
 # parse-manager is the CLI front-end for ParserManager.  Pre-v0.5.2 it
 # was built by tools/Makefile, which defaulted to USE_STUBS=1 so the
 # binary linked against a 64-LOC tools/stubs.c shim that returned
-# placeholder values for parse_begin / parse_token / parse_end / JIT
-# query.  USE_STUBS=0 mode never worked past v0.2.x because the
+# placeholder values for parse_begin / parse_token / parse_end.  USE_STUBS=0 mode never worked past v0.2.x because the
 # Makefile's hand-maintained dep list rotted.
 #
 # Migrating to meson (v0.5.2):

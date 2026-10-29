@@ -335,7 +335,6 @@ static int cmd_info(ParserManager *mgr, int argc, char **argv) {
     static const struct { LimePluginCaps cap; const char *desc; } cap_list[] = {
         { LIME_CAP_SNAPSHOT,     "Can create parser snapshots" },
         { LIME_CAP_EXTENSIBLE,   "Supports runtime grammar extension" },
-        { LIME_CAP_JIT,          "JIT compilation available" },
         { LIME_CAP_INCREMENTAL,  "Incremental snapshot updates" },
         { LIME_CAP_SERIALIZABLE, "Snapshot serialization/deserialization" },
     };
@@ -692,8 +691,6 @@ static int cmd_version(ParserManager *mgr, int argc, char **argv) {
         printf("Lime parser library: %s\n", ver);
     }
 
-    printf("JIT available: %s\n", lime_jit_available() ? "yes" : "no");
-
     return 0;
 }
 
@@ -723,7 +720,6 @@ static int cmd_help(ParserManager *mgr, int argc, char **argv) {
     printf("Options:\n");
     printf("  -s, --search-path <dir>    Add plugin search directory\n");
     printf("  -v, --validate             Validate snapshots on load\n");
-    printf("  -j, --jit                  Enable auto-JIT compilation\n");
     printf("  -q, --quiet                Suppress non-essential output\n");
     printf("  -h, --help                 Show this help message\n");
     printf("\nCommands:\n");
@@ -763,14 +759,13 @@ int main(int argc, char **argv) {
     static struct option long_opts[] = {
         { "search-path", required_argument, 0, 's' },
         { "validate",    no_argument,       0, 'v' },
-        { "jit",         no_argument,       0, 'j' },
         { "quiet",       no_argument,       0, 'q' },
         { "help",        no_argument,       0, 'h' },
         { 0, 0, 0, 0 }
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "+s:vjqh", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "+s:vqh", long_opts, NULL)) != -1) {
         switch (opt) {
         case 's':
             if (search_path_count < 15) {
@@ -779,9 +774,6 @@ int main(int argc, char **argv) {
             break;
         case 'v':
             config.validate_on_load = true;
-            break;
-        case 'j':
-            config.auto_jit = true;
             break;
         case 'q':
             quiet = true;

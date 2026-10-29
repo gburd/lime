@@ -24,8 +24,9 @@ knobs explicitly:
 # "undefined reference" errors at link time without the wrapper.
 #
 # Measured on lime v0.9.3 (i9-12900H, gcc 15.2.0):
-#   * bench_jit_real_parser:  ~3-5% faster on hot path (51.3 vs 53.0 ms)
-#   * binary size:           ~50% smaller (bench_jit_real_parser:
+#   * bench_jit_real_parser (since removed; it timed the AOT
+#     Arith() parser): ~3-5% faster on hot path (51.3 vs 53.0 ms)
+#   * binary size:           ~50% smaller (same binary:
 #                            84 KB -> 41 KB)
 #   * Workload-dependent:    streaming throughput cases see larger
 #                            wins (+30-50%); some micro-benchmarks
@@ -49,14 +50,14 @@ meson compile -C build-prod
 #   bench_lsc_medium (32-state lexer):   +46%% throughput
 #   bench_lsc_large (122-state lexer):   +26%% throughput
 #   bench_parse_fanout (8 thr borrowed): +14%% throughput
-#   bench_jit_real_parser hot path:      -7%%   (regression!)
+#   bench_jit_real_parser hot path:      -7%%   (regression!; bench since removed)
 #
 # Lex-heavy workloads see substantial wins (training data is
 # representative; gcc's PGO chooses good inlining + branch ordering).
 # The parser-engine hot path can regress when PGO's profile-driven
 # code layout doesn't match the test invocation pattern -- if you
-# care most about parse_token throughput, run the bench-jit-real-
-# parser-style workload to populate the profile, then measure.
+# care most about parse_token throughput, train the profile on a
+# parse-heavy workload (e.g. bench_parse_fanout), then measure.
 #
 # CAVEAT: PGO + LTO together do not currently compose with our static
 # library setup (gcc-ar plugin can't handle the dual bytecode).  Use
@@ -176,13 +177,9 @@ because classification is only part of the tokenization pipeline.
 - Very short queries (< 32 bytes, cannot fill a SIMD register)
 - Operator-heavy queries (single-character tokens bypass classification)
 
-## JIT Compilation
+## Action Table Lookup
 
-The JIT subsystem compiles action table lookups into native code using LLVM.
-Each parser state gets a specialized function that replaces table-driven
-lookup with direct switch/branch sequences.
-
-### Interpreted (Table-Driven) Baseline
+### Table-Driven Baseline
 
 | Workload                      | ns/op   | ops/sec |
 |------------------------------|---------|---------|
@@ -191,47 +188,10 @@ lookup with direct switch/branch sequences.
 This is the cost of looking up all 2048 state+terminal combinations using
 the standard `yy_shift_ofst` + `yy_lookahead` + `yy_action` table walk.
 
-### JIT Performance (When LLVM Available)
-
-When LLVM is available, the JIT compiler generates per-state functions with
-action values baked into switch/branch IR, then runs LLVM's O2 optimization
-pipeline. Expected characteristics:
-
-- **Compilation cost**: Proportional to `nstate * nterminal`. For a 500-state
-  grammar, expect 10-50 ms one-time compilation overhead.
-- **Runtime speedup**: 2-5x for action table lookups after compilation,
-  depending on grammar size and branch prediction behavior.
-- **Code size**: Approximately 100-500 bytes per state (varies with terminal count).
-
-### JIT Policy
-
-The policy system tracks runtime metrics and triggers JIT compilation only
-when the expected benefit exceeds the compilation cost:
-
-| Metric               | Default Threshold | Rationale                        |
-|---------------------|-------------------|----------------------------------|
-| `min_parse_count`    | 50 parses         | Avoid JIT for one-off grammars   |
-| `min_total_parse_time_ns` | 10 ms       | Ensure enough parsing time to amortize |
-| `min_avg_lookups_per_parse` | 100       | Ensure action lookups are a bottleneck |
-
-Policy evaluation overhead is negligible:
-
-| Operation              | ns/op | ops/sec |
-|-----------------------|-------|---------|
-| `metrics_record_parse` | ~111  | ~9.0M   |
-| `should_compile` eval  | ~53   | ~18.8M  |
-
-The `metrics_record_parse` call uses relaxed atomic operations and adds less
-than 0.01% overhead to a typical parse session. The `should_compile`
-evaluation is a handful of atomic loads and integer comparisons.
-
-### JIT Compilation Modes
-
-- **Background (default)**: A detached thread compiles while parsing continues
-  with the interpreted path. Parsers transparently switch to JIT on their
-  next action lookup after compilation completes.
-- **Synchronous**: Blocks the caller until compilation finishes. Use when
-  you need JIT to be active before the first parse.
+There is no JIT.  The LLVM JIT that earlier releases offered was 4-6%
+slower than this table walk on x86_64 and 7-9% slower on aarch64 on the
+PostgreSQL grammar, and was removed; see [JIT_ANALYSIS.md](JIT_ANALYSIS.md).
+`lime -j` still emits an ahead-of-time C switch for the shift lookup.
 
 ## Extension Overhead
 
@@ -247,7 +207,6 @@ precedence changes. The overhead comes from several components:
 | Token table updates   | ~50-200 ns/token | Adding extension tokens (O(1) per token) |
 | Conflict detection    | ~50-650 us     | Scanning for token/rule/semantic conflicts |
 | Dependency resolution | ~5-60 us       | Topological sort of extension graph |
-| JIT invalidation      | ~10-80 ms      | Recompilation for the new snapshot |
 
 ### Per-Token Runtime Costs
 
@@ -284,16 +243,14 @@ Two built-in strategies resolve conflicts between extensions:
 | Fork set (peak, transient)   | ~4-640 KB       | Up to 16 forks * 40 KB    |
 
 For comprehensive analysis including scaling behavior (1-50 extensions),
-JIT interaction, conflict type performance comparison, and tuning
+conflict type performance comparison, and tuning
 recommendations, see **[EXTENSION_PERFORMANCE.md](EXTENSION_PERFORMANCE.md)**.
 
 ### Recommendations
 
 - Load all extensions at startup before parsing begins, to avoid mid-stream
-  snapshot transitions and repeated JIT invalidation.
+  snapshot transitions and repeated table rebuilds.
 - Use priority strategy for known conflicts (100-1000x faster than fork-resolve).
-- If an extension is loaded rarely, synchronous JIT compilation of the new
-  snapshot may be worthwhile to avoid the warmup period.
 - Declare `conflicts_with` in extension metadata to reject incompatible
   combinations early, before expensive conflict detection runs.
 
@@ -335,12 +292,10 @@ is a one-time cost at load time.
 | `ParserSnapshot` (struct)     | 128 B          | Per snapshot         |
 | Action tables                 | 150-300 KB     | Per snapshot         |
 | `TokenTable` (36 keywords)    | ~3 KB          | Per table            |
-| `JITContext` (compiled code)  | 50-500 KB      | Per JIT-compiled snapshot |
-| `JITMetrics`                  | 32 B           | Per tracked snapshot |
 | `ParseContext` (parser stack) | 2-8 KB         | Per concurrent parser|
 | `Tokenizer` state             | ~100 B         | Per concurrent tokenizer |
 
-**Total for a typical deployment** (1 snapshot, 1 JIT context, 4 parser
+**Total for a typical deployment** (1 snapshot, 4 parser
 threads): approximately 500 KB - 1 MB.
 
 ## Performance Tuning
@@ -354,24 +309,12 @@ threads): approximately 500 KB - 1 MB.
 3. **Pin snapshots**: Acquire a snapshot reference at the start of a batch
    and release it at the end, rather than acquiring/releasing per query.
 
-### JIT Tuning
-
-4. **Lower thresholds for latency-sensitive workloads**: If you know the
-   grammar will be used heavily, reduce `min_parse_count` and
-   `min_total_parse_time_ns` so JIT triggers sooner.
-5. **Use synchronous JIT for server startup**: Call `lime_jit_compile(snap)`
-   directly after creating the snapshot to ensure JIT is active before the
-   first client query.
-6. **Disable JIT for short-lived processes**: If the process exits before
-   the JIT warmup period, the compilation overhead is wasted. Set high
-   thresholds or skip JIT entirely.
-
 ### Memory Optimization
 
-7. **Limit concurrent snapshots**: Each snapshot holds a full copy of the
+4. **Limit concurrent snapshots**: Each snapshot holds a full copy of the
    action tables. If extensions are loaded infrequently, release old
    snapshots promptly.
-8. **Share snapshots across threads**: Use `snapshot_acquire` rather than
+5. **Share snapshots across threads**: Use `snapshot_acquire` rather than
    creating duplicate snapshots for each thread.
 
 ## Running Benchmarks

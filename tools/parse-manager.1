@@ -35,11 +35,6 @@ the manager will call the plugin's
 .B validate_snapshot
 callback (if available) before making the snapshot active.
 .TP
-.BR \-j ", " \-\-jit
-Enable automatic JIT compilation. When a plugin creates a snapshot and
-advertises JIT capability, the manager will compile the action tables
-to machine code for faster parsing.
-.TP
 .BR \-q ", " \-\-quiet
 Suppress non-essential output.
 .TP
@@ -113,8 +108,7 @@ size. Reports per-file timing, overall throughput, and a summary.
 .SS version
 .B parse-manager version
 .PP
-Show version information for the tool, plugin ABI, parser library,
-and JIT availability.
+Show version information for the tool, plugin ABI, and parser library.
 .SS help
 .B parse-manager help
 .RI [ command ]

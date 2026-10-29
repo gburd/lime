@@ -55,7 +55,6 @@ static void print_plugin_info(const ParserManager *mgr, LimePluginHandle h) {
     printf("    Capabilities: 0x%x", info.capabilities);
     if (info.capabilities & LIME_CAP_SNAPSHOT)    printf(" SNAPSHOT");
     if (info.capabilities & LIME_CAP_EXTENSIBLE)  printf(" EXTENSIBLE");
-    if (info.capabilities & LIME_CAP_JIT)         printf(" JIT");
     if (info.capabilities & LIME_CAP_INCREMENTAL) printf(" INCREMENTAL");
     if (info.capabilities & LIME_CAP_SERIALIZABLE) printf(" SERIALIZABLE");
     printf("\n");
@@ -93,7 +92,6 @@ int main(int argc, char **argv) {
     ParserManagerConfig config = {
         .max_plugins = 0,             /* unlimited */
         .validate_on_load = true,     /* validate snapshots */
-        .auto_jit = false,            /* don't auto-JIT */
         .plugin_search_paths = NULL,  /* no search paths */
     };
 

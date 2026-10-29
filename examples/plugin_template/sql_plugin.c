@@ -7,7 +7,7 @@
 ** This example implements a basic SQL parser plugin that:
 **   1. Produces snapshots from grammar files via lime_snapshot_create()
 **   2. Optionally validates snapshots
-**   3. Advertises extensibility and JIT support
+**   3. Advertises extensibility support
 **
 ** Build as a shared library:
 **
@@ -67,8 +67,7 @@ static uint16_t sql_get_abi_minor(void) {
 
 static uint32_t sql_get_capabilities(void) {
     return LIME_CAP_SNAPSHOT
-         | LIME_CAP_EXTENSIBLE
-         | LIME_CAP_JIT;
+         | LIME_CAP_EXTENSIBLE;
 }
 
 /* ================================================================== */

@@ -1,30 +1,16 @@
 /*
-** Test for JIT per-rule reducer inlining policy.
+** Test for the per-rule action-body inlining classifier
+** (src/rule_inline.c), used by the Rust emitter.
 **
-** Verifies jit_can_inline_rule() correctly classifies rule actions as
-** inlin able vs. dispatch-required.
-**
-** When LLVM is unavailable (LIME_NO_JIT), this test still validates the
-** codegen decision logic - the policy function compiles and runs correctly
-** in stub mode even though no runtime JIT execution occurs.
+** Verifies rule_can_inline_text() correctly classifies rule actions as
+** inlinable vs. dispatch-required.
 */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 
-/* Plain-data classifier (jit_inline.h).  The struct-rule-typed wrapper
-** is intentionally absent from the test harness because tests don't
-** link against lime.c (where `struct rule` is defined). */
-extern bool jit_can_inline_rule_text(const char *code, int no_code);
-
-/* JIT-availability probe.  When meson is configured with -Dllvm=disabled,
-** jit_codegen.c compiles a stub that returns false unconditionally
-** (the inlining policy doesn't matter when there's no JIT to inline
-** into).  In that configuration the policy classifications below would
-** all collapse to false, so we skip the test rather than report
-** spurious failures. */
-extern bool jit_is_available(void);
+#include "rule_inline.h"
 
 /* Helper: pair the two relevant fields the policy reads. */
 typedef struct {
@@ -32,7 +18,7 @@ typedef struct {
     int noCode;
 } rule_view;
 static inline bool can_inline(const rule_view *r) {
-    return jit_can_inline_rule_text(r ? r->code : NULL, r ? r->noCode : 0);
+    return rule_can_inline_text(r ? r->code : NULL, r ? r->noCode : 0);
 }
 
 static int tests_run = 0;
@@ -58,10 +44,7 @@ static bool test_null_rule(void) {
     /* NULL rule semantics: a NULL rule_view (or one with NULL code
     ** and noCode==0) classifies as "no action body" -- inlinable
     ** as a no-op.  This matches the empty_action case below.
-    ** The pre-v0.6.2 jit_can_inline_rule(struct rule*) wrapper
-    ** rejected NULL outright but the v0.6.2 plain-data refactor
-    ** treats the no-op rule as inlinable, which is the correct
-    ** semantics: an empty reduce IS trivially inlinable. */
+    ** An empty reduce IS trivially inlinable. */
     return can_inline(NULL);
 }
 
@@ -143,13 +126,8 @@ static bool test_very_long_action(void) {
 /* ------------------------------------------------------------------ */
 
 int main(void) {
-    printf("JIT per-rule reducer inlining policy tests\n");
-    printf("===========================================\n\n");
-
-    if (!jit_is_available()) {
-        printf("SKIP: JIT disabled (LIME_NO_JIT); inline policy untested.\n");
-        return 77;  /* meson SKIP exit code */
-    }
+    printf("Per-rule action-body inlining classifier tests\n");
+    printf("==============================================\n\n");
 
     TEST(null_rule);
     TEST(empty_action);

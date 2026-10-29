@@ -12,7 +12,7 @@
 #   - gcc or compatible C compiler
 
 CC       ?= gcc
-CFLAGS   ?= -std=c11 -Wall -Wextra -D_GNU_SOURCE -DLIME_NO_JIT
+CFLAGS   ?= -std=c11 -Wall -Wextra -D_GNU_SOURCE
 LIME     ?= ../../lime
 INCFLAGS  = -I ../../include -I ../../src
 LDFLAGS   = -lpthread
@@ -27,10 +27,7 @@ LIB_SRC   = ../../src/extension_registry.c \
             ../../src/snapshot.c \
             ../../src/snapshot_create.c \
             ../../src/token_table.c \
-            ../../src/merkle_tree.c \
-            ../../src/jit_context.c \
-            ../../src/jit_codegen.c \
-            ../../src/jit_policy.c
+            ../../src/merkle_tree.c
 
 .PHONY: all grammars demo test clean
 

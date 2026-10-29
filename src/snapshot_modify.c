@@ -111,7 +111,6 @@ ParserSnapshot *clone_snapshot(const ParserSnapshot *base) {
     snap->version = base->version + 1;
     atomic_init(&snap->refcount, 1);
     snap->create_time_ns = now_ns();
-    snap->jit_ctx = NULL; /* JIT context is not inherited */
 
     /* Grammar data -- shallow copy of pointer arrays.
     ** The symbol / rule / state structs themselves are owned by the

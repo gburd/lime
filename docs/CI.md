@@ -49,9 +49,6 @@ alignment paths honest.
 | `build (macos-13, apple-clang)`           | `macos-13`   | Apple Clang     | x86_64   |
 | `build (macos-14, apple-clang)`           | `macos-14`   | Apple Clang     | aarch64  |
 
-We pin `-Dllvm=disabled` on macOS because the Xcode-bundled LLVM
-doesn't expose the full `llvm-config` / Orc.h surface lime's JIT
-needs.  Coverage of the JIT path stays on Linux + Nix devShell.
 `macos-15` is intentionally skipped for now -- macos-13 +
 macos-14 covers Intel + Apple Silicon and adding macos-15 only
 re-tests Apple Silicon under a newer Xcode.
@@ -130,21 +127,6 @@ stabilizes.
 | `coverage`           | `ubuntu-24.04`  | `scripts/check_coverage.sh` -- gcovr gate at LIME_COV_MIN_LINES=78 / LIME_COV_MIN_BRANCHES=60. |
 | `version-consistency`| `ubuntu-24.04`  | Asserts `LIME_VERSION_STRING` (lime.c), `project(version: ...)` (meson.build), and `src/version.c` agree. |
 
-### LLVM matrix
-
-| Job                                 | Runner          | Args |
-|-------------------------------------|-----------------|------|
-| `llvm-matrix (shared)`              | `ubuntu-24.04`  | `-Dllvm=enabled` |
-| `llvm-matrix (static)`              | `ubuntu-24.04`  | `-Dllvm=enabled -Dllvm-static=true` |
-| `llvm-matrix (disabled)`            | `ubuntu-24.04`  | `-Dllvm=disabled` |
-
-Each variant builds + tests + asserts the `tests/test_jit`
-binary's `libLLVM` linkage count matches the requested config:
-the shared row must link `libLLVM`, the static + disabled rows
-must not.  Together with the
-`include/jit_llvm_compat.h` shim's version split (LLVM 14-20 vs
-LLVM 21+), this catches API-surface drift across LLVM majors.
-
 ## Codeberg / Forgejo matrix
 
 Codeberg's hosted Forgejo Actions don't currently offer ARM,
@@ -166,7 +148,6 @@ re-add the `ubuntu-24.04-arm` matrix entries.
 | `valgrind`                          | `codeberg-medium`| `scripts/check_memory.sh` |
 | `coverage`                          | `codeberg-medium`| gcovr gate |
 | `version-consistency`               | `codeberg-tiny`  | three-source agreement |
-| `llvm-matrix (shared/static/disabled)`| `codeberg-medium` | linkage-asserted |
 
 ### `.forgejo/workflows/pages.yml`
 
@@ -215,8 +196,6 @@ succeed.  In practice that means:
 * **Sanitizers clean**: address + thread + undefined on Linux,
   address on macOS.
 * **`scripts/check_memory.sh`** runs cleanly under valgrind.
-* **LLVM=enabled / enabled+static / disabled** all build, test, and
-  link as advertised.
 * **Doxygen** produces zero warnings.
 * **Version-string** is consistent across `lime.c`, `meson.build`,
   and `src/version.c`.
@@ -229,7 +208,7 @@ run locally.  Replicate any failing job with:
 ```sh
 # build matrix (Linux only -- macOS / Windows need that platform)
 nix develop --command bash -c \
-  'meson setup build -Dllvm=disabled && ninja -C build && meson test -C build'
+  'meson setup build && ninja -C build && meson test -C build'
 
 # version check
 ./scripts/check_version_consistency.sh
@@ -237,22 +216,14 @@ nix develop --command bash -c \
 # valgrind
 ./scripts/check_memory.sh
 
-# llvm matrix
-nix develop --command bash -c \
-  'meson setup build-llvm-shared   -Dllvm=enabled                    && ninja -C build-llvm-shared   && meson test -C build-llvm-shared'
-nix develop --command bash -c \
-  'meson setup build-llvm-static   -Dllvm=enabled -Dllvm-static=true && ninja -C build-llvm-static   && meson test -C build-llvm-static'
-nix develop --command bash -c \
-  'meson setup build-llvm-disabled -Dllvm=disabled                   && ninja -C build-llvm-disabled && meson test -C build-llvm-disabled'
-
 # doxygen
 nix develop --command bash -c 'cd docs && doxygen Doxyfile'
 
 # sanitizers
 nix develop --command bash -c \
-  'meson setup build-asan -Dllvm=disabled -Db_sanitize=address      && ninja -C build-asan      && meson test -C build-asan'
+  'meson setup build-asan -Db_sanitize=address      && ninja -C build-asan      && meson test -C build-asan'
 nix develop --command bash -c \
-  'meson setup build-tsan -Dllvm=disabled -Db_sanitize=thread       && ninja -C build-tsan      && meson test -C build-tsan'
+  'meson setup build-tsan -Db_sanitize=thread       && ninja -C build-tsan      && meson test -C build-tsan'
 nix develop --command bash -c \
-  'meson setup build-ubsan -Dllvm=disabled -Db_sanitize=undefined   && ninja -C build-ubsan     && meson test -C build-ubsan'
+  'meson setup build-ubsan -Db_sanitize=undefined   && ninja -C build-ubsan     && meson test -C build-ubsan'
 ```

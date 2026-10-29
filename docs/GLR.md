@@ -100,8 +100,8 @@ token forces a fork.
 ### LALR fast path: unchanged by the merge
 
 The most important guarantee: `src/parse_engine.c`,
-`src/parse_context.c`, `src/snapshot.c`, `src/jit_codegen.c`, and
-`src/jit_context.c` are **byte-identical** between the v0.3.3 main
+`src/parse_context.c`, `src/snapshot.c` and the (since removed) JIT
+sources were **byte-identical** between the v0.3.3 main
 branch and the v0.3.4 GLR-merged tree.  No call site in any LALR
 path references any GLR symbol; the GLR engine lives entirely in
 `src/glr.c` + `src/parse_glr.c`.  Users who never call

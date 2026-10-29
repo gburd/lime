@@ -4,8 +4,7 @@
 
 - A C11 compiler: GCC 13+ or Clang 15+
 - Meson 0.60+ and Ninja (for the extension framework)
-- Optional: LLVM 14-21 (for JIT; verified on 14.0.6 and 21.1.8),
-  Valgrind (for memory checking)
+- Optional: Valgrind (for memory checking)
 
 All dependencies are provided by `nix develop` if you use Nix.
 
@@ -90,7 +89,7 @@ cc -o calc main.c expr.c
 
 ## Building the Extension Framework
 
-If you need runtime grammar extension, SIMD tokenization, or JIT:
+If you need runtime grammar extension or SIMD tokenization:
 
 ```bash
 meson setup builddir
@@ -102,20 +101,6 @@ This builds:
 - The `lime` generator
 - `liblime_parser.a` — the extension framework library
 - All tests and benchmarks
-
-### LLVM / JIT Build Options
-
-| Meson flag | Effect |
-|------------|--------|
-| `-Dllvm=auto` (default) | Enable JIT if `llvm-config` is found, otherwise build stubs |
-| `-Dllvm=enabled` | Require LLVM; hard error at configure if absent |
-| `-Dllvm=disabled` | Never probe; build stubs only (no `libLLVM` in `ldd`) |
-| `-Dllvm-static=true` | Statically link LLVM into the binary (no runtime `libLLVM.so` dependency; binary grows by 50-80 MB) |
-
-If multiple `llvm-config` binaries are on `PATH` (common on Linux
-distros that ship several LLVM versions side by side) set
-`LLVM_CONFIG=/path/to/llvm-config` before `meson setup` to pin the
-choice.  The flake's devShell does this automatically.
 
 ## Useful Flags
 

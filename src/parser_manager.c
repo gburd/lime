@@ -636,11 +636,6 @@ ParserManagerStatus parser_manager_set_active(ParserManager *mgr, LimePluginHand
             }
             free(val_error);
         }
-
-        /* Optionally JIT compile */
-        if (mgr->config.auto_jit && (e->plugin->get_capabilities() & LIME_CAP_JIT)) {
-            lime_jit_compile(new_snap);
-        }
     }
 
     /* Swap the active snapshot atomically */

@@ -7,15 +7,6 @@ URL:            https://codeberg.org/gregburd/lime
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  gcc >= 13, gcc-c++ >= 13, meson, ninja-build, pkgconfig
-BuildRequires:  llvm-devel >= 14
-BuildRequires:  zlib-ng-compat-devel
-BuildRequires:  libxml2-devel
-BuildRequires:  libffi-devel
-%if 0%{?rhel} && 0%{?rhel} < 9
-BuildRequires:  ncurses-devel
-%else
-BuildRequires:  ncurses-devel
-%endif
 
 %description
 Lime is a runtime-extensible LALR(1) parser generator derived from
@@ -23,8 +14,7 @@ the Lemon parser generator (SQLite project).  Lime reads a context-
 free grammar and emits a C parser, and -- unlike yacc/bison -- the
 generated parser can load and unload grammar extensions at runtime
 without recompilation.  Optional features include SIMD-accelerated
-tokenization (AVX2 / NEON) and LLVM JIT compilation of the action
-table.
+tokenization (AVX2 / NEON).
 
 %package        devel
 Summary:        Development headers and runtime library for lime-parser
@@ -39,7 +29,7 @@ extension-registry interfaces.
 %autosetup -n %{name}-%{version}
 
 %build
-%meson -Dllvm=auto
+%meson
 %meson_build
 
 %install

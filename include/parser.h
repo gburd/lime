@@ -6,7 +6,6 @@
  * It provides:
  *   - Snapshot lifecycle (create, acquire, release)
  *   - Parse session management (begin, token, end)
- *   - JIT compilation control
  *   - Extension registry initialization
  *
  * @par Basic Usage
@@ -248,32 +247,6 @@ void parse_end(ParseContext *ctx);
 ParserSnapshot *parse_get_snapshot(ParseContext *ctx);
 
 /** @} */ /* end parse_ctx_api */
-
-/* --- JIT Compilation API ----------------------------------------- */
-
-/** @defgroup jit_api JIT Compilation API
- *  @brief Control LLVM JIT compilation of parser action tables.
- *  @{
- */
-
-/**
- * @brief Check whether JIT compilation support is available at runtime.
- *
- * @retval true  LLVM was linked and initialization succeeded.
- * @retval false JIT is not available.
- */
-bool lime_jit_available(void);
-
-/**
- * @brief Compile and attach JIT code to a snapshot's action tables.
- *
- * @param snap Snapshot to JIT-compile.
- * @retval 0     Success (or already compiled, or LLVM unavailable).
- * @retval non-zero Compilation failure.
- */
-int lime_jit_compile(ParserSnapshot *snap);
-
-/** @} */ /* end jit_api */
 
 /* --- Extension API ------------------------------------------------ */
 

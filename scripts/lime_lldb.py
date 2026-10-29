@@ -142,7 +142,7 @@ def lime_snapshot(debugger, command, result, _internal_dict):
         v = val.GetChildMemberWithName(f)
         if v.IsValid():
             result.AppendMessage(f"  {f:<14s}  {_safe_int(v)}")
-    for f in ("yy_action", "yy_lookahead", "yy_default", "jit_ctx", "jit_find_shift_fn"):
+    for f in ("yy_action", "yy_lookahead", "yy_default"):
         v = val.GetChildMemberWithName(f)
         if v.IsValid():
             result.AppendMessage(f"  {f:<14s}  0x{_safe_int(v):x}")

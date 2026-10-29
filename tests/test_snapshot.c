@@ -59,7 +59,6 @@ static ParserSnapshot *make_test_snapshot(void) {
     snap->symbols = NULL;
     snap->rules = NULL;
     snap->states = NULL;
-    snap->jit_ctx = NULL;
     snap->create_time_ns = 0;
 
     return snap;

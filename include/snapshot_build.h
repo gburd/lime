@@ -9,7 +9,7 @@
  *
  * This header provides the bridge that lets a generated parser hand
  * those tables to the runtime so the runtime push parser
- * (parse_begin / parse_token / parse_end) and the JIT can drive them.
+ * (parse_begin / parse_token / parse_end) can drive them.
  *
  * Two ways to use this:
  *

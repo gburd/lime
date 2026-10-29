@@ -20,7 +20,7 @@ pull request.
 
 Include enough detail to reproduce: the affected version (see
 `lime -x`), the grammar / input / snapshot that triggers the issue, the
-build configuration (compiler, `-Dllvm`, sanitizers), and the observed
+build configuration (compiler, meson options, sanitizers), and the observed
 behavior (crash, hang, memory error, etc.). A minimal reproducer and, if
 you have one, an ASan/UBSan/Valgrind trace speeds triage considerably.
 
@@ -49,7 +49,7 @@ Out of scope (by design, not a vulnerability):
   untrusted code and is not a security boundary Lime defends.
 - Resource use proportional to a legitimately large but well-formed
   grammar.
-- Issues in third-party dependencies (LLVM, libc) that are not amplified
+- Issues in third-party dependencies (libc) that are not amplified
   by Lime.
 
 ## Supported versions

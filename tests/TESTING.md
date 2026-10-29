@@ -135,12 +135,6 @@ document's last refresh:
 | `test_merkle_tree` | Merkle-tree snapshot identity |
 | `test_coverage_boost` | Additional coverage across modules |
 
-**JIT**
-
-| Test | Focus |
-|------|-------|
-| `test_jit` | JIT compilation, policy (runs against stubs when LLVM disabled) |
-
 **Concurrency**
 
 | Test | Focus |
@@ -180,9 +174,6 @@ Based on current test suite:
 | tokenize_simd.c | ~85% | Medium |
 | token_table.c | ~90% | ✓ Good |
 | parse_context.c | ~93% | ✓ Good |
-| jit_context.c | ~80% | Medium |
-| jit_codegen.c | ~70% | **High** |
-| jit_policy.c | ~88% | Medium |
 
 ## Improving Coverage
 
@@ -208,23 +199,7 @@ Based on current test suite:
 - test_conflict_with_multiple_extensions()
 ```
 
-#### 2. JIT Code Generation (jit_codegen.c)
-
-**Uncovered paths:**
-- Error handling in LLVM IR generation
-- Edge cases in action table encoding
-- State function generation failures
-
-**Suggested tests:**
-```c
-// tests/test_jit_codegen.c
-- test_codegen_empty_state()
-- test_codegen_large_action_table()
-- test_codegen_error_handling()
-- test_generated_code_correctness()
-```
-
-#### 3. Extension System Edge Cases
+#### 2. Extension System Edge Cases
 
 **Uncovered paths:**
 - Extension load failure recovery
@@ -331,7 +306,7 @@ Open `coverage-report/index.html` and look for:
 
 Focus on:
 1. Critical paths (error handling, edge cases)
-2. Complex logic (conflict detection, JIT codegen)
+2. Complex logic (conflict detection, table building)
 3. Public APIs (ensure all paths callable by users)
 
 ### 4. Write Tests
@@ -359,7 +334,6 @@ For each gap:
 - **Target**: 92% line coverage
 - **Focus**:
   - Edge cases in conflict detection
-  - JIT error handling
   - Extension failure recovery
   - Memory allocation failures
 
@@ -389,8 +363,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build lcov \
-            llvm-dev
+          sudo apt-get install -y meson ninja-build lcov
 
       - name: Build and test
         run: |

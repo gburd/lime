@@ -914,9 +914,9 @@ void Parse_drain(void *yyp ParseCTX_PDECL);
 ** replaces Lemon's classical 30-year switch-on-yyruleno.
 **
 ** Why the change:
-**   1. JIT specialisation -- per-rule callbacks let the JIT
-**      inline reduce code into the JIT-compiled trace,
-**      eliminating the indirect call through yy_reduce.
+**   1. Debuggability -- each rule's action is its own
+**      symbol, so backtraces, profilers and coverage tools
+**      attribute time and lines to the rule that ran.
 **   2. Composition + extension -- merging two grammars now
 **      concatenates `yy_rule_reduce_fn[]` arrays trivially
 **      instead of doing source-level switch surgery.
@@ -929,7 +929,7 @@ void Parse_drain(void *yyp ParseCTX_PDECL);
 **
 ** ABI break vs v0.5.x: the generated .c file's reduce path
 ** changes shape but the runtime ABI (ParserSnapshot, the
-** push-parser entry, the JIT) stays put.  See ROADMAP for
+** push-parser entry) stays put.  See ROADMAP for
 ** the v0.6.0 charter.
 */
 typedef struct yy_reduce_ctx {

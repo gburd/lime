@@ -13,8 +13,6 @@ All public symbols are declared in headers under `include/`.
 - [SIMD Character Classification API](#simd-character-classification-api)
 - [Extension API](#extension-api)
 - [In-Process Compiler API](#in-process-compiler-api)
-- [JIT Compilation API](#jit-compilation-api)
-- [JIT Policy API](#jit-policy-api)
 - [Data Structures Reference](#data-structures-reference)
 - [Token Type Codes](#token-type-codes)
 - [Error Handling Conventions](#error-handling-conventions)
@@ -86,7 +84,7 @@ void lime_snapshot_release(ParserSnapshot *snap);
 ```
 
 Decrement the reference count. When it reaches zero, the snapshot and all
-memory it owns (grammar data, action tables, JIT context) are freed.
+memory it owns (grammar data, action tables) are freed.
 Passing `NULL` is safe.
 
 ---
@@ -806,145 +804,6 @@ free(fragment);
 
 ---
 
-## JIT Compilation API
-
-**Header:** `include/jit_context.h`
-
-Optional LLVM-based JIT compilation of parser action tables. When LLVM is
-available, the JIT compiles specialized lookup functions for each parser
-state, replacing table-driven lookups with direct branch sequences.
-
-When compiled without LLVM (`LIME_NO_JIT`), all JIT functions degrade
-to no-ops.
-
-### Types
-
-```c
-typedef struct JITContext JITContext;  /* Opaque handle */
-
-typedef uint16_t (*JITShiftActionFn)(uint16_t iLookAhead);
-
-typedef enum JITStatus {
-    JIT_OK = 0,
-    JIT_ERR_NO_LLVM,
-    JIT_ERR_INIT_FAILED,
-    JIT_ERR_CODEGEN_FAILED,
-    JIT_ERR_COMPILE_FAILED,
-    JIT_ERR_LOOKUP_FAILED,
-    JIT_ERR_INVALID_ARG,
-    JIT_ERR_ALREADY_COMPILED,
-} JITStatus;
-
-typedef struct JITStats {
-    uint32_t states_compiled;
-    uint32_t states_total;
-    uint64_t compile_time_ns;
-    uint64_t code_size_bytes;
-    bool     available;
-} JITStats;
-```
-
-### Functions
-
-#### High-Level (parser.h)
-
-```c
-bool lime_jit_available(void);
-int  lime_jit_compile(ParserSnapshot *snap);
-```
-
-`lime_jit_available()` returns `true` if LLVM was linked and
-initialization succeeds.
-
-`lime_jit_compile()` compiles and attaches JIT code to a snapshot.
-Returns `0` on success, non-zero on failure. No-op if already compiled
-or LLVM is unavailable.
-
-#### Low-Level (jit_context.h)
-
-```c
-JITStatus jit_create(JITContext **ctx_out);
-void      jit_destroy(JITContext *ctx);
-
-JITStatus jit_compile_snapshot(JITContext *ctx, const ParserSnapshot *snap);
-
-JITShiftActionFn jit_get_shift_action(const JITContext *ctx, uint32_t state_id);
-
-JITStats    jit_get_stats(const JITContext *ctx);
-const char *jit_status_string(JITStatus status);
-bool        jit_is_available(void);
-```
-
-#### Snapshot Integration
-
-```c
-JITStatus jit_attach_to_snapshot(ParserSnapshot *snap);
-void      jit_detach_from_snapshot(ParserSnapshot *snap);
-
-uint16_t jit_find_shift_action(const ParserSnapshot *snap,
-                                uint16_t stateno,
-                                uint16_t iLookAhead);
-```
-
-`jit_find_shift_action()` is the primary runtime dispatch function. If
-the snapshot has JIT code for the given state, it uses the compiled path;
-otherwise it falls back to the table-driven lookup.
-
----
-
-## JIT Policy API
-
-**Header:** `include/jit_policy.h`
-
-Adaptive JIT compilation policy that decides when to compile based on
-runtime metrics. Tracks per-snapshot usage and triggers compilation when
-the expected benefit exceeds the cost.
-
-### Types
-
-```c
-typedef struct JITMetrics {
-    atomic_uint_fast64_t parse_count;
-    atomic_uint_fast64_t total_parse_time_ns;
-    atomic_uint_fast64_t action_lookup_count;
-    atomic_int           is_jitted;
-    atomic_int           jit_in_progress;
-} JITMetrics;
-
-typedef struct JITPolicyConfig {
-    uint64_t min_parse_count;             /* Default: 50 */
-    uint64_t min_total_parse_time_ns;     /* Default: 10,000,000 (10 ms) */
-    uint64_t min_avg_lookups_per_parse;   /* Default: 100 */
-    bool     background_compile;          /* Default: true */
-} JITPolicyConfig;
-```
-
-### Functions
-
-```c
-JITPolicyConfig jit_policy_default_config(void);
-
-void jit_metrics_init(JITMetrics *m);
-
-void jit_metrics_record_parse(JITMetrics *m,
-                              uint64_t parse_time_ns,
-                              uint64_t action_lookups);
-
-bool jit_should_compile(const JITMetrics *m, const JITPolicyConfig *config);
-
-int jit_maybe_compile(ParserSnapshot *snap,
-                      JITMetrics *m,
-                      const JITPolicyConfig *config);
-
-void jit_policy_shutdown(void);
-```
-
-`jit_maybe_compile()` returns `0` if compilation was triggered, `1` if
-metrics do not yet warrant compilation, or `-1` on error. When
-`background_compile` is true, compilation happens on a detached thread.
-
----
-
 ## Data Structures Reference
 
 ### ParserSnapshot (src/snapshot.h)
@@ -966,7 +825,6 @@ metrics do not yet warrant compilation, or `-1` on error. When
 | `yy_reduce_ofst` | `int16_t *` | Per-state reduce offset |
 | `yy_default` | `uint16_t *` | Default action per state |
 | `create_time_ns` | `uint64_t` | Creation timestamp (nanoseconds) |
-| `jit_ctx` | `void *` | Attached JIT context (or NULL) |
 
 ---
 
@@ -1027,9 +885,6 @@ The library uses the following conventions for error reporting:
 - **Error string** -- Functions with a `char **error` parameter set it to
   a `malloc`'d string on failure. The caller must `free()` this string.
 
-- **Status codes** -- JIT functions return `JITStatus` enum values. Use
-  `jit_status_string()` to convert to a human-readable message.
-
 - **NULL-safe** -- Destroy/release functions (`tokenizer_destroy`,
   `parse_end`, `lime_snapshot_release`) accept `NULL` safely.
 
@@ -1089,7 +944,6 @@ without macro gymnastics.
 | `TokenTable` lookup | Lock-free (concurrent readers) | Write-locked |
 | `TokenTable` add/remove | N/A | Acquires internal lock |
 | `ExtensionRegistry` | Read-locked (concurrent) | Write-locked |
-| `JITMetrics` | Atomic reads | Atomic updates |
 
 **Key points:**
 
@@ -1099,8 +953,6 @@ without macro gymnastics.
   thread/task.
 - The `TokenTable` supports concurrent readers with lock-free lookups.
   Writes (adding/removing tokens) serialize internally.
-- JIT metrics use atomic operations for contention-free updates from
-  multiple parser threads.
 
 ---
 
@@ -1112,7 +964,7 @@ without macro gymnastics.
 
 | File | Library | Use it for |
 |---|---|---|
-| `lime.pc`          | `liblime_parser` | The runtime push parser, snapshots, tokenizer, extension registry, JIT. |
+| `lime.pc`          | `liblime_parser` | The runtime push parser, snapshots, tokenizer, extension registry. |
 | `lime-compiler.pc` | `liblime_compiler` (depends on `liblime_parser`) | The in-process compiler / linter API (`lime_compile_grammar_in_process`, `lime_lint_grammar_in_process`). |
 
 Most consumers want only `lime`:
@@ -1307,31 +1159,6 @@ char *error = NULL;
 load_extension(reg, id, snap, &error);
 ```
 
-### JIT Compilation with Policy
-
-```c
-#include "parser.h"
-#include "jit_policy.h"
-
-/* Initialize metrics and policy */
-JITMetrics metrics;
-jit_metrics_init(&metrics);
-JITPolicyConfig policy = jit_policy_default_config();
-policy.min_parse_count = 100;
-
-/* After each parse session, record metrics */
-jit_metrics_record_parse(&metrics, elapsed_ns, lookup_count);
-
-/* Check if JIT compilation should trigger */
-int rc = jit_maybe_compile(snap, &metrics, &policy);
-/* rc == 0: compilation triggered
-** rc == 1: not yet warranted
-** rc == -1: error */
-
-/* At shutdown */
-jit_policy_shutdown();
-```
-
 ## API Stability (v1.3.0 LTS commitment)
 
 This document is the canonical inventory of public C symbols
@@ -1344,6 +1171,11 @@ support window (v1.3.x through June 2028) commits to:
 - Source-level compatibility for the in-process compile / lint
   helpers exposed via `liblime-compiler`.
 - The diagnostic text formats consumed by tooling.
+
+Exception: the v1.11.3 review removed the LLVM JIT.  `lime_jit_available`,
+`lime_jit_compile` and every `jit_*` symbol are gone, and
+`LIME_SNAPSHOT_ABI_VERSION` is now 3 (the two JIT fields left
+`ParserSnapshot`).  See `docs/JIT_ANALYSIS.md`.
 
 ### Diagnostic text format (LTS-pinned)
 

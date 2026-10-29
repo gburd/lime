@@ -94,8 +94,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Capability contract: sql_plugin advertises SNAPSHOT | EXTENSIBLE | JIT. */
-    uint32_t want = LIME_CAP_SNAPSHOT | LIME_CAP_EXTENSIBLE | LIME_CAP_JIT;
+    /* Capability contract: sql_plugin advertises SNAPSHOT | EXTENSIBLE. */
+    uint32_t want = LIME_CAP_SNAPSHOT | LIME_CAP_EXTENSIBLE;
     if ((info.capabilities & want) != want) {
         fprintf(stderr, "FAIL: capabilities 0x%x missing bits from 0x%x\n",
                 info.capabilities, want);

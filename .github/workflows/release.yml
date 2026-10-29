@@ -67,14 +67,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y meson ninja-build pkg-config gcc \
-                                  llvm-dev libllvm18 zlib1g-dev \
-                                  libxml2-dev libffi-dev libtinfo-dev \
                                   xz-utils
 
       - name: Configure + make tarball
         id: dist
         run: |
-          meson setup build --buildtype=release -Dllvm=disabled
+          meson setup build --buildtype=release
           meson dist -C build --no-tests --formats=xztar
           tarball="$(ls build/meson-dist/lime-parser-*.tar.xz)"
           tarball_basename="$(basename "$tarball")"
@@ -117,8 +115,7 @@ jobs:
         run: |
           dnf install -y --setopt=install_weak_deps=False \
               rpm-build rpmdevtools meson ninja-build gcc gcc-c++ \
-              pkg-config llvm-devel xz \
-              zlib-ng-compat-devel libxml2-devel libffi-devel ncurses-devel
+              pkg-config xz
           rpmdev-setuptree
           version="${{ needs.source-tarball.outputs.version }}"
           tarball="dist/lime-parser-${version}.tar.xz"
@@ -164,7 +161,7 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends \
               build-essential dpkg-dev debhelper \
-              meson ninja-build pkg-config llvm-dev xz-utils
+              meson ninja-build pkg-config xz-utils
           version="${{ needs.source-tarball.outputs.version }}"
           tarball="dist/lime-parser-${version}.tar.xz"
           # Stage the upstream tarball as orig.  Debian wants
@@ -212,8 +209,8 @@ jobs:
           path: dist
       - name: Build APK
         run: |
-          apk add --no-cache alpine-sdk meson ninja pkgconfig llvm-dev \
-              llvm-static gcc g++ musl-dev xz git sudo abuild
+          apk add --no-cache alpine-sdk meson ninja pkgconfig \
+              gcc g++ musl-dev xz git sudo abuild
           version="${{ needs.source-tarball.outputs.version }}"
           # abuild refuses to run as root; create the build user FIRST
           # so paths are under their home, not /root (su -c then sees
@@ -267,8 +264,8 @@ jobs:
           path: dist
       - name: Build Arch package
         run: |
-          pacman -Sy --noconfirm base-devel meson ninja pkgconf llvm \
-              llvm-libs xz git sudo
+          pacman -Sy --noconfirm base-devel meson ninja pkgconf \
+              xz git sudo
           version="${{ needs.source-tarball.outputs.version }}"
           # makepkg refuses to run as root.
           useradd -m builder

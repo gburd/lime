@@ -48,10 +48,9 @@
         #   valgrind:   Linux only (+ FreeBSD, but flaky)
         #   gdb:        Linux; not reliably available on Darwin
         #   lcov/gcovr: portable, but gcovr is Python so more portable
-        #   llvm:       available on most platforms; gate on meta.available
-        #               in case a specific platform combo isn't supported
+        # clang-format comes from llvmPackages_21.clang-tools (formatter
+        # only; Lime has no LLVM dependency).
         llvmPkgs = pkgs.llvmPackages_21;
-        hasLLVM = llvmPkgs.libllvm.meta.available or false;
 
         # ----------------------------------------------------------------
         #  Hegel: property-based testing
@@ -158,9 +157,8 @@
           pkg-config
           python3
           doxygen
-          # Code formatter -- ships clang-format-21 to match the
-          # bundled LLVM toolchain so `make format` and the
-          # `.clang-format` config behave identically across
+          # Code formatter -- pins clang-format-21 so `make format`
+          # and the `.clang-format` config behave identically across
           # contributor machines.
           llvmPkgs.clang-tools
           # Flex + Bison are required by the optional Flex/Bison
@@ -189,15 +187,6 @@
 
         coverageTools = with pkgs; [ gcovr ];
 
-        llvmInputs = lib.optionals hasLLVM [
-          llvmPkgs.libllvm
-          # System libraries that llvm-config --system-libs --link-static
-          # reports as transitive dependencies.  Needed when building
-          # lime with -Dllvm-static=true; harmless otherwise.
-          pkgs.libxml2
-          pkgs.zlib
-          pkgs.libffi
-        ];
       in
       {
         devShells.default = pkgs.mkShell {
@@ -207,7 +196,7 @@
           #   FreeBSD      -> clang
           #   riscv64-linux -> gcc (cross or native)
           packages = commonTools ++ linuxTools ++ coverageTools
-                     ++ llvmInputs ++ hegelInputs;
+                     ++ hegelInputs;
 
           shellHook = ''
             echo "Lime development environment (${system})"
@@ -217,18 +206,6 @@
             echo "  clang-format:  $(clang-format --version 2>/dev/null | head -1 || echo missing)"
             echo "  flex:          $(flex --version 2>/dev/null || echo missing)"
             echo "  bison:         $(bison --version 2>/dev/null | head -1 || echo missing)"
-          '' + lib.optionalString hasLLVM ''
-            echo "  llvm:          $(llvm-config --version 2>/dev/null || echo 'not in PATH')"
-            export PKG_CONFIG_PATH="${llvmPkgs.libllvm.dev}/lib/pkgconfig:''${PKG_CONFIG_PATH:-}"
-            # Pin meson's LLVM config-tool probe to the nix-provided
-            # llvm-config.  Without this, meson's dependency('llvm',
-            # method:'config-tool') scans for llvm-config-XX candidates
-            # and picks the highest version on PATH, which on distros
-            # like Fedora selects /usr/bin/llvm-config-22 instead of the
-            # nix LLVM and causes link failures against host /usr/lib64.
-            export LLVM_CONFIG="${llvmPkgs.libllvm.dev}/bin/llvm-config"
-          '' + lib.optionalString (!hasLLVM) ''
-            echo "  llvm:          not available on ${system} (JIT disabled)"
           '' + lib.optionalString (hegel-c != null) ''
             export PKG_CONFIG_PATH="${hegel-c}/lib/pkgconfig:''${PKG_CONFIG_PATH:-}"
             # libhegel runs in-process: there is no hegel server binary
@@ -246,9 +223,6 @@
           src = ./.;
 
           nativeBuildInputs = with pkgs; [ meson ninja pkg-config ];
-          buildInputs = llvmInputs;
-
-          mesonFlags = lib.optionals (!hasLLVM) [ "-Dllvm=disabled" ];
 
           meta = with lib; {
             description = "Runtime-extensible LALR(1) parser generator";

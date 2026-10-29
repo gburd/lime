@@ -2,7 +2,7 @@
 lib_sources = files(
   'version.c',
   'snapshot.c',
-  'jit_inline.c',
+  'rule_inline.c',
   'snapshot_build.c',
   'snapshot_create.c',
   'snapshot_diff.c',
@@ -59,87 +59,25 @@ tokenize_simd_lib = static_library('tokenize_simd',
   link_args : coverage_link_args,
 )
 
-# LLVM JIT compilation support.
-# When LLVM is available and enabled, the JIT subsystem compiles parser
-# hot paths into native code. Otherwise stub implementations (guarded
-# by -DLIME_NO_JIT) are compiled and jit_is_available() returns false.
-#
-# Controlled by the 'llvm' feature option (see meson_options.txt):
-#   auto      -- enable if llvm-config is found on PATH / $LLVM_CONFIG
-#   enabled   -- require LLVM; hard error if it is absent
-#   disabled  -- skip the probe entirely; always build stubs
-#
-# The 'llvm-static' boolean option (default false) switches between
-# dynamic linking (libLLVM.so, runtime dep) and static linking
-# (component .a archives, self-contained but larger binary).  It has
-# effect only when LLVM is enabled.
-#
-# Minimum LLVM version floor is 14.  The compat shim in
-# include/jit_llvm_compat.h hides API differences across 14-21,
-# so all targets from 14 onward build with the same call sites.
-#
-# Passing the feature option as `required:` makes meson short-circuit
-# the llvm-config probe when the feature is disabled, and hard-error
-# (rather than silently falling back to stubs) when it is enabled.
-#
-# Prefer llvm-config over CMake so an environment-provided LLVM (e.g.
-# the one pinned in flake.nix) takes precedence over system installs.
-llvm_opt    = get_option('llvm')
-llvm_static = get_option('llvm-static')
-llvm_dep = dependency('llvm',
-  version  : '>=14',
-  modules  : ['core', 'executionengine', 'mcjit',
-              'native', 'analysis', 'passes', 'orcjit'],
-  method   : 'config-tool',
-  static   : llvm_static,
-  required : llvm_opt,
-)
-
-jit_sources = files('jit_context.c', 'jit_codegen.c', 'jit_policy.c')
-jit_c_args = []
-jit_deps = []
-
-if llvm_dep.found()
-  jit_deps += llvm_dep
-  link_kind = llvm_static ? 'static' : 'shared'
-  message('LLVM JIT compilation: enabled (' + llvm_dep.version() + ', ' + link_kind + ' link)')
-else
-  jit_c_args += '-DLIME_NO_JIT'
-  if llvm_opt.disabled()
-    message('LLVM JIT compilation: disabled by -Dllvm=disabled (stub mode)')
-  else
-    message('LLVM JIT compilation: disabled, llvm-config not found (stub mode)')
-  endif
-endif
-
-jit_lib = static_library('lime_jit',
-  jit_sources,
-  include_directories : inc,
-  c_args : jit_c_args + coverage_args,
-  link_args : coverage_link_args,
-  dependencies : [thread_dep] + jit_deps,
-)
-
 lime_parser_lib = static_library('lime_parser',
   lib_sources,
   include_directories : inc,
   c_args : coverage_args,
   link_args : coverage_link_args,
   dependencies : [thread_dep, dl_dep],
-  link_with : [tokenize_simd_lib, jit_lib],
+  link_with : [tokenize_simd_lib],
   install : true,
 )
 
 lime_parser_dep = declare_dependency(
-  # link_with lists ONLY lime_parser_lib here.  jit_lib and
-  # tokenize_simd_lib are propagated transitively via
-  # lime_parser_lib's own link_with.  Listing them again would
-  # cause lld-link (Windows / clang-cl) to error with 'duplicate
-  # symbol' on jit_detach_from_snapshot et al -- GNU ld dedupes
-  # static-archive contents but lld-link does not.
+  # link_with lists ONLY lime_parser_lib here.  tokenize_simd_lib
+  # is propagated transitively via lime_parser_lib's own link_with.
+  # Listing it again would cause lld-link (Windows / clang-cl) to
+  # error with 'duplicate symbol' -- GNU ld dedupes static-archive
+  # contents but lld-link does not.
   link_with : [lime_parser_lib],
   include_directories : inc,
-  dependencies : [thread_dep, dl_dep] + jit_deps,
+  dependencies : [thread_dep, dl_dep],
 )
 
 # .lex source-language frontend (M1 of the lexer project).

@@ -65,7 +65,6 @@ static ParserSnapshot *make_test_snapshot(uint64_t version) {
         }
     }
 
-    snap->jit_ctx = NULL;
     return snap;
 }
 

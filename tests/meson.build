@@ -52,20 +52,6 @@ test_tokenize = executable('test_tokenize',
 
 test('tokenize', test_tokenize)
 
-# test_jit segfaults on Windows when LLVM is disabled (the test
-# exercises JIT-codegen paths that aren't fully no-LLVM-clean).
-# Re-gate on Windows; runs on POSIX where the LLVM-disabled build
-# correctly takes the stub path.
-if host_machine.system() != 'windows'
-  test_jit = executable('test_jit',
-    'test_jit.c',
-    dependencies : lime_parser_dep,
-    include_directories : include_directories('../src'),
-  )
-
-  test('jit', test_jit)
-endif
-
 test_snapshot = executable('test_snapshot',
   'test_snapshot.c',
   dependencies : lime_parser_dep,
@@ -348,7 +334,7 @@ if host_machine.system() != 'windows'
 endif
 
 # Per-rule reducer inlining: verifies the Rust output emitter wires
-# jit_can_inline_rule_text() into yy_rule_N emission so action
+# rule_can_inline_text() into yy_rule_N emission so action
 # bodies classified as inlinable get #[inline(always)] (rustc
 # inlines them into the parse loop) while bodies with function
 # calls or control flow are left for rustc to decide.
@@ -614,19 +600,6 @@ if host_machine.system() != 'windows'
     is_parallel : false,
     timeout : 30)
 endif
-
-# v0.6.x: YYFALLBACK AOT codegen regression.  Verifies the JIT
-# trace bakes yy_fallback into the find_shift_action emit path so
-# the runtime path that consults snap->yy_fallback is bypassed.
-# Skips at runtime when JIT isn't available (LIME_NO_JIT).
-test_jit_fallback = executable('test_jit_fallback',
-  'test_jit_fallback.c',
-  include_directories : include_directories('../src'),
-  dependencies : [lime_parser_dep, lime_compiler_dep],
-  c_args : ['-DLIME_HAVE_SNAPSHOT_BUILD'],
-)
-
-test('jit_fallback', test_jit_fallback)
 
 test_parse_context = executable('test_parse_context',
   'test_parse_context.c',
@@ -2218,7 +2191,7 @@ test_mod_serialize = executable('test_mod_serialize',
 
 test('mod_serialize', test_mod_serialize)
 
-# Forensic harness that probes runtime extensibility and JIT claims
+# Forensic harness that probes runtime extensibility claims
 # against the actual code paths.  Always exits 0; verdicts in stdout.
 test_claims_proof = executable('test_claims_proof',
   'test_claims_proof.c',
@@ -2590,32 +2563,18 @@ if host_machine.system() != 'windows'
   )
 endif
 
-# Equivalence test: the JIT-armed parse_token path produces the same
-# accept/reject outcomes as the table-driven path on a battery of
-# well-formed and malformed inputs.  Skipped at runtime when LLVM is
-# unavailable (lime_jit_compile returns non-zero).
-test_jit_parse_equivalence = executable('test_jit_parse_equivalence',
-  'test_jit_parse_equivalence.c',
-  test_runtime_arith_gen,
-  include_directories : include_directories('../src'),
-  dependencies : lime_parser_dep,
-)
-
-test('jit_parse_equivalence', test_jit_parse_equivalence)
-
-# v0.6.x: per-rule reducer inlining policy classification test.
-# Exercises jit_can_inline_rule against a corpus of representative rule
-# bodies (empty, passthrough, simple expression, function call,
-# control flow) to lock the conservative-when-in-doubt policy.
-# Skipped at runtime when LLVM is disabled (LIME_NO_JIT) -- the
-# inlining policy doesn't matter when there's no JIT to inline into.
-test_jit_inline = executable('test_jit_inline',
-  'test_jit_inline.c',
+# Per-rule action-body inlining classifier (src/rule_inline.c, used
+# by the Rust emitter).  Exercises rule_can_inline_text against a
+# corpus of representative rule bodies (empty, passthrough, simple
+# expression, function call, control flow) to lock the
+# conservative-when-in-doubt policy.
+test_rule_inline = executable('test_rule_inline',
+  'test_rule_inline.c',
   dependencies : lime_parser_dep,
   include_directories : include_directories('../src'),
 )
 
-test('jit_inline', test_jit_inline)
+test('rule_inline', test_rule_inline)
 
 # Letter-15 regression: AOT path must agree with the
 # table-driven path for every (state, lookahead) pair.
@@ -2831,22 +2790,19 @@ endif
 # https://github.com/hegeldev/hegel-rust.  It runs entirely
 # in-process: no server binary, no subprocess, no socket.  (The
 # predecessor, github.com/gburd/hegel-c, spoke a socket protocol that
-# upstream has since removed; that mismatch is why all four PBTs below
+# upstream has since removed; that mismatch is why the PBTs below
 # skipped at runtime for their entire existence.)
 #
-# Four PBTs land here when the library is present, exercising:
+# Three PBTs land here when the library is present, exercising:
 #
 #   1. parser-table roundtrip (test_runtime_pbt)
 #   2. snapshot acquire/release refcount stateful test
 #      (test_snapshot_pbt)
-#   3. JIT vs interpreter equivalence on (state, lookahead)
-#      (test_jit_pbt)
-#   4. JSON allocator-mode equivalence (test_json_pbt)
+#   3. JSON allocator-mode equivalence (test_json_pbt)
 #
 # The shared run-loop harness is tests/hegel_pbt.h.  Each test exits
-# 77 (meson skip code) only if libhegel itself fails to initialise
-# (or, for jit_pbt, if there is no JIT to compare against), so the
-# rest of the suite still runs on hosts without libhegel.
+# 77 (meson skip code) only if libhegel itself fails to initialise,
+# so the rest of the suite still runs on hosts without libhegel.
 hegel_dep = dependency('hegel', required : false)
 
 if hegel_dep.found()
@@ -2870,19 +2826,6 @@ if hegel_dep.found()
     dependencies : [lime_parser_dep, hegel_dep],
   )
   test('snapshot_pbt', test_snapshot_pbt, timeout : 60)
-
-  test_jit_pbt = executable('test_jit_pbt',
-    'test_jit_pbt.c',
-    test_runtime_arith_gen,
-    include_directories : include_directories('../src'),
-    dependencies : [lime_parser_dep, hegel_dep],
-  )
-  # LIME_JIT=1 forces lime_jit_compile past its x86_64 size/arch
-  # policy, which otherwise declines to JIT the small arith grammar
-  # and would leave this test with nothing to compare the interpreter
-  # against.  Without LLVM the test still skips, via
-  # lime_jit_compile's JIT_ERR_NO_LLVM.
-  test('jit_pbt', test_jit_pbt, timeout : 120, env : {'LIME_JIT' : '1'})
 
   # JSON allocator-mode PBT consumes the JSON example's parser
   # sources directly (json.h, json_helpers.c, json_tokenize.c) and

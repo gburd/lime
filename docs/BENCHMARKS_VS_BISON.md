@@ -20,8 +20,7 @@ grammar -- last measured on Lime 0.1.0; the gap is unlikely to
 have shrunk).  Generated source is larger (1.47× on the older
 benchmark) because Lime carries more introspection metadata.
 Pick Lime when you need runtime grammar extension, the SIMD
-lexer, the LLVM JIT for hot grammars, or modern error
-diagnostics.  Pick Bison when you need IELR(1) or its long
+lexer, or modern error diagnostics.  Pick Bison when you need IELR(1) or its long
 production track record.
 
 This document is a working measurement, not a marketing page.
@@ -31,7 +30,7 @@ Numbers are reproducible and the methodology is below.
 
 Reproducibility: x86_64 i9-12900H Linux, gcc 15.2.0, glibc 2.42,
 bison 3.8.2 + flex 2.6.4 from nix store.  `meson setup
---buildtype=debugoptimized -Dllvm=disabled`.  Run `bench/
+--buildtype=debugoptimized`, JIT disabled.  Run `bench/
 bench_flex_bison_compare/bench_flex_bison_compare`.
 
 ## v1.11.3 re-measurement with a `flex -CF` baseline
@@ -46,7 +45,7 @@ the best time).
 
 Environment: Debian 13, AWS c7i.8xlarge (Xeon Platinum 8488C, VM, no
 cpufreq control), gcc 14.2.0, flex 2.6.4, bison 3.8.2, meson
-`-Dllvm=disabled` (debugoptimized).  Pinned to one core
+debugoptimized, JIT disabled.  Pinned to one core
 (`taskset -c 3`); one warm-up run discarded; 10 rounds alternating the
 `-Cem` and `-CF` binaries (A,B,A,B...) to cancel drift; 100,000
 documents per run; 515-byte document, 127 tokens.
@@ -127,37 +126,13 @@ The earlier doc claim of 1.15× faster on this bench was from
 m3pro hardware with different bison + glibc; corrected to the
 stable x86_64 measurement during the v0.4.4 perf-audit pass.
 
-### JIT scaling on PG grammar (informational)
+### JIT (removed)
 
-`tests/test_pg_grammar`: full PostgreSQL SQL grammar (3,842 LR
-states, 3,584 rules, 557 terminals, 145,227 action-table entries).
-
-| Codegen path | Compile time | Notes |
-|--------------|-------------:|-------|
-| Original (fully unrolled `state × lookahead` switch) | did not terminate within 5 minutes | LLVM `default<O2>` does not scale on ~146 K basic blocks |
-| With O2 disabled, still unrolled | ~186 s | LLVM mandatory lowering still slow on that IR size |
-| **Compact (`generate_find_shift_action_compact`)** | **~19 ms** | tables baked as constant globals, ~30 IR instructions |
-
-The compact path kicks in above `IR_SIZE_THRESHOLD = 500_000`
-(`nstate × nterminal`).  Below the threshold the unrolled path is
-still used because its constant-folded action returns are faster
-per call on small grammars.
-
-### JIT vs interpreted speedup
-
-`bench/jit_comparison`: synthetic 128-state grammar with 64
-terminals, action table of 8,192 entries.
-
-| Path | Per-parse |
-|------|----------:|
-| Interpreted (table walk in C) | 98 ns |
-| JIT (after warmup) | 43 ns |
-
-**JIT is 2.28× faster** than the interpreter on this grammar size.
-JIT compile time on the same grammar is 750 ms; break-even after
-~13.6 M parses.  This is the workload class where JIT shines: a
-single grammar parsed many times in a long-running process (a
-database, a language server, a query engine).
+Earlier versions of this page reported JIT compile times on the
+PostgreSQL grammar and a 2.28x JIT lookup speedup from the synthetic
+`bench/jit_comparison`.  End to end on the PostgreSQL grammar the JIT
+was 4-6% slower than the interpreter on x86_64 and 7-9% slower on
+aarch64, and it has been removed.  See [JIT_ANALYSIS.md](JIT_ANALYSIS.md).
 
 ### SIMD-accelerated tokenization
 
@@ -172,7 +147,7 @@ database, a language server, a query engine).
 **SIMD is 1.78× faster** on classification.  End-to-end tokenizer
 throughput holds steady at 99-101 MB/s across input sizes.
 
-## Lime+JIT vs simdjson (orientation, not a fair fight)
+## Lime vs simdjson (orientation, not a fair fight)
 
 simdjson is a SIMD-accelerated JSON-only parser; Lime is a generic
 LALR(1) parser generator that happens to be hosting a JSON
@@ -182,7 +157,8 @@ much of the gap is allocation cost vs parsing cost.
 `bench/bench_simdjson_compare/` runs Lime in three allocator modes
 and simdjson in its standard ondemand mode.  Median of 5 trials,
 100 K iterations each, on a 515-byte JSON document (Apple M1,
-clang 21.1.8 -O2, simdjson 4.6.4):
+clang 21.1.8 -O2, simdjson 4.6.4).  The Lime rows were measured with
+the since-removed JIT armed:
 
 | Tool | mean (ms) | MB/s | docs/s | gap to simdjson |
 |------|----------:|-----:|-------:|----------------:|
@@ -211,8 +187,7 @@ So:
     push parser vs a SIMD-vectorised structural decoder operating
     on 32-byte chunks at a time.
   * Lime is the right tool when you want a generic parser
-    generator (any language, runtime extensions, JIT for hot
-    grammars).  simdjson is the right tool when "JSON, fast"
+    generator (any language, runtime extensions).  simdjson is the right tool when "JSON, fast"
     *is* the requirement.
 
 ## Historical baseline (Lime 0.1.0)
@@ -231,7 +206,8 @@ arithmetic benchmark:
   * Action table layout reorganised to match the
     `find_shift_action` access pattern, improving cache hit rate.
   * SIMD tokenizer integrated end-to-end.
-  * LLVM JIT engine integrated with the runtime, not just batch-mode.
+  * LLVM JIT engine integrated with the runtime (since removed: it
+    measured slower than the interpreter).
   * `int16_t` -> `int32_t` widening of the offset arrays
     (correctness fix; trivial perf impact on small grammars).
 
@@ -248,7 +224,6 @@ turnaround on a larger grammar.
   * **Compiler:** clang 21.1.8, `-O2 -std=c11`
   * **Bison:** 3.8.2 (via `nix develop` -> `flake.nix`)
   * **Flex:** 2.6.4
-  * **LLVM:** 21.1.8 (for the Lime JIT)
   * **Lime:** 0.2.4
 
 ### Reproduce
@@ -262,14 +237,11 @@ nix develop --command bash -c '
     # Arithmetic-grammar comparison (5 trials by default)
     ./builddir/bench/bench_flex_bison_compare/bench_flex_bison_compare
 
-    # JIT vs interpreted on a synthetic medium grammar
-    ./builddir/bench/jit_comparison
-
-    # Tokenizer + JIT + miscellaneous microbenchmarks
+    # Tokenizer + miscellaneous microbenchmarks
     ./builddir/bench/parser_bench
 
-    # PG-grammar JIT compile time + correctness
-    LIME_PG_TEST_JIT=1 ./builddir/tests/test_pg_grammar
+    # PG-grammar parse benchmark (needs -Dpg_grammar=true)
+    LIME_PG_BENCH=21 ./builddir/tests/test_pg_grammar
 '
 ```
 
@@ -282,8 +254,7 @@ trials; on a quiet machine the variance run-to-run is
   * **Single grammar, single input shape** for the headline number.
     Different grammars and inputs will show different ratios.
   * **Apple Silicon** for these numbers.  On x86_64 with AVX2 the
-    SIMD speedup ratios tend to be larger; the JIT speedup ratios
-    on small grammars tend to be larger as well.
+    SIMD speedup ratios tend to be larger.
   * **Push parser overhead:** Lime is push (caller drives
     `parse_token`); Bison is pull (parser calls `yylex()`).  The
     shape of the integration affects the measured numbers as much
@@ -305,7 +276,6 @@ tool actually gives you:
 | Reentrant by default | ✗ (opt-in) | ✓ |
 | Runtime grammar extension | ✗ | ✓ |
 | SIMD-accelerated tokenizer | ✗ | ✓ (AVX2/NEON) |
-| LLVM JIT | ✗ | ✓ (auto-tuned per grammar size) |
 | `%symbol_prefix` for namespace isolation | ✗ | ✓ |
 | Built-in lexer compiler (`-X` flag) | (separate Flex) | ✓ |
 | Format and lint flags | ✗ | ✓ (`-F`, `-L`) |
@@ -330,7 +300,6 @@ tool actually gives you:
 
   * You need to load and unload grammar extensions at runtime
     without recompilation.
-  * You want JIT-accelerated parsing of a hot, mostly-static grammar.
   * The SIMD-tokenizer throughput matters (large input streams).
   * You need ergonomic error diagnostics out of the box.
   * Public-domain licensing matters to you.

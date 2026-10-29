@@ -430,11 +430,8 @@ The Rust output classifies every rule's action body and emits
 reducer when the body is small and pure enough that rustc can
 safely inline it into the parse loop's match arm.
 
-The classifier (`jit_can_inline_rule_text` in `src/jit_inline.c`)
-is the same one Lime's runtime LLVM JIT uses to decide whether to
-inline an action into a trace.  For the Rust output -- which has
-no runtime JIT, only ahead-of-time `rustc` -- the equivalent gain
-is the inline hint, which lets LLVM collapse the indirect dispatch
+The classifier is `rule_can_inline_text` in `src/rule_inline.c`.
+The gain is the inline hint, which lets LLVM collapse the indirect dispatch
 through `YY_RULE_REDUCE_FN[ruleno]` into the action body itself for
 the common case of trivial reducers.
 

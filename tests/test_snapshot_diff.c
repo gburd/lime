@@ -10,7 +10,7 @@
  *
  * Method: build two snapshots from grammar text via the in-process
  * API, diff them, apply, compare.  Skipped when the in-process
- * dispatch isn't available (no LLVM / no LIME_HAVE_SNAPSHOT_BUILD).
+ * dispatch isn't available (no LIME_HAVE_SNAPSHOT_BUILD).
  */
 
 #include "parser.h"

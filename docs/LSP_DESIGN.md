@@ -99,7 +99,7 @@ and Emacs (via `eglot`).
 LSP work is its own multi-day project and would not have been a
 responsible thing to ship inside the larger session this design
 came out of.  Treating it as a follow-up keeps the headline
-deliverables (parser correctness, JIT scaling, COBOL example,
+deliverables (parser correctness, COBOL example,
 Bayesian disambiguation, benchmark wins) honest.
 
 If anyone wants to pick this up, the natural starting point is to

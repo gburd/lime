@@ -129,19 +129,12 @@ overhead and emit path absorb the rest.  See
 [PERFORMANCE.md](PERFORMANCE.md) for measured numbers.  A scalar
 fallback is always available.
 
-## JIT Compilation
+## No JIT
 
-The optional LLVM JIT compiles parser action table lookups into native
-machine code at runtime.  This replaces the table-driven interpreter
-loop with direct jumps, yielding ~2.3x speedup on the lookup step
-itself (per `bench/jit_comparison`).  Action lookup is roughly 15% of
-total parse time on the arithmetic benchmark, so the *overall* parse
-speedup is in the 1.04-1.10x range on x86 and Apple Silicon (per
-`docs/BENCHMARK_RESULTS.md`); on x86 small grammars JIT can actually
-be a 5-10% regression because compile latency outweighs runtime
-gain.  JIT is most beneficial for large grammars (500+ states) in
-long-running processes.  See [JIT_ANALYSIS.md](JIT_ANALYSIS.md) for
-the detailed cost-benefit analysis.
+Lime has no runtime JIT.  An optional LLVM JIT for the action lookup
+shipped in earlier releases and was removed: on the PostgreSQL grammar
+it was 4-6% slower than the table interpreter on x86_64 and 7-9%
+slower on aarch64.  See [JIT_ANALYSIS.md](JIT_ANALYSIS.md).
 
 ## Module System
 

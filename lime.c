@@ -11706,7 +11706,7 @@ static void GenerateASTActions(struct lime *lemp){
 ** Generate an ahead-of-time (AOT) compiled action table.
 ** This produces a *_aot.c file containing a switch-based version
 ** of yy_find_shift_action() that the C compiler can optimize into
-** efficient jump tables, matching JIT performance with zero runtime cost.
+** efficient jump tables, at zero runtime cost.
 */
 void ReportAOTTable(struct lime *lemp){
   FILE *out;
@@ -12842,7 +12842,7 @@ void ReportTable(
     rp->codeEmitted = 0;
   }
   /* One function per rule.  Rules with identical action
-  ** bodies still emit distinct functions: the LLVM and GNU
+  ** bodies still emit distinct functions: the lld and GNU
   ** linkers fold identical .text via -fmerge-functions /
   ** -Wl,--icf=safe, so the on-disk cost is one function tag
   ** per rule (~80 bytes) and the call-site cost is unchanged.
@@ -14309,9 +14309,9 @@ static struct ParserSnapshot *build_snapshot_from_lime(struct lime *lemp,
     /* v0.6.x: populate yy_fallback when the grammar uses %fallback.
     ** Mirrors the table emit in lime.c at line ~10943 inside the
     ** has_fallback branch.  Without this, the in-process pipeline
-    ** silently drops the fallback machinery and JIT YYFALLBACK AOT
-    ** has nothing to bake in.  yy_fallback is declared at the
-    ** function scope above so the oom: label can free it. */
+    ** silently drops the fallback machinery.  yy_fallback is
+    ** declared at the function scope above so the oom: label can
+    ** free it. */
     uint32_t  nfallback   = 0;
     if (lemp->has_fallback && lemp->nterminal > 0) {
         nfallback = (uint32_t)lemp->nterminal;

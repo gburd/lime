@@ -19,7 +19,7 @@ def parse_arith(path):
     """Extract per-tool min and mean from a flex_bison_compare arith run."""
     out = {}
     text = open(path).read()
-    for tool in ("lime", "bison", "lime+jit"):
+    for tool in ("lime", "bison"):
         m = re.search(
             rf"^\s*{re.escape(tool)}\s+min=(\d+\.\d+)\s+ms\s+mean=(\d+\.\d+)",
             text, re.MULTILINE,
@@ -34,7 +34,7 @@ def parse_json_arith(path):
     """JSON section of bench_flex_bison_compare."""
     out = {}
     text = open(path).read()
-    for tool in ("lime_json", "bison_json", "lime_json+jit"):
+    for tool in ("lime_json", "bison_json"):
         m = re.search(
             rf"^\s*{re.escape(tool)}\s+min=(\d+\.\d+)\s+ms\s+mean=(\d+\.\d+)",
             text, re.MULTILINE,
@@ -50,7 +50,7 @@ def parse_simdjson(path):
     out = {}
     text = open(path).read()
     rows = re.findall(
-        r"^\s*(lime\+jit\s+\S+|simdjson\s+\S+)\s+(\d+\.\d+)\s+ms\s+(\d+\.\d+)\s+MB/s\s+(\d+)\s+docs/s",
+        r"^\s*(lime\s+\S+|simdjson\s+\S+)\s+(\d+\.\d+)\s+ms\s+(\d+\.\d+)\s+MB/s\s+(\d+)\s+docs/s",
         text, re.MULTILINE,
     )
     for label, ms, mbs, docs in rows:

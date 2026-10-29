@@ -9,7 +9,7 @@
 ** is the structural sanity check that GLR is a faithful superset of
 ** LALR rather than a separate implementation that quietly drifted.
 **
-** The arithmetic grammar is the one used by bench/bench_jit_real_parser
+** The arithmetic grammar is the one used by bench/parser_bench
 ** (bench/bench_arith_grammar.y).
 */
 

@@ -8,8 +8,6 @@
 LIME      ?= ../../bin/lime
 LIME_TPL  ?= ../../limpar.c
 RUNTIME   ?= ../../lib/liblime_parser.a
-LLVM_LIBS ?= $(shell llvm-config --ldflags --libs core executionengine \
-                                  mcjit native analysis passes orcjit 2>/dev/null)
 
 CC      ?= cc
 CFLAGS  ?= -O2 -g -Wall -Wextra -Wno-unused-parameter -std=c11 \
@@ -44,7 +42,7 @@ $(LIME):
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(TARGET): $(OBJECTS) $(RUNTIME)
-	$(CC) $(CFLAGS) -o $@ $(OBJECTS) $(RUNTIME) $(LLVM_LIBS) -lpthread
+	$(CC) $(CFLAGS) -o $@ $(OBJECTS) $(RUNTIME) -lpthread
 
 test: $(TARGET)
 	@set -e; for f in tests/*.cob; do \

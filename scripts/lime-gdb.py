@@ -205,8 +205,6 @@ class LimeSnapshotCmd(gdb.Command):
         print(f"  yy_default:     {val['yy_default']}")
         print(f"  yy_max_shift:   {int(val['yy_max_shift'])}")
         print(f"  yy_min_reduce:  {int(val['yy_min_reduce'])}")
-        print(f"  jit_ctx:        {val['jit_ctx']}")
-        print(f"  jit_find_fn:    {val['jit_find_shift_fn']}")
 
 
 class LimeStackCmd(gdb.Command):

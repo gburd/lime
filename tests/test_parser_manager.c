@@ -231,7 +231,6 @@ static void test_create_with_config(void) {
     ParserManagerConfig config = {
         .max_plugins = 4,
         .validate_on_load = true,
-        .auto_jit = false,
         .plugin_search_paths = NULL,
     };
     ParserManager *mgr = parser_manager_create(&config);
@@ -1558,7 +1557,6 @@ static void test_max_plugins_limit(void) {
     ParserManagerConfig config = {
         .max_plugins = 1,
         .validate_on_load = false,
-        .auto_jit = false,
         .plugin_search_paths = NULL,
     };
     ParserManager *mgr = parser_manager_create(&config);

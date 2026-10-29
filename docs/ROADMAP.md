@@ -118,82 +118,7 @@ also done (`snapshot_dlopen_release`, `tests/test_snapshot_dlopen_cleanup.c`).
 
 ---
 
-## 2. JIT-accelerated `parse_token`
-
-**What works today.**  Two paths:
-
-1. *Per-token JIT for the runtime push parser.*  `lime_jit_compile(snap)`
-   now also emits a `jit_find_shift_action(state, lookahead) -> action`
-   function (alongside the original monolithic batch function).
-   `parse_engine_step()` checks `snap->jit_ctx` and dispatches through
-   the JIT'd lookup instead of the table-driven `find_shift_action()`.
-   Each parse_token call goes through native code: a fully-inlined
-   nested switch that LLVM lowers to native jump tables, avoiding
-   the indirect-load chain through `yy_shift_ofst` / `yy_lookahead`
-   / `yy_action` / `yy_default`.  Verified by
-   `tests/test_jit_parse_equivalence` (21/21 PASS) -- JIT and table
-   paths produce identical outcomes on every well-formed and
-   malformed input the test feeds them.
-
-2. *Monolithic batch JIT.*  The original `jit_parse_sequence(tokens,
-   count, state)` function continues to be compiled and is callable
-   for callers that want batch processing.  `bench/jit_comparison`
-   shows 2-4x speedup on the synthetic batch workload.
-
-Performance signal from `bench/bench_flex_bison_compare` on
-aarch64-darwin (500K iterations x 8 trials, identical arithmetic
-grammar):
-
-```
-  lime     min=166.56 ms mean=175.00 ms
-  bison    min=183.58 ms mean=194.05 ms
-  lime+jit min=145.73 ms mean=150.25 ms
-  speedup vs bison (lime mean):     1.11x
-  speedup vs bison (lime+jit mean): 1.29x
-```
-
-**Implementation notes for future contributors.**
-
-- The JIT'd `jit_find_shift_action` returns `i32` (not `i16`) so the
-  aarch64 / x86_64 ABIs put a well-defined 32-bit value in the
-  return register.  Returning LLVM `i16` directly leaves the upper
-  16 bits undefined; the C ABI requires the *caller* to zero-extend
-  small return types, so reading via a `uint16_t (*)(...)` function
-  pointer would get garbage in the upper bits.  Use the
-  `JITFindShiftActionFn` typedef in `include/jit_context.h` (uint32
-  in / out) and let the engine mask down.  This is documented at
-  the typedef and at `src/parse_engine.c::find_shift_action`.
-
-**What is missing.**  A few smaller items:
-
-- *Reduce dispatch via JIT.*  The current JIT only accelerates the
-  shift action lookup; reduce / shift-reduce / accept dispatch
-  still goes through C in `parse_engine_step`.  Extending the JIT
-  to emit the full inner loop (similar to the existing
-  `jit_parse_sequence`, but state-machine-correct) would give a
-  further speedup, possibly into the 1.5-2x range vs Bison.
-
-- *Tiered compilation.*  All states are compiled to the same
-  optimisation level today.  A future tiered model could keep cold
-  states on the table-driven path and JIT only the hot ones, which
-  would reduce compile latency for very large grammars (the PG
-  PG grammar at ~3,842 states currently takes ~19 ms to JIT via
-  the compact path).
-
-**Source-tree references.**
-
-- `src/jit_codegen.c::generate_find_shift_action` -- IR for the
-  per-token lookup function.
-- `src/jit_context.c::jit_compile_snapshot` -- looks up both
-  `jit_parse_sequence` and `jit_find_shift_action` after compile.
-- `src/parse_engine.c::find_shift_action` -- the dispatch site that
-  routes to the JIT'd function when `snap->jit_ctx != NULL`.
-- `tests/test_jit_parse_equivalence.c` -- regression test asserting
-  JIT and table paths produce identical parse outcomes.
-
----
-
-## 3. Bayesian disambiguation strategy (LLM: not planned)
+## 2. Bayesian disambiguation strategy (LLM: not planned)
 
 **What works today.**  Priority-based, fork-resolve, and Bayesian
 (Beta-Bernoulli) disambiguation strategies are fully implemented
@@ -225,7 +150,7 @@ of additional code in `strategy_bayesian.c`.
 
 ---
 
-## 4. `examples/calc/` running on the runtime extension API
+## 3. `examples/calc/` running on the runtime extension API
 
 **What works today.**  `examples/calc/main.c` demonstrates loading a
 `.so` plugin and calling its parser via a function pointer.
@@ -242,7 +167,7 @@ modified snapshot.
 
 ---
 
-## 5. Flex / Bison comparison benchmark
+## 4. Flex / Bison comparison benchmark
 
 **Status: COMPLETE.**
 
@@ -262,6 +187,11 @@ Retained in this list as a reference entry; nothing remains to do.
 
 ## Removed
 
+- *JIT-accelerated `parse_token` (LLVM).*  Removed in the v1.11.3
+  review.  On the PostgreSQL grammar it was 4-6% slower than the table
+  interpreter on x86_64 and 7-9% slower on aarch64, so it never broke
+  even; its background compile thread also cannot run inside a
+  PostgreSQL backend.  See `docs/JIT_ANALYSIS.md`.
 - *Stale "Task #3 dynamic-table support" references.*  The "Task #3"
   identifier referred to an internal tracker that has been folded
   into item 1 above.  All source comments now point at this file.

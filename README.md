@@ -24,8 +24,7 @@ unlike those tools, the generated parser can load and unload grammar
 extensions at runtime without recompilation.
 
 The generator itself compiles from a single C file with no dependencies.
-Generated parsers optionally use SIMD-accelerated tokenization (AVX2/NEON)
-and LLVM JIT compilation for action table lookups.
+Generated parsers optionally use SIMD-accelerated tokenization (AVX2/NEON).
 
 ## Motivation
 
@@ -64,14 +63,6 @@ LALR(1) parsers.  Lime targets that gap.
   [docs/PERFORMANCE.md](docs/PERFORMANCE.md),
   [docs/BENCHMARKS_VS_BISON.md](docs/BENCHMARKS_VS_BISON.md), and
   `bench/bench_simd_classify` for the baselines and their limits.
-  The optional LLVM JIT does **not** currently pay for itself on
-  x86_64.  On the full PostgreSQL grammar -- the only grammar in the
-  tree big enough for the JIT's cost model to engage -- JIT-armed
-  parsing is **0.94-0.96x** the speed of the table-driven interpreter
-  (i.e. 4-6% *slower*), after a 16-34 ms compile, so it never breaks
-  even; on aarch64 (Graviton4) it is 7-9% slower.  On smaller grammars
-  the x86_64 cost model declines to JIT at all.  See
-  [docs/JIT_ANALYSIS.md](docs/JIT_ANALYSIS.md).
 - **Thread-safe by design** — Copy-on-write snapshots with atomic reference
   counting allow concurrent parsing with zero shared mutable state.
 - **Modern memory safety** — `%destructor` directives prevent semantic
@@ -239,7 +230,6 @@ ninja -C builddir test
 make            # builds bin/lime, lib/liblime_parser.a, tests
 make test       # runs the runtime-engine tests
 make LEX=1      # bundle the .lex compiler into the lime binary
-make JIT=0      # build without LLVM JIT (stubs)
 make install PREFIX=/usr/local
 ```
 
@@ -248,26 +238,6 @@ the `.lex` lexer compiler requires linking the lex sources -- if
 invoked without them, lime prints a clear error directing you to
 either `meson setup` or
 `cc -o lime lime.c src/lex/*.c -Iinclude -Isrc/lex -DLIME_HAS_LEX_COMPILER`.
-
-Build options:
-
-```sh
-# LLVM JIT feature: auto (default), enabled, or disabled
-meson setup builddir -Dllvm=enabled    # hard-require LLVM
-meson setup builddir -Dllvm=disabled   # force stub mode, no libLLVM link
-meson setup builddir -Dllvm-static=true -Dllvm=enabled  # statically link LLVM
-meson configure builddir -Dllvm=disabled   # toggle after the fact
-```
-
-With `-Dllvm=disabled` the resulting binaries have zero references to
-`libLLVM.so`; `jit_is_available()` returns false and JIT call sites
-fall through to the interpreter.
-
-With `-Dllvm-static=true` meson invokes `llvm-config --link-static` and
-links the LLVM component archives directly into the final binary,
-removing the runtime dependency on `libLLVM.so`. Expect a 50-80 MB
-binary size increase and slower link; useful when shipping to hosts
-that do not have a matching LLVM SONAME installed.
 
 ## Project Layout
 
@@ -291,13 +261,12 @@ lime/
 │   ├── extension.{c,h}     #   Extension registry
 │   ├── conflict.{c,h}      #   Conflict detection
 │   ├── tokenize_simd.{c,h} #   SIMD tokenization (AVX2/NEON)
-│   ├── jit_context.{c,h}   #   LLVM JIT compilation
 │   └── ...                 #   (35+ source files)
 │
 ├── include/                # Public API headers (snapshot_build.h,
 │                           # tokenize_simd.h, parser.h, ...)
 ├── tests/                  # Test suite (60+ files)
-├── bench/                  # Benchmarks (JIT, overhead, real parser)
+├── bench/                  # Benchmarks (vs bison, overhead, PG rebuild)
 ├── examples/               # Example grammars and extensions
 ├── contrib/                # SQL dialect extensions (Oracle, MySQL, ...)
 ├── docs/                   # Reference documentation
@@ -314,7 +283,7 @@ See **[docs/README.md](docs/README.md)** for the full index, and
 | Document | Description |
 |----------|-------------|
 | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | Build Lime, write your first grammar |
-| [docs/CONCEPTS.md](docs/CONCEPTS.md) | Snapshots, extensions, conflicts, JIT |
+| [docs/CONCEPTS.md](docs/CONCEPTS.md) | Snapshots, extensions, conflicts |
 | [docs/INTEGRATION.md](docs/INTEGRATION.md) | Embed Lime in your project |
 | [docs/EXAMPLES.md](docs/EXAMPLES.md) | All examples explained |
 | [docs/API.md](docs/API.md) | C API reference |
@@ -455,55 +424,17 @@ trials, three runs:
 | bison + flex | 245-251 ns | 1.00x |
 | lime (runtime engine) | 286-287 ns | **0.86x** |
 
-`lime + JIT` no longer appears: on this grammar the x86_64 cost model
-declines to JIT (it would be slower).  Earlier releases reported
-lime 1.15x and lime+JIT 1.25x on an i9-12900H; that measurement has
-not reproduced here.
+Earlier releases reported lime 1.15x on an i9-12900H; that
+measurement has not reproduced here.
 
-### JIT speedup vs interpreted
+### No JIT
 
-`bench/jit_comparison`, synthetic 128-state grammar:
-
-| Path | Per-parse |
-|------|----------:|
-| Interpreted | 98 ns |
-| JIT (warm) | 43 ns |
-
-These are lookup-only numbers on a synthetic grammar (the
-per-parse figure excludes everything but action lookup).  They do not
-predict a real parse: on the PostgreSQL grammar end to end, the JIT is
-4-6% slower than the interpreter (next section and
-[docs/JIT_ANALYSIS.md](docs/JIT_ANALYSIS.md)).
-
-### JIT compile scaling
-
-The JIT codegen has two paths:
-
-- **Unrolled** (default below `nstate × nterminal = 500,000`): every
-  state is compiled to a basic block with a constant-action switch,
-  yielding the fastest per-call performance.
-- **Compact** (above the threshold): the snapshot's action tables
-  are baked in as LLVM constant globals and the lookup is done via
-  ~30 IR instructions.  This is what makes the JIT scale to
-  PG-class grammars.
-
-On the full PostgreSQL SQL grammar (3,842 states, 145 K-entry
-action table), the compact path JITs in 16-34 ms (Debian 13, Xeon
-8488C, LLVM 19; earlier releases quoted ~19 ms).  An earlier
-unrolled-only path either timed out or took 186 s on the same input.
-
-Compiling is cheap; running is not faster.  Measured with
-`LIME_PG_BENCH=21 tests/test_pg_grammar` (built with
-`-Dpg_grammar=true -Dllvm=enabled --buildtype=release`): 12-query SQL
-corpus, 20,000 passes per sample, CPU time, table and JIT rounds
-alternated, one core pinned, three runs:
-
-| Path | ns/token (median) |
-|------|------------------:|
-| table-driven | 13.0-13.2 |
-| JIT          | 13.8-14.1 |
-
-Median JIT speedup per run: 0.958x, 0.942x, 0.939x.
+Earlier releases shipped an optional LLVM JIT for the shift-action
+lookup.  It was removed: on the full PostgreSQL grammar (3,842
+states) it was 4-6% slower than the table interpreter on x86_64
+(Xeon 8488C) and 7-9% slower on aarch64 (Graviton4), so its 16-34 ms
+compile never paid back.  The measurements and method are in
+[docs/JIT_ANALYSIS.md](docs/JIT_ANALYSIS.md).
 
 ### SIMD tokenizer
 
@@ -571,10 +502,8 @@ meson setup builddir-ubsan -Db_sanitize=undefined && ninja -C builddir-ubsan tes
 ## Dependencies
 
 **Build:** GCC 13+ or Clang 15+, Meson 0.60+, Ninja, pkg-config.
-**Optional:** LLVM 14-21 (JIT; verified on 14.0.6 and 21.1.8, expected
-to build on every release in between via the compat shim in
-`include/jit_llvm_compat.h`).  lcov/gcovr (coverage), Valgrind, perf.
-**Runtime:** pthreads, C11 standard library.  LLVM if JIT enabled.
+**Optional:** lcov/gcovr (coverage), Valgrind, perf.
+**Runtime:** pthreads, C11 standard library.
 
 All provided by `nix develop` via `flake.nix`.
 
@@ -630,4 +559,3 @@ Public Domain
 
 - **Lemon Parser Generator**: http://www.hwaci.com/sw/lemon/
 - **SQLite**: https://www.sqlite.org/
-- **LLVM ORC JIT**: https://llvm.org/docs/ORCv2.html

@@ -23,7 +23,6 @@
 #include "parse_context.h"
 #include "snapshot.h"
 #include "lime_time.h"
-#include "jit_context.h"
 #include "grammar_context.h"
 
 #include <stdint.h>
@@ -121,50 +120,15 @@ static inline void *stack_top_value(const ParseStack *s) {
 /* ------------------------------------------------------------------ */
 
 /*
-** find_shift_action -- the per-token action lookup hot path.
-**
-** When the snapshot has JIT code attached (snap->jit_ctx != NULL,
-** populated by lime_jit_compile), we dispatch through the JIT'd
-** function pointer instead of doing the table-driven walk.  The JIT
-** function (generate_find_shift_action in src/jit_codegen.c) is a
-** fully-inlined nested switch lowered to native jump tables, which
-** avoids the indirect-load chain through yy_shift_ofst / yy_lookahead
-** / yy_action / yy_default.
-**
-** PERFORMANCE NOTE -- LOAD-BEARING: This is the dispatch site that
-** turns lime_jit_compile() from a batch-only speedup into a real
-** per-token JIT acceleration.  bench/bench_jit_real_parser shows the
-** delta (with JIT vs without) on a real Lime-generated parser.  If a
-** future refactor moves this dispatch elsewhere, please verify the
-** bench still shows the JIT-armed path beating the table-driven
-** path.
-*/
-/*
 ** find_shift_action -- per-token hot path.
 **
-** Optimisations:
-**   1. Hoisted JIT entry-point cache: snap->jit_find_shift_fn is
-**      written once in lime_jit_compile and read once per token.
-**      Avoids the previous ctx->fn chase that was two loads + one
-**      function call.
-**   2. Branch hints: __builtin_expect tells the compiler the JIT
-**      branch is unlikely (most callers don't enable JIT), so the
-**      table-driven path stays in the straight-line fallthrough
-**      that branch predictors handle best.
-**   3. `static inline`: explicit inline hint so the engine's
-**      step function doesn't pay function-call overhead per token.
-**      The compiler at -O2 already inlines this most of the time,
-**      but the explicit hint makes it consistent across compilers.
+** `static inline`: explicit inline hint so the engine's step function
+** doesn't pay function-call overhead per token.  The compiler at -O2
+** already inlines this most of the time, but the explicit hint makes
+** it consistent across compilers.
 */
-typedef uint32_t (*lime_jit_shift_fn)(uint32_t state, uint32_t lookahead);
-
 static inline uint16_t find_shift_action(const ParserSnapshot * LIME_RESTRICT snap, uint16_t stateno,
                                          uint16_t lookahead) {
-    lime_jit_shift_fn jit_fn = (lime_jit_shift_fn)snap->jit_find_shift_fn;
-    if (LIME_UNLIKELY(jit_fn != NULL)) {
-        return (uint16_t)jit_fn((uint32_t)stateno, (uint32_t)lookahead);
-    }
-
     if (LIME_UNLIKELY(stateno > snap->yy_max_shift)) return stateno;
     if (LIME_UNLIKELY(snap->yy_shift_ofst == NULL)) return snap->yy_no_action;
 
@@ -819,7 +783,6 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
     const uint16_t yy_accept_action   = snap->yy_accept_action;
     const uint16_t yy_error_action    = snap->yy_error_action;
     const uint16_t yy_no_action       = snap->yy_no_action;
-    const lime_jit_shift_fn jit_fn    = (lime_jit_shift_fn)snap->jit_find_shift_fn;
     ReduceScratch * LIME_RESTRICT sc  = &eng->scratch;
 
     /* Threaded dispatch (Letter 39 W2): the pending-reduce check and
@@ -853,10 +816,8 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
         }
 
         /* Shift-action lookup, inlined + hoisted (was find_shift_action).
-        ** Preserves the JIT dispatch site and the exact table walk. */
-        if (LIME_UNLIKELY(jit_fn != NULL)) {
-            action = (uint16_t)jit_fn((uint32_t)cur_state, (uint32_t)major);
-        } else if (LIME_UNLIKELY(cur_state > yy_max_shift)) {
+        ** Preserves the exact table walk. */
+        if (LIME_UNLIKELY(cur_state > yy_max_shift)) {
             action = cur_state;
         } else if (LIME_UNLIKELY(yy_shift_ofst == NULL)) {
             action = yy_no_action;

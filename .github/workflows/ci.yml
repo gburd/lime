@@ -49,7 +49,7 @@ jobs:
       - name: Setup meson
         env:
           CC: ${{ matrix.compiler }}
-        run: meson setup builddir -Dllvm=disabled
+        run: meson setup builddir
 
       - name: Build
         run: ninja -C builddir
@@ -78,7 +78,7 @@ jobs:
           sudo apt-get install -y meson ninja-build pkg-config
 
       - name: Setup meson
-        run: meson setup builddir -Dllvm=disabled -Dcontrib=enabled
+        run: meson setup builddir -Dcontrib=enabled
 
       - name: Build
         run: ninja -C builddir
@@ -119,7 +119,7 @@ jobs:
       - name: Setup meson
         env:
           CC: ${{ matrix.compiler }}
-        run: meson setup builddir -Dllvm=disabled
+        run: meson setup builddir
 
       - name: Build
         run: ninja -C builddir
@@ -133,9 +133,7 @@ jobs:
   # Both runners ship Apple Clang (Xcode-bundled).  GCC via Homebrew
   # is available but adds a ~3-min `brew install gcc` step and
   # rarely diverges from clang on the codepaths we exercise -- skip
-  # it for the per-PR matrix.  We pin -Dllvm=disabled because the
-  # macOS runner image ships an Xcode LLVM that doesn't expose the
-  # full llvm-config/Orc.h surface lime_jit_create_ts_ctx needs.
+  # it for the per-PR matrix.
   # =====================================================================
   build-macos:
     name: build (${{ matrix.os }}, apple-clang)
@@ -158,7 +156,7 @@ jobs:
         run: clang -O2 -Wall -Wextra -o lime lime.c
 
       - name: Setup meson
-        run: meson setup builddir -Dllvm=disabled
+        run: meson setup builddir
 
       - name: Build
         run: meson compile -C builddir
@@ -215,14 +213,14 @@ jobs:
 
       - name: Setup meson (msvc)
         if: matrix.toolchain == 'msvc'
-        run: meson setup builddir -Dllvm=disabled -Dpg_grammar=false
+        run: meson setup builddir -Dpg_grammar=false
 
       - name: Setup meson (clang-cl)
         if: matrix.toolchain == 'clang-cl'
         env:
           CC: clang-cl
           CXX: clang-cl
-        run: meson setup builddir -Dllvm=disabled -Dpg_grammar=false
+        run: meson setup builddir -Dpg_grammar=false
 
       - name: Build
         run: meson compile -C builddir
@@ -268,7 +266,7 @@ jobs:
         run: gcc -O2 -Wall -Wextra -o lime.exe lime.c
 
       - name: Setup meson
-        run: meson setup builddir -Dllvm=disabled -Dpg_grammar=false
+        run: meson setup builddir -Dpg_grammar=false
 
       - name: Build
         run: meson compile -C builddir
@@ -301,7 +299,6 @@ jobs:
       - name: Build with ${{ matrix.sanitizer }} sanitizer
         run: |
           meson setup builddir-${{ matrix.sanitizer }} \
-            -Dllvm=disabled \
             -Db_sanitize=${{ matrix.sanitizer }}
           ninja -C builddir-${{ matrix.sanitizer }}
 
@@ -331,7 +328,6 @@ jobs:
       - name: Build with address sanitizer
         run: |
           meson setup builddir-asan \
-            -Dllvm=disabled \
             -Db_sanitize=address
           meson compile -C builddir-asan
 
@@ -353,7 +349,7 @@ jobs:
 
       - name: Build
         run: |
-          meson setup builddir -Dllvm=disabled
+          meson setup builddir
           ninja -C builddir
 
       - name: Valgrind check
@@ -413,59 +409,6 @@ jobs:
         run: scripts/check_contrib_grammars.sh
 
   # =====================================================================
-  # Exercise the LLVM/JIT integration paths.  Without this matrix,
-  # the LLVM 14-21 compat shim, -Dllvm-static, and -Dllvm=disabled
-  # stub mode have no automated coverage; a regression in any of
-  # them would land silently.  We test against the LLVM available
-  # in Ubuntu 24.04 apt (one shot) -- not a full version sweep.
-  # The Nix devShell builds against LLVM 21 separately for
-  # developers; the LLVM 17-20 compat path gets exercised whenever
-  # someone runs CI on a host whose apt has a newer toolchain.
-  # =====================================================================
-  llvm-matrix:
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        config:
-          - { name: "shared",   args: "-Dllvm=enabled" }
-          - { name: "static",   args: "-Dllvm=enabled -Dllvm-static=true" }
-          - { name: "disabled", args: "-Dllvm=disabled" }
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y meson ninja-build pkg-config gcc \
-                                  llvm-dev libllvm18 zlib1g-dev \
-                                  libxml2-dev libffi-dev libtinfo-dev
-
-      - name: Setup meson (${{ matrix.config.name }})
-        run: meson setup builddir-${{ matrix.config.name }} ${{ matrix.config.args }}
-
-      - name: Build
-        run: ninja -C builddir-${{ matrix.config.name }}
-
-      - name: Test
-        run: meson test -C builddir-${{ matrix.config.name }} --print-errorlogs
-
-      - name: Verify libLLVM linkage matches config
-        # shared: test_jit binary should link libLLVM
-        # static: test_jit binary should NOT link libLLVM
-        # disabled: test_jit binary should NOT link libLLVM
-        run: |
-          binary=builddir-${{ matrix.config.name }}/tests/test_jit
-          refs=$(ldd "$binary" 2>&1 | grep -cE libLLVM || true)
-          case "${{ matrix.config.name }}" in
-            shared)
-              test "$refs" -ge 1 || { echo "shared expected libLLVM, got $refs"; exit 1; } ;;
-            static|disabled)
-              test "$refs" -eq 0 || { echo "${{ matrix.config.name }} expected 0 libLLVM, got $refs"; exit 1; } ;;
-          esac
-          echo "OK: ${{ matrix.config.name }} has $refs libLLVM dependencies"
-
-  # =====================================================================
   # LTO (Link-Time Optimization) build verification.
   #
   # Validates that scripts/build-lto.sh produces a working build with
@@ -497,7 +440,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y meson ninja-build pkg-config \
                                   gcc binutils \
-                                  llvm-dev libllvm18 zlib1g-dev \
+                                  zlib1g-dev \
                                   libxml2-dev libffi-dev libtinfo-dev
 
       - name: Install dependencies (clang)
@@ -506,7 +449,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y meson ninja-build pkg-config \
                                   clang lld llvm \
-                                  llvm-dev libllvm18 zlib1g-dev \
+                                  zlib1g-dev \
                                   libxml2-dev libffi-dev libtinfo-dev
 
       - name: Verify plugin-aware archiver wrappers exist
@@ -542,12 +485,12 @@ jobs:
           # Compare LTO vs non-LTO at the SAME buildtype the job uses
           # above, so we measure LTO's contribution and not the
           # confounded buildtype + LTO change.
-          meson setup build-nolto -Dllvm=disabled
-          ninja -C build-nolto bench/bench_jit_real_parser
-          CC=${{ matrix.compiler }} ./scripts/build-lto.sh build-lto-cmp -Dllvm=disabled
-          ninja -C build-lto-cmp bench/bench_jit_real_parser
-          nolto_size=$(stat -c%s build-nolto/bench/bench_jit_real_parser)
-          lto_size=$(stat -c%s build-lto-cmp/bench/bench_jit_real_parser)
+          meson setup build-nolto
+          ninja -C build-nolto bench/parser_bench
+          CC=${{ matrix.compiler }} ./scripts/build-lto.sh build-lto-cmp
+          ninja -C build-lto-cmp bench/parser_bench
+          nolto_size=$(stat -c%s build-nolto/bench/parser_bench)
+          lto_size=$(stat -c%s build-lto-cmp/bench/parser_bench)
           echo "no-LTO binary: $nolto_size bytes"
           echo "LTO binary:    $lto_size bytes"
           delta=$((nolto_size - lto_size))

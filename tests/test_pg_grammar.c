@@ -1,5 +1,5 @@
 /*
-** test_pg_grammar.c -- Stress-test the runtime + JIT against the
+** test_pg_grammar.c -- Stress-test the runtime against the
 ** full PostgreSQL SQL grammar (~3,842 LR states, ~3,584 rules,
 ** ~557 terminals, ~145,000 action-table entries, ~1,665 conflicts
 ** resolved by precedence).
@@ -13,7 +13,6 @@
 ** corner cases that small grammars hide -- most importantly:
 **
 **   - 16-bit field widths overflowing on real-world action tables
-**   - JIT codegen scaling on a 3,842-state x 557-terminal switch
 **   - snapshot allocation/deallocation on multi-megabyte payloads
 **   - precedence-resolution paths exercised by 1,665 conflicts
 **
@@ -48,20 +47,12 @@
 **   - lime regenerates the parser tables from gram.lime in ~3.8 s
 **     on Apple M1; the snapshot itself is then materialised from
 **     static initializers in <1 ms.
-**   - lime_jit_compile on the PG grammar completes in ~15 ms with
-**     the compact (table-load) codegen path that's enabled above
-**     the IR_SIZE_THRESHOLD in jit_codegen.c.  An earlier version
-**     used a fully-unrolled state x lookahead switch which produced
-**     hundreds of thousands of basic blocks and could not be
-**     compiled by LLVM's default<O2> pipeline within reasonable
-**     bounds; that path is still used for small grammars where its
-**     constant-folding gains outweigh the IR-size cost.
-**   - JIT and table paths agree on every query in the corpus
-**     (15/15 match in current runs).  This is the headline test
-**     for the compact codegen.
+**   - The removed LLVM JIT was measured here against the table
+**     path and lost (docs/JIT_ANALYSIS.md); LIME_PG_BENCH below now
+**     times the table path alone.
 **
-** Known issue (driver-side, not JIT-side)
-** ---------------------------------------
+** Known issue (driver-side)
+** -------------------------
 **   The hand-rolled SQL tokenizer + this snapshot reject SELECT
 **   statements.  A single-token diagnostic (SELECT then ICONST)
 **   shows that state-after-SELECT in this snapshot does not accept
@@ -69,9 +60,7 @@
 **   contexts.  The most likely cause is that this snapshot was
 **   built without action callbacks (lime -n only), and SELECT's
 **   opt_target_list reduction depends on a precedence resolution
-**   that requires the action layer.  Investigation is a follow-up;
-**   it does not impact the JIT-vs-table cross-check that this test
-**   actually verifies.
+**   that requires the action layer.  Investigation is a follow-up.
 */
 
 #define _POSIX_C_SOURCE 200809L
@@ -80,7 +69,6 @@
 #include "parse_context.h"
 #include "snapshot.h"
 #include "snapshot_build.h"
-#include "jit_context.h"   /* jit_status_string() -- see the JIT half below */
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -112,8 +100,7 @@ extern ParserSnapshot *ParseBuildSnapshot(void);
 ** This tokenizer covers just enough to feed real SELECT / INSERT /
 ** UPDATE / DELETE / CREATE TABLE statements through the runtime
 ** engine, which is the actual point of this exercise: drive
-** non-trivial token sequences through the 3,842-state machine and
-** confirm the JIT and table paths agree on every outcome.
+** non-trivial token sequences through the 3,842-state machine.
 **
 ** Skipped for brevity: dollar-quoted strings, ::cast operators,
 ** array subscripts, schema-qualified names, comments other than
@@ -265,8 +252,7 @@ static uint16_t *tokenize_sql(const char *sql, size_t *out_count) {
 /* ------------------------------------------------------------------ */
 
 /*
-** Returns 0 on accept, -1 on parse error.  Mirrors what lime_jit_compile
-** + the runtime engine actually do under the hood.
+** Returns 0 on accept, -1 on parse error.
 **
 ** Parser semantics:
 **   parse_token returns 0 to mean "consumed, give me more"; -1 to mean
@@ -386,13 +372,10 @@ int main(void) {
     ** Each query is tokenized into the same int16_t IDs the PG
     ** grammar's action tables were built against, then fed through
     ** parse_token in a loop.  We capture the outcome (accept/reject)
-    ** for each query so we can replay the same corpus through the
-    ** JIT path below and assert identical results.
+    ** for each query.
     **
     ** Why this matters: this is the actual test that the runtime
-    ** engine -- and especially the new compact JIT codegen
-    ** introduced for large grammars -- handles a real production
-    ** workload.  EOF-only smoke tests don't exercise any of the
+    ** engine handles a real production workload.  EOF-only smoke tests don't exercise any of the
     ** 3,800+ states; these queries do.
     */
     static const char *kAccept[] = {
@@ -448,9 +431,7 @@ int main(void) {
 
     /* What we have asserted: the runtime engine accepts at least
     ** one well-formed SQL form (INSERT INTO ... VALUES ...) and
-    ** rejects every malformed input we tried.  More importantly,
-    ** the engine'\''s acceptance / rejection decisions feed into the
-    ** JIT cross-check below.
+    ** rejects every malformed input we tried.
     **
     ** Known issue documented in tests/test_pg_grammar.c: SELECT
     ** statements are currently rejected by this snapshot+driver
@@ -462,7 +443,7 @@ int main(void) {
     ** with `-n` only (no action callbacks linked) and SELECT'\''s
     ** opt_target_list reduction depends on a precedence resolution
     ** that the table-only path hits differently.  Tracking as a
-    ** follow-up; does NOT affect the JIT-vs-table headline result.
+    ** follow-up.
     */
     int table_accepted = 0, table_rejected = 0;
     for (int i = 0; kAccept[i] != NULL; i++)
@@ -474,163 +455,44 @@ int main(void) {
     T_CHECK(table_rejected >= 3, "table path rejects every malformed query (got %d)",
             table_rejected);
 
-    /* --- JIT compile ----------------------------------------- */
-    /* For small grammars the JIT codegen unrolls the state x
-    ** lookahead machine into ~146,000 basic blocks of LLVM IR with
-    ** constant-folded action returns, which is fast on tiny grammars
-    ** but does not scale to PG-class input.  jit_codegen.c switches
-    ** to a compact table-load path above an IR-size threshold; on
-    ** the PG grammar that path produces ~30 IR instructions and the
-    ** JIT compile completes in tens of milliseconds.
-    **
-    ** Set LIME_PG_TEST_JIT=0 to skip the JIT half (e.g. when running
-    ** under sanitizers that don't play nicely with OrcJIT). */
-    if (getenv("LIME_PG_TEST_JIT") != NULL && strcmp(getenv("LIME_PG_TEST_JIT"), "0") == 0) {
-        printf("\n--- JIT compile ---\n");
-        printf("  [SKIP] LIME_PG_TEST_JIT=0 set -- skipping JIT half.\n");
-    } else {
-        printf("\n--- JIT compile ---\n");
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        int jit_rc = lime_jit_compile(snap);
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        if (jit_rc != 0) {
-            /* Report the actual status, never a guess.  A bare numeric
-            ** code here is ambiguous: JIT_ERR_NO_LLVM and the cost
-            ** model's JIT_SKIPPED_BY_POLICY are distinct conditions
-            ** that used to both surface as "1", which is exactly how a
-            ** policy skip masqueraded as "LLVM unavailable" in
-            ** test_jit_parse_equivalence and hid that test never
-            ** running.  This grammar (3842 states) clears the cost
-            ** model's threshold so it should not skip at all -- if it
-            ** does, the reason needs to be legible. */
-            printf("  [SKIP] lime_jit_compile returned %d: %s\n",
-                   jit_rc, jit_status_string((JITStatus)jit_rc));
-        } else {
-            printf("  JIT compiled in %.2f ms\n", time_diff_ms(t0, t1));
-            T_CHECK(snap->jit_ctx != NULL, "JIT context attached after compile");
-
-            ctx = parse_begin(snap);
-            T_CHECK(ctx != NULL, "parse_begin succeeded with JIT armed");
-            if (ctx != NULL) {
-                int rc = parse_token(ctx, 0, NULL, -1);
-                T_CHECK(rc != 0, "JIT path rejects empty input cleanly (rc=%d)", rc);
-                parse_end(ctx);
-            }
-
-            /* Replay the same corpus through the JIT-armed engine
-            ** and cross-check that every outcome agrees with the
-            ** table-driven path.  This is the headline test for
-            ** the compact JIT codegen: any mismatch means the
-            ** baked-in tables or the lookup IR diverge from the
-            ** C interpreter on real input. */
-            printf("\n--- real-SQL corpus, JIT path (must match table) ---\n");
-            int mismatches = 0;
-            for (int i = 0; kAccept[i] != NULL; i++) {
-                size_t n = 0;
-                uint16_t *toks = tokenize_sql(kAccept[i], &n);
-                if (toks == NULL) continue;
-                int rc = run_token_stream(snap, toks, n);
-                int jit_outcome = rc == 0 ? 1 : -1;
-                if (jit_outcome != table_outcomes_a[i]) {
-                    printf("  [MISMATCH] %s: table=%d jit=%d\n", kAccept[i],
-                           table_outcomes_a[i], jit_outcome);
-                    mismatches++;
-                } else {
-                    printf("  ok %-50s (table=%+d jit=%+d)\n", kAccept[i],
-                           table_outcomes_a[i], jit_outcome);
-                }
-                free(toks);
-            }
-            for (int i = 0; kReject[i] != NULL; i++) {
-                size_t n = 0;
-                uint16_t *toks = tokenize_sql(kReject[i], &n);
-                if (toks == NULL) continue;
-                int rc = run_token_stream(snap, toks, n);
-                int jit_outcome = rc == 0 ? 1 : -1;
-                if (jit_outcome != table_outcomes_r[i]) {
-                    printf("  [MISMATCH] %s: table=%d jit=%d\n", kReject[i],
-                           table_outcomes_r[i], jit_outcome);
-                    mismatches++;
-                } else {
-                    printf("  ok %-50s (table=%+d jit=%+d)\n", kReject[i],
-                           table_outcomes_r[i], jit_outcome);
-                }
-                free(toks);
-            }
-            T_CHECK(mismatches == 0,
-                  "JIT and table paths agree on every corpus query (mismatches=%d)", mismatches);
-
-            /* Throughput: table vs JIT on the PG grammar, the one
-            ** grammar in the tree large enough for lime_jit_compile's
-            ** x86_64 cost model to engage.  Opt-in (it takes seconds):
-            **   LIME_PG_BENCH=<rounds> ./test_pg_grammar
-            ** Uses two snapshots (one table-driven, one JIT-armed),
-            ** CPU time, the accept corpus pre-tokenised, and rounds that
-            ** ALTERNATE table and JIT so drift cancels.  Reports the
-            ** median per-round ratio, never a mean. */
-            const char *bench_env = getenv("LIME_PG_BENCH");
-            if (bench_env != NULL && atoi(bench_env) > 0 && mismatches == 0) {
-                int rounds = atoi(bench_env);
-                ParserSnapshot *tsnap = ParseBuildSnapshot();   /* table-only twin */
-                size_t ncorp = 0, ntok_total = 0;
-                uint16_t *ctoks[16] = {0};
-                size_t cn[16] = {0};
-                for (int i = 0; kAccept[i] != NULL && i < 16; i++) {
-                    ctoks[i] = tokenize_sql(kAccept[i], &cn[i]);
-                    if (ctoks[i]) { ncorp++; ntok_total += cn[i]; }
-                }
-                const int REPS = 20000; /* corpus passes per timed sample: ~30 ms, well above timer / scheduler granularity */
-                double *ratio = calloc((size_t)rounds, sizeof(double));
-                double *tt = calloc((size_t)rounds, sizeof(double));
-                double *jt = calloc((size_t)rounds, sizeof(double));
-                for (int r = -1; r < rounds && tsnap && ratio && tt && jt; r++) {
-                    double t_tab = 0, t_jit = 0;
-                    for (int leg = 0; leg < 2; leg++) {
-                        /* alternate which side goes first each round */
-                        int jit_leg = ((r & 1) == 0) ? leg : 1 - leg;
-                        ParserSnapshot *sp = jit_leg ? snap : tsnap;
-                        struct timespec a, b;
-                        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &a);
-                        for (int rep = 0; rep < REPS; rep++)
-                            for (int i = 0; i < 16; i++)
-                                if (ctoks[i]) (void)run_token_stream(sp, ctoks[i], cn[i]);
-                        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &b);
-                        double ms = time_diff_ms(a, b);
-                        if (jit_leg) t_jit = ms; else t_tab = ms;
-                    }
-                    if (r < 0) continue; /* warm-up round */
-                    tt[r] = t_tab; jt[r] = t_jit; ratio[r] = t_tab / t_jit;
-                }
-                if (tsnap && ratio && tt && jt) {
-                    qsort(ratio, (size_t)rounds, sizeof(double), cmp_double_asc);
-                    qsort(tt, (size_t)rounds, sizeof(double), cmp_double_asc);
-                    qsort(jt, (size_t)rounds, sizeof(double), cmp_double_asc);
-                    double ntok = (double)ntok_total * REPS;
-                    printf("\n--- PG-grammar throughput, %d rounds x %d corpus passes "
-                           "(%zu queries, %zu tokens/pass) ---\n",
-                           rounds, REPS, ncorp, ntok_total);
-                    printf("  table : median %.1f ms  (%.1f ns/token)\n",
-                           tt[rounds / 2], tt[rounds / 2] * 1e6 / ntok);
-                    printf("  JIT   : median %.1f ms  (%.1f ns/token)\n",
-                           jt[rounds / 2], jt[rounds / 2] * 1e6 / ntok);
-                    printf("  JIT speedup (table/JIT): median %.3fx  min %.3fx  max %.3fx\n",
-                           ratio[rounds / 2], ratio[0], ratio[rounds - 1]);
-                    double jc = time_diff_ms(t0, t1);
-                    if (ratio[rounds / 2] > 1.0) {
-                        double saved_ns_per_tok =
-                            (tt[rounds / 2] - jt[rounds / 2]) * 1e6 / ntok;
-                        printf("  JIT compile cost: %.1f ms -> break-even after %.0f tokens\n",
-                               jc, jc * 1e6 / saved_ns_per_tok);
-                    } else {
-                        printf("  JIT compile cost: %.1f ms -> never breaks even "
-                               "(JIT is not faster on this grammar)\n", jc);
-                    }
-                }
-                for (int i = 0; i < 16; i++) free(ctoks[i]);
-                free(ratio); free(tt); free(jt);
-                if (tsnap) snapshot_release(tsnap);
-            }
+    /* Throughput of the table-driven engine on the PG grammar.
+    ** Opt-in (it takes seconds):
+    **   LIME_PG_BENCH=<rounds> ./test_pg_grammar
+    ** CPU time, the accept corpus pre-tokenised, one warm-up round
+    ** discarded.  Reports the median and min-max, never a mean. */
+    const char *bench_env = getenv("LIME_PG_BENCH");
+    if (bench_env != NULL && atoi(bench_env) > 0) {
+        int rounds = atoi(bench_env);
+        size_t ncorp = 0, ntok_total = 0;
+        uint16_t *ctoks[16] = {0};
+        size_t cn[16] = {0};
+        for (int i = 0; kAccept[i] != NULL && i < 16; i++) {
+            ctoks[i] = tokenize_sql(kAccept[i], &cn[i]);
+            if (ctoks[i]) { ncorp++; ntok_total += cn[i]; }
         }
+        const int REPS = 20000; /* corpus passes per timed sample: ~30 ms, well above timer / scheduler granularity */
+        double *tt = calloc((size_t)rounds, sizeof(double));
+        for (int r = -1; r < rounds && tt; r++) {
+            struct timespec a, b;
+            clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &a);
+            for (int rep = 0; rep < REPS; rep++)
+                for (int i = 0; i < 16; i++)
+                    if (ctoks[i]) (void)run_token_stream(snap, ctoks[i], cn[i]);
+            clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &b);
+            if (r >= 0) tt[r] = time_diff_ms(a, b); /* r == -1: warm-up */
+        }
+        if (tt) {
+            qsort(tt, (size_t)rounds, sizeof(double), cmp_double_asc);
+            double ntok = (double)ntok_total * REPS;
+            printf("\n--- PG-grammar throughput, %d rounds x %d corpus passes "
+                   "(%zu queries, %zu tokens/pass) ---\n",
+                   rounds, REPS, ncorp, ntok_total);
+            printf("  table : median %.1f ms (%.1f ns/token)  min %.1f  max %.1f ms\n",
+                   tt[rounds / 2], tt[rounds / 2] * 1e6 / ntok,
+                   tt[0], tt[rounds - 1]);
+        }
+        for (int i = 0; i < 16; i++) free(ctoks[i]);
+        free(tt);
     }
 
     snapshot_release(snap);

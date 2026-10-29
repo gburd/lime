@@ -199,7 +199,7 @@ static int lime_rust_ident_used(const char *hay, const char *id) {
     return 0;
 }
 
-/* Per-rule action body classifier (see src/jit_inline.c).  Returns
+/* Per-rule action body classifier (see src/rule_inline.c).  Returns
 ** true when the action body is small/pure enough that the host
 ** compiler can safely inline it; returns false for bodies that
 ** contain function calls, control flow, or are otherwise too large
@@ -207,9 +207,8 @@ static int lime_rust_ident_used(const char *hay, const char *id) {
 **
 ** For the Rust output we use this to emit `#[inline(always)]` on
 ** the corresponding yy_rule_N reducer so rustc inlines it into the
-** parse loop.  The classifier itself has no LLVM dependency, so it
-** is available even when LIME_NO_JIT is set. */
-extern bool jit_can_inline_rule_text(const char *code, int no_code);
+** parse loop. */
+extern bool rule_can_inline_text(const char *code, int no_code);
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -689,7 +688,7 @@ static void emit_reduce_callbacks(FILE *out, struct lime *lemp,
             lime_emit_rust_rule_rust_code(lemp, r);
         bool inlinable =
             (rust_override_for_inline == NULL || rust_override_for_inline[0] == '\0')
-            && jit_can_inline_rule_text(code, no_code);
+            && rule_can_inline_text(code, no_code);
         fprintf(out, "/// Rule %d: nrhs=%d, lhs symbol index=%d (line %d)\n",
                 r, nrhs, lhs_index, line);
         if (inlinable) {

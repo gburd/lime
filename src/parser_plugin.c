@@ -91,8 +91,6 @@ const char *lime_plugin_capability_name(LimePluginCaps cap) {
         return "snapshot";
     case LIME_CAP_EXTENSIBLE:
         return "extensible";
-    case LIME_CAP_JIT:
-        return "jit";
     case LIME_CAP_INCREMENTAL:
         return "incremental";
     case LIME_CAP_SERIALIZABLE:
@@ -119,7 +117,6 @@ char *lime_plugin_capabilities_string(uint32_t caps, char *buf, size_t buflen) {
     } cap_table[] = {
         { LIME_CAP_SNAPSHOT, "snapshot" },
         { LIME_CAP_EXTENSIBLE, "extensible" },
-        { LIME_CAP_JIT, "jit" },
         { LIME_CAP_INCREMENTAL, "incremental" },
         { LIME_CAP_SERIALIZABLE, "serializable" },
     };

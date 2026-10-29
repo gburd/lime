@@ -6,7 +6,7 @@ pkgdesc="Runtime-extensible LALR(1) parser generator"
 url="https://codeberg.org/gregburd/lime"
 arch="all"
 license="PublicDomain"
-makedepends="meson ninja llvm-dev llvm-static"
+makedepends="meson ninja"
 subpackages="$pkgname-dev $pkgname-doc"
 # Local-tarball name: the release CI stages this file as <pkgname>-<pkgver>.tar.gz.
 source="$pkgname-$pkgver.tar.gz"
@@ -14,7 +14,7 @@ builddir="$srcdir/$pkgname-$pkgver"
 
 build() {
   cd "$builddir"
-  abuild-meson -Dllvm=auto . build
+  abuild-meson . build
   meson compile -C build
 }
 

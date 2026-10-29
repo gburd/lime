@@ -3,6 +3,11 @@
 Two-machine comparison of Lime v0.6.3 vs Flex+Bison on identical
 arithmetic and JSON grammars.  Run on 2026-05-27.
 
+> **Historical record.**  The lime+JIT rows below were measured with the
+> LLVM JIT that has since been removed (see
+> [JIT_ANALYSIS.md](JIT_ANALYSIS.md)) and cannot be reproduced on the
+> current tree.
+
 ## Test machines
 
 | | dev box | nuc |
@@ -102,11 +107,13 @@ flex+bison baseline they're qualifying lime to replace.
 # In the lime source tree
 nix --extra-experimental-features 'nix-command flakes' develop
 unset TMPDIR
-meson setup build-bench --buildtype=release -Dllvm=enabled
+meson setup build-bench --buildtype=release
 ninja -C build-bench
 ./build-bench/bench/bench_flex_bison_compare/bench_flex_bison_compare
-LIME_JIT=1 ./build-bench/bench/bench_flex_bison_compare/bench_flex_bison_compare
 ```
+
+(The original run also built with `-Dllvm=enabled` and re-ran with
+`LIME_JIT=1` for the lime+JIT rows; both are gone with the JIT.)
 
 ## Known issues observed during this run -- both fixed in commit 112a5c1
 

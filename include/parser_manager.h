@@ -117,7 +117,7 @@ typedef uint32_t LimePluginHandle;
 typedef enum LimePluginCaps {
     LIME_CAP_SNAPSHOT = (1u << 0),     /**< Plugin produces ParserSnapshot objects */
     LIME_CAP_EXTENSIBLE = (1u << 1),   /**< Plugin supports runtime grammar extension */
-    LIME_CAP_JIT = (1u << 2),          /**< Plugin's snapshots are JIT-compilable */
+    /* (1u << 2) is retired; do not reuse it for a new capability. */
     LIME_CAP_INCREMENTAL = (1u << 3),  /**< Plugin can produce incremental snapshots */
     LIME_CAP_SERIALIZABLE = (1u << 4), /**< Plugin supports serializing/deserializing state */
 } LimePluginCaps;
@@ -399,13 +399,6 @@ typedef struct ParserManagerConfig {
      * snapshots available.  Default: false.
      */
     bool validate_on_load;
-
-    /**
-     * @brief If true, attempt to JIT-compile snapshots from capable plugins.
-     *
-     * Applies to plugins that advertise LIME_CAP_JIT.  Default: false.
-     */
-    bool auto_jit;
 
     /**
      * @brief Search paths for plugin shared libraries.

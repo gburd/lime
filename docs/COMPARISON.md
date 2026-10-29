@@ -64,7 +64,6 @@ involved.
 |---------|------|------|-------|-------|--------|
 | Parse time complexity | O(n) | O(n) | O(n) / O(n^3) GLR | O(n^4) worst case | O(n) |
 | SIMD tokenization | Yes (AVX2/NEON) | No | No | No | No |
-| JIT compilation | Yes (LLVM) | No | No | No | No |
 | Table compression | Yes (`-c` to disable) | Yes | Yes | N/A | Yes |
 | Typical parse latency | 0.2--3 us | 1--10 us | 1--10 us | 5--50 us | 1--10 us |
 | Memory footprint | ~500 KB--1 MB | ~50--200 KB | ~50--200 KB | ~2--10 MB | ~100--500 KB |
@@ -130,9 +129,8 @@ takes a different approach:
   a running parser without recompilation.  At parser-generation time,
   `%extends` and `%dialect` give file-level inheritance and conditional
   rule blocks respectively.
-- **Performance**: Lime's SIMD tokenizer and LLVM JIT compiler provide
-  significant speedups for hot parsing paths. Bison relies on the standard
-  table-driven approach.  See [BENCHMARKS_VS_BISON.md](BENCHMARKS_VS_BISON.md)
+- **Performance**: Lime's SIMD tokenizer speeds up lexing; parsing is
+  table-driven in both.  See [BENCHMARKS_VS_BISON.md](BENCHMARKS_VS_BISON.md)
   for measured numbers (Lime is 1.69× faster on a fair lex+parse JSON
   benchmark; on parser-only arithmetic Bison's tight-loop wins by ~20%).
 - **License**: Lime is Public Domain. Bison's generated parsers were
@@ -184,15 +182,15 @@ for users choosing between the C and OCaml ecosystems:
 - **Error reporting**: Menhir has sophisticated error message generation
   via `.messages` files. Lime provides `%syntax_error` and `%parse_failure`
   callbacks.
-- **Performance**: Both generate efficient table-driven parsers. Lime's JIT
-  and SIMD features give it an edge for raw throughput on large inputs.
+- **Performance**: Both generate efficient table-driven parsers. Lime's
+  SIMD tokenizer speeds up lexing on large inputs.
 
 ## When to Use Each Tool
 
 ### Use Lime when you need:
 
 - **Runtime grammar modification** -- no other tool supports this
-- **Maximum parsing throughput** -- SIMD + JIT optimizations
+- **SIMD tokenization** -- AVX2/NEON character classification
 - **Thread-safe concurrent parsing** -- built-in snapshot architecture
 - **Minimal dependencies** -- single C file, Public Domain license
 - **Push-based parsing** -- integrate with event loops and custom tokenizers
@@ -264,11 +262,14 @@ These numbers are from the Lime benchmark suite on Linux x86_64 (GCC 14,
 
 ### Parse Latency
 
-| Grammar Size | Lime (interpreted) | Lime (JIT) | Typical Bison/Yacc |
-|--------------|-------------------|------------|-------------------|
-| Small (64 states) | 424 ns | 168 ns | ~500 ns |
-| Medium (256 states) | 1,244 ns | 412 ns | ~1,500 ns |
-| Large (512 states) | 2,890 ns | 689 ns | ~3,500 ns |
+| Grammar Size | Lime (table-driven) | Typical Bison/Yacc |
+|--------------|-------------------|-------------------|
+| Small (64 states) | 424 ns | ~500 ns |
+| Medium (256 states) | 1,244 ns | ~1,500 ns |
+| Large (512 states) | 2,890 ns | ~3,500 ns |
+
+(Earlier versions listed a Lime JIT column; the JIT was removed, see
+[JIT_ANALYSIS.md](JIT_ANALYSIS.md).)
 
 ### Tokenizer Throughput
 

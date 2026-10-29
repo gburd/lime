@@ -7,7 +7,6 @@ Build-Depends:
  meson (>= 0.60),
  ninja-build,
  pkg-config,
- libllvm-dev | llvm-dev (>= 14),
  gcc (>= 13) | clang (>= 15),
 Standards-Version: 4.6.2
 Homepage: https://codeberg.org/gregburd/lime
@@ -24,7 +23,7 @@ Description: Runtime-extensible LALR(1) parser generator
  grammar and emits a C parser, and -- unlike yacc/bison -- the generated
  parser can load and unload grammar extensions at runtime without
  recompilation. Optional features include SIMD-accelerated tokenization
- (AVX2/NEON) and LLVM JIT compilation of the action table.
+ (AVX2/NEON).
 
 Package: lime-parser-dev
 Section: libdevel

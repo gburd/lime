@@ -46,8 +46,6 @@ $1 = ParserSnapshot{magic=LIME abi=2 ver=1 refcount=1 nrule=9 nstate=11}
   yy_default:     0x555555563550
   yy_max_shift:   10
   yy_min_reduce:  28
-  jit_ctx:        0x0
-  jit_find_fn:    0x0
 
 (gdb) lime-stack ctx
   depth:    3 / 64
@@ -117,20 +115,6 @@ For grammar bugs (rules not firing, ambiguity, conflicts):
    (`<file>:<line>:<col>: warning: ...`) ready for editor integration.
 3. Run with `LIME_TRACE=1` (if your generated parser is built with
    `Parse(..., yyTraceFILE)` enabled) to log every shift/reduce.
-
-## JIT debugging
-
-When a JIT'd parser misbehaves but the interpreted parser works, set:
-
-```
-export LIME_NO_JIT=1
-```
-
-This forces the runtime to use the interpreted path. Compare the two
-runs to localise the divergence.
-
-To inspect the JIT'd machine code, build with `LIME_JIT_DUMP=1`. Per-state
-disassembly goes to stderr.
 
 ## See also
 

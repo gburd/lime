@@ -1,33 +1,14 @@
 /*
-** src/jit_inline.c -- per-rule action body classifier.
+** src/rule_inline.c -- per-rule action body classifier.
 **
 ** Pure-string analysis of a rule's action body to decide whether
-** the body can be safely inlined into the parser hot path.  Used
-** by two backends:
-**
-**   1. The runtime LLVM JIT (src/jit_codegen.c) -- inlines the
-**      action body into the trace IR rather than dispatching
-**      through yy_rule_reduce_fn[].
-**
-**   2. The Rust output emitter (src/emit_rust.c) -- emits
-**      `#[inline(always)]` on yy_rule_N reducers so rustc inlines
-**      them into the parse loop.
-**
-** The classifier itself has no LLVM or runtime dependencies, so it
-** lives outside src/jit_codegen.c (which is conditionally compiled
-** under LIME_NO_JIT) and is always available regardless of whether
-** LLVM was found at configure time.
-**
-** Pre-v0.9 history: this code lived inside jit_codegen.c, gated on
-** !LIME_NO_JIT.  In LIME_NO_JIT builds it returned false
-** unconditionally, which was correct for the C+JIT path but wrong
-** for the Rust path (where there is no JIT at all -- inlining is
-** decided by ahead-of-time rustc, not by a runtime trace).  The
-** classifier was hoisted here in feat/rust-inline-action-bodies so
-** the Rust emitter can use it independently of LLVM availability.
+** the body can be safely inlined into the parser hot path.  The
+** Rust output emitter (src/emit_rust.c) uses it to emit
+** `#[inline(always)]` on yy_rule_N reducers so rustc inlines them
+** into the parse loop.
 */
 
-#include "jit_inline.h"
+#include "rule_inline.h"
 
 #include <ctype.h>
 #include <stddef.h>
@@ -62,7 +43,7 @@
 ** parens, block braces, the keyword set -- overlaps cleanly with
 ** Rust, so the Rust emitter reuses it without modification.
 */
-bool jit_can_inline_rule_text(const char *code, int no_code) {
+bool rule_can_inline_text(const char *code, int no_code) {
     /* Empty actions or explicitly marked noCode are inlinable (no-ops). */
     if (no_code || code == NULL || code[0] == '\0') {
         return true;

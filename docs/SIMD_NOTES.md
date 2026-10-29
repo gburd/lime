@@ -66,17 +66,6 @@ Where it would land: `src/tokenize.c::scan_identifier_simd` -- the
 loop that consumes the bitmask Lime already produces.  This is a
 real candidate but the numbers are small.
 
-### 4. Pdep / Pext (BMI2) for unpacking action-table indices
-
-Outside of tokenisation, the JIT codegen could use `_pdep_u64` /
-`_pext_u64` to scatter/gather action-table entries when emitting
-per-state action lookups.  This is what `fastfloat` uses for
-fast integer-to-string (digit extraction).
-
-This is purely a JIT-internal optimisation and only relevant once
-the JIT-into-parse_token integration in
-[ROADMAP.md](ROADMAP.md) §2 is done.
-
 ## Verification
 
 `bench/bench_simd_classify` is the gate: any change to

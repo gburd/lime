@@ -154,8 +154,7 @@ static inline uint64_t lime_now_realtime_ns(void) {
 ** LIME_LIKELY(x) / LIME_UNLIKELY(x) -- branch-prediction hints.
 **
 ** On gcc/clang these wrap __builtin_expect, which has been used
-** in src/parse_engine.c's per-token hot path since commit
-** 602c305 ("perf(x86): hoist JIT pointer cache + branch hints").
+** in src/parse_engine.c's per-token hot path.
 **
 ** MSVC has no __builtin_expect in C.  C++23 introduces the
 ** [[likely]] / [[unlikely]] attributes but C has no equivalent.

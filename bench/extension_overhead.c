@@ -40,7 +40,7 @@
 #include "parser_fork.h"
 #include "grammar_context.h"
 #include "snapshot.h"
-#include "jit_context.h"
+#include "parse_context.h"
 
 /* ------------------------------------------------------------------ */
 /*  Timing infrastructure                                              */
@@ -171,7 +171,6 @@ static ParserSnapshot *create_test_snapshot(uint32_t nstates,
         }
     }
 
-    snap->jit_ctx = NULL;
     return snap;
 }
 
@@ -193,7 +192,7 @@ static void bench_snap_action_lookup(void *arg) {
     SnapCtx *ctx = (SnapCtx *)arg;
     /* Look up 50 actions (simulating a moderate parse) */
     for (int i = 0; i < 50; i++) {
-        uint16_t action = jit_find_shift_action(
+        uint16_t action = snap_find_shift_action(
             ctx->snap, (uint16_t)(i % 64), (uint16_t)(i % 32));
         (void)action;
     }

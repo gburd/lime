@@ -41,28 +41,20 @@ What remains is inherent to interpreting composed tables at runtime:
 3. **Per-token value-stack boxing.** A pointer-width `memcpy` per token to move
    the semantic value in and out of the generic stack.
 
-None of these is removable by a memset shrink, and none is touched by the JIT.
+None of these is removable by a memset shrink.
 
-## Why the LLVM JIT does not fix this
+## Why a JIT does not fix this
 
-The only "fast path" ever shipped for composed snapshots is the optional LLVM
-JIT (`LIME_JIT=1`). It accelerates **only the shift-action lookup** — the
-nested `switch` on state and lookahead token in
-`src/jit_codegen.c`. It does **not** touch the reduce dispatch, the
-`host_reduce` callback boundary, or the per-token value-stack boxing, which is
-where the residual time actually goes.
-
-Worse, on x86_64 it loses to the C compiler outright. Lime's own arch-gate in
-`lime_jit_compile()` (`src/jit_context.c`) skips the JIT for small grammars on
-x86_64, because the compiler-generated static switch out-predicts the indirect
-calls the JIT emits (`docs/BENCHMARK_RESULTS.md`: −8 to −12% on JSON/arith).
-The PostgreSQL port measured the same: **0% speedup on x86_64, marginally
-slower** (`SELECT 1` 786→813 ns; join 5539→5743 ns). On aarch64 the JIT does
-win, which is the only reason it is still gated-on rather than removed.
+Earlier releases shipped an optional LLVM JIT. It accelerated **only the
+shift-action lookup**, not the reduce dispatch, the `host_reduce` callback
+boundary, or the per-token value-stack boxing, which is where the residual
+time goes. Measured on the PostgreSQL grammar it was 4-6% slower than the
+table interpreter on x86_64 and 7-9% slower on aarch64, and it has been
+removed (`docs/JIT_ANALYSIS.md`).
 
 ## The real fix (planned, not shipped)
 
-Closing the AOT/composed gap without LLVM means making the interpreter loop
+Closing the AOT/composed gap means making the interpreter loop
 itself competitive: a threaded-code / computed-goto dispatch for
 `parse_engine_step` with the snapshot table bases hoisted into locals, plus a
 persistent reducer context and value-stack changes to drop the per-reduce
@@ -74,5 +66,5 @@ above, and no existing knob changes that.
 
 - `docs/REDUCE_DISPATCH.md` — how composed reduces are routed to base +
   extension actions.
-- `docs/JIT_ANALYSIS.md` — the JIT's scope and measured results.
+- `docs/JIT_ANALYSIS.md` — why the JIT was removed, with measurements.
 - `docs/HOST_REDUCE.md` — the host-reduce contract the W1 fix operates on.

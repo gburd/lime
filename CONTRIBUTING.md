@@ -21,8 +21,8 @@ Lime builds with Meson + Ninja. The reproducible development environment is
 a Nix flake:
 
 ```sh
-nix develop            # drops you into a shell with meson, ninja, llvm, etc.
-meson setup build      # add -Dllvm=disabled to skip the JIT dependency
+nix develop            # drops you into a shell with meson, ninja, gcc, etc.
+meson setup build
 ninja -C build         # build the lime generator + runtime library
 meson test -C build    # run the test suite
 ```

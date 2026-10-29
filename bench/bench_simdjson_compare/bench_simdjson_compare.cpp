@@ -1,19 +1,19 @@
 /*
-** bench_simdjson_compare.cpp -- Lime+JIT vs simdjson on a JSON
+** bench_simdjson_compare.cpp -- Lime vs simdjson on a JSON
 ** workload, measured at steady state after warmup.
 **
 ** Three Lime modes:
 **
-**   1. lime+jit malloc        -- one malloc per JsonValue node
+**   1. lime malloc            -- one malloc per JsonValue node
 **                                + json_free walks and releases.
 **                                The honest "build a tree, dispose
 **                                of it" cost.
-**   2. lime+jit malloc-leak   -- one malloc per node; json_free is
+**   2. lime malloc-leak       -- one malloc per node; json_free is
 **                                a no-op.  Isolates parse-only cost
 **                                without paying the deallocator.
 **                                For TESTING ONLY -- in production
 **                                this leaks every parse.
-**   3. lime+jit arena         -- single 1 MB pre-allocated arena;
+**   3. lime arena             -- single 1 MB pre-allocated arena;
 **                                bump-pointer alloc per node; reset
 **                                (not freed) between iterations.
 **                                Mirrors simdjson's allocation
@@ -247,7 +247,7 @@ int main() {
     const int trials = 5;
     const size_t doc_bytes = std::strlen(kJsonInput);
 
-    std::printf("Lime+JIT vs simdjson, JSON throughput at steady state\n");
+    std::printf("Lime vs simdjson, JSON throughput at steady state\n");
     std::printf("=====================================================\n");
     std::printf("Document: %zu bytes\n", doc_bytes);
     std::printf("Warmup:   %d iterations per side\n", warmup);
@@ -256,9 +256,7 @@ int main() {
     ParserSnapshot *snap = JsonBuildSnapshot();
     if (!snap) { std::fprintf(stderr, "JsonBuildSnapshot returned NULL\n"); return 1; }
 
-    /* JIT compile, then warm everything. */
-    int rc = lime_jit_compile(snap);
-    std::printf("lime_jit_compile rc=%d (0 = ok)\n\n", rc);
+    /* Warm everything. */
 
     bench_lime_malloc(snap, warmup);
     bench_lime_leak  (snap, warmup);
@@ -291,11 +289,11 @@ int main() {
            a = median(t_arena),  s = median(t_simd);
 
     std::printf("\n=== Median across %d trials ===\n", trials);
-    std::printf("  lime+jit malloc       %7.1f ms  %6.1f MB/s  %7.0f docs/s\n",
+    std::printf("  lime malloc           %7.1f ms  %6.1f MB/s  %7.0f docs/s\n",
                 m, throughput_mbs(m), docs_per_sec(m));
-    std::printf("  lime+jit malloc-leak  %7.1f ms  %6.1f MB/s  %7.0f docs/s   (no free)\n",
+    std::printf("  lime malloc-leak      %7.1f ms  %6.1f MB/s  %7.0f docs/s   (no free)\n",
                 l, throughput_mbs(l), docs_per_sec(l));
-    std::printf("  lime+jit arena        %7.1f ms  %6.1f MB/s  %7.0f docs/s   (zero alloc steady)\n",
+    std::printf("  lime arena            %7.1f ms  %6.1f MB/s  %7.0f docs/s   (zero alloc steady)\n",
                 a, throughput_mbs(a), docs_per_sec(a));
     std::printf("  simdjson ondemand     %7.1f ms  %6.1f MB/s  %7.0f docs/s\n",
                 s, throughput_mbs(s), docs_per_sec(s));

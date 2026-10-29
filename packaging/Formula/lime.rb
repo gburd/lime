@@ -11,13 +11,9 @@ class Lime < Formula
   depends_on "meson"           => :build
   depends_on "ninja"           => :build
   depends_on "pkg-config"      => :build
-  depends_on "llvm" # for the optional JIT; --without-llvm omits it
 
   def install
-    args = ["-Dllvm=auto"]
-    args << "-Dllvm=disabled" if build.without?("llvm")
-
-    system "meson", "setup", "builddir", *args, *std_meson_args
+    system "meson", "setup", "builddir", *std_meson_args
     system "meson", "compile", "-C", "builddir"
     system "meson", "test",    "-C", "builddir", "--no-rebuild"
     system "meson", "install", "-C", "builddir"

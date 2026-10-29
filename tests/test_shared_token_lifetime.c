@@ -18,7 +18,7 @@
 #include "snapshot_modify.h"
 #include "parser_composition.h"
 #include "token_table.h"
-#include "jit_context.h"
+#include "parse_context.h"
 
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -234,7 +234,7 @@ static void test_imported_tokens_survive_source_unload(void) {
 
 /*
 ** Acquire a snapshot, simulate an in-flight parse by reading action
-** tables (including jit_find_shift_action fallback path), release
+** tables (including snap_find_shift_action), release
 ** the original, and continue reading from the acquired reference.
 */
 static void test_inflight_parse_survives_plugin_unload(void) {
@@ -243,7 +243,7 @@ static void test_inflight_parse_survives_plugin_unload(void) {
     ParserSnapshot *plugin_snap = make_plugin_snapshot(6, 3, 2, 4, 8);
     if (!plugin_snap) { FAIL("snapshot creation failed"); return; }
 
-    /* Set up shift offsets so jit_find_shift_action has something to read. */
+    /* Set up shift offsets so snap_find_shift_action has something to read. */
     for (uint32_t i = 0; i < 4; i++) {
         plugin_snap->yy_shift_ofst[i] = 0;
         plugin_snap->yy_default[i] = (uint16_t)(i + 50);
@@ -257,9 +257,8 @@ static void test_inflight_parse_survives_plugin_unload(void) {
     uint16_t action3 = parse_ref->yy_action[3];
     uint16_t default1 = parse_ref->yy_default[1];
 
-    /* Use jit_find_shift_action (will use table-driven fallback since
-    ** no JIT is compiled). State 0, lookahead 0. */
-    uint16_t jit_result = jit_find_shift_action(parse_ref, 0, 0);
+    /* Table-driven shift lookup.  State 0, lookahead 0. */
+    uint16_t shift_result = snap_find_shift_action(parse_ref, 0, 0);
 
     /* "Unload plugin" -- release the original reference. */
     snapshot_release(plugin_snap);
@@ -288,10 +287,10 @@ static void test_inflight_parse_survives_plugin_unload(void) {
         return;
     }
 
-    /* Another jit_find_shift_action call after unload. */
-    uint16_t jit_result2 = jit_find_shift_action(parse_ref, 0, 0);
-    if (jit_result != jit_result2) {
-        FAIL("jit_find_shift_action returned different result after unload");
+    /* Another snap_find_shift_action call after unload. */
+    uint16_t shift_result2 = snap_find_shift_action(parse_ref, 0, 0);
+    if (shift_result != shift_result2) {
+        FAIL("snap_find_shift_action returned different result after unload");
         snapshot_release(parse_ref);
         return;
     }

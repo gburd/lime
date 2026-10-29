@@ -21,7 +21,7 @@
 #   ./scripts/build-lto.sh build-lto-pgo -Dlime_pgo=use  # LTO + PGO
 #
 # Any extra arguments are forwarded to `meson setup`, so the standard
-# flags (-Dbuildtype=release, -Dllvm=disabled, etc.) compose normally.
+# flags (-Dbuildtype=release, -Dcontrib=enabled, etc.) compose normally.
 #
 # After setup, build and test as usual:
 #   ninja -C build-lto

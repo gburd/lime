@@ -5,7 +5,7 @@
 ** parse_engine.c is the runtime push parser that drives every
 ** consumer of parse_begin/parse_token/parse_end.  Until v0.5.0 it
 ** was only covered transitively (test_runtime_parse, runtime_pbt,
-** jit_parse_equivalence, extension_e2e) -- direct unit tests catch
+** extension_e2e) -- direct unit tests catch
 ** regressions integration tests miss, particularly the synthetic
 ** error/edge paths that real grammars never visit.
 **

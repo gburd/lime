@@ -575,7 +575,7 @@ static void test_identity_random(void) {
 /*
 ** Benchmark clock.  Wall clock counts time this process spent
 ** descheduled, which on a loaded machine (parallel `meson test`, a
-** busier -Dllvm=enabled build) is many times the effect being measured
+** busy build) is many times the effect being measured
 ** and is what made this test flap by >120 points run to run.  CPU time
 ** charges only cycles actually executed, so a preempted batch costs what
 ** an unpreempted one does.  Fall back to the wall clock where

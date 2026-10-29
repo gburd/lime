@@ -11,12 +11,6 @@ parser_bench = executable('parser_bench',
   include_directories : include_directories('../src'),
 )
 
-jit_comparison = executable('jit_comparison',
-  'jit_comparison.c',
-  include_directories : include_directories('../src'),
-  dependencies : [lime_parser_dep, math_dep],
-)
-
 extension_overhead = executable('extension_overhead',
   'extension_overhead.c',
   include_directories : include_directories('../src'),
@@ -32,10 +26,9 @@ jsonb_extension_lib = static_library('jsonb_extension_example',
   build_by_default : true,
 )
 
-# Real-parser JIT benchmark.  Generates a small arithmetic parser via
-# the same `lime` invocation users get in examples/*, then compares
-# parse time with and without lime_jit_compile().  Forensic, not a
-# regression test.
+# Small arithmetic parser generated via the same `lime` invocation
+# users get in examples/*.  Shared by bench_parse_fanout and the
+# flex/bison comparison harness.
 bench_arith_gen = custom_target('bench_arith_parser',
   input   : ['bench_arith_grammar.y'],
   output  : ['bench_arith_grammar.c', 'bench_arith_grammar.h',
@@ -65,13 +58,6 @@ bench_json_gen = custom_target('bench_json_parser',
     '-d@OUTDIR@',
     '@INPUT@',
   ],
-)
-
-bench_jit_real_parser = executable('bench_jit_real_parser',
-  'bench_jit_real_parser.c',
-  bench_arith_gen,
-  include_directories : include_directories('../src'),
-  dependencies : [lime_parser_dep, math_dep],
 )
 
 # In-process LALR(1) rebuild cost of a whole grammar (default: the full

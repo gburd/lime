@@ -11,11 +11,6 @@ LIME_CPPFLAGS = -I. -I../../include -I../../src
 LDFLAGS   ?=
 LDLIBS    ?= -lpthread
 
-# LLVM JIT path is optional but lights up automatically when present.
-ifneq (,$(wildcard /nix/store/*-llvm-*))
-LDLIBS += -L$(firstword $(wildcard /nix/store/*-llvm-*-lib/lib)) -lLLVM-21
-endif
-
 GEN_SRCS = json_grammar.c
 GEN_HDRS = json_grammar.h
 SRCS     = main.c json_helpers.c json_tokenize.c $(GEN_SRCS)

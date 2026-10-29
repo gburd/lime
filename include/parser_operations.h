@@ -175,7 +175,7 @@ ParserOpResult parser_op_get_stats(const ParserManager *mgr, ParserManagerStats 
 ** Write a formatted summary of all loaded plugins to the given stream.
 **
 ** Output format:
-**   [1] sql_parser v1.2.3 (active) [snapshot, extensible, jit]
+**   [1] sql_parser v1.2.3 (active) [snapshot, extensible]
 **   [2] json_parser v2.0.0 [snapshot]
 **
 ** Returns PM_OK on success.

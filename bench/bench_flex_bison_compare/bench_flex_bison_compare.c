@@ -1,17 +1,12 @@
 /*
 ** bench_flex_bison_compare.c
 **
-** Apples-to-apples performance comparison of three implementations of
+** Apples-to-apples performance comparison of two implementations of
 ** an identical arithmetic grammar:
 **
 **   1. Lime + hand tokenizer  -- runtime parse_token engine driving
 **                                ArithBuildSnapshot()'s tables.
-**   2. Lime + JIT             -- same Lime parser with
-**                                lime_jit_compile() called.  Lime's JIT
-**                                presently accelerates the batch parse
-**                                path; see docs/ROADMAP.md for the
-**                                runtime-engine integration item.
-**   3. Bison + Flex           -- the standard Yacc/Lex pipeline on
+**   2. Bison + Flex           -- the standard Yacc/Lex pipeline on
 **                                the same grammar.
 **
 ** Output is CSV-formatted: tool,trial,duration_ms,rss_kb,cpu_us
@@ -392,31 +387,11 @@ int main(int argc, char **argv) {
         bison_sum += ms;
     }
 
-    /* JIT-armed Lime: compile and rerun. */
-    int rc = lime_jit_compile(snap);
-    double jit_min = 1e18, jit_sum = 0;
-    if (rc == 0) {
-        for (int t = 0; t < trials; t++) {
-            double ms = bench_lime(snap, iters);
-            Sample s = sample_capture((uint64_t)(ms * 1e6));
-            printf("lime+jit,%d,%.3f,%ld,%ld\n", t + 1, ms, s.rss_kb, s.cpu_us);
-            if (ms < jit_min) jit_min = ms;
-            jit_sum += ms;
-        }
-    }
-
     printf("\n=== Summary (lower is better) ===\n");
     printf("  lime     min=%.2f ms mean=%.2f ms\n", lime_min,  lime_sum / trials);
     printf("  bison    min=%.2f ms mean=%.2f ms\n", bison_min, bison_sum / trials);
-    if (rc == 0) {
-        printf("  lime+jit min=%.2f ms mean=%.2f ms\n", jit_min, jit_sum / trials);
-    }
     printf("\n  speedup vs bison (lime mean):     %.2fx\n",
            (bison_sum / trials) / (lime_sum / trials));
-    if (rc == 0) {
-        printf("  speedup vs bison (lime+jit mean): %.2fx\n",
-               (bison_sum / trials) / (jit_sum / trials));
-    }
 
     snapshot_release(snap);
 
@@ -453,8 +428,8 @@ int main(int argc, char **argv) {
 
     printf("tool,trial,duration_ms,rss_kb,cpu_us\n");
 
-    double jl_min = 1e18, jb_min = 1e18, jj_min = 1e18;
-    double jl_sum = 0, jb_sum = 0, jj_sum = 0;
+    double jl_min = 1e18, jb_min = 1e18;
+    double jl_sum = 0, jb_sum = 0;
 
     for (int t = 0; t < trials; t++) {
         double ms = bench_lime_json(jsnap, iters);
@@ -471,29 +446,11 @@ int main(int argc, char **argv) {
         jb_sum += ms;
     }
 
-    int jit_rc = lime_jit_compile(jsnap);
-    if (jit_rc == 0) {
-        for (int t = 0; t < trials; t++) {
-            double ms = bench_lime_json(jsnap, iters);
-            Sample s = sample_capture((uint64_t)(ms * 1e6));
-            printf("lime_json+jit,%d,%.3f,%ld,%ld\n", t + 1, ms, s.rss_kb, s.cpu_us);
-            if (ms < jj_min) jj_min = ms;
-            jj_sum += ms;
-        }
-    }
-
     printf("\n=== JSON Summary (lower is better) ===\n");
     printf("  lime_json     min=%.2f ms mean=%.2f ms\n", jl_min, jl_sum / trials);
     printf("  bison_json    min=%.2f ms mean=%.2f ms\n", jb_min, jb_sum / trials);
-    if (jit_rc == 0) {
-        printf("  lime_json+jit min=%.2f ms mean=%.2f ms\n", jj_min, jj_sum / trials);
-    }
     printf("\n  speedup vs bison_json (lime_json mean):     %.2fx\n",
            (jb_sum / trials) / (jl_sum / trials));
-    if (jit_rc == 0) {
-        printf("  speedup vs bison_json (lime_json+jit mean): %.2fx\n",
-               (jb_sum / trials) / (jj_sum / trials));
-    }
 
     snapshot_release(jsnap);
     return 0;

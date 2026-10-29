@@ -1,5 +1,5 @@
 /*
-** Tiny arithmetic grammar used by bench_jit_real_parser to build a
+** Tiny arithmetic grammar used by the parser benchmarks to build a
 ** REAL Lime-generated parser with a non-trivial state machine.
 **
 ** Grammar:

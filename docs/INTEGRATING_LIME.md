@@ -61,9 +61,8 @@ What you get on this path:
     upgrade.  Without ParserSnapshot you can't load extensions
     at runtime (the static `yy_action` table is fixed at
     compile time).
-  - JIT acceleration -- not on this path.  See Shape B.
 
-## Shape B: ParserSnapshot + parse_token (runtime extensible, JITable)
+## Shape B: ParserSnapshot + parse_token (runtime extensible)
 
 This is the path PG's roadmap lands on for the dialect /
 extension story.  It uses
@@ -100,10 +99,6 @@ What you get on this path:
     extensions that add new tokens / rules / precedence at
     runtime via the ExtensionRegistry.  See
     `docs/EXTENSIONS.md`.
-  - **JIT-armed dispatch.**  After `lime_jit_compile(snap)`,
-    `parse_token` resolves shift actions through the JIT'd
-    `find_shift_action` instead of the table walk.  See
-    `docs/JIT_ANALYSIS.md` for the cost-benefit story.
   - **Snapshot acquire / release** is reference-counted.  Two
     threads can hold references to the same snapshot
     concurrently and call `parse_token` against it; copy-on-
@@ -131,11 +126,10 @@ arithmetic / JSON Bison-vs-Lime comparison in
 `docs/BENCHMARKS_VS_BISON.md`: 1.27× faster than Bison + default
 flex, but 0.83× (17% slower) than Bison + `flex -CF`; the older
 1.04-1.81× figures compared only against flex's slowest table
-mode.  The headline on the snapshot path is
-the JIT speedup in `docs/BENCHMARK_RESULTS.md` (typically
-2-3× over the C interpreter on grammars > 100 states, on
-aarch64; on x86 the JIT is auto-skipped for small grammars
-because the unrolled-switch interpreter is already optimal).
+mode.  The snapshot path has no JIT: the LLVM JIT that earlier
+releases offered here was removed after it measured 4-6% slower
+than the table interpreter on x86_64 and 7-9% slower on aarch64
+(`docs/JIT_ANALYSIS.md`).
 
 ## Concrete answers to Letter 14
 
@@ -183,10 +177,8 @@ without releasing the snapshot reference; until then,
 
 ### Q2.1 -- JIT and the static action-table dispatch
 
-The JIT operates on a ParserSnapshot.  It does not directly
-accelerate the static `yy_find_shift_action` in your generated
-`gram.c`.  If you want JIT acceleration, you need the snapshot
-path (Shape B or hybrid).
+Historical: this asked about the LLVM JIT, which has since been
+removed (`docs/JIT_ANALYSIS.md`).  Neither path has a runtime JIT.
 
 ### Q2.2 -- AOT (-j flag) as the static-codegen equivalent
 
@@ -197,10 +189,8 @@ YYACTIONTYPE_AOT yy_find_shift_action_aot(stateno, lookahead);
 ```
 
 implemented as a switch-of-switches that the C compiler
-optimises into a jump table at -O2.  That's the static-time
-equivalent of the JIT: no runtime LLVM, no per-grammar compile
-delay, but the same constant-folded dispatch shape the JIT
-gives you on aarch64 grammars.
+optimises into a jump table at -O2.  It is plain C generated
+ahead of time: no LLVM, nothing compiled at runtime.
 
 To use: compile the AOT file alongside your `gram.c`, link
 both, define `-DYYAOT` so the generator's `yy_find_shift_action`
@@ -217,9 +207,8 @@ v0.2.5 (commit `b566478`) -- `lime -j` now produces a valid
                                           full AST
   - `tests/test_extension_e2e.c`       -- Shape B with runtime
                                           extension loading
-  - `tests/test_jit_parse_equivalence.c` -- Shape B with JIT
-  - `bench/bench_jit_real_parser.c`    -- Shape B perf
-                                          measurement
+  - `bench/bench_composed_vs_aot.c`    -- Shape B vs Shape A perf
+                                          on the same tokens
 
 Each is a self-contained, < 200-line C file.  All examples
 build via the top-level `make` and each subdirectory's

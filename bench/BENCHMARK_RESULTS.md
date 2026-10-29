@@ -9,7 +9,7 @@
 **System:** Intel Xeon E5-2697 v2 @ 2.70GHz (12 cores / 24 threads), 125GB RAM
 **OS:** NixOS Linux 6.12.80 x86_64
 **Compiler:** GCC 14.3.0, -O2 -std=c11
-**Build:** meson debugoptimized (default), JIT disabled (LLVM not available)
+**Build:** meson debugoptimized (default), no JIT (the LLVM JIT has since been removed)
 **Iterations:** 50,000 per benchmark, 1,000 warmup
 
 ---
@@ -295,9 +295,7 @@ Additional baseline data from the parser_bench suite (5,000 iterations):
 | token_table | lookup_36_keywords_hit | 3,240 | 309K |
 | token_table | lookup_5_keywords_miss | 448 | 2.2M |
 | snapshot | acquire_release | 92 | 10.9M |
-| jit | action_lookup_interpreted_64x32 | 13,963 | 72K |
-| policy | metrics_record | 100 | 10.0M |
-| policy | should_compile_eval | 51 | 19.7M |
+| lookup | action_lookup_table_64x32 (then named jit/action_lookup_interpreted_64x32) | 13,963 | 72K |
 | throughput | throughput_4kb | 190,862 | 5.2K |
 | throughput | throughput_64kb | 3,167,545 | 316 |
 | throughput | throughput_256kb | 12,803,847 | 78 |
@@ -312,7 +310,10 @@ Additional baseline data from the parser_bench suite (5,000 iterations):
 
 ---
 
-## JIT Comparison (from jit_comparison, interpreted-only)
+## Table-driven lookup (from the removed jit_comparison bench)
+
+Historical: `bench/jit_comparison` no longer exists.  These rows timed
+the interpreter only.
 
 | Grammar Size | Parse Length | Mean (ns) | Median (ns) | P95 (ns) | Throughput |
 |-------------|------------:|----------:|------------:|------:|-----------|
@@ -320,5 +321,6 @@ Additional baseline data from the parser_bench suite (5,000 iterations):
 | 256 states, 100 terms | 100 tokens | 338 | 334 | 337 | 3.0M parses/sec |
 | 512 states, 150 terms | 200 tokens | 600 | 593 | 596 | 1.7M parses/sec |
 
-Note: JIT compilation was not available (LLVM not linked). When enabled,
-expected speedup is 2-5x for the action lookup hot path.
+The LLVM JIT that this bench compared against was removed; measured on
+the PostgreSQL grammar it was slower than the table interpreter (see
+`docs/JIT_ANALYSIS.md`).
