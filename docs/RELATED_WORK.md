@@ -52,15 +52,22 @@ poor error messages.
 
 **What Lime pays for LALR.**  Every change to the extension set rebuilds
 the parser tables.  Measured with `bench/bench_pg_rebuild` on the full
-PostgreSQL grammar (3,842 states, 557 terminals, 3,584 rules, 145k
-actions), in-process, Debian 13 / Xeon 8488C, median of 7:
+PostgreSQL grammar (`examples/pg/pg_grammar.lime`: 3,841 states, 561
+terminals, 3,600 rules, 147k actions, 0 conflicts), in-process, Debian 13
+/ Xeon 8488C, one core, CPU time, median of 9:
 
 | | CPU time | peak RSS |
 |---|---:|---:|
-| before the v1.11.3 review fixes | 5.0 s | ~854 MB |
-| after (`acttab_insert` offset index, word-wide `SetUnion`; output byte-identical) | **2.1 s** | ~854 MB |
+| before the v1.11.3 review fixes (measured on `gram.lime`, the no-precedence copy; within a few % of the same build on `pg_grammar.lime`) | 5.0 s | ~854 MB |
+| after (`acttab_insert` offset index, word-wide `SetUnion`) | 1.77 s | 855 MB |
+| + sparse config-table clear, same-symbol chain in `buildshifts`, per-lookahead slot index in `acttab_insert`, bitset follow sets | **0.80 s** | **325 MB** |
+| the same, PG + a 30-rule dialect extension (`--compose bench/pg_dialect_ext.lime`) | 0.82 s | 332 MB |
 
-So a PostgreSQL-scale recompose costs about two seconds of CPU and ~850 MB
+Every row builds byte-identical tables (`tests/test_lalr_identity.c`).
+Of the 0.80 s, packing the action table is 0.22 s, follow sets 0.17 s,
+LR(0) states 0.10 s and freeing the generator's memory 0.12 s.
+
+So a PostgreSQL-scale recompose costs under a second of CPU and ~330 MB
 of transient memory.  That is acceptable once at backend start or on
 `CREATE EXTENSION`; it is not acceptable per session, per statement, or
 per backend (500 backends each rebuilding would be the dominant startup

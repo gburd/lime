@@ -23,7 +23,7 @@ All binaries land in `builddir/bench/`.
 |------------|----------|-----------|
 | `parser_bench` | Tokenizer throughput (SIMD vs scalar classify), table-driven action lookup, snapshot acquire/release and creation, token-table lookup.  CSV on stdout, commentary on stderr. | `[iters] [warmup]` |
 | `extension_overhead` | Extension framework cost against a no-extension baseline: registry ops, conflict detection, disambiguation, execution policy, parser fork, grammar-context switching, and the full pipeline.  CSV on stdout. | `[iters] [warmup]` |
-| `bench_pg_rebuild` | CPU time, wall time and peak-RSS growth of one in-process LALR(1) rebuild of a whole grammar (default: the PostgreSQL grammar).  The cost every extension-set change pays. | `<grammar.lime> [iterations]` |
+| `bench_pg_rebuild` | CPU time, wall time, instructions and peak RSS of one in-process LALR(1) rebuild of a whole grammar (use `examples/pg/pg_grammar.lime`), with a per-phase breakdown; `--compose ext.lime` adds the grammar with an extension appended, as `publish_modified_snapshot` does (try `bench/pg_dialect_ext.lime`).  The cost every extension-set change pays. | `<grammar.lime> [iterations] [--compose ext.lime]` |
 | `bench_parse_fanout` | Parse throughput as parser threads scale 1..N over one shared `ParserSnapshot`; the false-sharing check for the snapshot layout.  POSIX only. | `[thread counts...]` or `THREADS=N` |
 | `bench_simd_classify` | SIMD vs scalar character classification in `src/tokenize_simd.c`, ns per 32-byte block.  Backs the README's SIMD claim. | `[bytes] [iters]` |
 | `glr_overhead` | The LALR push parser vs the GLR engine on the same unambiguous arithmetic input: the fixed cost of the GLR step machinery. | `[iters] [trials]` |

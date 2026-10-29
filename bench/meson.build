@@ -61,14 +61,19 @@ bench_json_gen = custom_target('bench_json_parser',
 )
 
 # In-process LALR(1) rebuild cost of a whole grammar (default: the full
-# PostgreSQL grammar).  The number the runtime-composition design rests
-# on -- every extension-set change rebuilds the tables.  Not a test.
-#   ./bench/bench_pg_rebuild ../examples/pg/pg_grammar.lime 7
+# PostgreSQL grammar), with a per-phase CPU / instruction breakdown and
+# an optional --compose ext.lime for base vs composed.  The number the
+# runtime-composition design rests on -- every extension-set change
+# rebuilds the tables.  Not a test.  It #includes lime.c (for the
+# phase timer), so it links the parser runtime but not lime_compiler.
+#   ./bench/bench_pg_rebuild ../examples/pg/pg_grammar.lime 7 [--compose ext.lime]
 bench_pg_rebuild = executable('bench_pg_rebuild',
   'bench_pg_rebuild.c',
-  include_directories : include_directories('../src'),
-  dependencies : [lime_parser_dep, lime_compiler_dep],
-  c_args : ['-DLIME_HAVE_SNAPSHOT_BUILD'],
+  include_directories : [inc, include_directories('../src'),
+                         include_directories('../src/lex')],
+  dependencies : [lime_parser_dep],
+  c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAVE_SNAPSHOT_BUILD']
+           + lime_warning_suppress,
 )
 
 # v0.9.x: multi-thread parse-server fan-out benchmark.  Measures
