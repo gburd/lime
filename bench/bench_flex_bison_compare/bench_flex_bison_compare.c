@@ -291,6 +291,31 @@ static int lime_json_next_token(const char **pp) {
     return tok;
 }
 
+#ifndef BENCH_FLEX_VARIANT
+#define BENCH_FLEX_VARIANT "default (-Cem)"
+#endif
+
+/* Correctness gate: run each side once and require ACCEPT before any
+** timing is trusted.  A benchmark that does not check its output
+** measures nothing -- a parser that rejected at the third token would
+** otherwise post the best time. */
+static int lime_json_accepts(ParserSnapshot *snap) {
+    ParseContext *ctx = parse_begin(snap);
+    const char *p = kJsonInput;
+    int last = 0, ntok = 0;
+    for (;;) {
+        int tok = lime_json_next_token(&p);
+        if (tok < 0) { parse_end(ctx); return 0; }
+        if (tok == 0) break;
+        ntok++;
+        last = parse_token(ctx, tok, NULL, -1);
+        if (last < 0) { parse_end(ctx); return 0; }
+    }
+    last = parse_token(ctx, 0, NULL, -1);
+    parse_end(ctx);
+    return last == 1 ? ntok : 0;
+}
+
 static double bench_lime_json(ParserSnapshot *snap, int iters) {
     uint64_t t0 = now_ns();
     int total = 0;
@@ -409,6 +434,21 @@ int main(int argc, char **argv) {
     if (jsnap == NULL) {
         fprintf(stderr, "JsonParserBuildSnapshot returned NULL\n");
         return 1;
+    }
+
+    printf("flex build: %s\n", BENCH_FLEX_VARIANT);
+    {
+        int lime_ntok = lime_json_accepts(jsnap);
+        struct yy_buffer_state *buf = json__scan_string(kJsonInput);
+        int bison_rc = json_parse();
+        json__delete_buffer(buf);
+        if (lime_ntok == 0 || bison_rc != 0) {
+            fprintf(stderr, "correctness gate FAILED: lime %s, bison rc=%d -- "
+                    "timings would be meaningless\n",
+                    lime_ntok ? "accepts" : "REJECTS", bison_rc);
+            return 1;
+        }
+        printf("correctness gate: both accept (%d tokens)\n\n", lime_ntok);
     }
 
     printf("tool,trial,duration_ms,rss_kb,cpu_us\n");

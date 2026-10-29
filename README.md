@@ -422,26 +422,25 @@ See **[docs/EXTENSIONS.md](docs/EXTENSIONS.md)** and
 
 ## Performance
 
-### vs Bison + Flex (lex + parse, fair)
+### vs Bison + Flex (lex + parse)
 
-`bench/bench_flex_bison_compare/`: same JSON document parsed
-through Flex+Bison and Lime in the same harness.  100k iterations
-per trial, 5 trials, median:
+`bench/bench_flex_bison_compare/`: same 515-byte JSON document lexed
+and parsed by Bison + flex and by Lime, both checked to accept it
+before timing.  Re-measured in v1.11.3 against both flex table modes
+(Debian 13, Xeon 8488C, one pinned core, 10 interleaved rounds of
+100k documents, median):
 
-| Tool | mean (ms) | per-doc | vs Bison |
-|------|----------:|--------:|---------:|
-| bison + flex | 470 | 4.70 µs | 1.00× |
-| lime         | 260 | 2.60 µs | **1.81×** |
+| Baseline | bison + flex | lime | lime vs bison |
+|----------|-------------:|-----:|--------------:|
+| flex default (`-Cem`) | 258.6 ms | 203.7 ms | 1.27x faster |
+| flex `-CF` (full tables) | 168.1 ms | 202.0 ms | **0.83x (17% slower)** |
 
-This is the honest end-to-end comparison: both sides include
-lexing.  **Caveat:** the 1.81× headline is a *small, friendly*
-JSON grammar, and the `flex`/`bison` baseline build flags are not
-disclosed here (no `flex -CF`/`-Cf` table-compression variant is
-stated), so the figure is not a claim about large real-world
-grammars such as PostgreSQL's.  See
-[docs/BENCHMARKS_VS_BISON.md](docs/BENCHMARKS_VS_BISON.md)
-for methodology, baseline flags, and the parser-only arithmetic
-benchmark.
+Earlier versions of this README claimed 1.81x; that was measured only
+against flex's slowest (default) table mode.  The Lime side also lexes
+with a hand-written tokenizer, and neither side builds values, so this
+is a small-grammar recognition benchmark, not a claim about real
+parsers.  Details and caveats:
+[docs/BENCHMARKS_VS_BISON.md](docs/BENCHMARKS_VS_BISON.md).
 
 ### Parser-only throughput
 

@@ -74,12 +74,25 @@ if flex_bison_ok
     ],
   )
 
-  # Flex lexer for JSON
+  # Flex lexer for JSON.  Built twice: flex's default table compression
+  # (-Cem: smallest, slowest scanner) and -CF (full uncompressed tables,
+  # what a performance-sensitive flex user ships).  Publishing a number
+  # against only the slow default would flatter Lime.
   flex_json_gen = custom_target('bench_json_flex',
     input   : ['bench_json.l'],
     output  : ['bench_json.lex.c'],
     command : [
       flex_prog,
+      '-o', '@OUTPUT@',
+      '@INPUT@',
+    ],
+  )
+  flex_json_cf_gen = custom_target('bench_json_flex_cf',
+    input   : ['bench_json.l'],
+    output  : ['bench_json_cf.lex.c'],
+    command : [
+      flex_prog,
+      '-CF',
       '-o', '@OUTPUT@',
       '@INPUT@',
     ],
@@ -102,6 +115,22 @@ if flex_bison_ok
     # static link succeeds.  ArithBuildSnapshot / JsonParserBuildSnapshot
     # remain available unconditionally.
     c_args : ['-DLIME_NO_SNAPSHOT_ENTRY_ALIAS=1'],
+    dependencies : lime_parser_dep,
+    include_directories : include_directories('../../src'),
+    link_args : ['-lm'],
+  )
+
+  # Same harness, JSON lexer built with flex -CF.  Separate binary because
+  # the -Cem and -CF scanners define the same symbols.
+  bench_compare_cf = executable('bench_flex_bison_compare_cf',
+    'bench_flex_bison_compare.c',
+    bison_gen,
+    flex_gen,
+    bison_json_gen,
+    flex_json_cf_gen,
+    bench_arith_gen,
+    bench_json_gen,
+    c_args : ['-DLIME_NO_SNAPSHOT_ENTRY_ALIAS=1', '-DBENCH_FLEX_VARIANT="-CF"'],
     dependencies : lime_parser_dep,
     include_directories : include_directories('../../src'),
     link_args : ['-lm'],

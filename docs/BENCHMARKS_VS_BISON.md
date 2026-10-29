@@ -4,13 +4,16 @@ A side-by-side measurement of Lime against GNU Bison 3.8.2 on
 identical grammars, running on the same hardware with the same
 compiler.
 
-**TL;DR:** On a fair lex+parse JSON benchmark Lime is **1.69×
-faster** than Bison+Flex (consistent across v0.2.7-v0.4.4 on
-x86_64 i9-12900H).  On a parser-only arithmetic benchmark Lime
-runs at **0.81× of Bison** -- Bison's tight-loop arith parser
-edges Lime by ~20%, a result that has held steady through every
-release in the v0.2 / v0.3 / v0.4 series (verified by
-bisecting v0.2.7 / v0.3.3 / v0.4.4 -- all measured 0.81-0.85×).
+**TL;DR (v1.11.3, re-measured):** On the lex+parse JSON benchmark,
+Lime is **1.27x faster than Bison + flex's default scanner**, but
+**0.83x -- about 17% slower -- than Bison + `flex -CF`**, the
+full-table configuration a performance-sensitive flex user ships.
+Earlier headline figures (1.69x, 1.81x) compared against flex's
+default `-Cem` tables only, the smallest and slowest flex scanner;
+they were a table-compression artifact, not a Lime win.  The Lime
+side also lexes with a hand-written tokenizer, not a generated
+scanner, so neither number isolates "Lime vs Bison" -- see the
+caveats under the JSON benchmark.
 
 Lime still generates parsers measurably faster (~4× on a 250-rule
 grammar -- last measured on Lime 0.1.0; the gap is unlikely to
@@ -30,6 +33,49 @@ Reproducibility: x86_64 i9-12900H Linux, gcc 15.2.0, glibc 2.42,
 bison 3.8.2 + flex 2.6.4 from nix store.  `meson setup
 --buildtype=debugoptimized -Dllvm=disabled`.  Run `bench/
 bench_flex_bison_compare/bench_flex_bison_compare`.
+
+## v1.11.3 re-measurement with a `flex -CF` baseline
+
+Prompted by review: the published comparison only ever built the flex
+side with flex's default table compression (`-Cem`).  `flex -CF`
+(full, uncompressed tables, no equivalence classes) is the standard
+fast configuration.  The harness now builds both and refuses to time
+anything until both parsers ACCEPT the document once (a correctness
+gate: a parser that rejected at the third token would otherwise post
+the best time).
+
+Environment: Debian 13, AWS c7i.8xlarge (Xeon Platinum 8488C, VM, no
+cpufreq control), gcc 14.2.0, flex 2.6.4, bison 3.8.2, meson
+`-Dllvm=disabled` (debugoptimized).  Pinned to one core
+(`taskset -c 3`); one warm-up run discarded; 10 rounds alternating the
+`-Cem` and `-CF` binaries (A,B,A,B...) to cancel drift; 100,000
+documents per run; 515-byte document, 127 tokens.
+
+| Baseline | bison + flex (median) | lime (median) | lime speedup (median, range) |
+|---|---:|---:|---:|
+| flex default `-Cem` | 258.6 ms (IQR 258.0-260.2) | 203.7 ms | **1.27x** (1.26-1.28) |
+| flex `-CF`          | 168.1 ms (IQR 167.8-168.4) | 202.0 ms | **0.83x** (0.80-0.84) |
+
+`-CF` makes the flex side 1.54x faster on its own, which is more than
+Lime's entire advantage over the default build.
+
+Reproduce: `ninja -C build bench/bench_flex_bison_compare/bench_flex_bison_compare{,_cf}`
+then run both binaries interleaved (see the round loop above).
+
+What this comparison still does **not** control for:
+
+- The Lime side lexes with ~90 lines of hand-written C
+  (`lime_json_next_token`), the bison side with a generated scanner.
+  A Lime-generated lexer (`lime -X`) on the Lime side would make it a
+  generator-vs-generator comparison; that has not been measured.
+- Neither side builds a value: bison's only action increments a
+  counter, Lime's grammar has none.  Real parsers spend much of their
+  time in actions, which this benchmark does not exercise.
+- The document is small (515 bytes) and the grammar tiny.  Nothing
+  here predicts PostgreSQL-grammar throughput.
+
+The sections below are the historical v0.4.4 numbers, kept for the
+record; their "vs Bison" column is against flex `-Cem` only.
 
 ### JSON benchmark (lex + parse, fair on both sides)
 
