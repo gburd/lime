@@ -102,6 +102,22 @@ GrammarModification mod = {
 - `token_code` -- Set to -1 to let the system assign one automatically.
   Set to a specific value to force a particular code (use with caution --
   may conflict with existing tokens).
+- `fallback_to` -- Optional.  Name an existing terminal (usually the
+  base grammar's identifier token) to make this a **soft keyword**: where
+  the keyword cannot be shifted, the parser treats it as that terminal.
+  This is Lemon's `%fallback`, the mechanism SQLite uses to keep most of
+  its keywords non-reserved.  Leave it NULL (the default) for a reserved
+  keyword.
+
+**Use `fallback_to` for any keyword spelled like a plausible identifier.**
+Without it, adding `CONNECT` makes every existing `SELECT connect FROM t`
+(lexed as `SELECT CONNECT FROM ID`) a syntax error the moment the
+extension loads.  With `.fallback_to = "ID"`, that query still parses
+and the new `CONNECT t` statement works too.
+`tests/test_ext_soft_keyword.c` checks both.  This covers keywords that
+replace an identifier; it does not do context-aware scanning, so a
+scanner still has to emit the keyword's code, and a keyword can only
+fall back to one terminal.
 
 ### Adding Grammar Rules (`MOD_ADD_RULE`)
 

@@ -2528,6 +2528,16 @@ if host_machine.system() != 'windows'
     is_parallel : false,
   )
 
+  # MOD_ADD_TOKEN.fallback_to: an extension keyword must not break an
+  # existing identifier of the same spelling (SQLite-style %fallback).
+  test_ext_soft_keyword = executable('test_ext_soft_keyword',
+    'test_ext_soft_keyword.c',
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, lime_compiler_dep],
+    export_dynamic : true,
+  )
+  test('ext_soft_keyword', test_ext_soft_keyword, workdir : meson.project_source_root())
+
   # Is a composed grammar a function of the extension SET, or of the
   # order load_extension() was called in?  Composes 3 extensions in all
   # 6 orders and compares parse tables and assigned token codes.

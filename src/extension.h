@@ -165,6 +165,16 @@ typedef struct GrammarModification {
             const char *name;   /* Token name (e.g. "TK_JSONB") */
             const char *lexeme; /* Literal text if applicable   */
             int token_code;     /* Assigned token code, or -1 for auto */
+            /* Soft keyword: name an existing terminal (typically the
+            ** grammar's identifier token, e.g. "ID" or "IDENT") and the
+            ** new keyword falls back to it wherever the keyword itself
+            ** cannot be shifted -- Lemon's %fallback, the mechanism
+            ** SQLite uses to keep most keywords non-reserved.  Without
+            ** it, an extension that adds CONNECT turns every existing
+            ** `SELECT connect FROM t` into a syntax error.  NULL (the
+            ** zero-initialised default) = a reserved keyword, as before.
+            ** Must name a terminal the base grammar declares. */
+            const char *fallback_to;
         } add_token;
 
         /* MOD_MODIFY_PRECEDENCE */

@@ -104,6 +104,11 @@ static void emit_add_token(TextBuf *tb, const GrammarModification *mod) {
         tb_printf(tb, "/* %s */\n", mod->description);
     }
     tb_printf(tb, "%%token %s.\n", name);
+    if (mod->u.add_token.fallback_to != NULL && mod->u.add_token.fallback_to[0] != '\0') {
+        /* Soft keyword: falls back to the named terminal where it cannot
+        ** be shifted.  See add_token.fallback_to in extension.h. */
+        tb_printf(tb, "%%fallback %s %s.\n", mod->u.add_token.fallback_to, name);
+    }
 }
 
 /*
