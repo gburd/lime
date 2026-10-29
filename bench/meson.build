@@ -63,7 +63,7 @@ bench_json_gen = custom_target('bench_json_parser',
 # In-process LALR(1) rebuild cost of a whole grammar (default: the full
 # PostgreSQL grammar).  The number the runtime-composition design rests
 # on -- every extension-set change rebuilds the tables.  Not a test.
-#   ./bench/bench_pg_rebuild ../examples/pg/gram.lime 5
+#   ./bench/bench_pg_rebuild ../examples/pg/pg_grammar.lime 7
 bench_pg_rebuild = executable('bench_pg_rebuild',
   'bench_pg_rebuild.c',
   include_directories : include_directories('../src'),

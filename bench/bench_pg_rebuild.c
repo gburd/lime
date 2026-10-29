@@ -16,6 +16,10 @@
 ** median / max over N compiles after one warm-up.
 **
 ** usage: bench_pg_rebuild <grammar.lime> [iterations]
+**
+** Use examples/pg/pg_grammar.lime (tokens.lime + gram.lime, 0 conflicts).
+** gram.lime alone has no precedence declarations and 1665 conflicts, so
+** it measures a grammar nobody would ship.
 */
 #include "lime_compiler.h"
 #include "snapshot.h"
@@ -82,7 +86,8 @@ int main(int argc, char **argv) {
     ParserSnapshot *snap = NULL;
     char *err = NULL;
     double w0 = clk(CLOCK_MONOTONIC), c0 = clk(CLOCK_PROCESS_CPUTIME_ID);
-    int rc = lime_compile_grammar_in_process(text, len, &snap, &err);
+    int nconflict = -1;
+    int rc = lime_compile_grammar_in_process_ex(text, len, &snap, &err, &nconflict);
     double c1 = clk(CLOCK_PROCESS_CPUTIME_ID), w1 = clk(CLOCK_MONOTONIC);
     if (rc != 0 || snap == NULL) {
         fprintf(stderr, "compile failed (rc=%d): %s\n", rc, err ? err : "(no message)");
@@ -91,8 +96,8 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("grammar: %s (%zu bytes)\n", argv[1], len);
-    printf("tables : nstate=%u nterminal=%u nrule=%u action_count=%u\n",
-           snap->nstate, snap->nterminal, snap->nrule, snap->action_count);
+    printf("tables : nstate=%u nterminal=%u nrule=%u action_count=%u nconflict=%d\n",
+           snap->nstate, snap->nterminal, snap->nrule, snap->action_count, nconflict);
     printf("warm-up: cpu=%.1f ms wall=%.1f ms peak_rss_growth=%ld MB\n",
            (c1 - c0) * 1e3, (w1 - w0) * 1e3, (peak_rss_kb() - rss0) / 1024);
     snapshot_release(snap);

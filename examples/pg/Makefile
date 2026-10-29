@@ -44,9 +44,11 @@ lime: $(LIME)
 $(LIME):
 	$(MAKE) -C ../.. lime
 
-# Combine token definitions and grammar into a single file
+# Combine token definitions and grammar into a single file, dropping
+# gram.lime's standalone-only %expect block (tests/test_pg_grammar.c
+# checks the checked-in pg_grammar.lime is exactly this).
 $(COMBINED): $(TOKENS) $(GRAMMAR)
-	cat $(TOKENS) $(GRAMMAR) > $(COMBINED)
+	{ cat $(TOKENS); sed '/^\/\* standalone-only/,/^$$/d' $(GRAMMAR); } > $(COMBINED)
 
 # Generate parser C source from combined Lime grammar
 generate: $(PARSER_C) $(PARSER_H)

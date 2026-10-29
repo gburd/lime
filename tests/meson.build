@@ -2726,20 +2726,25 @@ test('parse_reset', test_parse_reset)
 # ====================================================================
 # PostgreSQL grammar regression test (gated by -Dpg_grammar=true)
 # ====================================================================
-# The PG SQL grammar is the largest LR(1) machine Lime hosts:
-#   - 3,842 states, 3,584 rules, 557 terminals
-#   - 145,227-entry action table (which exposes int16_t overflow on
+# The PG SQL grammar is the largest LR(1) machine Lime hosts.  The
+# fixture is examples/pg/pg_grammar.lime = tokens.lime + gram.lime
+# minus gram.lime's standalone %expect block:
+#   - 3,841 states, 3,584 rules, 561 terminals, 0 conflicts (gram.lime
+#     alone has no precedence declarations and 1,665 unresolved S/R
+#     conflicts hidden by %expect; the test asserts 0 on pg_grammar.lime)
+#   - ~147k-entry action table (which exposes int16_t overflow on
 #     yy_shift_ofst / yy_reduce_ofst -- the int32 widening lives in
 #     src/snapshot.h)
-#   - 1,665 conflicts resolved by precedence + default-shift
 #
-# Regenerating gram_snapshot.c takes ~3.8 s, so this test is opt-in.
-# Enable it in CI sweeps that need to exercise stress-test corners:
+# Regenerating pg_grammar_snapshot.c takes seconds, so this test is
+# opt-in.  Enable it in CI sweeps that need to exercise stress-test
+# corners:
 #     meson configure builddir -Dpg_grammar=true
 if get_option('pg_grammar')
+  pg_dir = meson.project_source_root() / 'examples/pg'
   pg_gram_snapshot_gen = custom_target('pg_gram_snapshot',
-    input   : meson.project_source_root() / 'examples/pg/gram.lime',
-    output  : ['gram.c', 'gram.h', 'gram_snapshot.c'],
+    input   : pg_dir / 'pg_grammar.lime',
+    output  : ['pg_grammar.c', 'pg_grammar.h', 'pg_grammar_snapshot.c'],
     command : [
       lime_exe,
       '-T' + meson.project_source_root() / 'limpar.c',
@@ -2749,12 +2754,12 @@ if get_option('pg_grammar')
     ],
   )
 
-  # Compile only the snapshot file (not gram.c, which depends on
+  # Compile only the snapshot file (not pg_grammar.c, which depends on
   # the PostgreSQL header tree).  Use a wrapper static library so
   # we can pass the necessary -Wno-* flags without polluting the
   # whole project.
   pg_gram_snapshot_lib = static_library('pg_gram_snapshot',
-    pg_gram_snapshot_gen[2],   # gram_snapshot.c is the third output
+    pg_gram_snapshot_gen[2],   # pg_grammar_snapshot.c is the third output
     c_args : [
       '-Wno-shorten-64-to-32',
       '-Wno-constant-conversion',
@@ -2766,16 +2771,22 @@ if get_option('pg_grammar')
 
   test_pg_grammar = executable('test_pg_grammar',
     'test_pg_grammar.c',
-    pg_gram_snapshot_gen[1],   # gram.h: pull into the build graph so it's
-                               # generated before this target compiles, and
-                               # so meson auto-adds its dir to the include
-                               # path -- the test C file does #include "gram.h".
+    pg_gram_snapshot_gen[1],   # pg_grammar.h: pull into the build graph so
+                               # it's generated before this target compiles,
+                               # and so meson auto-adds its dir to the include
+                               # path -- the test C file does #include it.
     include_directories : include_directories('../src'),
     link_with    : pg_gram_snapshot_lib,
-    dependencies : lime_parser_dep,
+    dependencies : [lime_parser_dep, lime_compiler_dep],
   )
 
-  test('pg_grammar', test_pg_grammar, timeout : 120)
+  # argv: the fixture (compiled in-process; must have 0 conflicts), then
+  # the two files it must equal (tokens.lime + gram.lime minus its
+  # standalone-only %expect block).
+  test('pg_grammar', test_pg_grammar,
+    args : [pg_dir / 'pg_grammar.lime', pg_dir / 'tokens.lime',
+            pg_dir / 'gram.lime'],
+    timeout : 300)
 endif
 
 # ====================================================================

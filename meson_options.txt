@@ -19,9 +19,10 @@ option('pg_grammar',
   value       : false,
   description : 'Build the PostgreSQL-grammar regression test ' +
                 '(tests/test_pg_grammar). Off by default because ' +
-                'regenerating examples/pg/gram_snapshot.c via lime -n ' +
-                'takes ~3.8 s -- only enable for stress runs / CI ' +
-                'sweeps. The 3,842-state PG grammar is the largest ' +
+                'regenerating pg_grammar_snapshot.c from ' +
+                'examples/pg/pg_grammar.lime via lime -n takes ' +
+                'seconds -- only enable for stress runs / CI ' +
+                'sweeps. The 3,841-state PG grammar is the largest ' +
                 'LR(1) machine Lime is asked to host, and the test ' +
                 'guards against int16/int32 overflow regressions.',
 )

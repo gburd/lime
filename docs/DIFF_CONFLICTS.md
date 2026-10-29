@@ -31,8 +31,9 @@ lime --diff-conflicts pg_core.lime pg_oracle.lime || \
 
 ## Why this exists
 
-PG's `gram.lime` carries 1,682 expected LALR conflicts that are
-resolved by precedence directives (`%left`, `%right`, `%nonassoc`).
+PG's grammar needs its precedence directives (`%left`, `%right`,
+`%nonassoc`): with them it has 0 conflicts (`examples/pg/pg_grammar.lime`),
+without them 1,665 shift/reduce conflicts (`examples/pg/gram.lime` alone).
 v0.4.2 caught the regression in which Lime was silently dropping
 those directives — the patch went out and the conflict count
 exploded from 0 to 1,682. A diff tool would have caught the change

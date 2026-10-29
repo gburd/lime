@@ -2,43 +2,36 @@
 
 ## Grammar Generation: PASS
 
-The Lime parser generator successfully processes `gram.lime` and produces
-`gram.c` (3MB) and `gram.h` (24KB).
+The Lime parser generator processes `pg_grammar.lime` (`tokens.lime` +
+`gram.lime`, built by `make pg_grammar.lime`) and produces `pg_grammar.c`
+and `pg_grammar.h`.
 
 Command used:
 ```
-../../lime -T../../limpar.c gram.lime
+../../lime -T../../limpar.c pg_grammar.lime
 ```
 
 ### Parser Statistics
 
-| Metric                    | Value   |
-|---------------------------|---------|
-| Terminal symbols          | 557     |
-| Non-terminal symbols      | 782     |
-| Total symbols             | 1,339   |
-| Production rules          | 3,584   |
-| Parser states             | 3,842   |
-| Shift-reduce conflicts    | 1,665   |
-| Action table entries      | 145,227 |
-| Lookahead table entries   | 145,363 |
-| Total table size (bytes)  | 613,920 |
+| Metric                    | pg_grammar.lime | gram.lime alone |
+|---------------------------|----------------:|----------------:|
+| Terminal symbols          | 561             | 557             |
+| Non-terminal symbols      | 782             | 782             |
+| Production rules          | 3,584           | 3,584           |
+| Parser states             | 3,841           | 3,842           |
+| Conflicts                 | **0**           | 1,665           |
+| Action table entries      | 146,743         | 145,227         |
+| Lookahead table entries   | 146,763         | 145,363         |
+| Total table size (bytes)  | 619,746         | 613,920         |
 
 ### Conflicts
 
-All 1,665 conflicts are shift-reduce and are resolved by Lime's default
-rules (shift wins over reduce) and explicit `[TOKEN]` precedence
-annotations.  PostgreSQL's Bison grammar uses `%expect 0` -- it resolves
-the same underlying conflicts via Bison's implicit rightmost-terminal
-precedence and `%prec` directives.
-
-Main conflict sources:
-- `stmtmulti`: 128+ statement alternatives create SR conflicts with SEMICOLON
-- `a_expr`/`b_expr`: binary operator expression grammar
-- Keyword lists: 469+ alternatives in `bare_label_keyword`
-
-These are structurally identical to the conflicts in PostgreSQL's Bison
-grammar and resolve correctly.
+`pg_grammar.lime` has 0 conflicts, like bison on gram.y (`%expect 0`).
+The `%left` / `%right` / `%nonassoc` declarations live in `tokens.lime`.
+`gram.lime` compiled alone has none of them, so its 1,665 shift/reduce
+conflicts are not "resolved by precedence": Lemon settles every one by
+shift-wins, and the `%expect 1665` in gram.lime only lets it compile.
+Use `pg_grammar.lime`.
 
 ### Warnings
 
@@ -130,10 +123,9 @@ python3 ../../test_harness/run_pg_tests.py \
 
 ## Known Limitations
 
-1. **Conflict count**: 1,665 resolved conflicts vs Bison's 0.  While these
-   resolve correctly for most cases, subtle differences in conflict resolution
-   strategy between Bison and Lime could cause divergent behavior on edge
-   cases.  End-to-end testing is needed to verify.
+1. **Conflict count**: `pg_grammar.lime` has 0 conflicts, like Bison.  Do
+   not compile `gram.lime` alone: without `tokens.lime`'s precedence it has
+   1,665 shift/reduce conflicts, all settled by shift-wins.
 
 2. **No `%destructor`**: Lime/Lemon does not support Bison's `%destructor`
    directive.  Memory cleanup for parser stack values on error recovery

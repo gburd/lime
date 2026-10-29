@@ -84,7 +84,7 @@ Heap profile:
 
 ```bash
 valgrind --tool=massif --massif-out-file=massif.out \
-    ./builddir/bench/bench_pg_rebuild examples/pg/gram.lime 1
+    ./builddir/bench/bench_pg_rebuild examples/pg/pg_grammar.lime 1
 ms_print massif.out
 ```
 
