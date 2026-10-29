@@ -1367,6 +1367,15 @@ struct acttab {
   int *nAtOfst;
   int nAtOfstAlloc;
   int ofstBias;
+  /* aPos[la][0..nPos[la]-1] = ascending slots j with aAction[j].lookahead
+  ** == la.  The duplicate scan in acttab_insert() visits only those (in
+  ** the same descending order as a scan of every slot).  A filled slot
+  ** never changes its lookahead, so a slot joins one list once, when it
+  ** is first filled.  Every slot below firstEmpty is filled. */
+  int **aPos;
+  int *nPos;
+  int *nPosAlloc;
+  int firstEmpty;
 };
 
 /* Return the number of entries in the yy_action table */
@@ -1380,6 +1389,11 @@ struct acttab {
 
 /* Free all memory associated with the given acttab */
 void acttab_free(acttab *p){
+  int la;
+  for(la=0; la<=p->nsymbol; la++) lime_free( p->aPos[la] );
+  lime_free( p->aPos );
+  lime_free( p->nPos );
+  lime_free( p->nPosAlloc );
   lime_free( p->nAtOfst );
   lime_free( p->aAction );
   lime_free( p->aLookahead );
@@ -1396,7 +1410,23 @@ acttab *acttab_alloc(int nsymbol, int nterminal){
   memset(p, 0, sizeof(*p));
   p->nsymbol = nsymbol;
   p->nterminal = nterminal;
+  p->aPos = (int **) lime_calloc( nsymbol+1, sizeof(p->aPos[0]) );
+  p->nPos = (int *) lime_calloc( nsymbol+1, sizeof(p->nPos[0]) );
+  p->nPosAlloc = (int *) lime_calloc( nsymbol+1, sizeof(p->nPosAlloc[0]) );
   return p;
+}
+
+/* Record that slot k now holds lookahead la (keeps aPos[la] ascending). */
+static void acttab_add_pos(acttab *p, int la, int k){
+  int q;
+  if( p->nPos[la]>=p->nPosAlloc[la] ){
+    p->nPosAlloc[la] = p->nPosAlloc[la] ? p->nPosAlloc[la]*2 : 16;
+    p->aPos[la] = (int *) lime_realloc( p->aPos[la],
+                                        sizeof(int)*p->nPosAlloc[la] );
+  }
+  q = p->nPos[la]++;
+  while( q>0 && p->aPos[la][q-1]>k ){ p->aPos[la][q] = p->aPos[la][q-1]; q--; }
+  p->aPos[la][q] = k;
 }
 
 /* Add a new action to the current transaction set.
@@ -1493,15 +1523,20 @@ int acttab_insert(acttab *p, int makeItSafe){
   ** if and when the duplicate is found.
   **
   ** i is the index in p->aAction[] where p->mnLookahead is inserted.
+  ** Only slots holding mnLookahead can match, so walk aPos[mnLookahead].
   */
   end = makeItSafe ? p->mnLookahead : 0;
-  for(i=p->nAction-1; i>=end; i--){
-    if( p->aAction[i].lookahead==p->mnLookahead ){
+  {
+    const int *pos = p->aPos[p->mnLookahead];
+    int q;
+    i = end - 1;   /* not found */
+    for(q=p->nPos[p->mnLookahead]-1; q>=0 && pos[q]>=end; q--){
+      int c = pos[q];
       /* All lookaheads and actions in the aLookahead[] transaction
-      ** must match against the candidate aAction[i] entry. */
-      if( p->aAction[i].action!=p->mnAction ) continue;
+      ** must match against the candidate aAction[c] entry. */
+      if( p->aAction[c].action!=p->mnAction ) continue;
       for(j=0; j<p->nLookahead; j++){
-        k = p->aLookahead[j].lookahead - p->mnLookahead + i;
+        k = p->aLookahead[j].lookahead - p->mnLookahead + c;
         if( k<0 || k>=p->nAction ) break;
         if( p->aLookahead[j].lookahead!=p->aAction[k].lookahead ) break;
         if( p->aLookahead[j].action!=p->aAction[k].action ) break;
@@ -1509,12 +1544,13 @@ int acttab_insert(acttab *p, int makeItSafe){
       if( j<p->nLookahead ) continue;
 
       /* No possible lookahead value that is not in the aLookahead[]
-      ** transaction is allowed to match aAction[i] */
-      /* Count of filled slots j with aAction[j].lookahead == j+mnLookahead-i,
-      ** i.e. with j - lookahead == i - mnLookahead.  O(1) via nAtOfst[]. */
-      n = p->nAtOfst[(i - p->mnLookahead) + p->ofstBias];
+      ** transaction is allowed to match aAction[c] */
+      /* Count of filled slots j with aAction[j].lookahead == j+mnLookahead-c,
+      ** i.e. with j - lookahead == c - mnLookahead.  O(1) via nAtOfst[]. */
+      n = p->nAtOfst[(c - p->mnLookahead) + p->ofstBias];
       if( n==p->nLookahead ){
-        break;  /* An exact match is found at offset i */
+        i = c;
+        break;  /* An exact match is found at offset c */
       }
     }
   }
@@ -1529,6 +1565,7 @@ int acttab_insert(acttab *p, int makeItSafe){
     ** If no holes are found, i is left at p->nAction, which means the
     ** transaction will be appended. */
     i = makeItSafe ? p->mnLookahead : 0;
+    if( i<p->firstEmpty ) i = p->firstEmpty;  /* slots below are all filled */
     for(; i<p->nActionAlloc - p->mxLookahead; i++){
       if( p->aAction[i].lookahead<0 ){
         for(j=0; j<p->nLookahead; j++){
@@ -1565,11 +1602,15 @@ int acttab_insert(acttab *p, int makeItSafe){
     k = p->aLookahead[j].lookahead - p->mnLookahead + i;
     if( p->aAction[k].lookahead>=0 ){
       p->nAtOfst[(k - p->aAction[k].lookahead) + p->ofstBias]--;
+    }else{
+      acttab_add_pos(p, p->aLookahead[j].lookahead, k);
     }
     p->aAction[k] = p->aLookahead[j];
     p->nAtOfst[(k - p->aAction[k].lookahead) + p->ofstBias]++;
     if( k>=p->nAction ) p->nAction = k+1;
   }
+  while( p->firstEmpty<p->nActionAlloc
+         && p->aAction[p->firstEmpty].lookahead>=0 ) p->firstEmpty++;
   if( makeItSafe && i+p->nterminal>=p->nAction ) p->nAction = i+p->nterminal+1;
   p->nLookahead = 0;
 
