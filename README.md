@@ -547,7 +547,11 @@ ninja -C builddir test                # all tests
 
 The coverage gate enforces a floor on `src/` (the runtime library
 that production users link against): line coverage ≥ 78%, branch
-coverage ≥ 60% as of v0.2.7.  Override locally for ad-hoc checks:
+coverage ≥ 60%.  (The script quietly enforced only 72/55 from v0.8.7
+until the v1.11.3 review restored the documented floor; measured then:
+79.4% lines / 60.2% branches.)  `lime.c`, the generator itself, is not
+gated -- it measured 73.9% lines / 62.0% branches taken.  Override
+locally for ad-hoc checks:
 
 ```bash
 LIME_COV_MIN_LINES=85 LIME_COV_MIN_BRANCHES=70 \

@@ -29,8 +29,13 @@ cd "$PROJECT_ROOT"
 # Coverage floors for src/ (the runtime library that production users
 # link against).  Tests/, lime.c (parser generator), and bench/ are
 # excluded from the floor by --filter.
-MIN_LINES="${LIME_COV_MIN_LINES:-72}"
-MIN_BRANCHES="${LIME_COV_MIN_BRANCHES:-55}"
+# v1.11.3 review: measured 79.4% lines / 60.2% branches on Debian 13
+# (gcc 14) with the full suite.  The floor was lowered to 72/55 in v0.8.7
+# while the code grew; restore the historical 78/60 (just under the
+# measured value, so the gate catches regression without flaking on
+# toolchain noise).  Ratchet upward as coverage improves -- do not lower.
+MIN_LINES="${LIME_COV_MIN_LINES:-78}"
+MIN_BRANCHES="${LIME_COV_MIN_BRANCHES:-60}"
 
 BUILDDIR="${BUILDDIR:-builddir-coverage}"
 
