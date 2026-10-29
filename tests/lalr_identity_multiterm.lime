@@ -1,0 +1,54 @@
+/*
+** lalr_identity_multiterm.lime -- fixture for tests/test_lalr_identity.c.
+**
+** Pins the generator corners no shipped grammar exercises, so a change
+** to state construction or table packing that mishandles them shows up
+** as a table-hash mismatch:
+**
+**   - inline multiterminals (A|B): every occurrence is a distinct symbol
+**     object, and same_symbol() must still merge equal member lists into
+**     one successor state;
+**   - a %token_class whose members equal an inline A|B, and a second
+**     class with the same members as the first (all four merge);
+**   - a plain member terminal (A) at the same dot as A|B: same_symbol()
+**     keeps them apart, so A has two shifts (a shift/shift conflict);
+**   - multiterminals with different member lists that overlap (C|D|E vs
+**     cd), %fallback, %wildcard, the error symbol and precedence.
+*/
+%name Mt
+%token_type {int}
+%expect 3
+
+%token A B C D E SEMI LP RP COMMA PLUS STAR ID KW1 KW2 ANY.
+%fallback ID KW1 KW2.
+%wildcard ANY.
+%token_class ab A B.
+%token_class ab2 A B.
+%token_class cd C D.
+%left PLUS.
+%left STAR.
+
+prog ::= stmts.
+stmts ::= stmts stmt.
+stmts ::= .
+
+stmt ::= A|B x SEMI.
+stmt ::= A|B y COMMA.
+stmt ::= ab z RP.
+stmt ::= ab2 LP RP.
+stmt ::= A E SEMI.
+stmt ::= C|D|E expr SEMI.
+stmt ::= cd expr COMMA.
+stmt ::= KW1 expr SEMI.
+stmt ::= ID ANY SEMI.
+stmt ::= error SEMI.
+
+x ::= E.
+y ::= E.
+z ::= E D.
+
+expr ::= expr PLUS expr.
+expr ::= expr STAR expr.
+expr ::= LP expr RP.
+expr ::= ID.
+expr ::= A|B.

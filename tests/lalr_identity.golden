@@ -1,0 +1,26 @@
+# Golden table hashes for tests/test_lalr_identity.c.
+# <grammar, relative to the source root>  <cli hash>  <in-process hash>
+#
+# Regenerate ONLY for a deliberate, reviewed change of generator output,
+# never to make an optimisation pass:
+#   LIME_LALR_IDENTITY_PRINT=1 build/tests/test_lalr_identity \
+#       build/lime limpar.c . tests/lalr_identity.golden
+# Blessed at 81f1c2f (generator unchanged since 35eefbc).
+examples/pg/pg_grammar.lime                      f28f201d73e39452 46be3432f885f205
+examples/pg/gram.lime                            68cfd19988bb910b 1fbc017cbd8b3bd2
+bench/bench_arith_grammar.y                      92a6d232a46e76e0 cb5043b1e43b05a5
+examples/json/json_grammar.lime                  0a2c307a1b5a5255 042a0e2208a1fb9e
+tests/lalr_identity_multiterm.lime               d742dcd61967313a d8121a5840831d4b
+bench/bench_grammar.lime                         72f71325a377e384 5b2a004fc3fd0389
+contrib/mysql_compat/mysql_grammar.lime          4debc27f56634824 4cbc6b78fc809b08
+contrib/xml_query/xquery_grammar.lime            529ef1423770ddc1 30d0a03e2376d3ea
+examples/cobol/cobol_grammar.lime                9743999737ee18d3 f4250f623375a8c9
+examples/jsonpath/jsonpath_gram.lime             8aa1010f424721c5 abc82311534cffce
+examples/datalog/datalog.lime                    0cc8574146500cb9 a884dc9327ac52e9
+examples/calc/calc.lime                          9e6952dc2652a9c7 b950b21d553d3d26
+tests/aot_error_grammar.y                        59042bada3c0aacf d8341f02e43ab29d
+tests/test_alternation_grammar.y                 2133d5a030818589 34bc3b2f84fdeb99
+tests/test_first_token_grammar.y                 e67d9ab656ffbe63 8dd7cce7610dc8a9
+tests/test_default_reduce_grammar.y              a0aeb04b461144d9 e23fd83bf6cbb8de
+tests/test_lsp_fixtures/rich.lime                7426aa0133f57ce8 5f94ee73e0f3e016
+tests/compat/diff/mfcalc.lime                    00ae6f26ba3d362c e266350366d1cddd

@@ -2789,6 +2789,24 @@ if get_option('pg_grammar')
     timeout : 300)
 endif
 
+# Generator table identity: the emitted parser's tables (lime -q -l)
+# and the in-process snapshot's tables, hashed per grammar, must equal
+# tests/lalr_identity.golden.  The gate for generator speed work; see
+# the top of test_lalr_identity.c.  POSIX only: it runs the lime binary.
+if host_machine.system() != 'windows'
+  test_lalr_identity = executable('test_lalr_identity',
+    'test_lalr_identity.c',
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, lime_compiler_dep],
+  )
+  test('lalr_identity', test_lalr_identity,
+    args : [lime_exe.full_path(), meson.project_source_root() / 'limpar.c',
+            meson.project_source_root(),
+            meson.current_source_dir() / 'lalr_identity.golden'],
+    depends : [lime_exe],
+    timeout : 300)
+endif
+
 # ====================================================================
 # Property-based tests via Hegel (gated on libhegel availability)
 # ====================================================================
