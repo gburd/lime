@@ -130,8 +130,8 @@ The headline performance number on the static path is the
 arithmetic / JSON Bison-vs-Lime comparison in
 `docs/BENCHMARKS_VS_BISON.md`: 1.27× faster than Bison + default
 flex, but 0.83× (17% slower) than Bison + `flex -CF`; the older
-1.04-1.81× figures compared only against flex's slowest table mode
-across architectures.  The headline on the snapshot path is
+1.04-1.81× figures compared only against flex's slowest table
+mode.  The headline on the snapshot path is
 the JIT speedup in `docs/BENCHMARK_RESULTS.md` (typically
 2-3× over the C interpreter on grammars > 100 states, on
 aarch64; on x86 the JIT is auto-skipped for small grammars

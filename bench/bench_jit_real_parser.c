@@ -42,6 +42,7 @@
 #include "parser.h"          /* lime_jit_available, lime_jit_compile */
 #include "snapshot.h"        /* ParserSnapshot */
 #include "snapshot_modify.h" /* clone_snapshot for synthetic snapshot */
+#include "jit_context.h"     /* jit_status_string */
 
 #include "bench_arith_grammar.h"
 
@@ -265,7 +266,8 @@ int main(int argc, char **argv) {
         printf("  could not make synthetic snapshot, skipping\n");
     } else {
         int rc = lime_jit_compile(jit_snap);
-        printf("  lime_jit_compile() returned %d\n", rc);
+        printf("  lime_jit_compile() returned %d (%s)\n", rc,
+               rc == 0 ? "compiled" : jit_status_string((JITStatus)rc));
         if (rc == 0 && jit_snap->jit_ctx != NULL) {
             printf("  JIT context attached to synthetic snapshot.\n");
         }
@@ -304,16 +306,23 @@ int main(int argc, char **argv) {
     printf("  Speedup    : min=%.3fx     mean=%.3fx\n", ratio_min, ratio_mean);
 
     printf("\n=== Verdict ===\n");
-    if (fabs(ratio_mean - 1.0) < 0.05) {
-        printf("  [GAP ] lime_jit_compile() has NO measurable effect on the\n");
-        printf("         generated ArithParse() function (within 5%%).\n");
-        printf("         The README's \"JIT speeds up generated parsers\" claim\n");
-        printf("         is not reflected in the actual generated code path.\n");
-    } else if (ratio_mean > 1.05) {
-        printf("  [PASS] JIT-armed parsing is %.2fx faster.\n", ratio_mean);
-    } else {
-        printf("  [FAIL] JIT-armed parsing is SLOWER than baseline (%.2fx).\n", ratio_mean);
-    }
+    /* Neither scenario can show a JIT effect, by construction: the timed
+    ** loop calls the AOT-generated Arith() in both, and the JIT is armed
+    ** on a separate synthetic snapshot that Arith() never consults.
+    ** Earlier versions printed "[PASS] JIT-armed parsing is 1.34x faster"
+    ** from that delta -- including when lime_jit_compile() had DECLINED
+    ** to compile (JIT_SKIPPED_BY_POLICY) -- which was scheduler noise
+    ** attributed to a JIT that did not run.  Report what was actually
+    ** observed; the honest JIT-vs-table throughput number is the
+    ** LIME_PG_BENCH section of tests/test_pg_grammar.c. */
+    printf("  Both scenarios time the same AOT Arith() function; the JIT is\n");
+    printf("  not on that path, so any difference above is noise (spread\n");
+    printf("  between min and mean shows how much).  This benchmark only\n");
+    printf("  demonstrates that arming the JIT does not affect AOT parsers.\n");
+    printf("  For JIT vs table-driven throughput on a grammar where the JIT\n");
+    printf("  engages, run: LIME_PG_BENCH=15 tests/test_pg_grammar\n");
+    (void)ratio_min;
+    (void)ratio_mean;
 
     if (jit_snap) snapshot_release(jit_snap);
     free(toks);

@@ -253,8 +253,8 @@ identical arithmetic grammar.  When `flex` and `bison` are not on
 unrelated builds are not blocked.  Numbers reproduced in
 [BENCHMARKS_VS_BISON.md](BENCHMARKS_VS_BISON.md): Lime 1.27x faster
 than Bison + default flex, 0.83x vs Bison + `flex -CF` (the earlier
-1.81x was against flex's slowest table mode only)
-than bison+flex on the lex+parse end-to-end JSON benchmark.
+1.81x was against flex's slowest table mode only), on the lex+parse
+end-to-end JSON benchmark.
 
 Retained in this list as a reference entry; nothing remains to do.
 

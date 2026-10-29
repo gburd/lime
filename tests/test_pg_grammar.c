@@ -295,6 +295,11 @@ static int run_token_stream(ParserSnapshot *snap, const uint16_t *toks, size_t c
     return last_rc < 0 ? -1 : 0;
 }
 
+static int cmp_double_asc(const void *a, const void *b) {
+    double x = *(const double *)a, y = *(const double *)b;
+    return (x > y) - (x < y);
+}
+
 static int n_pass = 0, n_fail = 0;
 
 #define T_CHECK(cond, ...)                                                                           \
@@ -554,6 +559,77 @@ int main(void) {
             }
             T_CHECK(mismatches == 0,
                   "JIT and table paths agree on every corpus query (mismatches=%d)", mismatches);
+
+            /* Throughput: table vs JIT on the PG grammar, the one
+            ** grammar in the tree large enough for lime_jit_compile's
+            ** x86_64 cost model to engage.  Opt-in (it takes seconds):
+            **   LIME_PG_BENCH=<rounds> ./test_pg_grammar
+            ** Uses two snapshots (one table-driven, one JIT-armed),
+            ** CPU time, the accept corpus pre-tokenised, and rounds that
+            ** ALTERNATE table and JIT so drift cancels.  Reports the
+            ** median per-round ratio, never a mean. */
+            const char *bench_env = getenv("LIME_PG_BENCH");
+            if (bench_env != NULL && atoi(bench_env) > 0 && mismatches == 0) {
+                int rounds = atoi(bench_env);
+                ParserSnapshot *tsnap = ParseBuildSnapshot();   /* table-only twin */
+                size_t ncorp = 0, ntok_total = 0;
+                uint16_t *ctoks[16] = {0};
+                size_t cn[16] = {0};
+                for (int i = 0; kAccept[i] != NULL && i < 16; i++) {
+                    ctoks[i] = tokenize_sql(kAccept[i], &cn[i]);
+                    if (ctoks[i]) { ncorp++; ntok_total += cn[i]; }
+                }
+                const int REPS = 20000; /* corpus passes per timed sample: ~30 ms, well above timer / scheduler granularity */
+                double *ratio = calloc((size_t)rounds, sizeof(double));
+                double *tt = calloc((size_t)rounds, sizeof(double));
+                double *jt = calloc((size_t)rounds, sizeof(double));
+                for (int r = -1; r < rounds && tsnap && ratio && tt && jt; r++) {
+                    double t_tab = 0, t_jit = 0;
+                    for (int leg = 0; leg < 2; leg++) {
+                        /* alternate which side goes first each round */
+                        int jit_leg = ((r & 1) == 0) ? leg : 1 - leg;
+                        ParserSnapshot *sp = jit_leg ? snap : tsnap;
+                        struct timespec a, b;
+                        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &a);
+                        for (int rep = 0; rep < REPS; rep++)
+                            for (int i = 0; i < 16; i++)
+                                if (ctoks[i]) (void)run_token_stream(sp, ctoks[i], cn[i]);
+                        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &b);
+                        double ms = time_diff_ms(a, b);
+                        if (jit_leg) t_jit = ms; else t_tab = ms;
+                    }
+                    if (r < 0) continue; /* warm-up round */
+                    tt[r] = t_tab; jt[r] = t_jit; ratio[r] = t_tab / t_jit;
+                }
+                if (tsnap && ratio && tt && jt) {
+                    qsort(ratio, (size_t)rounds, sizeof(double), cmp_double_asc);
+                    qsort(tt, (size_t)rounds, sizeof(double), cmp_double_asc);
+                    qsort(jt, (size_t)rounds, sizeof(double), cmp_double_asc);
+                    double ntok = (double)ntok_total * REPS;
+                    printf("\n--- PG-grammar throughput, %d rounds x %d corpus passes "
+                           "(%zu queries, %zu tokens/pass) ---\n",
+                           rounds, REPS, ncorp, ntok_total);
+                    printf("  table : median %.1f ms  (%.1f ns/token)\n",
+                           tt[rounds / 2], tt[rounds / 2] * 1e6 / ntok);
+                    printf("  JIT   : median %.1f ms  (%.1f ns/token)\n",
+                           jt[rounds / 2], jt[rounds / 2] * 1e6 / ntok);
+                    printf("  JIT speedup (table/JIT): median %.3fx  min %.3fx  max %.3fx\n",
+                           ratio[rounds / 2], ratio[0], ratio[rounds - 1]);
+                    double jc = time_diff_ms(t0, t1);
+                    if (ratio[rounds / 2] > 1.0) {
+                        double saved_ns_per_tok =
+                            (tt[rounds / 2] - jt[rounds / 2]) * 1e6 / ntok;
+                        printf("  JIT compile cost: %.1f ms -> break-even after %.0f tokens\n",
+                               jc, jc * 1e6 / saved_ns_per_tok);
+                    } else {
+                        printf("  JIT compile cost: %.1f ms -> never breaks even "
+                               "(JIT is not faster on this grammar)\n", jc);
+                    }
+                }
+                for (int i = 0; i < 16; i++) free(ctoks[i]);
+                free(ratio); free(tt); free(jt);
+                if (tsnap) snapshot_release(tsnap);
+            }
         }
     }
 

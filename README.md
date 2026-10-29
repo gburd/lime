@@ -64,14 +64,13 @@ LALR(1) parsers.  Lime targets that gap.
   [docs/PERFORMANCE.md](docs/PERFORMANCE.md),
   [docs/BENCHMARKS_VS_BISON.md](docs/BENCHMARKS_VS_BISON.md), and
   `bench/bench_simd_classify` for the baselines and their limits.
-  Optional LLVM JIT compiles the action-table lookup into native
-  code, yielding ~2.3x speedup *on the lookup step itself* against
-  the table-driven interpreter on `bench/jit_comparison`; overall
-  end-to-end parse speedup is in the 1.04-1.10x range on x86 and
-  m3pro per `docs/BENCHMARK_RESULTS.md`.  Whether JIT pays off depends
-  heavily on grammar size and how much of total parse time is action
-  lookup; see [docs/JIT_ANALYSIS.md](docs/JIT_ANALYSIS.md) for the
-  cost-benefit analysis.
+  The optional LLVM JIT does **not** currently pay for itself on
+  x86_64.  On the full PostgreSQL grammar -- the only grammar in the
+  tree big enough for the JIT's cost model to engage -- JIT-armed
+  parsing is **0.94-0.96x** the speed of the table-driven interpreter
+  (i.e. 4-6% *slower*), after a 16-34 ms compile, so it never breaks
+  even.  On every smaller grammar the cost model declines to JIT at
+  all.  See [docs/JIT_ANALYSIS.md](docs/JIT_ANALYSIS.md).
 - **Thread-safe by design** — Copy-on-write snapshots with atomic reference
   counting allow concurrent parsing with zero shared mutable state.
 - **Modern memory safety** — `%destructor` directives prevent semantic
@@ -444,13 +443,21 @@ parsers.  Details and caveats:
 
 ### Parser-only throughput
 
-Same harness, arithmetic grammar with pre-tokenized Lime input:
+Same harness, arithmetic grammar.  Not symmetric: the Lime side is
+fed pre-tokenised input while the bison side runs flex, so this
+*favours* Lime -- and Lime is still slower on the re-measurement.
+Debian 13, Xeon 8488C, release build, one pinned core, 500k parses x 5
+trials, three runs:
 
-| Tool | per-parse | per-token | vs Bison |
-|------|----------:|----------:|---------:|
-| bison       | 492 ns | 38 ns | 1.00× |
-| lime        | 426 ns | 33 ns | **1.15×** |
-| lime + JIT  | 393 ns | 30 ns | **1.25×** |
+| Tool | per-parse (min, 3 runs) | vs Bison |
+|------|------------------------:|---------:|
+| bison + flex | 245-251 ns | 1.00x |
+| lime (runtime engine) | 286-287 ns | **0.86x** |
+
+`lime + JIT` no longer appears: on this grammar the x86_64 cost model
+declines to JIT (it would be slower).  Earlier releases reported
+lime 1.15x and lime+JIT 1.25x on an i9-12900H; that measurement has
+not reproduced here.
 
 ### JIT speedup vs interpreted
 
@@ -461,9 +468,11 @@ Same harness, arithmetic grammar with pre-tokenized Lime input:
 | Interpreted | 98 ns |
 | JIT (warm) | 43 ns |
 
-JIT compile time on this grammar is 750 ms; break-even after ~14 M
-parses.  Useful for long-running processes that hit the same
-grammar over and over (databases, language servers, query engines).
+These are lookup-only numbers on a synthetic grammar (the
+per-parse figure excludes everything but action lookup).  They do not
+predict a real parse: on the PostgreSQL grammar end to end, the JIT is
+4-6% slower than the interpreter (next section and
+[docs/JIT_ANALYSIS.md](docs/JIT_ANALYSIS.md)).
 
 ### JIT compile scaling
 
@@ -478,8 +487,22 @@ The JIT codegen has two paths:
   PG-class grammars.
 
 On the full PostgreSQL SQL grammar (3,842 states, 145 K-entry
-action table), the compact path JITs in **~19 ms**.  An earlier
+action table), the compact path JITs in 16-34 ms (Debian 13, Xeon
+8488C, LLVM 19; earlier releases quoted ~19 ms).  An earlier
 unrolled-only path either timed out or took 186 s on the same input.
+
+Compiling is cheap; running is not faster.  Measured with
+`LIME_PG_BENCH=21 tests/test_pg_grammar` (built with
+`-Dpg_grammar=true -Dllvm=enabled --buildtype=release`): 12-query SQL
+corpus, 20,000 passes per sample, CPU time, table and JIT rounds
+alternated, one core pinned, three runs:
+
+| Path | ns/token (median) |
+|------|------------------:|
+| table-driven | 13.0-13.2 |
+| JIT          | 13.8-14.1 |
+
+Median JIT speedup per run: 0.958x, 0.942x, 0.939x.
 
 ### SIMD tokenizer
 

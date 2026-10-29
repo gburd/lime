@@ -33,6 +33,53 @@ given the current state and lookahead token.
 
 ---
 
+## Measured result (v1.11.3): the JIT is slower on PostgreSQL's grammar
+
+The cost-benefit section below is a model with *assumed* inputs ("if
+action lookup is 15% of parse time and the JIT gives 3x on it...").
+This section is the measurement that replaces it.
+
+**Setup.** Debian 13, AWS c7i.8xlarge (Xeon Platinum 8488C, VM), gcc
+14.2, LLVM 19.1.7, `--buildtype=release -Dllvm=enabled
+-Dpg_grammar=true`.  The full PostgreSQL grammar (3,842 states, 557
+terminals, 145k actions) -- the only grammar in the tree whose
+`nstate x nterminal` (2.14M) clears the x86_64 cost-model threshold
+(500k), so the only one where `lime_jit_compile` actually compiles
+without `LIME_JIT=1`.  Two snapshots from the same tables, one
+JIT-armed.  The 12-statement accept corpus from `tests/test_pg_grammar.c`
+is pre-tokenised; each sample is 20,000 corpus passes (2.36M tokens,
+~31 ms) timed with `CLOCK_PROCESS_CPUTIME_ID`; 21 rounds alternating
+which path runs first; one warm-up round discarded; pinned to one core.
+JIT and table produce identical accept/reject on every query first.
+
+**Result, three independent runs:**
+
+| Run | table ns/token | JIT ns/token | JIT speedup (median, min-max) |
+|---|---:|---:|---:|
+| 1 | 13.2 | 13.8 | 0.958x (0.951-0.967) |
+| 2 | 13.0 | 13.8 | 0.942x (0.931-0.955) |
+| 3 | 13.2 | 14.1 | 0.939x (0.932-0.943) |
+
+The JIT is 4-6% **slower**, consistently (the spread never reaches
+1.0x).  It costs 16-34 ms to compile, so it never breaks even.  On
+every smaller grammar the cost model already declines to compile, for
+the same reason stated in `src/jit_context.c`: on x86_64 the
+C compiler's code for the table lookup beats the JIT's.
+
+**What this does not cover:** aarch64, where the cost model assumes
+the JIT wins (not measured here); other LLVM versions; grammars between
+the tree's small ones and PostgreSQL's.
+
+**Reproduce:** `LIME_PG_BENCH=21 tests/test_pg_grammar`.
+
+**Note on `bench/bench_jit_real_parser`:** earlier releases cited it as
+evidence of a 1.3x+ JIT win.  It cannot show one: both of its scenarios
+time the same AOT-generated `Arith()`, and the JIT is armed on a
+separate synthetic snapshot that `Arith()` never reads -- in the
+measured run `lime_jit_compile` had in fact *declined* to compile
+(`JIT_SKIPPED_BY_POLICY`).  Its verdict line now says so instead of
+printing a speedup.
+
 ## Cost-Benefit Analysis
 
 ### Speedup from JIT on Action Table Lookups
@@ -365,3 +412,27 @@ Is tokenization the bottleneck? (typically yes for SQL)
   YES -> Enable LIME_TOKENIZER_JIT for highest impact
   NO  -> Action table JIT alone may suffice
 ```
+
+## Recommendation (v1.11.3 review)
+
+The two questions a reviewer would ask have answers now:
+
+1. *Does the JIT win on the grammar it was built for?*  No: 4-6% slower
+   than the table interpreter on PostgreSQL's grammar on x86_64
+   (section above), and it never breaks even.
+2. *Would cheaper dispatch tricks get the win instead?*  Already tried
+   upstream: `parse_engine_step` uses direct-`goto` threaded dispatch;
+   a computed-goto (`&&label`) jump table was measured and rejected as a
+   ~12% regression on clang (see the comment above the dispatch loop in
+   `src/parse_engine.c`).  The interpreter is not leaving an easy win on
+   the table.
+
+So: keep `-Dllvm=disabled` the default for any embedding (it already is
+the CI default), and treat the JIT as an experiment until it is shown to
+win somewhere -- aarch64 is the untested case the cost model bets on.
+If an aarch64 measurement with the same harness
+(`LIME_PG_BENCH=21 tests/test_pg_grammar`) also shows no win, the JIT
+(four source files, the LLVM 14-21 compat shim, the cost-model policy,
+three CI jobs, and a background compile thread that a PostgreSQL backend
+cannot host) is a removal candidate.  That decision is the maintainer's;
+this section only records the evidence.
