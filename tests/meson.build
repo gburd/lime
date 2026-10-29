@@ -2734,6 +2734,16 @@ test('compose_conflict_gate', test_compose_conflict_gate,
   timeout : 300,
   is_parallel : false)
 
+# C7: a failed compose returns an error and the snapshot the host serves
+# stays active (four failure kinds; no metadata-only fallback).
+test_compose_failure_keeps_snapshot = executable('test_compose_failure_keeps_snapshot',
+  'test_compose_failure_keeps_snapshot.c',
+  test_runtime_arith_gen,
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('compose_failure_keeps_snapshot', test_compose_failure_keeps_snapshot)
+
 # Per-rule action-body inlining classifier (src/rule_inline.c, used
 # by the Rust emitter).  Exercises rule_can_inline_text against a
 # corpus of representative rule bodies (empty, passthrough, simple

@@ -17,9 +17,11 @@
 **      (extension_registry_set_policy), or the compose FAILS -- whatever
 **      the base's %expect says;
 **   4. bind MOD_ADD_RULE reduce callbacks by rule identity.
-** On any failure *out_snap stays NULL and the caller's current snapshot is
-** untouched: there is no fallback that publishes tables lacking the
-** extension.
+** On any failure -- no grammar source on the base, a grammar error in an
+** extension, an unresolved conflict, a later compose stage -- it returns
+** false with *error set and *out_snap NULL, so whatever snapshot the caller
+** is serving stays active.  There is no fallback: the old metadata-only
+** path published tables that did not contain the extension.
 */
 #include "extension.h"
 #include "conflict.h"
@@ -28,7 +30,6 @@
 #include "mod_serialize.h"
 #include "parser.h"
 #include "snapshot.h"
-#include "snapshot_modify.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -253,8 +254,11 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
     }
 
     if (base == NULL || base->grammar_source == NULL || base->grammar_source_len == 0) {
-        cm_err = strdup("base snapshot carries no grammar source");
-        goto metadata_only;
+        /* Composition rebuilds the tables from source text; there is no
+        ** substitute that would not publish tables lacking the extension. */
+        cm_err = strdup("publish_modified_snapshot: the base snapshot carries no grammar "
+                        "source; build it with `lime -n` or lime_compile_grammar_in_process");
+        goto out;
     }
     pthread_rwlock_rdlock(&reg->lock);
     policy = reg->policy;
@@ -262,14 +266,14 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
 
     sess = lime_compose_begin(base->grammar_source, base->grammar_source_len, "base", units, ns,
                               policy, &cm_err);
-    if (sess == NULL) goto metadata_only;
+    if (sess == NULL) goto out;
     {
         size_t mlen = 0;
         const char *mtext = lime_compose_merged_text(sess, &mlen);
         LimeCompileStats st;
         if (lime_compile_grammar_in_process_ex2(mtext, mlen, lime_compose_hook(sess), &new_snap,
                                                 &st, &cm_err) != 0) {
-            goto metadata_only;
+            goto out;
         }
     }
     {
@@ -314,29 +318,6 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
     *out_snap = new_snap;
     new_snap = NULL;
     ok = true;
-    goto out;
-
-metadata_only:
-    /* Legacy: no source, or the rebuild hard-failed.  Clones the base and
-    ** applies the modifications as metadata only -- the tables do NOT
-    ** contain the extension.  Deleted in C7. */
-    {
-        ConflictSet *cs_inner = NULL;
-        free(cm_err);
-        cm_err = NULL;
-        ModifyResult mr =
-            create_modified_snapshot(base, combined, total, NULL, &new_snap, &cs_inner, &cm_err);
-        if (mr == MODIFY_OK) {
-            *out_snap = new_snap;
-            new_snap = NULL;
-            ok = true;
-            if (cs_inner) conflict_set_destroy(cs_inner);
-        } else {
-            if (cm_err == NULL) cm_err = strdup("create_modified_snapshot failed");
-            if (out_conflicts && cs_inner) *out_conflicts = cs_inner;
-            else if (cs_inner) conflict_set_destroy(cs_inner);
-        }
-    }
 
 out:
     if (new_snap) snapshot_release(new_snap);
