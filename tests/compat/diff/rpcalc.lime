@@ -1,8 +1,8 @@
-/* Independent Lime transcription of the grammar in bison-3.8.2/examples/c/rpcalc/rpcalc.y to Lime, for the
-** differential in run_diff.sh.  `input` is recursive, so it gets the
-** wrapper start rule yacc would synthesise. ** Only the grammar shape is reproduced; no bison source (GPL) is copied --
-** run_diff.sh compiles the example's own epilogue from the bison tree at
-** test time. */
+/* Lime transcription of the grammar in bison-3.8.2/examples/c/rpcalc/rpcalc.y,
+** for the differential in run_diff.sh.  `input` is recursive, so it gets the
+** wrapper start rule yacc would synthesise.  Only the grammar shape is
+** reproduced; no bison source is copied.  run_diff.sh compiles the example's
+** own epilogue from the bison tree at test time. */
 %name Rp
 %token_prefix TK_
 %token_type {double}

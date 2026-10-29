@@ -1,7 +1,7 @@
-/* Independent Lime transcription of the grammar in bison-3.8.2/examples/c/calc/calc.y.  `error NL` uses
-** Lemon-style recovery; bison's `{ yyerrok; }` has no Lime spelling. ** Only the grammar shape is reproduced; no bison source (GPL) is copied --
-** run_diff.sh compiles the example's own epilogue from the bison tree at
-** test time. */
+/* Lime transcription of the grammar in bison-3.8.2/examples/c/calc/calc.y,
+** for run_diff.sh.  `error NL` uses Lemon-style recovery; bison's
+** `{ yyerrok; }` has no Lime spelling.  Only the grammar shape is
+** reproduced; no bison source is copied. */
 %name Calc
 %token_prefix TK_
 %token_type {double}

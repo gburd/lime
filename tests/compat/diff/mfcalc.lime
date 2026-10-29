@@ -1,7 +1,7 @@
-/* Independent Lime transcription of the grammar in bison-3.8.2/examples/c/mfcalc/mfcalc.y.  %precedence
-** becomes %nonassoc (same effect for precedence-only tokens). ** Only the grammar shape is reproduced; no bison source (GPL) is copied --
-** run_diff.sh compiles the example's own epilogue from the bison tree at
-** test time. */
+/* Lime transcription of the grammar in bison-3.8.2/examples/c/mfcalc/mfcalc.y,
+** for run_diff.sh.  %precedence becomes %nonassoc (same effect for
+** precedence-only tokens).  Only the grammar shape is reproduced; no bison
+** source is copied. */
 %name Mf
 %token_prefix TK_
 %token_type {YYSTYPE}
