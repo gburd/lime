@@ -10538,7 +10538,16 @@ PRIVATE char *pathsearch(char *argv0, char *name, int modemask)
     path = (char *)lime_malloc( lemonStrlen(argv0) + lemonStrlen(name) + 2 );
     if( path ) lemon_sprintf(path,"%s/%s",argv0,name);
     *cp = c;
+    /* Return NULL rather than a path that does not exist, so callers can
+    ** try their next fallback.  The Lemon original returned the
+    ** candidate unchecked, which turned a missing template into a
+    ** misleading "Can't open the template file" on a made-up path. */
+    if( path && access(path,modemask)!=0 ){
+      lime_free(path);
+      path = 0;
+    }
   }else{
+    int found = 0;
     pathlist = getenv("PATH");
     if( pathlist==0 ) pathlist = ".:/bin:/usr/bin";
     pathbuf = (char *) lime_malloc( lemonStrlen(pathlist) + 1 );
@@ -10555,10 +10564,16 @@ PRIVATE char *pathsearch(char *argv0, char *name, int modemask)
         *cp = c;
         if( c==0 ) pathbuf[0] = 0;
         else pathbuf = &cp[1];
-        if( access(path,modemask)==0 ) break;
+        if( access(path,modemask)==0 ){ found = 1; break; }
       }
     }
     lime_free(pathbufptr);
+    /* Same fix: the loop leaves `path` holding the LAST candidate tried
+    ** (e.g. "/tmp/limpar.c") when nothing matched. */
+    if( !found && path ){
+      lime_free(path);
+      path = 0;
+    }
   }
   return path;
 }
@@ -10637,7 +10652,13 @@ PRIVATE void tplt_skip_header(FILE *in){
 ** a pointer to the opened file. */
 PRIVATE FILE *tplt_open(struct lime *lemp)
 {
-  static char templatename[] = "lempar.c";
+  /* The template ships as limpar.c.  lempar.c is still accepted second so
+  ** a Lemon-era tree (or a user's own lempar.c) keeps working.  Before
+  ** this, a plain `cc -o lime lime.c` binary looked only for "lempar.c"
+  ** and failed on every grammar outside the source tree with
+  ** 'Can't find the parser driver template file "lempar.c"'. */
+  static char templatename[] = "limpar.c";
+  static char templatename_legacy[] = "lempar.c";
   char buf[1000];
   FILE *in;
   char *tpltname;
@@ -10672,8 +10693,21 @@ PRIVATE FILE *tplt_open(struct lime *lemp)
     tpltname = buf;
   }else if( access(templatename,004)==0 ){
     tpltname = templatename;
+  }else if( access(templatename_legacy,004)==0 ){
+    tpltname = templatename_legacy;
   }else{
     toFree = tpltname = pathsearch(lemp->argv[0],templatename,0);
+    if( tpltname==0 ){
+      toFree = tpltname = pathsearch(lemp->argv[0],templatename_legacy,0);
+    }
+#ifdef LIME_DATADIR
+    /* Installed layout: the template lives in $datadir/lime, not next to
+    ** the binary.  meson passes -DLIME_DATADIR for installed builds. */
+    if( tpltname==0 ){
+      lemon_sprintf(buf, "%s/%s", LIME_DATADIR, templatename);
+      if( access(buf,004)==0 ) tpltname = buf;
+    }
+#endif
   }
   if( tpltname==0 ){
     fprintf(stderr,"Can't find the parser driver template file \"%s\".\n",

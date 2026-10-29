@@ -475,6 +475,7 @@ static void yy_destructor(
   /* Suppress unused-variable warnings when no %destructor is defined */
   ParseARG_STORE
   ParseCTX_STORE
+  (void)yypParser;   /* only dereferenced with %extra_argument/%extra_context */
   (void)yypminor;
   switch( yymajor ){
     /* Here is inserted the actions which take place when a
@@ -533,7 +534,10 @@ void ParseFinalize(void *p){
         yyTokenName[yytos->major]);
     }
 #endif
-    if( yytos->major>=YY_MIN_DSTRCTR ){
+#if YY_MIN_DSTRCTR>0
+    if( yytos->major>=YY_MIN_DSTRCTR )
+#endif
+    {
       yy_destructor(pParser, yytos->major, &yytos->minor);
     }
     yytos--;
@@ -589,7 +593,10 @@ void ParseReset(void *yyp){
         yyTokenName[pParser->yytos->major]);
     }
 #endif
-    if( pParser->yytos->major >= YY_MIN_DSTRCTR ){
+#if YY_MIN_DSTRCTR>0
+    if( pParser->yytos->major>=YY_MIN_DSTRCTR )
+#endif
+    {
       yy_destructor(pParser, pParser->yytos->major, &pParser->yytos->minor);
     }
     pParser->yytos--;
@@ -1112,6 +1119,7 @@ static void yy_syntax_error(
   ** yyminor are unused.  Reference them via a (void) cast so generated
   ** parsers compile cleanly under -Wunused-parameter without forcing
   ** an explicit pragma in every emitted file. */
+  (void)yypParser;   /* only dereferenced with %extra_argument/%extra_context */
   (void)yymajor;
   (void)yyminor;
 #define TOKEN yyminor
@@ -1434,12 +1442,12 @@ void Parse(
           fprintf(yyTraceFILE, "%sReduce %d [%s]%s, pop back to state %d.\n",
             yyTracePrompt,
             yyruleno, yyRuleName[yyruleno],
-            yyruleno<YYNRULE_WITH_ACTION ? "" : " without external action",
+            (int)yyruleno<(int)YYNRULE_WITH_ACTION ? "" : " without external action",
             yypParser->yytos[yysize].stateno);
         }else{
           fprintf(yyTraceFILE, "%sReduce %d [%s]%s.\n",
             yyTracePrompt, yyruleno, yyRuleName[yyruleno],
-            yyruleno<YYNRULE_WITH_ACTION ? "" : " without external action");
+            (int)yyruleno<(int)YYNRULE_WITH_ACTION ? "" : " without external action");
         }
       }
 #endif /* NDEBUG */

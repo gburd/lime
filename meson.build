@@ -198,9 +198,16 @@ lime_exe = executable('lime',
   'src/jit_inline.c',
   link_with : [lime_lex_compiler_lib],
   include_directories : [inc, include_directories('src/lex')],
-  c_args : ['-DLIME_HAS_LEX_COMPILER', '-DLIME_HAS_RUST_OUTPUT'],
+  c_args : ['-DLIME_HAS_LEX_COMPILER', '-DLIME_HAS_RUST_OUTPUT',
+            '-DLIME_DATADIR="' + get_option('prefix') / get_option('datadir') / 'lime' + '"'],
   install : true,
 )
+
+# The parser-driver template.  An installed `lime` finds it via
+# LIME_DATADIR (above) when it is not next to the grammar or the binary;
+# without this, `meson install` produced a lime that could not generate
+# a C parser unless every caller passed -T.
+install_data('limpar.c', install_dir : get_option('datadir') / 'lime')
 
 # ROADMAP item 1, phase 4 (in-process LALR rebuild library).
 #
