@@ -1,0 +1,41 @@
+/* A typical SQL dialect extension, in the text form publish_modified_snapshot
+** appends (mod_serialize.c: "LHS ::= RHS. "). 9 new keywords, 30 rules:
+** a MERGE-ish UPSERT statement, a PIVOT clause, a JSON arrow operator, and
+** a SHOW EXTENSION statement.  Composed onto examples/pg/pg_grammar.lime it
+** adds exactly 1 LALR conflict (upsert_cols on LPAREN); onto the
+** precedence-less examples/pg/gram.lime, 219.  tests/test_compose_conflict_gate.c. */
+%token UPSERT_K PIVOT_K UNPIVOT_K FOR_EACH_K JSON_ARROW JSON_ARROW2 SHOW_EXT_K
+       SAMPLE_K PERCENT_K2.
+%fallback IDENT UPSERT_K PIVOT_K UNPIVOT_K SAMPLE_K.
+%left JSON_ARROW JSON_ARROW2.
+stmt ::= upsertStmt.
+upsertStmt ::= UPSERT_K INTO qualified_name upsert_cols VALUES LPAREN expr_list RPAREN upsert_on.
+upsertStmt ::= UPSERT_K INTO qualified_name upsert_cols select_with_parens upsert_on.
+upsert_cols ::= LPAREN columnList RPAREN.
+upsert_cols ::= .
+upsert_on ::= ON LPAREN name_list RPAREN.
+upsert_on ::= .
+stmt ::= showExtStmt.
+showExtStmt ::= SHOW_EXT_K name.
+showExtStmt ::= SHOW_EXT_K name WITH LPAREN expr_list RPAREN.
+showExtStmt ::= SHOW_EXT_K.
+table_ref ::= relation_expr pivot_clause.
+table_ref ::= relation_expr unpivot_clause.
+pivot_clause ::= PIVOT_K LPAREN pivot_aggs FOR_EACH_K colId IN_P LPAREN pivot_vals RPAREN RPAREN.
+pivot_aggs ::= pivot_agg.
+pivot_aggs ::= pivot_aggs COMMA pivot_agg.
+pivot_agg ::= func_application.
+pivot_agg ::= func_application AS colId.
+pivot_vals ::= pivot_val.
+pivot_vals ::= pivot_vals COMMA pivot_val.
+pivot_val ::= a_expr.
+pivot_val ::= a_expr AS colId.
+unpivot_clause ::= UNPIVOT_K LPAREN colId FOR_EACH_K colId IN_P LPAREN columnList RPAREN RPAREN.
+a_expr ::= a_expr JSON_ARROW a_expr.
+a_expr ::= a_expr JSON_ARROW2 a_expr.
+b_expr ::= b_expr JSON_ARROW b_expr.
+b_expr ::= b_expr JSON_ARROW2 b_expr.
+table_ref ::= relation_expr SAMPLE_K sample_spec.
+sample_spec ::= ICONST PERCENT_K2.
+sample_spec ::= ICONST.
+sample_spec ::= LPAREN ICONST PERCENT_K2 RPAREN.

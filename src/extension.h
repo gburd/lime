@@ -313,12 +313,17 @@ typedef struct ExtensionInfo {
 /*  Extension registry                                                 */
 /* ------------------------------------------------------------------ */
 
+struct LimeComposePolicy;
+
 typedef struct ExtensionRegistry {
     Extension *extensions; /* Dynamic array of extensions   */
     uint32_t count;        /* Number of registered extensions */
     uint32_t capacity;     /* Allocated slots               */
     ExtensionID next_id;   /* Next ID to assign (starts at 1) */
     pthread_rwlock_t lock; /* Protects the registry         */
+    /* Host compose policy (include/lime_policy.h), borrowed.  NULL = the
+    ** default: every extension-introduced LALR conflict fails the compose. */
+    const struct LimeComposePolicy *policy;
 } ExtensionRegistry;
 
 /* ------------------------------------------------------------------ */
@@ -367,22 +372,37 @@ const Extension *find_extension(ExtensionRegistry *reg, ExtensionID id);
 */
 uint32_t get_loaded_extension_count(ExtensionRegistry *reg);
 
+/*
+** Install the host's compose policy on a registry (borrowed; keep it
+** alive while composing).  Only the HOST calls this: extensions propose,
+** the host resolves.  NULL restores the default (fail on any
+** extension-introduced conflict).
+*/
+void extension_registry_set_policy(ExtensionRegistry *reg, const struct LimeComposePolicy *policy);
+
 /* ------------------------------------------------------------------ */
 /*  Snapshot publishing                                                */
 /* ------------------------------------------------------------------ */
 
 /*
-** publish_modified_snapshot collects the modifications from every
-** currently-loaded extension, runs them through
-** create_modified_snapshot against *base*, and (on success) returns
-** the resulting ParserSnapshot in *out_snap with refcount 1.  The
-** caller owns the new snapshot reference.
+** publish_modified_snapshot composes every currently-loaded extension
+** onto *base* (whose grammar_source it rebuilds in-process, together with
+** each extension's serialised modifications) and on success returns the
+** resulting ParserSnapshot in *out_snap with refcount 1.  The caller owns
+** the new snapshot reference.  Defined in src/compose.c, which is part of
+** liblime_compiler: link it to compose.
 **
-** When at least one extension's modifications cause an unresolved
-** conflict the function returns false, *error is filled with a
-** human-readable message, and *out_conflicts (if non-NULL) receives
-** the ConflictSet for inspection (the caller frees it via
-** conflict_set_destroy()).
+** Fails (returns false, *error filled, *out_snap NULL) when:
+**   - a declaration-level conflict (same token name, identical rule,
+**     precedence clash) is left unresolved; or
+**   - the rebuilt automaton has an LALR conflict the base alone does not
+**     have and the registry's policy (extension_registry_set_policy) does
+**     not resolve it.  The base's %expect never absorbs such a conflict.
+**     *error carries the full report (src/compose_policy.c).
+** *out_conflicts (if non-NULL) then receives the ConflictSet for
+** inspection (free with conflict_set_destroy()); automaton conflicts
+** appear as CONFLICT_SHIFT_REDUCE / CONFLICT_REDUCE_REDUCE with the
+** symbolic key as description.
 **
 ** This is the single entry point applications use to materialise the
 ** "active extended grammar" after loading or unloading extensions.

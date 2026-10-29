@@ -187,6 +187,7 @@ subdir('src')
 
 lime_exe = executable('lime',
   'lime.c',
+  'src/compose_policy.c',
   'src/emit_rust.c',
   'src/emit_rust_skin_lalrpop.c',
   'src/emit_rust_skin_nom.c',
@@ -195,8 +196,9 @@ lime_exe = executable('lime',
   'src/emit_c_skin_bison.c',
   'src/rule_inline.c',
   link_with : [lime_lex_compiler_lib],
+  dependencies : [thread_dep],
   include_directories : [inc, include_directories('src/lex')],
-  c_args : ['-DLIME_HAS_LEX_COMPILER', '-DLIME_HAS_RUST_OUTPUT',
+  c_args : ['-DLIME_HAS_LEX_COMPILER', '-DLIME_HAS_RUST_OUTPUT', '-DLIME_HAS_COMPOSE_POLICY',
             '-DLIME_DATADIR="' + get_option('prefix') / get_option('datadir') / 'lime' + '"'],
   install : true,
 )
@@ -255,6 +257,10 @@ lime_compiler_lib = static_library('lime_compiler',
   'src/lex/lex_dfa.c',
   'src/lex/lex_dfa_min.c',
   'src/lex/lex_compile.c',
+  # Compose time: publish_modified_snapshot + the conflict policy.
+  'src/compose.c',
+  'src/compose_policy.c',
+  dependencies : [thread_dep],
   include_directories : [inc, include_directories('src'),
                          include_directories('src/lex')],
   c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAVE_SNAPSHOT_BUILD']
@@ -273,6 +279,7 @@ lime_compiler_dep = declare_dependency(
   # runtime -- precisely the regression phase 4 was meant to avoid.
   link_whole : [lime_compiler_lib],
   include_directories : inc,
+  dependencies : [lime_parser_dep],
 )
 
 # v0.5.0: standalone Lime Language Server (lime-lsp).  Lives under

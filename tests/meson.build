@@ -2389,7 +2389,7 @@ test_extension_e2e = executable('test_extension_e2e',
   'test_extension_e2e.c',
   test_runtime_arith_gen,
   include_directories : include_directories('../src'),
-  dependencies : lime_parser_dep,
+  dependencies : [lime_parser_dep, lime_compiler_dep],
 )
 
 test('extension_e2e', test_extension_e2e)
@@ -2460,7 +2460,7 @@ if host_machine.system() != 'windows'
     'test_extension_rebuild.c',
     test_runtime_arith_gen,
     include_directories : include_directories('../src'),
-    dependencies : lime_parser_dep,
+    dependencies : [lime_parser_dep, lime_compiler_dep],
     export_dynamic : true,
   )
 
@@ -2673,7 +2673,7 @@ if host_machine.system() != 'windows'
     'test_compose_order.c',
     test_runtime_arith_gen,
     include_directories : include_directories('../src'),
-    dependencies : lime_parser_dep,
+    dependencies : [lime_parser_dep, lime_compiler_dep],
     export_dynamic : true,
   )
   test('compose_order', test_compose_order,
@@ -2700,7 +2700,7 @@ if host_machine.system() != 'windows'
     'test_extension_reduce_e2e.c',
     test_runtime_arith_gen,
     include_directories : include_directories('../src'),
-    dependencies : lime_parser_dep,
+    dependencies : [lime_parser_dep, lime_compiler_dep],
     export_dynamic : true,
   )
 
@@ -2717,6 +2717,22 @@ if host_machine.system() != 'windows'
     is_parallel : false,
   )
 endif
+
+# C1: an extension's LALR conflicts must be resolved explicitly, or the
+# compose fails -- whatever the base's %expect says.  Composes the 30-rule
+# dialect fixture onto the precedence-complete PG grammar (1 new conflict)
+# and onto the precedence-less gram.lime (%expect 1665; 219 new).
+test_compose_conflict_gate = executable('test_compose_conflict_gate',
+  'test_compose_conflict_gate.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('compose_conflict_gate', test_compose_conflict_gate,
+  args : [meson.project_source_root() / 'examples' / 'pg' / 'pg_grammar.lime',
+          meson.project_source_root() / 'examples' / 'pg' / 'gram.lime',
+          meson.current_source_dir() / 'compose_fixtures' / 'dialect_ext.lime'],
+  timeout : 300,
+  is_parallel : false)
 
 # Per-rule action-body inlining classifier (src/rule_inline.c, used
 # by the Rust emitter).  Exercises rule_can_inline_text against a

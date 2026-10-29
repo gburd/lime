@@ -25,6 +25,8 @@
 #include "parser.h"
 #include "extension.h"
 #include "conflict.h"
+#include "lime_compiler.h"
+#include "lime_policy.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -129,6 +131,14 @@ int main(void) {
     CHECK(reg != NULL, "create_extension_registry");
     ExtensionInfo info = { .name = "ext", .version = "1.0.0",
                            .get_modifications = ext_get_mods };
+    /* `expr ::= expr KW_EXT` makes a new S/R with `expr ::= expr PLUS
+    ** expr` on KW_EXT (postfix vs infix).  Composition refuses an
+    ** unresolved extension conflict, so the host states the intent:
+    ** postfix binds tighter (shift). */
+    static const LimePolicyConflict pol_line = {LIME_CK_SR, "expr ::= expr PLUS expr", "KW_EXT",
+                                                LIME_PREFER_SHIFT, NULL};
+    static const LimeComposePolicy pol = {&pol_line, 1};
+    extension_registry_set_policy(reg, &pol);
     ExtensionID id = 0;
     CHECK(register_extension(reg, &info, &id), "register ext");
     char *err = NULL;

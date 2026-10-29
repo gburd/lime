@@ -41,8 +41,8 @@
 #ifdef LIME_HAVE_SNAPSHOT_BUILD
 #include "snapshot.h"
 #include "snapshot_build.h"
-#include "lime_compiler.h"
 #endif
+#include "include/lime_compiler.h"   /* compose hook types; also in the CLI build */
 
 /*
 ** Stub for the .lex compiler entry point.  The real implementation
@@ -2012,6 +2012,16 @@ void FindFollowSets(struct lime *lemp)
 
 static int resolve_conflict(struct action *,struct action *);
 
+/* Compose-policy hook (include/lime_policy.h).  Set only for the span of
+** one lime_compile_grammar_in_process_ex2() call, on that thread.  When
+** non-NULL, FindActions() offers every conflict resolve_conflict() could
+** NOT settle to it.  Precedence-resolved pairs never reach it, and with
+** no hook the generator is byte-for-byte unchanged. */
+static LIME_THREAD_LOCAL const LimeCompileHook *lime_active_hook = 0;
+static int lime_hook_conflict(struct lime*, struct state*, struct action*, struct action*);
+static void lime_hook_prepare(struct lime*);
+static LIME_THREAD_LOCAL int lime_hook_nresolved = 0;  /* per compile; reset by _ex2 */
+
 /* v0.4.3: append a ConflictRecord to lemp->conflict_list when
 ** resolve_conflict() reports the (apx,apy) pair as unresolved.
 ** Pure side channel -- does not change which actions live or die,
@@ -2068,6 +2078,118 @@ static void record_conflict(struct lime *lemp,
   lemp->conflict_tail = cr;
 }
 
+/* ---- Compose-policy conflict hook (see LimeCompileHook) ----------- */
+static char *ruleIdentityString(struct rule *rp);
+
+/* Shortest symbol path from state 0, for the report's example input.
+** Built once per compile, before any action is resolved, so it does
+** not depend on resolution order.  Arena-allocated. */
+static LIME_THREAD_LOCAL int *lime_hook_par = 0;            /* parent state */
+static LIME_THREAD_LOCAL struct symbol **lime_hook_parsym = 0; /* edge symbol */
+
+static void lime_hook_prepare(struct lime *lemp){
+  int n = lemp->nstate, head = 0, tail = 0, i;
+  int *queue;
+  lime_hook_par = (int*)lime_calloc(n, sizeof(int));
+  lime_hook_parsym = (struct symbol**)lime_calloc(n, sizeof(struct symbol*));
+  queue = (int*)lime_calloc(n, sizeof(int));
+  if( !lime_hook_par || !lime_hook_parsym || !queue ){ lime_hook_par = 0; return; }
+  for(i=0; i<n; i++) lime_hook_par[i] = -2;   /* unvisited */
+  lime_hook_par[0] = -1;
+  queue[tail++] = 0;
+  while( head<tail ){
+    int s = queue[head++];
+    struct action *ap;
+    for(ap=lemp->sorted[s]->ap; ap; ap=ap->next){
+      int t;
+      if( ap->type!=SHIFT ) continue;
+      t = ap->x.stp->statenum;
+      if( t<0 || t>=n || lime_hook_par[t]!=-2 ) continue;
+      lime_hook_par[t] = s;
+      lime_hook_parsym[t] = ap->sp;
+      queue[tail++] = t;
+    }
+  }
+}
+
+/* "A B c . LOOKAHEAD" for state `s`; malloc'd, NULL on OOM. */
+static char *lime_hook_example(int s, struct symbol *la){
+  size_t len = 0, cap = 0;
+  int depth = 0, k, i;
+  char *buf;
+  struct symbol **path;
+  if( !lime_hook_par || lime_hook_par[s]==-2 ) return 0;
+  for(k=s; k>0; k=lime_hook_par[k]) depth++;
+  path = (struct symbol**)malloc((size_t)(depth?depth:1)*sizeof(*path));
+  if( !path ) return 0;
+  for(k=s, i=depth; k>0; k=lime_hook_par[k]) path[--i] = lime_hook_parsym[k];
+  for(i=0; i<depth; i++) cap += strlen(path[i]->name) + 1;
+  cap += strlen(la->name) + 4;
+  buf = (char*)malloc(cap);
+  if( !buf ){ free(path); return 0; }
+  for(i=0; i<depth; i++){
+    size_t m = strlen(path[i]->name);
+    memcpy(buf+len, path[i]->name, m); len += m; buf[len++] = ' ';
+  }
+  buf[len++] = '.'; buf[len++] = ' ';
+  memcpy(buf+len, la->name, strlen(la->name)+1);
+  free(path);
+  return buf;
+}
+
+/* Offer one unresolved conflict (apx,apy after resolve_conflict) to the
+** active hook and apply its choice.  Returns 1 if the hook resolved it. */
+static int lime_hook_conflict(struct lime *lemp, struct state *stp,
+                              struct action *apx, struct action *apy){
+  LimeConflictInfo ci;
+  struct rule *ra = 0, *rb = 0;
+  char *ida = 0, *idb = 0, *ex;
+  LimeConflictChoice ch;
+  int done = 0;
+  (void)lemp;
+  memset(&ci, 0, sizeof(ci));
+  if( apy->type==SRCONFLICT && apx->type==SHIFT ){
+    struct config *cfp;
+    ci.kind = LIME_CK_SR;
+    rb = apy->x.rp;
+    for(cfp=stp->cfp; cfp && !ra; cfp=cfp->next){
+      struct symbol *x;
+      int k;
+      if( cfp->dot >= cfp->rp->nrhs ) continue;
+      x = cfp->rp->rhs[cfp->dot];
+      if( x==apx->sp ) ra = cfp->rp;
+      else if( x->type==MULTITERMINAL )
+        for(k=0; k<x->nsubsym; k++) if( x->subsym[k]==apx->sp ) ra = cfp->rp;
+      if( ra ) ci.dot_a = cfp->dot;
+    }
+  }else if( apy->type==RRCONFLICT && apx->type==REDUCE ){
+    ci.kind = LIME_CK_RR;
+    ra = apx->x.rp; rb = apy->x.rp;
+  }else{
+    ci.kind = LIME_CK_SS;
+  }
+  if( ra ) ida = ruleIdentityString(ra);
+  if( rb ) idb = ruleIdentityString(rb);
+  ci.lookahead = apx->sp->name;
+  ci.rule_a = ida; ci.rule_b = idb;
+  ci.line_a = ra ? ra->ruleline : 0;
+  ci.line_b = rb ? rb->ruleline : 0;
+  ci.state = stp->statenum;
+  ex = lime_hook_example(stp->statenum, apx->sp);
+  ci.example = ex;
+  ch = lime_active_hook->on_conflict(lime_active_hook->user, &ci);
+  if( ci.kind==LIME_CK_SR ){
+    if( ch==LIME_CHOOSE_SHIFT ){ apy->type = RD_RESOLVED; done = 1; }
+    else if( ch==LIME_CHOOSE_REDUCE ){ apx->type = SH_RESOLVED; apy->type = REDUCE; done = 1; }
+  }else if( ci.kind==LIME_CK_RR ){
+    if( ch==LIME_CHOOSE_KEEP_A ){ apy->type = RD_RESOLVED; done = 1; }
+    else if( ch==LIME_CHOOSE_KEEP_B ){ apx->type = RD_RESOLVED; apy->type = REDUCE; done = 1; }
+  }
+  free(ida); free(idb); free(ex);
+  lime_hook_nresolved += done;
+  return done;
+}
+
 /* Compute the reduce actions, and resolve conflicts.
 */
 void FindActions(struct lime *lemp)
@@ -2117,6 +2239,7 @@ void FindActions(struct lime *lemp)
   Action_add(&lemp->sorted[0]->ap,ACCEPT,sp,0);
 
   /* Resolve conflicts */
+  if( lime_active_hook ) lime_hook_prepare(lemp);
   for(i=0; i<lemp->nstate; i++){
     struct action *ap, *nap;
     stp = lemp->sorted[i];
@@ -2127,6 +2250,9 @@ void FindActions(struct lime *lemp)
          /* The two actions "ap" and "nap" have the same lookahead.
          ** Figure out which one should be used */
          int n = resolve_conflict(ap,nap);
+         /* Compose policy: a conflict the hook settles becomes an
+         ** ordinary SH/RD_RESOLVED pair and is not counted. */
+         if( n > 0 && lime_active_hook && lime_hook_conflict(lemp, stp, ap, nap) ) n = 0;
          lemp->nconflict += n;
          /* v0.4.3: side channel for --diff-conflicts.  Logic of
          ** resolve_conflict is unchanged; we observe its result. */
@@ -5059,6 +5185,92 @@ static int run_diff_conflicts(const char *base_path,
 }
 #endif
 
+/* lime --explain-compose base.lime ext.lime... : compose in-process (no
+** fork), print every extension-introduced conflict with owners, an
+** example input and a suggested policy line.  Exit 0 = nothing
+** unresolved; 1 = unresolved conflicts (a CI gate); 2 = I/O or grammar
+** error.  The analysis is lime_compose_* (src/compose_policy.c), the
+** same code publish_modified_snapshot() runs.  Needs src/compose_policy.c
+** (meson links it and sets LIME_HAS_COMPOSE_POLICY); the single-file
+** `cc -o lime lime.c` build reports that instead. */
+#ifndef LIME_HAS_COMPOSE_POLICY
+static int run_explain_compose(int nfile, char **files){
+  (void)nfile; (void)files;
+  fprintf(stderr, "lime: --explain-compose not available in this build; build with meson,\n"
+                  "      or: cc -o lime lime.c src/compose_policy.c -Iinclude -DLIME_HAS_COMPOSE_POLICY\n");
+  return 2;
+}
+#else
+#include "include/lime_policy.h"
+static char *ec_slurp(const char *path, size_t *n){
+  FILE *f = fopen(path, "rb");
+  long m;
+  char *b;
+  if( !f ){ fprintf(stderr, "lime --explain-compose: cannot open '%s': %s\n", path, strerror(errno)); return 0; }
+  fseek(f, 0, SEEK_END); m = ftell(f); fseek(f, 0, SEEK_SET);
+  b = (char*)malloc((size_t)m + 1);
+  if( !b || fread(b, 1, (size_t)m, f)!=(size_t)m ){ fclose(f); free(b); return 0; }
+  b[m] = 0; fclose(f); *n = (size_t)m;
+  return b;
+}
+static const char *ec_basename(const char *p){
+  const char *s = strrchr(p, '/');
+  return s ? s+1 : p;
+}
+static int run_explain_compose(int nfile, char **files){
+  size_t nb = 0;
+  char *base, *err = 0, *txt;
+  LimeComposeUnit *u;
+  char **names;
+  LimeComposeSession *s;
+  LimeComposeReport *rep = 0;
+  LimeCompileStats st;
+  uint32_t nun;
+  int i, rc = 2;
+  if( nfile < 2 ){
+    fprintf(stderr, "usage: lime --explain-compose base.lime ext.lime...\n");
+    return 2;
+  }
+  base = ec_slurp(files[0], &nb);
+  if( !base ) return 2;
+  u = (LimeComposeUnit*)calloc((size_t)nfile, sizeof(*u));
+  names = (char**)calloc((size_t)nfile, sizeof(*names));
+  for(i=1; i<nfile; i++){
+    const char *bn = ec_basename(files[i]);
+    const char *dot = strrchr(bn, '.');
+    size_t l = dot ? (size_t)(dot-bn) : strlen(bn);
+    names[i] = (char*)malloc(l+1); memcpy(names[i], bn, l); names[i][l] = 0;
+    u[i-1].name = names[i];
+    u[i-1].file = bn;
+    u[i-1].text = ec_slurp(files[i], &u[i-1].len);
+    if( !u[i-1].text ) goto out;
+  }
+  s = lime_compose_begin(base, nb, ec_basename(files[0]), u, (uint32_t)(nfile-1), 0, &err);
+  if( !s ){ fprintf(stderr, "lime --explain-compose: %s\n", err ? err : "?"); goto out; }
+  {
+    size_t ml = 0;
+    const char *m = lime_compose_merged_text(s, &ml);
+    if( lime_compile_grammar_in_process_ex2(m, ml, lime_compose_hook(s), 0, &st, &err)!=0 ){
+      fprintf(stderr, "lime --explain-compose: composed grammar: %s\n", err ? err : "?");
+      lime_compose_session_free(s);
+      goto out;
+    }
+  }
+  nun = lime_compose_finish(s, &rep);
+  lime_compose_session_free(s);
+  txt = lime_compose_report_format(rep);
+  fputs(txt, stdout);
+  free(txt);
+  lime_compose_report_free(rep);
+  rc = nun ? 1 : 0;
+out:
+  free(err);
+  for(i=1; i<nfile; i++){ free(names[i]); free((char*)u[i-1].text); }
+  free(names); free(u); free(base);
+  return rc;
+}
+#endif /* LIME_HAS_COMPOSE_POLICY */
+
 /* ========================================================== */
 /*  v0.8.6 CLI flag redesign -- feature toggle infrastructure.  */
 /* ========================================================== */
@@ -5674,6 +5886,7 @@ int main(int argc, char **argv){
                                 ** with --rust. */
   /* v0.4.3 (--diff-conflicts): see docs/DIFF_CONFLICTS.md */
   static int diffConflictsFlag = 0;
+  static int explainComposeFlag = 0;
   static int jsonFlag = 0;
 
   /* Forward decl: defined in src/lex/lex_main.c.  When lime is built
@@ -5831,6 +6044,8 @@ int main(int argc, char **argv){
     {OPT_FSTR, "W", 0, "Ignored.  (Placeholder for '-W' compiler options.)"},
     {OPT_FLAG, "-diff-conflicts", (char*)&diffConflictsFlag,
      "Diff LALR conflicts between two grammars (base.lime ext.lime)."},
+    {OPT_FLAG, "-explain-compose", (char*)&explainComposeFlag,
+     "Explain the conflicts ext.lime... introduce over base.lime (exit 1 if unresolved)."},
     {OPT_FLAG, "-json", (char*)&jsonFlag,
      "Output diff results as JSON (use with --diff-conflicts)."},
     {OPT_FLAG,0,0,0}
@@ -5948,6 +6163,12 @@ int main(int argc, char **argv){
   ** gets pristine global state) and prints a symbolic diff.  See
   ** docs/DIFF_CONFLICTS.md.  Exit 0 = no NEW; 1 = NEW present;
   ** 2 = arg / file / pipeline error. */
+  if( explainComposeFlag ){
+    char *ec_files[256];
+    int ec_n = OptNArgs() < 256 ? OptNArgs() : 256, k;
+    for(k=0; k<ec_n; k++) ec_files[k] = OptArg(k);
+    exit(run_explain_compose(ec_n, ec_files));
+  }
   if( diffConflictsFlag ){
     if( OptNArgs() != 2 ){
       fprintf(stderr,
@@ -14496,20 +14717,37 @@ oom:
   return snap;
 }
 
-int lime_compile_grammar_in_process_ex(const char *grammar_text,
-                                    size_t len,
-                                    struct ParserSnapshot **out_snapshot,
-                                    char **error,
-                                    int *out_nconflict)
+#endif /* LIME_HAVE_SNAPSHOT_BUILD: _ex2 is also in the CLI build */
+
+/*
+** lime_compile_grammar_in_process_ex2 -- the one in-process pipeline
+** (include/lime_compiler.h).  ParseText + LALR(1) construction, with an
+** optional conflict hook consulted inside FindActions().  out_snapshot
+** NULL = analysis only: stop after FindActions, pack no tables.  Defined
+** outside LIME_HAVE_SNAPSHOT_BUILD so `lime --explain-compose` can run
+** the analysis; a snapshot can only be built in liblime_compiler.
+*/
+int lime_compile_grammar_in_process_ex2(const char *grammar_text,
+                                        size_t len,
+                                        const LimeCompileHook *hook,
+                                        struct ParserSnapshot **out_snapshot,
+                                        LimeCompileStats *stats,
+                                        char **error)
 {
-  if( out_nconflict ) *out_nconflict = 0;
-  if( !grammar_text || len==0 || !out_snapshot ){
+  if( stats ) memset(stats, 0, sizeof(*stats));
+  if( stats ) stats->nexpect = -1;
+  if( out_snapshot ) *out_snapshot = NULL;
+  if( error ) *error = NULL;
+  if( !grammar_text || len==0 ){
     if( error ) *error = strdup("lime_compile_grammar_in_process: bad arguments");
-    if( out_snapshot ) *out_snapshot = NULL;
     return -1;
   }
-  *out_snapshot = NULL;
-  if( error ) *error = NULL;
+#ifndef LIME_HAVE_SNAPSHOT_BUILD
+  if( out_snapshot ){
+    if( error ) *error = strdup("lime_compile_grammar_in_process: snapshot build needs liblime_compiler");
+    return -1;
+  }
+#endif
 
   /* Capture stderr around the whole pipeline so ErrorMsg() and
   ** FindActions() conflict diagnostics end up in the returned
@@ -14532,7 +14770,12 @@ int lime_compile_grammar_in_process_ex(const char *grammar_text,
   ** its prior state on return -- success OR failure path. */
   LimeCompilerContext  cc;
   LimeCompilerContext *prev_active = lime_active_ctx;
+  const LimeCompileHook *prev_hook = lime_active_hook;
   lime_compiler_context_init(&cc);
+  lime_active_hook = (hook && hook->on_conflict) ? hook : 0;
+  lime_hook_nresolved = 0;
+  lime_hook_par = 0;
+  lime_hook_parsym = 0;
 
   struct lime lem;
   memset(&lem, 0, sizeof(lem));
@@ -14551,11 +14794,7 @@ int lime_compile_grammar_in_process_ex(const char *grammar_text,
   ParseText(&lem, grammar_text, len);
 
   int rc = -1;
-  struct ParserSnapshot *snap = NULL;
   const char *fail_reason = NULL;
-  int k;
-  struct rule *rp;
-  int idx;
 
   if( lem.errorcnt > 0 ){
     fail_reason = "grammar parse failed";
@@ -14586,6 +14825,16 @@ int lime_compile_grammar_in_process_ex(const char *grammar_text,
     fail_reason = "grammar has unresolved conflicts";
     goto done;
   }
+  if( stats ){
+    stats->nconflict = lem.nconflict;
+    stats->nresolved = lime_hook_nresolved;
+    stats->nexpect   = lem.nexpect;
+    stats->nstate    = lem.nstate;
+    stats->nrule     = lem.nrule;
+    stats->nterminal = lem.nterminal;
+  }
+  if( !out_snapshot ){ rc = 0; goto done; }
+#ifdef LIME_HAVE_SNAPSHOT_BUILD
   /* Letter 37: the in-process snapshot path is always driven by the
   ** push parser + host_reduce, where a unit rule's action is a
   ** callback dispatched by ruleno.  Keep unit-rule reductions so their
@@ -14602,26 +14851,27 @@ int lime_compile_grammar_in_process_ex(const char *grammar_text,
   /* Build the snapshot.  build_snapshot_from_lime() owns its
   ** scratch allocations and frees them before returning; the
   ** ParserSnapshot it returns is independent of the lime arena
-  ** about to be torn down by lime_compiler_context_destroy. */
-  snap = build_snapshot_from_lime(&lem, grammar_text, len);
-  if( !snap ){
-    fail_reason = "snapshot build failed";
-    goto done;
+  ** about to be torn down by lime_compiler_context_destroy.
+  ** lemon resolves R/R (keep-first) and S/R (keep-shift) silently --
+  ** they bump nconflict, not errorcnt -- so the caller reads
+  ** stats->nconflict to refuse a shadowing compose (Letter 35). */
+  {
+    struct ParserSnapshot *snap = build_snapshot_from_lime(&lem, grammar_text, len);
+    if( !snap ){
+      fail_reason = "snapshot build failed";
+      goto done;
+    }
+    *out_snapshot = snap;
   }
-  /* Q1 (Letter 35): surface the LALR conflict count.  lemon resolves
-  ** reduce/reduce (keep-first) and shift/reduce (keep-shift) conflicts
-  ** silently -- they increment lem.nconflict but NOT lem.errorcnt, so
-  ** the snapshot builds successfully even though a composed fragment
-  ** shadowed an already-loaded rule.  Report the count so the caller
-  ** can refuse the compose or warn the extension author rather than
-  ** ship a silently mis-parsing grammar. */
-  if( out_nconflict ) *out_nconflict = lem.nconflict;
-  *out_snapshot = snap;
   rc = 0;
+#endif
 
 done:
   lime_compiler_context_destroy(&cc);
   lime_active_ctx = prev_active;
+  lime_active_hook = prev_hook;
+  lime_hook_par = 0;
+  lime_hook_parsym = 0;
 
   /* Restore stderr and pull the captured diagnostics into a
   ** caller-owned heap buffer for the error path. */
@@ -14675,6 +14925,25 @@ done:
     }
   }
   free(err_buf);
+  return rc;
+}
+
+#ifdef LIME_HAVE_SNAPSHOT_BUILD
+int lime_compile_grammar_in_process_ex(const char *grammar_text,
+                                    size_t len,
+                                    struct ParserSnapshot **out_snapshot,
+                                    char **error,
+                                    int *out_nconflict)
+{
+  LimeCompileStats st;
+  int rc;
+  if( out_nconflict ) *out_nconflict = 0;
+  if( !out_snapshot ){
+    if( error ) *error = strdup("lime_compile_grammar_in_process: bad arguments");
+    return -1;
+  }
+  rc = lime_compile_grammar_in_process_ex2(grammar_text, len, NULL, out_snapshot, &st, error);
+  if( rc==0 && out_nconflict ) *out_nconflict = st.nconflict;
   return rc;
 }
 

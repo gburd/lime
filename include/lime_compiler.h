@@ -87,6 +87,86 @@ int lime_compile_grammar_in_process_ex(const char *grammar_text,
                                        char **error,
                                        int *out_nconflict);
 
+/* ------------------------------------------------------------------ */
+/*  Conflict hook (compose-time only; see include/lime_policy.h)       */
+/* ------------------------------------------------------------------ */
+
+/** Kind of an LALR conflict precedence could not settle. */
+typedef enum LimeCompileConflictKind {
+    LIME_CK_SR = 1, /**< shift/reduce */
+    LIME_CK_RR = 2, /**< reduce/reduce */
+    LIME_CK_SS = 3  /**< shift/shift (pathological; never resolvable) */
+} LimeCompileConflictKind;
+
+/**
+ * One unresolved conflict, as FindActions() sees it in one state.  All
+ * strings are valid for the duration of the hook call only.
+ *
+ * Rule identities are the canonical "lhs ::= rhs1 rhs2" text that
+ * snapshot->rule_ids[] carries: stable across composes, unlike state
+ * numbers.  For SR, rule_a is a shift-side rule (a config with the dot
+ * before the lookahead; display only, it is not part of the conflict's
+ * identity) and rule_b the reduce rule.  For RR both are reduce rules,
+ * rule_a the one Lemon would keep by default.  NULL for SS.
+ */
+typedef struct LimeConflictInfo {
+    int kind;               /**< LimeCompileConflictKind */
+    const char *lookahead;  /**< terminal name */
+    const char *rule_a;
+    const char *rule_b;
+    int line_a, line_b;     /**< line of the rule in the compiled text */
+    int dot_a;              /**< SR: position of the dot in rule_a */
+    int state;              /**< state number (cosmetic, NOT stable) */
+    const char *example;    /**< a symbol path from state 0 to this state,
+                                 "A B c . LOOKAHEAD" (may be NULL) */
+} LimeConflictInfo;
+
+/** What the hook decides for one conflict occurrence. */
+typedef enum LimeConflictChoice {
+    LIME_CHOOSE_NONE = 0, /**< leave it: Lemon's default, still counted */
+    LIME_CHOOSE_SHIFT,    /**< SR: keep the shift (drop the reduce) */
+    LIME_CHOOSE_REDUCE,   /**< SR: keep the reduce (drop the shift) */
+    LIME_CHOOSE_KEEP_A,   /**< RR: keep rule_a */
+    LIME_CHOOSE_KEEP_B    /**< RR: keep rule_b */
+} LimeConflictChoice;
+
+typedef LimeConflictChoice (*LimeConflictHookFn)(void *user, const LimeConflictInfo *c);
+
+typedef struct LimeCompileHook {
+    LimeConflictHookFn on_conflict; /**< called once per unresolved conflict */
+    void *user;
+} LimeCompileHook;
+
+/** Outcome counters of one in-process compile. */
+typedef struct LimeCompileStats {
+    int nconflict;  /**< conflicts left unresolved (after the hook) */
+    int nresolved;  /**< conflicts the hook resolved */
+    int nexpect;    /**< the grammar's %expect, or -1 */
+    int nstate;
+    int nrule;
+    int nterminal;
+} LimeCompileStats;
+
+/**
+ * @brief The in-process pipeline with a conflict hook.
+ *
+ * Runs ParseText + LALR(1) construction.  Every conflict precedence
+ * cannot settle is offered to @p hook (may be NULL); its choice is
+ * applied as an ordinary SH/RD_RESOLVED action, so nothing of the hook
+ * survives into the tables.  With @p out_snapshot NULL the pipeline
+ * stops after FindActions (conflict analysis only; no tables packed).
+ * Available in liblime_compiler and in the `lime` CLI build.
+ *
+ * @retval 0 on success (conflicts, resolved or not, are not errors:
+ *         read @p stats); non-zero on a hard error, *error explains.
+ */
+int lime_compile_grammar_in_process_ex2(const char *grammar_text,
+                                        size_t len,
+                                        const LimeCompileHook *hook,
+                                        struct ParserSnapshot **out_snapshot,
+                                        LimeCompileStats *stats,
+                                        char **error);
+
 #ifdef __cplusplus
 }
 #endif
