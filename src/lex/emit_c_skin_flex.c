@@ -83,6 +83,7 @@
 #include "lex_emit.h"
 
 #include <ctype.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -611,15 +612,480 @@ int lime_emit_c_skin_flex(const LimeLexCompiled *compiled,
 
 #include "flex_reader.h"
 
+/* The runtime skeleton: one string per line, with %%directives
+** (%%if NAME / %%else / %%endif, and named insertion points). */
+static const char *const flex_skel[] = {
+#include "flex_skel.inc"
+};
+
+/* Symbols %option prefix renames (flex's list, minus the C++ ones). */
+static const char *const flex_prefixed[] = {
+    "_create_buffer", "_delete_buffer", "_scan_buffer", "_scan_string", "_scan_bytes",
+    "_init_buffer", "_flush_buffer", "_load_buffer_state", "_switch_to_buffer",
+    "push_buffer_state", "pop_buffer_state", "ensure_buffer_stack", "lex", "restart",
+    "lex_init", "lex_init_extra", "lex_destroy", "get_debug", "set_debug", "get_extra",
+    "set_extra", "get_in", "set_in", "get_out", "set_out", "get_leng", "get_text",
+    "get_lineno", "set_lineno", "get_column", "set_column", "wrap", "get_lval", "set_lval",
+    "get_lloc", "set_lloc", "alloc", "realloc", "free", "text", "leng", "in", "out",
+    "_flex_debug", "lineno",
+};
+
+typedef struct {
+    LimeFlexSpec *fs;
+    FILE *out;
+    const char *out_name; /* for #line */
+    int line;             /* current output line (1-based) */
+    int noline;
+    LimeLexCompiled *lc;
+} FlexEmit;
+
+static void fe_puts(FlexEmit *e, const char *s) {
+    for (const char *p = s; *p; p++)
+        if (*p == '\n') e->line++;
+    fputs(s, e->out);
+}
+
+static void fe_printf(FlexEmit *e, const char *fmt, ...) {
+    char buf[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    if (n >= 0 && (size_t)n < sizeof buf) {
+        fe_puts(e, buf);
+        return;
+    }
+    char *big = malloc((size_t)n + 1);
+    if (!big) return;
+    va_start(ap, fmt);
+    vsnprintf(big, (size_t)n + 1, fmt, ap);
+    va_end(ap);
+    fe_puts(e, big);
+    free(big);
+}
+
+/* #line pointing into the .l file, or back into the output. */
+static void fe_line_src(FlexEmit *e, int line) {
+    if (e->noline) return;
+    fe_printf(e, "#line %d \"%s\"\n", line, e->fs->filename ? e->fs->filename : "<stdin>");
+}
+static void fe_line_out(FlexEmit *e) {
+    if (e->noline) return;
+    fe_printf(e, "#line %d \"%s\"\n", e->line + 2, e->out_name);
+}
+
+static void fe_code(FlexEmit *e, const LimeFlexCode *c, int n) {
+    for (int k = 0; k < n; k++) {
+        if (!c[k].text) continue;
+        fe_line_src(e, c[k].line);
+        fe_puts(e, c[k].text);
+        size_t L = strlen(c[k].text);
+        if (L == 0 || c[k].text[L - 1] != '\n') fe_puts(e, "\n");
+    }
+    if (n > 0) fe_line_out(e);
+}
+
+static int flex_opt(int v, int dflt) { return v < 0 ? dflt : v; }
+
+/* Value of a %%if condition. */
+static int fe_cond(FlexEmit *e, const char *name) {
+    const LimeFlexSpec *fs = e->fs;
+    const LimeFlexOptions *o = &fs->opt;
+    int neg = name[0] == '!';
+    if (neg) name++;
+    int v = 0;
+    if (!strcmp(name, "reentrant")) v = o->reentrant == 1;
+    else if (!strcmp(name, "bridge")) v = o->bison_bridge == 1;
+    else if (!strcmp(name, "locations")) v = o->bison_locations == 1;
+    else if (!strcmp(name, "yylineno")) v = o->yylineno == 1;
+    else if (!strcmp(name, "yymore")) v = fs->uses_yymore > 0;
+    else if (!strcmp(name, "reject")) v = fs->uses_reject > 0;
+    else if (!strcmp(name, "bol")) v = fs->bol_needed;
+    else if (!strcmp(name, "trail")) v = fs->has_trail;
+    else if (!strcmp(name, "stack")) v = o->stack == 1;
+    else if (!strcmp(name, "debug")) v = o->debug == 1;
+    else if (!strcmp(name, "unistd")) v = flex_opt(o->unistd, 1);
+    else if (!strcmp(name, "yyalloc")) v = flex_opt(o->yyalloc, 1);
+    else if (!strcmp(name, "yyrealloc")) v = flex_opt(o->yyrealloc, 1);
+    else if (!strcmp(name, "yyfree")) v = flex_opt(o->yyfree, 1);
+    else fprintf(stderr, "lime: internal error: unknown skeleton condition %s\n", name);
+    return neg ? !v : v;
+}
+
+static void fe_prefix_defines(FlexEmit *e) {
+    const char *P = e->fs->opt.prefix;
+    if (!P || !strcmp(P, "yy")) return;
+    size_t n = sizeof flex_prefixed / sizeof *flex_prefixed;
+    if (e->fs->opt.reentrant == 1) n -= 6; /* the globals: they live in yyguts_t */
+    for (size_t k = 0; k < n; k++)
+        fe_printf(e, "#define yy%s %s%s\n", flex_prefixed[k], P, flex_prefixed[k]);
+    fe_puts(e, "\n");
+}
+
+/* Equivalence classes over the 256 bytes, merged across every DFA. */
+static int fe_classes(const LimeLexCompiled *lc, int ec[256]) {
+    /* Two bytes share a class iff every state of every DFA sends them to
+    ** the same place.  Refine by hashing column signatures. */
+    int n_ec = 0, rep[256];
+    for (int b = 0; b < 256; b++) {
+        ec[b] = -1;
+        for (int k = 0; k < n_ec && ec[b] < 0; k++) {
+            int c = rep[k];
+            int same = (b == 0) == (c == 0); /* NUL stays alone: it doubles as end-of-buffer */
+            for (int s = 0; same && s < lc->n_states; s++) {
+                const LimeDfa *d = lc->states[s].dfa;
+                if (!d) continue;
+                for (int q = 0; q < d->n_states && same; q++)
+                    if (d->states[q].trans[b] != d->states[q].trans[c]) same = 0;
+            }
+            if (same) ec[b] = k;
+        }
+        if (ec[b] < 0) {
+            rep[n_ec] = b;
+            ec[b] = n_ec++;
+        }
+    }
+    return n_ec;
+}
+
+static int fe_has_out(const LimeDfaState *st) {
+    for (int b = 0; b < 256; b++)
+        if (st->trans[b] >= 0) return 1;
+    return 0;
+}
+
+/* Emit yy_ec, yy_nxt, yy_accept, yy_nul_trans, yy_start_tab and the
+** per-rule tables.  All Lime states' DFAs go into one table, offset per
+** state.  NUL (class 0) transitions are routed through yy_nul_trans so
+** the scanner can tell a real NUL from the end of the buffer. */
+static int fe_tables(FlexEmit *e) {
+    const LimeFlexSpec *fs = e->fs;
+    const LimeLexCompiled *lc = e->lc;
+    int ec[256];
+    int n_ec = fe_classes(lc, ec);
+    int *base = calloc((size_t)lc->n_states + 1, sizeof(int));
+    if (!base) return -1;
+    int total = 1; /* state 0 = jam (no transitions, not accepting) */
+    for (int s = 0; s < lc->n_states; s++) {
+        base[s] = total;
+        if (lc->states[s].dfa) total += lc->states[s].dfa->n_states;
+    }
+
+    fe_printf(e, "#define YY_NUM_RULES %d\n", fs->n_rules);
+    fe_printf(e, "#define YY_END_OF_BUFFER %d\n", fs->n_rules + 1);
+    fe_printf(e, "#define YY_NEC %d\n", n_ec);
+    fe_puts(e, "static const flex_uint8_t yy_ec[256] = {");
+    for (int b = 0; b < 256; b++)
+        fe_printf(e, "%s%d,", b % 16 ? " " : "\n\t", ec[b]);
+    fe_puts(e, "\n};\n");
+
+    /* Per class, the first byte (to read the class's column). */
+    int rep[256];
+    for (int c = 0; c < n_ec; c++) rep[c] = -1;
+    for (int b = 255; b >= 0; b--) rep[ec[b]] = b;
+
+    const char *ty = total < 32767 ? "flex_int16_t" : "flex_int32_t";
+    fe_printf(e, "static const %s yy_nxt[%d] = {", ty, total * n_ec);
+    int col = 0;
+    for (int c = 0; c < n_ec; c++)
+        fe_printf(e, "%s-1,", col++ % 16 ? " " : "\n\t");
+    for (int s = 0; s < lc->n_states; s++) {
+        const LimeDfa *d = lc->states[s].dfa;
+        if (!d) continue;
+        for (int q = 0; q < d->n_states; q++) {
+            for (int c = 0; c < n_ec; c++) {
+                int t = d->states[q].trans[rep[c]];
+                /* -2 = look at yy_nul_trans (NUL byte or end of buffer). */
+                int v = c == ec[0] ? -2 : (t < 0 ? -1 : base[s] + t);
+                fe_printf(e, "%s%d,", col++ % 16 ? " " : "\n\t", v);
+            }
+        }
+    }
+    fe_puts(e, "\n};\n");
+
+    /* yy_nul_trans: the real NUL transition; yy_accept: rule + 1, negated
+    ** when the state has no way out. */
+    fe_printf(e, "static const %s yy_nul_trans[%d] = {\n\t-1,", ty, total);
+    col = 1;
+    for (int s = 0; s < lc->n_states; s++) {
+        const LimeDfa *d = lc->states[s].dfa;
+        if (!d) continue;
+        for (int q = 0; q < d->n_states; q++) {
+            int t = d->states[q].trans[0];
+            fe_printf(e, "%s%d,", col++ % 16 ? " " : "\n\t", t < 0 ? -1 : base[s] + t);
+        }
+    }
+    fe_puts(e, "\n};\n");
+    fe_printf(e, "static const %s yy_accept[%d] = {\n\t0,", fs->n_rules < 32767 ? "flex_int16_t" : "flex_int32_t", total);
+    col = 1;
+    for (int s = 0; s < lc->n_states; s++) {
+        const LimeLexCompiledState *cs = &lc->states[s];
+        const LimeDfa *d = cs->dfa;
+        if (!d) continue;
+        for (int q = 0; q < d->n_states; q++) {
+            int v = 0;
+            if (d->states[q].is_accept) {
+                v = cs->rule_indices[d->states[q].accept_rule] + 1;
+                if (!fe_has_out(&d->states[q])) v = -v;
+            }
+            fe_printf(e, "%s%d,", col++ % 16 ? " " : "\n\t", v);
+        }
+    }
+    fe_puts(e, "\n};\n");
+
+    /* yy_start_tab[2 * sc + bol]: flex's yy_start is 1 + 2 * sc, and the
+    ** scanner adds YY_START_BOL (0 or 1). */
+    fe_printf(e, "static const %s yy_start_tab[%d] = {", ty, 2 * fs->n_sc);
+    for (int c = 0; c < fs->n_sc; c++) {
+        for (int bol = 0; bol < 2; bol++) {
+            int st = lime_flex_state_index(fs, c, bol);
+            const LimeDfa *d = st < lc->n_states ? lc->states[st].dfa : NULL;
+            fe_printf(e, "%s%d,", (2 * c + bol) % 16 ? " " : "\n\t", d ? base[st] + d->start : 0);
+        }
+    }
+    fe_puts(e, "\n};\n");
+    if (fs->bol_needed)
+        fe_puts(e, "#define YY_START_BOL (YY_CURRENT_BUFFER_LVALUE->yy_at_bol)\n");
+    else
+        fe_puts(e, "#define YY_START_BOL 0\n");
+
+    /* Per rule (index = yy_act): trailing context and yylineno. */
+    if (fs->has_trail) {
+        fe_printf(e, "static const flex_int32_t yy_tc[%d] = {\n\t0,", fs->n_rules + 1);
+        for (int k = 0; k < fs->n_rules; k++) {
+            const LimeFlexRule *fr = &fs->rules[k];
+            int v = fr->trail ? fr->trail : (fr->head ? -fr->head : 0);
+            fe_printf(e, "%s%d,", (k + 1) % 16 ? " " : "\n\t", v);
+        }
+        fe_puts(e, "\n};\n");
+    }
+    if (fs->opt.yylineno == 1) {
+        fe_printf(e, "static const flex_int32_t yy_rule_can_match_eol[%d] = {\n\t0,", fs->n_rules + 1);
+        for (int k = 0; k < fs->n_rules; k++)
+            fe_printf(e, "%s%d,", (k + 1) % 16 ? " " : "\n\t", fs->rules[k].can_match_eol);
+        fe_puts(e, "\n};\n");
+    }
+    if (fs->opt.debug == 1) {
+        fe_printf(e, "static const flex_int32_t yy_rule_linenum[%d] = {\n\t0,", fs->n_rules + 1);
+        for (int k = 0; k < fs->n_rules; k++)
+            fe_printf(e, "%s%d,", (k + 1) % 16 ? " " : "\n\t", fs->rules[k].line);
+        fe_puts(e, "\n};\n");
+    }
+    free(base);
+    return 0;
+}
+
+/* The switch body: one case per rule, <<EOF>> cases, the default rule. */
+static void fe_actions(FlexEmit *e) {
+    const LimeFlexSpec *fs = e->fs;
+    int nodefault = fs->opt.nodefault == 1;
+    for (int k = 0; k < fs->n_rules; k++) {
+        const LimeFlexRule *fr = &fs->rules[k];
+        if (fr->is_eof) continue;
+        if (fr->pre_code) {
+            fe_puts(e, fr->pre_code);
+            if (fr->pre_code[0] && fr->pre_code[strlen(fr->pre_code) - 1] != '\n') fe_puts(e, "\n");
+        }
+        fe_printf(e, "case %d:\n", k + 1);
+        if (fr->is_default) {
+            fe_puts(e, "YY_RULE_SETUP\n");
+            if (nodefault)
+                fe_puts(e, "\tYY_FATAL_ERROR(\"flex scanner jammed\");\n");
+            else
+                fe_puts(e, "\tECHO;\n");
+            fe_puts(e, "\tYY_BREAK\n");
+            continue;
+        }
+        if (fr->action_rule != k) {
+            /* A `|` rule shares the next real action; flex gives it its own
+            ** case so its trailing context (if any) is undone first. */
+            continue;
+        }
+        fe_puts(e, "YY_RULE_SETUP\n");
+        fe_line_src(e, fr->action_line);
+        fe_puts(e, fr->action ? fr->action : "");
+        fe_puts(e, "\n");
+        fe_line_out(e);
+        fe_puts(e, "\tYY_BREAK\n");
+    }
+    /* <<EOF>>: the conditions sharing a rule share its case. */
+    for (int k = -1; k < fs->n_rules; k++) {
+        if (k >= 0 && !fs->rules[k].is_eof) continue;
+        int any = 0;
+        for (int c = 0; c < fs->n_sc; c++) {
+            if ((fs->sc_eof_rule ? fs->sc_eof_rule[c] : -1) != k) continue;
+            fe_printf(e, "case YY_STATE_EOF(%s):\n", fs->sc_names[c]);
+            any = 1;
+        }
+        if (!any) continue;
+        if (k < 0) {
+            fe_puts(e, "\tyyterminate();\n");
+            continue;
+        }
+        const LimeFlexRule *fr = &fs->rules[k];
+        fe_line_src(e, fr->action_line);
+        fe_puts(e, fr->action ? fr->action : "");
+        fe_puts(e, "\n");
+        fe_line_out(e);
+        fe_puts(e, "\tYY_BREAK\n");
+    }
+}
+
+static void fe_sc_defines(FlexEmit *e) {
+    const LimeFlexSpec *fs = e->fs;
+    for (int c = 0; c < fs->n_sc; c++)
+        fe_printf(e, "#define %s %d\n", fs->sc_names[c], c);
+    fe_puts(e, "\n");
+}
+
+static void fe_yy_decl(FlexEmit *e) {
+    const LimeFlexOptions *o = &e->fs->opt;
+    const char *args;
+    if (o->bison_locations == 1)
+        args = o->reentrant == 1 ? "(YYSTYPE *yylval_param, YYLTYPE *yylloc_param, yyscan_t yyscanner)"
+                                 : "(YYSTYPE *yylval_param, YYLTYPE *yylloc_param)";
+    else if (o->bison_bridge == 1)
+        args = o->reentrant == 1 ? "(YYSTYPE *yylval_param, yyscan_t yyscanner)" : "(YYSTYPE *yylval_param)";
+    else
+        args = o->reentrant == 1 ? "(yyscan_t yyscanner)" : "(void)";
+    fe_printf(e, "#ifndef YY_DECL\n#define YY_DECL_IS_OURS 1\nextern int yylex %s;\n#define YY_DECL int yylex %s\n#endif\n\n",
+              args, args);
+}
+
+static void fe_yywrap(FlexEmit *e) {
+    const LimeFlexOptions *o = &e->fs->opt;
+    if (o->yywrap == 0) {
+        if (o->reentrant == 1)
+            fe_printf(e, "#define %swrap(yyscanner) (/*CONSTCOND*/1)\n", e->fs->opt.prefix);
+        else
+            fe_printf(e, "#define %swrap() (/*CONSTCOND*/1)\n", e->fs->opt.prefix);
+        fe_puts(e, "#define YY_SKIP_YYWRAP\n");
+    }
+}
+
+static void fe_interactive_init(FlexEmit *e) {
+    const LimeFlexOptions *o = &e->fs->opt;
+    if (o->always_interactive == 1)
+        fe_puts(e, "\tb->yy_is_interactive = 1;\n");
+    else if (o->never_interactive == 1)
+        fe_puts(e, "\tb->yy_is_interactive = 0;\n");
+    else if (flex_opt(o->unistd, 1))
+        fe_puts(e, "\tb->yy_is_interactive = file ? (isatty(fileno(file)) > 0) : 0;\n");
+    else
+        fe_puts(e, "\tb->yy_is_interactive = 0;\n");
+}
+
+static int fe_skeleton(FlexEmit *e) {
+    const LimeFlexSpec *fs = e->fs;
+    int depth = 0, off = 0;
+    for (size_t k = 0; k < sizeof flex_skel / sizeof *flex_skel; k++) {
+        const char *ln = flex_skel[k];
+        if (ln[0] == '%' && ln[1] == '%') {
+            const char *d = ln + 2;
+            if (!strncmp(d, "if ", 3)) {
+                depth++;
+                if (!off && !fe_cond(e, d + 3)) off = depth;
+            } else if (!strcmp(d, "else")) {
+                if (off == depth) off = 0;
+                else if (!off) off = depth;
+            } else if (!strcmp(d, "endif")) {
+                if (off == depth) off = 0;
+                depth--;
+            } else if (off) {
+                continue;
+            } else if (!strcmp(d, "top-code")) {
+                fe_code(e, fs->top_code, fs->n_top_code);
+            } else if (!strcmp(d, "prefix-defines")) {
+                fe_prefix_defines(e);
+            } else if (!strcmp(d, "yywrap-macro")) {
+                fe_yywrap(e);
+            } else if (!strcmp(d, "tables")) {
+                if (fe_tables(e) < 0) return -1;
+            } else if (!strcmp(d, "defs-code")) {
+                fe_code(e, fs->defs_code, fs->n_defs_code);
+            } else if (!strcmp(d, "sc-defines")) {
+                fe_sc_defines(e);
+            } else if (!strcmp(d, "yy-decl")) {
+                fe_yy_decl(e);
+            } else if (!strcmp(d, "prolog-code")) {
+                fe_code(e, fs->prolog_code, fs->n_prolog_code);
+            } else if (!strcmp(d, "actions")) {
+                fe_actions(e);
+            } else if (!strcmp(d, "interactive-init")) {
+                fe_interactive_init(e);
+            } else if (!strcmp(d, "user-code")) {
+                if (fs->user_code.text) fe_code(e, &fs->user_code, 1);
+                else if (fs->opt.main_fn == 1)
+                    fe_puts(e, "\nint main(void)\n{\n\tyylex();\n\treturn 0;\n}\n");
+            } else {
+                fprintf(stderr, "lime: internal error: unknown skeleton directive %s\n", ln);
+            }
+            continue;
+        }
+        if (off) continue;
+        fe_puts(e, ln);
+        fe_puts(e, "\n");
+    }
+    if (depth != 0) {
+        fprintf(stderr, "lime: internal error: unbalanced %%%%if in the flex skeleton\n");
+        return -1;
+    }
+    return 0;
+}
+
 /* Compile fs->spec and write the scanner.  out_c NULL = flex's default
 ** name (lex.<prefix>.c, or %option outfile).  Returns 0, 1 (diagnosed
 ** error) or 2 (I/O). */
 int lime_flex_compile_and_emit(LimeFlexSpec *fs, const char *out_c, const char *out_h,
                                int to_stdout) {
-    (void)fs;
-    (void)out_c;
     (void)out_h;
-    (void)to_stdout;
-    fprintf(stderr, "lime: the flex-mode code generator is not built yet (Track E, step L1)\n");
-    return 1;
+    LimeLexCompiled *lc = lime_lex_compile(fs->spec);
+    if (!lc) {
+        fprintf(stderr, "lime: out of memory\n");
+        return 2;
+    }
+    if (lc->error_count > 0) {
+        lime_lex_compiled_free(lc);
+        return 1;
+    }
+    if (!fs->opt.prefix) fs->opt.prefix = strdup("yy");
+    char defname[256];
+    if (!out_c) out_c = fs->opt.outfile;
+    if (!out_c) {
+        snprintf(defname, sizeof defname, "lex.%s.c", fs->opt.prefix);
+        out_c = defname;
+    }
+    FlexEmit e;
+    memset(&e, 0, sizeof e);
+    e.fs = fs;
+    e.lc = lc;
+    e.noline = fs->opt.noline == 1;
+    e.out_name = to_stdout ? "<stdout>" : out_c;
+    e.out = to_stdout ? stdout : fopen(out_c, "wb");
+    if (!e.out) {
+        fprintf(stderr, "lime: cannot write %s\n", out_c);
+        lime_lex_compiled_free(lc);
+        return 2;
+    }
+    if (fs->uses_reject > 0) {
+        fprintf(stderr, "%s: REJECT is not implemented yet in lime's flex mode\n",
+                fs->filename ? fs->filename : "<stdin>");
+        lime_lex_compiled_free(lc);
+        if (!to_stdout) fclose(e.out);
+        return 1;
+    }
+    int rc = fe_skeleton(&e);
+    int werr = ferror(e.out);
+    if (!to_stdout) werr |= fclose(e.out);
+    else werr |= fflush(stdout);
+    lime_lex_compiled_free(lc);
+    if (rc < 0) {
+        fprintf(stderr, "lime: out of memory\n");
+        return 2;
+    }
+    if (werr) {
+        fprintf(stderr, "lime: write error on %s\n", e.out_name);
+        return 2;
+    }
+    return 0;
 }
