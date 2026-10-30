@@ -732,6 +732,8 @@ struct symbol {
   ** by field name (`K.<field>`) -- the tag is documentation today
   ** plus a hook for future type-safe locals.  See docs/SKINS.md. */
   const char *union_field;
+  int yacc_code;           /* Track D: external (yylex) token code for
+                           ** yacc input, bison's numbering; 0 = none */
   /* The following fields are used by MULTITERMINALs only */
   int nsubsym;             /* Number of constituent symbols in the MULTI */
   struct symbol **subsym;  /* Array of constituent symbols */
@@ -1028,6 +1030,10 @@ struct lime {
   char *union_body;
   int is_yacc;             /* Track D: grammar was read by the yacc front
                            ** end (yacc semantics apply); 0 for Lemon */
+  int yacc_maxcode;        /* Track D: largest external token code */
+  char *yacc_post_prologue;/* Track D: %{ %} blocks after %union */
+  char *yacc_stype;        /* Track D: YYSTYPE when there is no %union */
+  int yacc_debug;          /* Track D: -t / %debug: YYDEBUG default 1 */
   char *yystype_header;    /* %yystype_header "name.h": basename for the
                            ** standalone token-defines + YYSTYPE header
                            ** that a separately-generated lexer can
@@ -9935,6 +9941,8 @@ static const char *resolve_extends_path(const char *current_file,
 */
 PRIVATE char *append_str(const char *zText, int n, int p1, int p2);
 struct yacc_rd {
+  struct symbol **toks;  /* Terminals in the order they became tokens */
+  int ntok, ntokalloc;
   struct pstate *psp;
   const char *filename;
   char *cp;             /* Read cursor */
@@ -10004,16 +10012,112 @@ static struct symbol *yacc_symbol(const char *name, int is_terminal){
   return sp;
 }
 
-/* Append a %{ ... %} block to gp->include, the way %include does. */
-static void yacc_append_include(struct lime *gp, const char *s, size_t n){
-  size_t old = gp->include ? strlen(gp->include) : 0;
-  char *z = (char*)lime_realloc(gp->include, old + n + 2);
+/* Make `sp` a terminal, remembering the order tokens are declared in:
+** bison numbers named tokens 258, 259, ... in that order. */
+static struct symbol *yacc_token(struct yacc_rd *r, struct symbol *sp){
+  int i;
+  sp->type = TERMINAL;
+  for(i=0; i<r->ntok; i++) if( r->toks[i]==sp ) return sp;
+  if( r->ntok>=r->ntokalloc ){
+    r->ntokalloc = r->ntokalloc*2 + 16;
+    r->toks = (struct symbol**)lime_realloc(r->toks,
+                                sizeof(r->toks[0])*r->ntokalloc);
+    MemoryCheck(r->toks);
+  }
+  r->toks[r->ntok++] = sp;
+  return sp;
+}
+
+/* Parse a char literal at r->cp ('c', '\n', '\'', '\012', '\x41').
+** Returns its terminal symbol, named by the literal as written, with
+** yacc_code = the character's code.  Leaves r->cp past the literal. */
+static struct symbol *yacc_charlit(struct yacc_rd *r){
+  char *s = r->cp, *p = s + 1, name[16];
+  int code;
+  struct symbol *sp;
+  if( *p=='\\' ){
+    p++;
+    switch( *p ){
+      case 'n': code = '\n'; p++; break;
+      case 't': code = '\t'; p++; break;
+      case 'r': code = '\r'; p++; break;
+      case 'f': code = '\f'; p++; break;
+      case 'v': code = '\v'; p++; break;
+      case 'b': code = '\b'; p++; break;
+      case 'a': code = 7; p++; break;
+      case 'x': code = (int)strtol(p+1, &p, 16); break;
+      default:
+        if( *p>='0' && *p<='7' ){
+          int n = 0; code = 0;
+          while( n<3 && *p>='0' && *p<='7' ){ code = code*8 + (*p-'0'); p++; n++; }
+        }else{
+          code = (unsigned char)*p; p++;
+        }
+    }
+  }else if( *p ){
+    code = (unsigned char)*p; p++;
+  }else{
+    code = 0;
+  }
+  if( *p!='\'' || code<=0 || code>255 || p-s>12 ){
+    yacc_error(r, "%s", "malformed character literal");
+    while( *r->cp && *r->cp!='\'' && *r->cp!='\n' ) r->cp++;
+    if( *r->cp=='\'' ) r->cp++;
+    return 0;
+  }
+  p++;
+  /* A '"' must not end a C string when the name lands in yyTokenName. */
+  if( code=='"' ) lemon_strcpy(name, "'\\\"'");
+  else{ memcpy(name, s, (size_t)(p - s)); name[p - s] = 0; }
+  r->cp = p;
+  sp = yacc_token(r, Symbol_new(name));
+  sp->yacc_code = code;
+  return sp;
+}
+
+/* Append text to a malloc'd string slot. */
+static void yacc_append(char **slot, const char *s, size_t n){
+  size_t old = *slot ? strlen(*slot) : 0;
+  char *z = (char*)lime_realloc(*slot, old + n + 2);
   MemoryCheck(z);
   memcpy(z + old, s, n);
   z[old+n] = '\n';
   z[old+n+1] = 0;
-  gp->include = z;
+  *slot = z;
 }
+
+/* Append `#line N "file"` (backslashes doubled) to a string slot. */
+static void yacc_append_linedir(char **slot, int line, const char *fn){
+  char *z = (char*)lime_malloc(strlen(fn)*2 + 40), *q;
+  MemoryCheck(z);
+  lemon_sprintf(z, "#line %d \"", line);
+  q = z + strlen(z);
+  for(; *fn; fn++){ if( *fn=='\\' ) *q++ = '\\'; *q++ = *fn; }
+  *q++ = '"'; *q = 0;
+  yacc_append(slot, z, strlen(z));
+  lime_free(z);
+}
+
+/* Read `<tag>` at r->cp; returns the Strsafe'd tag or 0. */
+static const char *yacc_tag(struct yacc_rd *r){
+  char *s, *e, save;
+  const char *res;
+  if( *r->cp!='<' ) return 0;
+  s = r->cp + 1;
+  e = strchr(s, '>');
+  if( e==0 || memchr(s, '\n', (size_t)(e - s)) ){
+    yacc_error(r, "%s", "unterminated <tag>");
+    return 0;
+  }
+  save = *e; *e = 0;
+  res = Strsafe(s);
+  *e = save;
+  r->cp = e + 1;
+  return res;
+}
+
+/* Scan a { ... } block (for %union); returns the body or 0. */
+static char *yacc_scan_action(struct yacc_rd *r);
 
 static void yacc_declarations(struct yacc_rd *r, char *buf){
   struct pstate *psp = r->psp;
@@ -10037,19 +10141,56 @@ static void yacc_declarations(struct yacc_rd *r, char *buf){
         return;
       }
       e++;  /* points at "%}" */
-      yacc_append_include(gp, s, (size_t)(e - s));
+      {
+        char **slot = gp->union_body ? &gp->yacc_post_prologue : &gp->include;
+        if( !gp->nolinenosflag ) yacc_append_linedir(slot, r->lineno, r->filename);
+        yacc_append(slot, s, (size_t)(e - s));
+      }
       for(; r->cp<e; r->cp++) if( *r->cp=='\n' ) r->lineno++;
       r->cp = e + 2;
       continue;
     }
     if( r->cp[0]=='%' && ISALPHA(r->cp[1]) ){
-      const char *kw;
+      const char *kw, *tag;
       int is_prec = 0;
       enum e_assoc assoc = UNK;
       r->cp++;
       kw = yacc_ident(r);
       if( strcmp(kw,"token")==0 ){
         is_prec = 0;
+      }else if( strcmp(kw,"union")==0 ){
+        char *body;
+        yacc_skip_ws(r);
+        if( ISALPHA(*r->cp) || *r->cp=='_' ) (void)yacc_ident(r); /* tag name */
+        yacc_skip_ws(r);
+        if( *r->cp!='{' ){
+          yacc_error(r, "%s", "%union must be followed by { ... }");
+          continue;
+        }
+        if( gp->union_body ){
+          yacc_error(r, "%s", "only one %union is supported");
+        }
+        body = yacc_scan_action(r);
+        if( body ){
+          gp->union_body = (char*)Strsafe(body);
+          lime_free(body);
+        }
+        continue;
+      }else if( strcmp(kw,"type")==0 ){
+        const char *tag;
+        yacc_skip_ws(r);
+        tag = yacc_tag(r);
+        for(;;){
+          struct symbol *sp;
+          yacc_skip_ws(r);
+          if( *r->cp=='\'' ){
+            sp = yacc_charlit(r);
+          }else if( ISALPHA(*r->cp) || *r->cp=='_' ){
+            sp = yacc_symbol(yacc_ident(r), 0);
+          }else break;
+          if( sp && tag ) sp->union_field = tag;
+        }
+        continue;
       }else if( strcmp(kw,"left")==0 ){
         is_prec = 1; assoc = LEFT;
       }else if( strcmp(kw,"right")==0 ){
@@ -10068,11 +10209,25 @@ static void yacc_declarations(struct yacc_rd *r, char *buf){
         continue;
       }
       if( is_prec ) psp->preccounter++;
+      yacc_skip_ws(r);
+      tag = yacc_tag(r);
       /* Symbol list: stops at the next '%' or end of line run. */
       for(;;){
         yacc_skip_ws(r);
-        if( ISALPHA(*r->cp) || *r->cp=='_' ){
-          struct symbol *sp = yacc_symbol(yacc_ident(r), 1);
+        if( ISALPHA(*r->cp) || *r->cp=='_' || *r->cp=='\'' ){
+          struct symbol *sp;
+          if( *r->cp=='\'' ){
+            sp = yacc_charlit(r);
+            if( sp==0 ) continue;
+          }else{
+            sp = yacc_token(r, yacc_symbol(yacc_ident(r), 1));
+          }
+          yacc_skip_ws(r);
+          if( ISDIGIT(*r->cp) ){
+            /* %token NAME 300: an explicit external code. */
+            sp->yacc_code = (int)strtol(r->cp, &r->cp, 10);
+          }
+          if( tag ) sp->union_field = tag;
           if( is_prec ){
             if( sp->prec>=0 ){
               yacc_error(r, "Symbol \"%s\" has already been given a "
@@ -10433,6 +10588,18 @@ static void yacc_rules(struct yacc_rd *r){
           }
           continue;
         }
+        if( *r->cp=='\'' ){
+          struct symbol *sp = yacc_charlit(r);
+          if( sp==0 ) continue;
+          yacc_flush_midrule(r, &alt);
+          if( alt.nrhs>=MAXRHS ){
+            yacc_error(r, "too many symbols on the right-hand side of a "
+                       "rule for \"%s\"", lhs->name);
+          }else{
+            alt.rhs[alt.nrhs++] = sp;
+          }
+          continue;
+        }
         if( *r->cp=='{' ){
           int line = r->lineno;
           char *body;
@@ -10447,8 +10614,10 @@ static void yacc_rules(struct yacc_rd *r){
           kw = yacc_ident(r);
           if( strcmp(kw,"prec")==0 ){
             yacc_skip_ws(r);
-            if( ISALPHA(*r->cp) || *r->cp=='_' ){
-              alt.prec = yacc_symbol(yacc_ident(r), 1);
+            if( *r->cp=='\'' ){
+              alt.prec = yacc_charlit(r);
+            }else if( ISALPHA(*r->cp) || *r->cp=='_' ){
+              alt.prec = yacc_token(r, yacc_symbol(yacc_ident(r), 1));
             }else{
               yacc_error(r, "%s", "%prec must be followed by a token name");
             }
@@ -10487,6 +10656,9 @@ static void yacc_parse_buffer(struct pstate *psp, char *buf,
   rd.cp = buf;
   rd.lineno = 1;
   gp->is_yacc = 1;
+  /* bison's internal token 2: what yylex codes nobody declared map to.
+  ** No rule uses it, so it is always a syntax error. */
+  yacc_token(&rd, yacc_symbol("$undefined", 1))->yacc_code = 257;
   psp->preccounter = 0;
   psp->firstrule = psp->lastrule = psp->prevrule = 0;
   gp->nrule = 0;
@@ -10496,7 +10668,41 @@ static void yacc_parse_buffer(struct pstate *psp, char *buf,
   ** otherwise; every symbol's value lives in that one type (yy0). */
   if( gp->union_body==0 && gp->tokentype==0 ) gp->tokentype = "int";
   yacc_rules(&rd);
-  /* Anything after the second %% is the epilogue (not emitted yet). */
+  /* Anything after the second %% is the epilogue. */
+  if( *rd.cp ){
+    if( !gp->nolinenosflag ) yacc_append_linedir(&gp->extracode, rd.lineno, filename);
+    yacc_append(&gp->extracode, rd.cp, strlen(rd.cp));
+  }
+  /* yacc runtime model, over Lemon's hooks: every symbol's value is a
+  ** YYSTYPE; a syntax error calls yyerror(), and aborts the parse when
+  ** the grammar has no `error` rule; the stack grows like bison's. */
+  gp->tokentype = (char*)"YYSTYPE";
+  if( gp->union_body==0 && gp->yacc_stype==0 ) gp->yacc_stype = (char*)"int";
+  gp->name = (char*)"yyParse";
+  gp->error = (char*)
+    "  ++yynerrs;\n"
+    "  yyerror(\"syntax error\");\n"
+    "#ifndef YYERRORSYMBOL\n"
+    "  yy_yacc_status = 1; yy_yacc_done = 1;\n"
+    "#endif\n";
+  gp->failure = (char*)"  yy_yacc_status = 1; yy_yacc_done = 1;\n";
+  gp->accept = (char*)"  yy_yacc_status = 0; yy_yacc_done = 1;\n";
+  gp->overflow = (char*)
+    "  yyerror(\"memory exhausted\"); yy_yacc_status = 2; yy_yacc_done = 1;\n";
+  /* shortcut: fixed stack of bison's YYMAXDEPTH (10000), not a growing
+  ** one; upgrade if a grammar needs deeper nesting. */
+  if( gp->stacksize==0 ) gp->stacksize = (char*)"10000";
+  /* External codes, as bison's symbols_token_translations_init: char
+  ** literals keep their character code, explicit numbers stand, and
+  ** every other token gets max+1 in declaration order, max starting at
+  ** max(256, largest explicit code). */
+  {
+    int i, mx = 256;
+    for(i=0; i<rd.ntok; i++) if( rd.toks[i]->yacc_code>mx ) mx = rd.toks[i]->yacc_code;
+    for(i=0; i<rd.ntok; i++) if( rd.toks[i]->yacc_code==0 ) rd.toks[i]->yacc_code = ++mx;
+    gp->yacc_maxcode = mx;
+    lime_free(rd.toks);
+  }
   if( psp->errorcnt || psp->firstrule==0 ) return;
   /* yacc augments every grammar with `$accept : start $end`, so the
   ** start symbol may appear on a right-hand side.  Lemon accepts on
@@ -13045,6 +13251,127 @@ static void emit_symbol_prefix_block(FILE *out, struct lime *lemp, int *lineno) 
 }
 
 /* Generate C source code for the parser */
+/* Track D: the declarations bison puts in y.tab.h (and at the top of
+** y.tab.c): token codes as an enum plus #defines, YYSTYPE, yylval,
+** yyparse(), yyerror()/yylex() prototypes.  Codes are the external
+** (yylex) codes, bison's numbering. */
+static int yacc_tok_is_named(const struct symbol *sp){
+  return sp->name[0]!='\'' && sp->name[0]!='$' && strcmp(sp->name,"error")!=0;
+}
+static void yacc_emit_shared_decls(FILE *out, struct lime *lemp, int *plineno){
+  int i, lineno = *plineno, first = 1;
+  fprintf(out,"/* Debug traces.  */\n#ifndef YYDEBUG\n# define YYDEBUG %d\n#endif\n"
+              "#if YYDEBUG\nextern int yydebug;\n#endif\n", lemp->yacc_debug);
+  lineno += 7;
+  fprintf(out,"/* Token kinds (bison numbering; yylex returns these). */\n");
+  fprintf(out,"#ifndef YYTOKENTYPE\n# define YYTOKENTYPE\n");
+  fprintf(out,"  enum yytokentype\n  {\n");
+  fprintf(out,"    YYEMPTY = -2,\n    YYEOF = 0,\n    YYerror = 256,\n"
+              "    YYUNDEF = 257");
+  lineno += 10;
+  for(i=1; i<lemp->nterminal; i++){
+    struct symbol *sp = lemp->symbols[i];
+    if( !yacc_tok_is_named(sp) ) continue;
+    fprintf(out, ",\n    %s = %d", sp->name, sp->yacc_code); lineno++;
+  }
+  fprintf(out,"\n  };\n  typedef enum yytokentype yytoken_kind_t;\n#endif\n");
+  lineno += 4;
+  fprintf(out,"#define YYEMPTY -2\n#define YYEOF 0\n#define YYerror 256\n"
+              "#define YYUNDEF 257\n");
+  lineno += 4;
+  for(i=1; i<lemp->nterminal; i++){
+    struct symbol *sp = lemp->symbols[i];
+    if( !yacc_tok_is_named(sp) ) continue;
+    fprintf(out,"#define %s %d\n", sp->name, sp->yacc_code); lineno++;
+  }
+  (void)first;
+  fprintf(out,"\n/* Value type.  */\n");
+  fprintf(out,"#if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED\n");
+  lineno += 3;
+  if( lemp->union_body ){
+    fprintf(out,"typedef union YYSTYPE {%s} YYSTYPE;\n", lemp->union_body);
+  }else{
+    fprintf(out,"typedef %s YYSTYPE;\n", lemp->yacc_stype);
+  }
+  {
+    const char *cp;
+    lineno++;
+    if( lemp->union_body ) for(cp=lemp->union_body; *cp; cp++) if( *cp=='\n' ) lineno++;
+  }
+  fprintf(out,"# define YYSTYPE_IS_TRIVIAL 1\n# define YYSTYPE_IS_DECLARED 1\n"
+              "#endif\n\n");
+  fprintf(out,"extern YYSTYPE yylval;\n\n");
+  fprintf(out,"int yyparse (void);\n");
+  lineno += 7;
+  *plineno = lineno;
+}
+
+/* Track D: the yyparse() pull driver for yacc input.  It maps yylex()'s
+** external codes through yy_yacc_xlat[] (bison's yytranslate), and
+** before each token it runs Parse_drain() so default reductions fire
+** before yylex() is called again, as bison's do. */
+static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
+  int i, n = 0, lineno = *plineno;
+  int undef = 0;
+  int mx = lemp->yacc_maxcode;
+  int *xl;
+  const char *name = lemp->name;
+  for(i=1; i<lemp->nterminal; i++){
+    if( strcmp(lemp->symbols[i]->name, "$undefined")==0 ) undef = i;
+  }
+  xl = (int*)lime_calloc((size_t)mx + 1, sizeof(int));
+  MemoryCheck(xl);
+  for(i=0; i<=mx; i++) xl[i] = undef;
+  xl[0] = 0;
+  for(i=1; i<lemp->nterminal; i++){
+    struct symbol *sp = lemp->symbols[i];
+    if( sp->yacc_code>0 && sp->yacc_code<=mx ) xl[sp->yacc_code] = i;
+  }
+  fprintf(out,"\n/* yacc driver (Lime yacc front end). */\n"); lineno += 2;
+  fprintf(out,"#define YY_YACC_MAXCODE %d\n", mx); lineno++;
+  fprintf(out,"static const %s yy_yacc_xlat[] = {",
+          minimum_size_type(0, lemp->nterminal, 0)); lineno++;
+  for(i=0; i<=mx; i++){
+    if( n++ % 16 == 0 ){ fprintf(out,"\n "); lineno++; }
+    fprintf(out," %d,", xl[i]);
+  }
+  fprintf(out,"\n};\n"); lineno += 2;
+  lime_free(xl);
+  fprintf(out,
+    "YYSTYPE yylval;\n"
+    "int yychar = YYEMPTY;\n"
+    "int yynerrs;\n"
+    "#if YYDEBUG\n"
+    "int yydebug;\n"
+    "#endif\n"
+    "int yyparse(void){\n"
+    "  void *yyp = %sAlloc(malloc);\n"
+    "  if( yyp==0 ){ yyerror(\"memory exhausted\"); return 2; }\n"
+    "#if YYDEBUG && !defined(NDEBUG)\n"
+    "  if( yydebug ) %sTrace(stderr, (char*)\"\");\n"
+    "#endif\n"
+    "  yynerrs = 0;\n"
+    "  yy_yacc_status = 0;\n"
+    "  yy_yacc_done = 0;\n"
+    "  while( !yy_yacc_done ){\n"
+    "    int yyt;\n"
+    "    %s_drain(yyp);\n"
+    "    if( yy_yacc_done ) break;\n"
+    "    yychar = yylex();\n"
+    "    if( yychar<=0 ) yyt = 0;\n"
+    "    else if( yychar>YY_YACC_MAXCODE ) yyt = yy_yacc_xlat[257];\n"
+    "    else yyt = yy_yacc_xlat[yychar];\n"
+    "    %s(yyp, yyt, yylval);\n"
+    "    if( yyt==0 && !yy_yacc_done ){ yy_yacc_status = 1; break; }\n"
+    "  }\n"
+    "  yychar = YYEMPTY;\n"
+    "  %sFree(yyp, free);\n"
+    "  return yy_yacc_status;\n"
+    "}\n", name, name, name, name, name);
+  lineno += 31;
+  *plineno = lineno;
+}
+
 void ReportTable(
   struct lime *lemp,
   int mhflag,     /* Output in makeheaders format if true */
@@ -13200,6 +13527,18 @@ void ReportTable(
   /* Generate #defines for all tokens */
   if( lemp->tokenprefix ) prefix = lemp->tokenprefix;
   else                    prefix = "";
+  if( lemp->is_yacc ){
+    /* Track D: bison's external token codes and YYSTYPE, the same text
+    ** as y.tab.h, then the internal codes under YYI_ names. */
+    yacc_emit_shared_decls(out, lemp, &lineno);
+    fprintf(out,"static int yy_yacc_status;  /* yyparse() result */\n"
+                "static int yy_yacc_done;    /* parse finished */\n"
+                "extern int yychar, yynerrs;\n");
+    lineno += 3;
+    if( lemp->yacc_post_prologue ){
+      tplt_print(out, lemp, lemp->yacc_post_prologue, &lineno);
+    }
+  }else{
   if( mhflag ){
     fprintf(out,"#if INTERFACE\n"); lineno++;
   }else{
@@ -13210,6 +13549,7 @@ void ReportTable(
     lineno++;
   }
   fprintf(out,"#endif\n"); lineno++;
+  }
   tplt_xfer(lemp->name,in,out,&lineno);
 
   /* Generate the defines */
@@ -14075,6 +14415,8 @@ void ReportTable(
   tplt_print(out,lemp,lemp->accept,&lineno);
   tplt_xfer(lemp->name,in,out,&lineno);
 
+  if( lemp->is_yacc ) yacc_emit_driver(out, lemp, &lineno);
+
   /* Append any addition code the user desires */
   tplt_print(out,lemp,lemp->extracode,&lineno);
 
@@ -14186,6 +14528,20 @@ void ReportHeader(struct lime *lemp)
   char line[LINESIZE];
   char pattern[LINESIZE];
   int i;
+
+  if( lemp->is_yacc ){
+    /* Track D: y.tab.h, the declarations a yacc lexer includes. */
+    int ln = 0;
+    out = file_open(lemp, ".h", "wb");
+    if( out==0 ) return;
+    fprintf(out,"/* Generated by Lime's yacc front end. */\n"
+                "#ifndef YY_LIME_YACC_H_INCLUDED\n"
+                "# define YY_LIME_YACC_H_INCLUDED\n");
+    yacc_emit_shared_decls(out, lemp, &ln);
+    fprintf(out,"\n#endif /* !YY_LIME_YACC_H_INCLUDED */\n");
+    fclose(out);
+    return;
+  }
 
   if( lemp->tokenprefix ) prefix = lemp->tokenprefix;
   else                    prefix = "";
