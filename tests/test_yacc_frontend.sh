@@ -149,6 +149,69 @@ if [ $HAVE_BISON = 1 ]; then
   [ "$a" = "$b" ] && echo "ok   token #defines equal bison's" || { fail "token #defines differ from bison"; echo "$a"; echo "$b"; }
 fi
 
+# --- 3b. pure parser, %parse-param/%lex-param, %name-prefix, %locations, %expect
+cat > "$W/pure.y" <<'EOF'
+%{
+#include <stdio.h>
+typedef struct { const char *s; int k; } scan_t;
+%}
+%pure-parser
+%expect 0
+%name-prefix "calc_"
+%locations
+%parse-param { int *result }
+%parse-param { scan_t *sc }
+%lex-param { scan_t *sc }
+%union { int n; }
+%{
+int calc_lex(YYSTYPE *lval, YYLTYPE *lloc, scan_t *sc);
+void calc_error(YYLTYPE *lloc, int *result, scan_t *sc, const char *m);
+%}
+%token <n> NUM
+%type <n> e
+%left '+'
+%%
+top : e { *result = $1; printf("at col %d-%d\n", @1.first_column, @1.last_column); } ;
+e : e '+' e { $$ = $1 + $3; } | NUM ;
+%%
+int calc_lex(YYSTYPE *lval, YYLTYPE *lloc, scan_t *sc){
+  char c = sc->s[sc->k];
+  lloc->first_line = lloc->last_line = 1;
+  lloc->first_column = lloc->last_column = sc->k;
+  if( c==0 ) return 0;
+  sc->k++;
+  if( c>='0' && c<='9' ){ lval->n = c - '0'; return NUM; }
+  return c;
+}
+void calc_error(YYLTYPE *lloc, int *result, scan_t *sc, const char *m){
+  (void)result; printf("%s at %d (k=%d)\n", m, lloc->first_column, sc->k);
+}
+int main(int argc, char **argv){
+  int r = -1; scan_t sc = { argc>1 ? argv[1] : "", 0 };
+  int rc = calc_parse(&r, &sc);
+  printf("rc=%d r=%d\n", rc, r);
+  return 0;
+}
+EOF
+(cd "$W" && ./lime-yacc -o pure.c pure.y && $CC -w -o pure pure.c) || fail "pure: build"
+pure_case() {  # name arg expected
+  out=$($TO "$W/pure" "$2")
+  if [ $? -eq 124 ]; then fail "$1: hang (killed after 10 s)"; return; fi
+  [ "$out" = "$(printf '%b' "$3")" ] && echo "ok   $1" || fail "$1: $out"
+}
+if [ -x "$W/pure" ]; then
+  pure_case "pure parse-param"  '1+2+3' 'at col 0-4\nrc=0 r=6'
+  pure_case "pure yyerror args" '1++'   'syntax error at 2 (k=3)\nrc=1 r=-1'
+fi
+if grep -q 'calc_parse' "$W/pure.c" && ! grep -q '^YYSTYPE yylval;' "$W/pure.c"; then
+  echo "ok   pure: no global yylval, renamed yyparse"
+else
+  fail "pure: globals / prefix"
+fi
+printf '%%expect 1\n%%token A\n%%%%\ns : A ;\n' > "$W/ex.y"
+out=$(cd "$W" && ./lime-yacc ex.y 2>&1); rc=$?
+[ $rc -ne 0 ] && echo "ok   %expect mismatch fails" || fail "%expect mismatch accepted: $out"
+
 # --- 4. named diagnostics for unsupported constructs
 expect_diag() {  # name grammar needle
   printf '%b' "$2" > "$W/d.y"
@@ -160,7 +223,7 @@ expect_diag "%glr-parser" '%glr-parser\n%token A\n%%\ns : A ;\n' 'glr-parser'
 expect_diag "YYERROR"     '%token A\n%%\ns : A { YYERROR; } ;\n'   'YYERROR'
 expect_diag "\$name"      '%token A\n%%\ns : A { $$ = $A; } ;\n'   'named reference'
 expect_diag "\$3 > m"     '%token A\n%%\ns : A { $$ = $3; } ;\n'   'exceeds'
-out=$(cd "$W" && ./lime-yacc -p xx d.y 2>&1); case "$out" in *name-prefix*) echo "ok   diag -p" ;; *) fail "-p: $out" ;; esac
+
 
 # --- 5. a Lemon grammar is still read as Lemon (no %% line), and --lemon
 printf '%%token_type {int}\n%%token A.\ns ::= A.\n' > "$W/lemon.y"

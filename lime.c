@@ -1034,6 +1034,13 @@ struct lime {
   char *yacc_post_prologue;/* Track D: %{ %} blocks after %union */
   char *yacc_stype;        /* Track D: YYSTYPE when there is no %union */
   int yacc_debug;          /* Track D: -t / %debug: YYDEBUG default 1 */
+  int yacc_expect_rr;      /* Track D: %expect-rr N (-1 = not given) */
+  int yacc_pure;           /* Track D: %pure-parser / %define api.pure */
+  char *yacc_prefix;       /* Track D: %name-prefix / api.prefix ("yy") */
+  char *yacc_parse_params; /* Track D: %parse-param decls, ", "-joined */
+  char *yacc_parse_names;  /* Track D: their identifiers, ", "-joined */
+  char *yacc_lex_params;   /* Track D: %lex-param decls */
+  char *yacc_lex_names;    /* Track D: their identifiers */
   char *yystype_header;    /* %yystype_header "name.h": basename for the
                            ** standalone token-defines + YYSTYPE header
                            ** that a separately-generated lexer can
@@ -5437,6 +5444,7 @@ static char *g_yacc_out_h = 0;
 static char *g_yacc_out_v = 0;
 static int g_yacc_defines = 0;
 static int g_yacc_debug_flag = 0;
+static const char *g_yacc_cli_prefix = 0;  /* -p / --name-prefix */
 static void handle_yacc_flag(int v){ (void)v; g_yacc_mode = 1; }
 static void handle_lemon_flag(int v){ (void)v; g_yacc_mode = -1; }
 
@@ -5919,11 +5927,7 @@ static int yacc_personality(int argc, char **argv){
     fprintf(stderr, "%s: no grammar file given\n", base);
     exit(1);
   }
-  if( prefix && strcmp(prefix,"yy")!=0 ){
-    fprintf(stderr, "%s: -p/--name-prefix (other than yy) is not "
-            "supported by Lime's yacc mode yet\n", base);
-    exit(1);
-  }
+  if( prefix ) g_yacc_cli_prefix = prefix;
   /* Output names, as bison: -o wins; else <b>.tab.c, b = -b, or "y"
   ** under -y/yacc, or the grammar's name minus its extension. */
   if( outfile ){
@@ -10312,6 +10316,80 @@ static const char *yacc_tag(struct yacc_rd *r){
 /* Scan a { ... } block (for %union); returns the body or 0. */
 static char *yacc_scan_action(struct yacc_rd *r);
 
+/* Append one %parse-param / %lex-param declaration and its identifier
+** (the last C identifier in it) to the ", "-joined lists. */
+static void yacc_add_param(struct yacc_rd *r, char **decls, char **names,
+                           const char *body){
+  const char *e = body + strlen(body), *b;
+  char *d;
+  while( e>body && ISSPACE(e[-1]) ) e--;
+  b = e;
+  while( b>body && (ISALNUM(b[-1]) || b[-1]=='_') ) b--;
+  if( b==e ){
+    yacc_error(r, "cannot find the parameter name in \"%s\"", body);
+    return;
+  }
+  d = (char*)lime_malloc((size_t)(e - body) + 1);
+  MemoryCheck(d);
+  memcpy(d, body, (size_t)(e - body)); d[e - body] = 0;
+  { char *p = d; while( ISSPACE(*p) ) p++;
+    if( *decls ){ size_t n = strlen(*decls); *decls = lime_realloc(*decls, n + strlen(p) + 3);
+      MemoryCheck(*decls); strcpy(*decls + n, ", "); strcpy(*decls + n + 2, p);
+    }else{ *decls = lime_malloc(strlen(p) + 1); MemoryCheck(*decls); strcpy(*decls, p); } }
+  lime_free(d);
+  if( *names ){ size_t n = strlen(*names); *names = lime_realloc(*names, n + (size_t)(e-b) + 3);
+    MemoryCheck(*names); strcpy(*names + n, ", "); memcpy(*names + n + 2, b, (size_t)(e-b));
+    (*names)[n + 2 + (e-b)] = 0;
+  }else{ *names = lime_malloc((size_t)(e-b) + 1); MemoryCheck(*names);
+    memcpy(*names, b, (size_t)(e-b)); (*names)[e-b] = 0; }
+}
+
+/* %define VARIABLE [VALUE].  The ones that change nothing for Lime's
+** output are accepted; the rest get a named diagnostic. */
+static void yacc_define(struct yacc_rd *r){
+  struct lime *gp = r->psp->gp;
+  char *s, *e, save, var[128], val[256];
+  yacc_skip_ws(r);
+  s = r->cp;
+  while( ISALNUM(*r->cp) || *r->cp=='_' || *r->cp=='.' || *r->cp=='-' ) r->cp++;
+  if( r->cp - s >= (int)sizeof(var) ) s = r->cp - (sizeof(var) - 1);
+  memcpy(var, s, (size_t)(r->cp - s)); var[r->cp - s] = 0;
+  while( *r->cp==' ' || *r->cp=='\t' ) r->cp++;
+  /* Value: {...}, "...", or a bare word, up to end of line. */
+  val[0] = 0;
+  if( *r->cp=='{' ){
+    char *b = yacc_scan_action(r);
+    if( b ){ lemon_strcpy(val, ""); strncat(val, b, sizeof(val)-1); lime_free(b); }
+  }else if( *r->cp=='"' ){
+    const char *q = yacc_string(r);
+    if( q ){ strncat(val, q + 1, sizeof(val)-1); if( val[0] ) val[strlen(val)-1] = 0; }
+  }else{
+    e = r->cp;
+    while( *e && *e!='\n' && !(e[0]=='/' && (e[1]=='*' || e[1]=='/')) ) e++;
+    save = *e; *e = 0;
+    strncat(val, r->cp, sizeof(val)-1);
+    *e = save; r->cp = e;
+    { size_t n = strlen(val); while( n && ISSPACE(val[n-1]) ) val[--n] = 0; }
+  }
+  if( strcmp(var,"api.pure")==0 ){
+    gp->yacc_pure = strcmp(val,"false")!=0;
+  }else if( strcmp(var,"api.prefix")==0 ){
+    gp->yacc_prefix = (char*)Strsafe(val);
+  }else if( strcmp(var,"api.value.type")==0 && val[0] && strcmp(val,"union")!=0
+            && strcmp(val,"variant")!=0 ){
+    gp->yacc_stype = (char*)Strsafe(val);
+  }else if( strcmp(var,"parse.error")==0 || strcmp(var,"parse.trace")==0
+            || strcmp(var,"api.header.include")==0 || strcmp(var,"parse.lac")==0
+            || (strcmp(var,"api.token.prefix")==0 && val[0]==0) ){
+    /* Accepted and ignored: Lime's messages are "syntax error". */
+    if( strcmp(var,"parse.trace")==0 ) gp->yacc_debug = 1;
+  }else{
+    char msg[200];
+    lemon_sprintf(msg, "%.100s %.60s", var, val);
+    yacc_error(r, "%%define %s is not supported by Lime's yacc front end", msg);
+  }
+}
+
 static void yacc_declarations(struct yacc_rd *r, char *buf){
   struct pstate *psp = r->psp;
   struct lime *gp = psp->gp;
@@ -10393,6 +10471,65 @@ static void yacc_declarations(struct yacc_rd *r, char *buf){
       }else if( strcmp(kw,"start")==0 ){
         yacc_skip_ws(r);
         gp->start = (char*)yacc_ident(r);
+        continue;
+      }else if( strcmp(kw,"expect")==0 || strcmp(kw,"expect-rr")==0 ){
+        int n;
+        yacc_skip_ws(r);
+        if( !ISDIGIT(*r->cp) ){
+          yacc_error(r, "%%%s needs a number", kw);
+          continue;
+        }
+        n = (int)strtol(r->cp, &r->cp, 10);
+        if( kw[6]=='-' ) gp->yacc_expect_rr = n; else gp->nexpect = n;
+        continue;
+      }else if( strcmp(kw,"pure-parser")==0 ){
+        gp->yacc_pure = 1;
+        continue;
+      }else if( strcmp(kw,"name-prefix")==0 ){
+        /* %name-prefix "p", %name-prefix="p" or %name-prefix p */
+        yacc_skip_ws(r);
+        if( *r->cp=='=' ){ r->cp++; yacc_skip_ws(r); }
+        if( *r->cp=='"' ){
+          const char *q = yacc_string(r);
+          if( q ){
+            char *z = (char*)Strsafe(q + 1);
+            gp->yacc_prefix = (char*)lime_malloc(strlen(z));
+            MemoryCheck(gp->yacc_prefix);
+            memcpy(gp->yacc_prefix, z, strlen(z) - 1);
+            gp->yacc_prefix[strlen(z) - 1] = 0;
+          }
+        }else{
+          gp->yacc_prefix = (char*)yacc_ident(r);
+        }
+        continue;
+      }else if( strcmp(kw,"parse-param")==0 || strcmp(kw,"lex-param")==0
+                || strcmp(kw,"param")==0 ){
+        /* One or more { decl } groups. */
+        for(;;){
+          char *body;
+          yacc_skip_ws(r);
+          if( *r->cp!='{' ) break;
+          body = yacc_scan_action(r);
+          if( body==0 ) break;
+          if( kw[0]=='p' && kw[1]=='a' && kw[2]=='r' && kw[5]=='-' ){
+            yacc_add_param(r, &gp->yacc_parse_params, &gp->yacc_parse_names, body);
+          }else if( kw[0]=='l' ){
+            yacc_add_param(r, &gp->yacc_lex_params, &gp->yacc_lex_names, body);
+          }else{
+            yacc_add_param(r, &gp->yacc_parse_params, &gp->yacc_parse_names, body);
+            yacc_add_param(r, &gp->yacc_lex_params, &gp->yacc_lex_names, body);
+          }
+          lime_free(body);
+        }
+        continue;
+      }else if( strcmp(kw,"locations")==0 ){
+        gp->has_locations = 1;
+        continue;
+      }else if( strcmp(kw,"define")==0 ){
+        yacc_define(r);
+        continue;
+      }else if( strcmp(kw,"debug")==0 ){
+        gp->yacc_debug = 1;
         continue;
       }else if( strcmp(kw,"glr-parser")==0 ){
         yacc_error(r, "%s", "%glr-parser is not supported: Lime generates "
@@ -10876,6 +11013,7 @@ static void yacc_parse_buffer(struct pstate *psp, char *buf,
   rd.cp = buf;
   rd.lineno = 1;
   gp->is_yacc = 1;
+  gp->yacc_expect_rr = -1;
   /* bison's internal token 2: what yylex codes nobody declared map to.
   ** No rule uses it, so it is always a syntax error. */
   /* Its code is assigned like any undeclared token's: 257 unless an
@@ -10900,18 +11038,32 @@ static void yacc_parse_buffer(struct pstate *psp, char *buf,
   ** the grammar has no `error` rule; the stack grows like bison's. */
   gp->tokentype = (char*)"YYSTYPE";
   if( g_yacc_debug_flag ) gp->yacc_debug = 1;
+  if( g_yacc_cli_prefix ) gp->yacc_prefix = (char*)g_yacc_cli_prefix;
+  if( gp->has_locations && gp->location_type==0 ) gp->location_type = (char*)"YYLTYPE";
   if( gp->union_body==0 && gp->yacc_stype==0 ) gp->yacc_stype = (char*)"int";
   gp->name = (char*)"yyParse";
-  gp->error = (char*)
-    "  ++yynerrs;\n"
-    "  yyerror(\"syntax error\");\n"
-    "#ifndef YYERRORSYMBOL\n"
-    "  yy_yacc_status = 1; yy_yacc_done = 1;\n"
-    "#endif\n";
+  {
+    /* yyerror's arguments, as bison's b4_yyerror_args: &yylloc first when
+    ** the parser is pure with locations and parse-params, then the
+    ** parse-params. */
+    size_t n = 200 + (gp->yacc_parse_names ? strlen(gp->yacc_parse_names) : 0);
+    char *e = (char*)lime_malloc(n);
+    MemoryCheck(e);
+    lemon_strcpy(e, "  ++*yy_yacc_nerrs;\n  yyerror(");
+    if( gp->yacc_pure && gp->has_locations && gp->yacc_parse_names ){
+      lemon_strcat(e, "&yypParser->yyLookaheadLoc, ");
+    }
+    if( gp->yacc_parse_names ){
+      lemon_strcat(e, gp->yacc_parse_names);
+      lemon_strcat(e, ", ");
+    }
+    lemon_strcat(e, "\"syntax error\");\n#ifndef YYERRORSYMBOL\n"
+                    "  yy_yacc_status = 1; yy_yacc_done = 1;\n#endif\n");
+    gp->error = e;
+  }
   gp->failure = (char*)"  yy_yacc_status = 1; yy_yacc_done = 1;\n";
   gp->accept = (char*)"  yy_yacc_status = 0; yy_yacc_done = 1;\n";
-  gp->overflow = (char*)
-    "  yyerror(\"memory exhausted\"); yy_yacc_status = 2; yy_yacc_done = 1;\n";
+  gp->overflow = (char*)"  yy_yacc_status = 2; yy_yacc_done = 1;\n";
   /* shortcut: fixed stack of bison's YYMAXDEPTH (10000), not a growing
   ** one; upgrade if a grammar needs deeper nesting. */
   if( gp->stacksize==0 ) gp->stacksize = (char*)"10000";
@@ -13552,7 +13704,21 @@ static void yacc_emit_shared_decls(FILE *out, struct lime *lemp, int *plineno){
   }
   fprintf(out,"# define YYSTYPE_IS_TRIVIAL 1\n# define YYSTYPE_IS_DECLARED 1\n"
               "#endif\n\n");
-  fprintf(out,"extern YYSTYPE yylval;\n\n");
+  if( lemp->has_locations ){
+    fprintf(out,"/* Location type.  */\n"
+      "#if ! defined YYLTYPE && ! defined YYLTYPE_IS_DECLARED\n"
+      "typedef struct YYLTYPE YYLTYPE;\n"
+      "struct YYLTYPE\n{\n  int first_line;\n  int first_column;\n"
+      "  int last_line;\n  int last_column;\n};\n"
+      "# define YYLTYPE_IS_DECLARED 1\n# define YYLTYPE_IS_TRIVIAL 1\n#endif\n\n");
+    lineno += 14;
+  }
+  if( !lemp->yacc_pure ){
+    fprintf(out,"extern YYSTYPE yylval;\n");
+    lineno++;
+    if( lemp->has_locations ){ fprintf(out,"extern YYLTYPE yylloc;\n"); lineno++; }
+  }
+  fprintf(out,"\n");
   /* bison declares yyerror()/yylex() only under POSIXLY_CORRECT; a
   ** grammar's own prototypes (bc: yyerror(const char *, ...)) would
   ** conflict, so do the same. */
@@ -13563,8 +13729,9 @@ static void yacc_emit_shared_decls(FILE *out, struct lime *lemp, int *plineno){
                 "int yylex (void);\n#endif\n\n");
     lineno += 7;
   }
-  fprintf(out,"int yyparse (void);\n");
-  lineno += 7;
+  fprintf(out,"int yyparse (%s);\n",
+          lemp->yacc_parse_params ? lemp->yacc_parse_params : "void");
+  lineno += 5;
   *plineno = lineno;
 }
 
@@ -13600,62 +13767,111 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
   }
   fprintf(out,"\n};\n"); lineno += 2;
   lime_free(xl);
-  fprintf(out,
-    "YYSTYPE yylval;\n"
-    "int yychar = YYEMPTY;\n"
-    "int yynerrs;\n"
-    "#if YYDEBUG\n"
-    "int yydebug;\n"
-    "#endif\n"
-    "/* bison reads no lookahead in a state whose only action is a\n"
-    "** reduction; fire those first, so yylex() runs when bison's would. */\n"
-    "static void yy_yacc_drain(yyParser *yypParser){\n"
-    "  YYMINORTYPE yyz;\n"
-    "  memset(&yyz, 0, sizeof(yyz));\n"
-    "  while( !yy_yacc_done ){\n"
-    "    YYACTIONTYPE st = yypParser->yytos->stateno, def;\n"
-    "    int i;\n"
-    "    if( st>=YY_MIN_REDUCE && st<=YY_MAX_REDUCE ){\n"
-    "      yy_reduce(yypParser, st - YY_MIN_REDUCE, YYNOCODE, yyz.yy0);\n"
-    "      continue;\n"
-    "    }\n"
-    "    if( st>YY_MAX_SHIFT ) return;\n"
-    "    def = yy_default[st];\n"
-    "    if( def<YY_MIN_REDUCE || def>YY_MAX_REDUCE ) return;\n"
-    "    if( st<=YY_SHIFT_COUNT ){\n"
-    "      for(i=0; i<YYNTOKEN; i++){\n"
-    "        int j = yy_shift_ofst[st] + i;\n"
-    "        if( j>=0 && j<YY_ACTTAB_COUNT && yy_lookahead[j]==(YYCODETYPE)i ) return;\n"
-    "      }\n"
-    "    }\n"
-    "    yy_reduce(yypParser, def - YY_MIN_REDUCE, YYNOCODE, yyz.yy0);\n"
-    "  }\n"
-    "}\n"
-    "int yyparse(void){\n"
-    "  void *yyp = %sAlloc(malloc);\n"
-    "  if( yyp==0 ){ yyerror(\"memory exhausted\"); return 2; }\n"
-    "#if YYDEBUG && !defined(NDEBUG)\n"
-    "  if( yydebug ) %sTrace(stderr, (char*)\"\");\n"
-    "#endif\n"
-    "  yynerrs = 0;\n"
-    "  yy_yacc_status = 0;\n"
-    "  yy_yacc_done = 0;\n"
-    "  while( !yy_yacc_done ){\n"
-    "    int yyt;\n"
-    "    yy_yacc_drain((yyParser*)yyp);\n"
-    "    if( yy_yacc_done ) break;\n"
-    "    yychar = yylex();\n"
-    "    if( yychar<=0 ) yyt = 0;\n"
-    "    else if( yychar>YY_YACC_MAXCODE ) yyt = YY_YACC_UNDEF;\n"
-    "    else yyt = yy_yacc_xlat[yychar];\n"
-    "    %s(yyp, yyt, yylval);\n"
-    "    if( yyt==0 && !yy_yacc_done && yychar!=YYEMPTY ){ yy_yacc_status = 1; break; }\n"
-    "  }\n"
-    "  yychar = YYEMPTY;\n"
-    "  %sFree(yyp, free);\n"
-    "  return yy_yacc_status;\n"
-    "}\n", name, name, name, name);
-  lineno += 54;
+  {
+    /* Driver text: the pure parser keeps yylval/yylloc/yychar/yynerrs
+    ** local to yyparse(), as bison's does; %parse-param become yyparse's
+    ** parameters, %lex-param are passed to yylex(). */
+    const char *pp = lemp->yacc_parse_params ? lemp->yacc_parse_params : "void";
+    int pure = lemp->yacc_pure, loc = lemp->has_locations;
+    const char *ln = lemp->yacc_lex_names;
+    if( !pure ){
+      fprintf(out, "YYSTYPE yylval;\nint yychar = YYEMPTY;\nint yynerrs;\n");
+      lineno += 3;
+      if( loc ){ fprintf(out, "YYLTYPE yylloc;\n"); lineno++; }
+    }
+    fprintf(out,
+      "#if YYDEBUG\n"
+      "int yydebug;\n"
+      "#endif\n"
+      "/* bison reads no lookahead in a state whose only action is a\n"
+      "** reduction; fire those first, so yylex() runs when bison's would. */\n"
+      "static void yy_yacc_drain(yyParser *yypParser){\n"
+      "  YYMINORTYPE yyz;\n"
+      "  memset(&yyz, 0, sizeof(yyz));\n"
+      "  while( !yy_yacc_done ){\n"
+      "    YYACTIONTYPE st = yypParser->yytos->stateno, def;\n"
+      "    int i;\n"
+      "    if( st>=YY_MIN_REDUCE && st<=YY_MAX_REDUCE ){\n"
+      "      yy_reduce(yypParser, st - YY_MIN_REDUCE, YYNOCODE, yyz.yy0);\n"
+      "      continue;\n"
+      "    }\n"
+      "    if( st>YY_MAX_SHIFT ) return;\n"
+      "    def = yy_default[st];\n"
+      "    if( def<YY_MIN_REDUCE || def>YY_MAX_REDUCE ) return;\n"
+      "    if( st<=YY_SHIFT_COUNT ){\n"
+      "      for(i=0; i<YYNTOKEN; i++){\n"
+      "        int j = yy_shift_ofst[st] + i;\n"
+      "        if( j>=0 && j<YY_ACTTAB_COUNT && yy_lookahead[j]==(YYCODETYPE)i ) return;\n"
+      "      }\n"
+      "    }\n"
+      "    yy_reduce(yypParser, def - YY_MIN_REDUCE, YYNOCODE, yyz.yy0);\n"
+      "  }\n"
+      "}\n"
+      "int yyparse(%s){\n", pp);
+    lineno += 29;
+    if( pure ){
+      fprintf(out, "  YYSTYPE yylval;\n  int yychar = YYEMPTY;\n  int yynerrs = 0;\n");
+      lineno += 3;
+      if( loc ){ fprintf(out, "  YYLTYPE yylloc;\n"); lineno++; }
+      fprintf(out, "  memset(&yylval, 0, sizeof(yylval));\n"); lineno++;
+      if( loc ){ fprintf(out, "  memset(&yylloc, 0, sizeof(yylloc));\n"); lineno++; }
+    }
+    fprintf(out,
+      "  yyParser yyparser_storage;\n"
+      "  void *yyp = &yyparser_storage;\n"
+      "  %sInit(yyp);\n"
+      "#if YYDEBUG && !defined(NDEBUG)\n"
+      "  if( yydebug ) %sTrace(stderr, (char*)\"\");\n"
+      "#endif\n"
+      "  yy_yacc_pp = &yyparser_storage;\n", name, name);
+    lineno += 7;
+    if( lemp->yacc_parse_names ){
+      /* The actions and yyerror see the parse-params through the
+      ** parser struct (%extra_argument). */
+      const char *nm = lemp->yacc_parse_names;
+      while( *nm ){
+        const char *ne = strstr(nm, ", ");
+        int nl = ne ? (int)(ne - nm) : (int)strlen(nm);
+        fprintf(out, "  yyparser_storage.%.*s = %.*s;\n", nl, nm, nl, nm); lineno++;
+        nm += nl; if( *nm ) nm += 2;
+      }
+    }
+    fprintf(out,
+      "  yynerrs = 0;\n"
+      "  yy_yacc_status = 0;\n"
+      "  yy_yacc_done = 0;\n"
+      "  yy_yacc_nerrs = &yynerrs;\n"
+      "  yy_yacc_char = &yychar;\n"
+      "  while( !yy_yacc_done ){\n"
+      "    int yyt;\n"
+      "    yy_yacc_drain((yyParser*)yyp);\n"
+      "    if( yy_yacc_done ) break;\n");
+    lineno += 9;
+    fprintf(out, "    yychar = yylex(%s%s%s%s%s);\n",
+            pure ? "&yylval" : "", (pure && loc) ? ", &yylloc" : "",
+            (pure && ln) ? ", " : "", ln ? ln : "", "");
+    lineno++;
+    fprintf(out,
+      "    if( yychar<=0 ) yyt = 0;\n"
+      "    else if( yychar>YY_YACC_MAXCODE ) yyt = YY_YACC_UNDEF;\n"
+      "    else yyt = yy_yacc_xlat[yychar];\n");
+    lineno += 3;
+    if( loc ){
+      fprintf(out, "    %sLoc(yyp, yyt, yylval, yylloc);\n", name);
+    }else{
+      fprintf(out, "    %s(yyp, yyt, yylval);\n", name);
+    }
+    lineno++;
+    fprintf(out,
+      "    if( yyt==0 && !yy_yacc_done && yychar!=YYEMPTY ){ yy_yacc_status = 1; break; }\n"
+      "  }\n"
+      "  yychar = YYEMPTY;\n"
+      "  %sFinalize(yyp);\n"
+      "  yy_yacc_pp = 0;\n"
+      "  return yy_yacc_status;\n"
+      "}\n", name);
+    lineno += 7;
+  }
   *plineno = lineno;
 }
 
@@ -13804,6 +14020,18 @@ void ReportTable(
     tplt_xfer(lemp->name,in,out,&lineno);
   }
 
+  /* Track D: bison's %name-prefix renames, ahead of the prologue. */
+  if( lemp->is_yacc && lemp->yacc_prefix && strcmp(lemp->yacc_prefix,"yy")!=0 ){
+    static const char *const zRen[] = { "parse", "lex", "error", "debug",
+      "nerrs", "lval", "char", "lloc" };
+    int k, nren = lemp->yacc_pure ? 5 : (lemp->has_locations ? 8 : 7);
+    fprintf(out, "/* Substitute the variable and function names.  */\n");
+    lineno++;
+    for(k=0; k<nren; k++){
+      fprintf(out, "#define yy%-13s %s%s\n", zRen[k], lemp->yacc_prefix, zRen[k]);
+      lineno++;
+    }
+  }
   /* Generate the include code, if any */
   tplt_print(out,lemp,lemp->include,&lineno);
   if( mhflag ){
@@ -13820,20 +14048,45 @@ void ReportTable(
     /* Track D: bison's external token codes and YYSTYPE, the same text
     ** as y.tab.h, then the internal codes under YYI_ names. */
     yacc_emit_shared_decls(out, lemp, &lineno);
+    /* yyparse() state.  shortcut: file-static, so two yyparse() calls of
+    ** one grammar must not run at once on different threads (bison's pure
+    ** parser allows that); upgrade by moving these into yyParser. */
     fprintf(out,"static int yy_yacc_status;  /* yyparse() result */\n"
                 "static int yy_yacc_done;    /* parse finished */\n"
-                "extern int yychar, yynerrs;\n"
-                "/* yacc action macros, over the Lime parser state. */\n"
+                "static int *yy_yacc_nerrs;  /* yyparse()'s yynerrs */\n"
+                "static int *yy_yacc_char;   /* yyparse()'s yychar */\n"
+                "static void *yy_yacc_pp;    /* the running parser */\n");
+    lineno += 5;
+    if( !lemp->yacc_pure ){
+      fprintf(out,"extern int yychar, yynerrs;\n"); lineno++;
+    }
+    fprintf(out,"/* yacc action macros, over the Lime parser state. */\n"
                 "#define yyerrok (yypParser->yyerrcnt = -1)\n"
-                "#define yyclearin (yypParser->yyLookaheadCleared = 1, yychar = YYEMPTY)\n"
+                "#define yyclearin (yypParser->yyLookaheadCleared = 1, *yy_yacc_char = YYEMPTY)\n"
                 "#define YYRECOVERING() (yypParser->yyerrcnt > 0)\n"
                 "#define YYACCEPT do{ yy_yacc_status = 0; yy_yacc_done = 1; "
                 "yypParser->yyLookaheadCleared = 1; return; }while(0)\n"
                 "#define YYABORT do{ yy_yacc_status = 1; yy_yacc_done = 1; "
                 "yypParser->yyLookaheadCleared = 1; return; }while(0)\n");
-    lineno += 9;
+    lineno += 7;
     if( lemp->yacc_post_prologue ){
       tplt_print(out, lemp, lemp->yacc_post_prologue, &lineno);
+    }
+    if( lemp->has_locations ){
+      /* bison's default: span Rhs[1]..Rhs[N], or the end of Rhs[0]. */
+      fprintf(out,
+        "#ifndef YYLLOC_DEFAULT\n"
+        "# define YYLLOC_DEFAULT(Current, Rhs, N) do { if (N) { \\\n"
+        "  (Current).first_line = YYRHSLOC (Rhs, 1).first_line; \\\n"
+        "  (Current).first_column = YYRHSLOC (Rhs, 1).first_column; \\\n"
+        "  (Current).last_line = YYRHSLOC (Rhs, N).last_line; \\\n"
+        "  (Current).last_column = YYRHSLOC (Rhs, N).last_column; \\\n"
+        "  } else { \\\n"
+        "  (Current).first_line = (Current).last_line = YYRHSLOC (Rhs, 0).last_line; \\\n"
+        "  (Current).first_column = (Current).last_column = YYRHSLOC (Rhs, 0).last_column; \\\n"
+        "  } } while (0)\n"
+        "#endif\n");
+      lineno += 11;
     }
   }else{
   if( mhflag ){
@@ -13890,6 +14143,37 @@ void ReportTable(
     fprintf(out,"#if INTERFACE\n"); lineno++;
   }
   name = lemp->name ? lemp->name : "Parse";
+  if( lemp->is_yacc ){
+    /* Track D: the yacc parse-params live in yyParser; actions and
+    ** yyerror() see them as locals of the same names.  Parse() takes no
+    ** extra argument; yyparse() stores them. */
+    const char *pd = lemp->yacc_parse_params, *pn = lemp->yacc_parse_names;
+    fprintf(out,"#define %sARG_SDECL", name);
+    if( pd ){
+      const char *c;
+      fputc(' ', out);
+      for(c=pd; *c; c++){
+        if( c[0]==',' && c[1]==' ' ){ fputs("; ", out); c++; } else fputc(*c, out);
+      }
+      fputc(';', out);
+    }
+    fprintf(out,"\n#define %sARG_PDECL\n#define %sARG_PARAM\n", name, name);
+    fprintf(out,"#define %sARG_FETCH", name);
+    if( pd ){
+      /* "T1 a, T2 *b" -> "T1 a=yypParser->a; (void)a; T2 *b=yypParser->b; ..." */
+      const char *d = pd, *nm = pn;
+      while( *d ){
+        const char *de = strstr(d, ", "), *ne = strstr(nm, ", ");
+        int dl = de ? (int)(de - d) : (int)strlen(d);
+        int nl = ne ? (int)(ne - nm) : (int)strlen(nm);
+        fprintf(out," %.*s=yypParser->%.*s; (void)%.*s;", dl, d, nl, nm, nl, nm);
+        d += dl; nm += nl;
+        if( *d ){ d += 2; nm += 2; }
+      }
+    }
+    fprintf(out,"\n#define %sARG_STORE\n", name);
+    lineno += 5;
+  }else
   if( lemp->arg && lemp->arg[0] ){
     i = lemonStrlen(lemp->arg);
     while( i>=1 && ISSPACE(lemp->arg[i-1]) ) i--;

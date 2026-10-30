@@ -116,13 +116,46 @@ def tool_verdict(cmd, cwd):
         return 'yes' + note, ''
     return 'NO' + note, first_err(out)
 
+# COMPAT_REPORT.md section 7 tiers (Track D).  T1: POSIX yacc grammars
+# (minimum set Y1); T2 adds the PostgreSQL set and byacc grammar.y (Y4);
+# T3 is every grammar bison accepts (Y5).  Targets: T1 10, T2 20, T3 28.
+T1 = ['flex parse.y (flex itself)', 'flex manual expr.y', 'flex manual front.y',
+      'one-true-awk awkgram.y', 'FreeBSD awk awkgram.y', 'bc bc.y', 'ANSI C11 c11.y',
+      'byacc test calc.y', 'byacc test quote_calc.y', 'gawk command.y']
+T2 = T1 + ['PG gram.y', 'PG pl_gram.y', 'PG bootparse.y', 'PG repl_gram.y',
+           'PG syncrep_gram.y', 'PG jsonpath_gram.y', 'PG pgbench exprparse.y',
+           'PG cube cubeparse.y', 'PG seg segparse.y', 'byacc test grammar.y (ANSI C decls)']
+T3 = [l for l, _ in Y if not l.startswith('CONTROL')]
+
+def tiers(lime, tpl, corpus):
+    """lime as-is on every .y; print a row per grammar and the tier counts."""
+    ok = {}
+    print('| grammar | lime as-is | first lime error |')
+    print('|---|---|---|')
+    for label, rel in Y:
+        src = os.path.join(corpus, rel)
+        if not os.path.exists(src):
+            print('| %s | MISSING | |' % label); continue
+        w = tempfile.mkdtemp(prefix='cxt-')
+        dst = os.path.join(w, 'g.y'); open(dst, 'w').write(open(src, errors='replace').read())
+        v = lime_verdict(lime, tpl, dst, w)
+        ok[label] = v[0].startswith('yes')
+        print('| %s | %s | %s |' % (label, v[0], v[1].replace('|', '\\|')), flush=True)
+    for name, t, target in (('T1', T1, 10), ('T2', T2, 20), ('T3', T3, 28)):
+        print('%s: %d/%d accepted (target %d/%d)' % (
+            name, sum(1 for l in t if ok.get(l)), len(t), target, len(t)))
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('lime'); ap.add_argument('tpl'); ap.add_argument('corpus')
     ap.add_argument('--byacc'); ap.add_argument('--conv2')
     ap.add_argument('--only', choices=['y', 'l'])
+    ap.add_argument('--tiers', action='store_true',
+                    help='lime as-is on the .y corpus only, with T1/T2/T3 counts')
     a = ap.parse_args()
     lime = os.path.abspath(a.lime); tpl = os.path.abspath(a.tpl)
+    if a.tiers:
+        tiers(lime, tpl, a.corpus); return
     if a.only != 'l':
         print('| grammar | lines | bison | byacc | lime as-is | lime via in-tree convert_gram.py | lime via PG-port lime_convert_gram.py | first lime error (as-is) | first error (in-tree conv) | first error (PG-port conv) |')
         print('|---|---|---|---|---|---|---|---|---|---|')
