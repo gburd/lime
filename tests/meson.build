@@ -2170,6 +2170,17 @@ test_syntax_error = executable('test_syntax_error',
 
 test('syntax_error', test_syntax_error)
 
+# %nonassoc must reject `a < b < c` (bison/yacc semantics; Lemon accepted it
+# because CompressTables auto-reduced past the nonassoc ERROR action).
+test_nonassoc_gen = custom_target('test_nonassoc_grammar',
+  input   : 'test_nonassoc_grammar.y',
+  output  : ['test_nonassoc_grammar.c', 'test_nonassoc_grammar.h'],
+  command : [lime_exe, '-T' + meson.project_source_root() / 'limpar.c',
+             '-d@OUTDIR@', '@INPUT@'],
+)
+test('nonassoc', executable('test_nonassoc', 'test_nonassoc.c', test_nonassoc_gen,
+  dependencies : lime_parser_dep, c_args : nounusedparam))
+
 # P0-2 scaffolding: compile-time check that LimeReduceFn and the
 # extended MOD_ADD_RULE shape build cleanly.  No runtime dispatch
 # (that lands with apply_add_rule, i.e. P0-1).

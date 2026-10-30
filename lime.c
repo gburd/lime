@@ -13955,7 +13955,10 @@ void CompressTables(struct lime *lemp)
     stp->ap = Action_sort(stp->ap);
 
     for(ap=stp->ap; ap; ap=ap->next){
-      if( ap->type==SHIFT ) break;
+      /* An ERROR action (a %nonassoc conflict) must keep the lookahead
+      ** check; auto-reducing would accept `a < b < c`.  Inherited from
+      ** Lemon; bison rejects it. */
+      if( ap->type==SHIFT || ap->type==ERROR ) break;
       if( ap->type==REDUCE && ap->x.rp!=rbest ) break;
     }
     if( ap==0 ){
