@@ -700,6 +700,21 @@ themselves (the flex skin's `yylex`), documented in
 is byte-identical to before (checked on every `.lex` in the tree and
 the PostgreSQL port, native and flex skin).
 
+**New lexical syntax at runtime (DFA interpreter).** Keywords and
+operators cover most extensions; a new *lexical class* (a quoting
+syntax, `#{...}`) needs a regex.  `lime_lex_program_compile(text, len,
+&err)` (liblime_compiler) runs the `lime -X` pipeline in process --
+parse, resolve, per-state NFA -> DFA -> minimise, no fork, no file --
+into a `LimeLexProgram`; `lime_lex_program_match(prog, state, s, n,
+&rule, &len)` (liblime_parser) runs it with flex semantics (longest
+match, ties to the earlier rule, per-state DFAs, `<<EOF>>` rules by
+state).  It runs no C action bodies: the caller acts on the rule id,
+exactly as a driver of the generated `<P>_match()` does.  Checked
+against the generated scanner on PostgreSQL's scanner
+(`tests/pg_scan_core.lex`, the PG Lime port's scan.lex with PG-free
+actions) over the REL_18 regression SQL: identical token streams
+(`tests/test_lex_program.c`).  Numbers are in the B4 commit.
+
 **Layout.** Open addressing, power-of-two slots at load factor <= 1/2,
 FNV-1a over the case-folded bytes, the full hash stored per slot so a
 probe rejects most misses without a string compare, and a max-length

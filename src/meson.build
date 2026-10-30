@@ -8,6 +8,7 @@ lib_sources = files(
   'snapshot_diff.c',
   'token_table.c',
   'kw_table.c',
+  'lex_program.c',
   'tokenize.c',
   'parse_context.c',
   'parse_engine.c',

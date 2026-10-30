@@ -2541,6 +2541,31 @@ if host_machine.system() != 'windows'
   )
   test('lex_classify', test_lex_classify)
 
+  # Track B4: the runtime DFA interpreter vs the lime -X generated scanner
+  # on PostgreSQL's scanner (tests/pg_scan_core.lex = the PG Lime port's
+  # scan.lex with PG-free actions).  meson runs it on the in-tree SQL;
+  # the REL_18 regression suite is run by hand (see the B4 commit).
+  pg_scan_core_gen = custom_target('pg_scan_core_lex',
+    input   : ['pg_scan_core.lex'],
+    output  : ['pg_scan_core_lex.c', 'pg_scan_core_lex.h'],
+    command : [lime_exe, '-X', '-d@OUTDIR@', '@INPUT@'],
+  )
+  test_lex_program = executable('test_lex_program',
+    'test_lex_program.c',
+    pg_scan_core_gen,
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, lime_compiler_dep],
+    export_dynamic : true,
+  )
+  test('lex_program', test_lex_program,
+    args : [meson.project_source_root() / 'examples/pg/tests/select_basic.sql',
+            meson.project_source_root() / 'examples/pg/tests/select_columns.sql',
+            meson.project_source_root() / 'examples/pg/tests/select_join.sql',
+            meson.project_source_root() / 'examples/pg/pg_grammar.lime',
+            meson.project_source_root() / 'tests/pg_scan_core.lex'],
+    env : ['PG_SCAN_CORE_LEX=' + meson.current_source_dir() / 'pg_scan_core.lex'],
+    timeout : 120)
+
   # Track B measurements (tests/bench_lexicon.c).  The meson test only
   # runs the agreement check (BENCH_CHECK_ONLY=1): PostgreSQL's keyword
   # list from examples/pg/pg_kwlist.h, every identifier in the in-tree

@@ -20,6 +20,7 @@ These derivatives include, but are not limited to:
   - contrib/xml_query/       (XPath / XQuery)
   - examples/pg*             (PostgreSQL grammar / bootscanner examples)
   - the gram.y-derived grammars used in tests and benchmarks
+  - tests/pg_scan_core.lex   (scan.l's patterns, via the PG Lime port's scan.lex)
 
 The PostgreSQL portions are:
 

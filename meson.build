@@ -241,6 +241,20 @@ install_data('limpar.c', install_dir : get_option('datadir') / 'lime')
 lime_compiler_lib = static_library('lime_compiler',
   'lime.c',
   'src/lexicon_build.c',
+  # Track B: compose-time lexer builders.  lex_program_build.c compiles
+  # .lex text in process; it needs the .lex front end and the DFA
+  # compiler, which are plain C with no dependencies.  They are ALSO in
+  # lime_lex_compiler_lib (the generator's copy); no target links both.
+  'src/lex_program_build.c',
+  'src/lex/lex_tokenize.c',
+  'src/lex/lex_ast.c',
+  'src/lex/lex_parse.c',
+  'src/lex/lex_resolve.c',
+  'src/lex/lex_regex.c',
+  'src/lex/lex_nfa.c',
+  'src/lex/lex_dfa.c',
+  'src/lex/lex_dfa_min.c',
+  'src/lex/lex_compile.c',
   include_directories : [inc, include_directories('src'),
                          include_directories('src/lex')],
   c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAVE_SNAPSHOT_BUILD']

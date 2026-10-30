@@ -75,6 +75,46 @@ struct LimeLexicon {
     size_t pool_len;
 };
 
+/* ------------------------------------------------------------------ */
+/*  LimeLexProgram (B4): a compiled .lex, as plain immutable data       */
+/* ------------------------------------------------------------------ */
+
+/* Same table shape the generated scanner uses (trans[state][byte] =
+** next or -1, accept[state] = global rule or -1), so the interpreter's
+** inner loop is the generated loop with the tables read from memory. */
+typedef struct LimeLexProgState {
+    int32_t start;
+    int32_t nstates;
+    int16_t (*trans)[256];
+    int16_t *accept;
+} LimeLexProgState;
+
+struct LimeLexProgram {
+    int32_t nstates; /* lexer states (INITIAL + declared) */
+    LimeLexProgState *st;
+    char **state_names; /* [nstates] */
+    int32_t nrules;
+    char **rule_names; /* [nrules], global compile order */
+    unsigned char *rule_is_eof; /* [nrules] */
+    int32_t *eof_rule;          /* [nstates]: <<EOF>> rule for the state or -1 */
+};
+
+static inline void lime_lex_program_destroy(struct LimeLexProgram *p) {
+    if (p == NULL) return;
+    for (int32_t i = 0; p->st && i < p->nstates; i++) {
+        free(p->st[i].trans);
+        free(p->st[i].accept);
+        if (p->state_names) free(p->state_names[i]);
+    }
+    for (int32_t i = 0; p->rule_names && i < p->nrules; i++) free(p->rule_names[i]);
+    free(p->st);
+    free(p->state_names);
+    free(p->rule_names);
+    free(p->rule_is_eof);
+    free(p->eof_rule);
+    free(p);
+}
+
 /* ASCII-only case fold, branch-free: 'A'..'Z' -> 'a'..'z'. */
 static inline unsigned char lime_lex_fold(unsigned char c) {
     return (unsigned char)(c | ((unsigned)((unsigned)(c - 'A') < 26u) << 5));

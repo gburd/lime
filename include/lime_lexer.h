@@ -109,7 +109,44 @@ int lime_lexicon_classify(const void *lexicon, int kind, const char *text, size_
 ** need it unless they detach one by hand. */
 void lime_lexicon_free(LimeLexicon *lx);
 
+/* ---------------- runtime DFA interpreter (B4) ----------------
+**
+** A LimeLexProgram is a .lex file compiled in-process to plain data
+** (lime_lex_program_compile, liblime_compiler): the same per-state
+** minimised DFAs `lime -X` would turn into C.  The interpreter below
+** (liblime_parser) runs them with flex semantics: longest match, ties
+** to the earlier rule, per-state DFAs.  It does not run C action
+** bodies (there is no compiler at runtime); the caller acts on the
+** returned rule id, exactly as a hand-written driver of the generated
+** <P>_match() does. */
+typedef struct LimeLexProgram LimeLexProgram;
+
+/* Longest match of `s[0..n)` in lexer state `state`.  Returns 1 and
+** sets *rule (global compile-order rule id) and *len; returns 0 when no
+** rule matches.  Same contract as the generated <P>_match(). */
+int lime_lex_program_match(const LimeLexProgram *p, int state, const char *s, size_t n,
+                           int *rule, size_t *len);
+
+/* Introspection: -1 / NULL when out of range or unknown. */
+int lime_lex_program_rule_count(const LimeLexProgram *p);
+int lime_lex_program_state_count(const LimeLexProgram *p);
+const char *lime_lex_program_rule_name(const LimeLexProgram *p, int rule);
+int lime_lex_program_rule_by_name(const LimeLexProgram *p, const char *name);
+int lime_lex_program_state_by_name(const LimeLexProgram *p, const char *name);
+int lime_lex_program_rule_is_eof(const LimeLexProgram *p, int rule);
+/* The <<EOF>> rule that fires in `state`, or -1. */
+int lime_lex_program_eof_rule(const LimeLexProgram *p, int state);
+
+void lime_lex_program_free(LimeLexProgram *p);
+
 /* ---------------- builders (liblime_compiler) ---------------- */
+
+/* Compile .lex source text in-process (parse, resolve %pattern, per-
+** state NFA -> DFA -> minimise; no fork, no file, no compiler).
+** Returns NULL with a malloc'd *error on a syntax / regex error.
+** Action bodies are parsed but ignored. */
+LimeLexProgram *lime_lex_program_compile(const char *lex_source, size_t len, char **error);
+
 
 /* Build a lexicon from host-supplied keywords and operators and attach
 ** it to `snap` (replacing any existing one).  Every `token` must name a

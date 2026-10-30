@@ -79,19 +79,31 @@ typedef struct {
 
 /* ============================================================
 ** NFA helpers (epsilon-closure, byte-step)
+**
+** B4: worklist closure (each NFA state pushed once) instead of
+** iterating to a fixed point over every NFA state, and the move step
+** walks the member list of the current set instead of scanning all
+** NFA states.  Both produce exactly the same sets as before; the
+** subset construction and therefore the DFA are unchanged
+** (tests/test_lex_dfa_identity checks a table hash).
 ** ============================================================ */
 
-static void eps_closure(const LimeNfa *nfa, unsigned char *set) {
-    int changed = 1;
-    while (changed) {
-        changed = 0;
-        for (int i = 0; i < nfa->n_states; i++) {
-            if (!bmap_has(set, i)) continue;
-            for (LimeNfaEdge *e = nfa->states[i].edges; e; e = e->next) {
-                if (e->kind == LIME_NFA_EPS && !bmap_has(set, e->target)) {
-                    bmap_set(set, e->target);
-                    changed = 1;
-                }
+/* Scratch shared by closure/move for one construction. */
+typedef struct {
+    int *stack;   /* worklist, nfa->n_states slots */
+    int *members; /* member list of the set being moved, n_states slots */
+} Scratch;
+
+static void eps_closure(const LimeNfa *nfa, unsigned char *set, Scratch *sc) {
+    int top = 0;
+    for (int i = 0; i < nfa->n_states; i++)
+        if (bmap_has(set, i)) sc->stack[top++] = i;
+    while (top > 0) {
+        int i = sc->stack[--top];
+        for (LimeNfaEdge *e = nfa->states[i].edges; e; e = e->next) {
+            if (e->kind == LIME_NFA_EPS && !bmap_has(set, e->target)) {
+                bmap_set(set, e->target);
+                sc->stack[top++] = e->target;
             }
         }
     }
@@ -103,16 +115,15 @@ static int class_matches(const LimeNfaEdge *e, unsigned char byte) {
     return e->u.char_class.negate ? !has : has;
 }
 
-/* Compute the move() set: states reachable from any state in
-** `cur` via a non-epsilon edge consuming byte `b`.  Then apply
-** epsilon-closure.  Returns 1 if the result is non-empty. */
-static int move_then_eps(const LimeNfa *nfa, const unsigned char *cur, unsigned char *out,
-                         size_t bytes, unsigned char byte) {
+/* Compute the move() set: states reachable from any of the `nm`
+** member states via a non-epsilon edge consuming byte `b`.  Then
+** apply epsilon-closure.  Returns 1 if the result is non-empty. */
+static int move_then_eps(const LimeNfa *nfa, const int *members, int nm, unsigned char *out,
+                         size_t bytes, unsigned char byte, Scratch *sc) {
     memset(out, 0, bytes);
     int any = 0;
-    for (int s = 0; s < nfa->n_states; s++) {
-        if (!bmap_has(cur, s)) continue;
-        for (LimeNfaEdge *e = nfa->states[s].edges; e; e = e->next) {
+    for (int k = 0; k < nm; k++) {
+        for (LimeNfaEdge *e = nfa->states[members[k]].edges; e; e = e->next) {
             if (e->kind == LIME_NFA_BYTE && e->u.byte == byte) {
                 bmap_set(out, e->target);
                 any = 1;
@@ -122,8 +133,46 @@ static int move_then_eps(const LimeNfa *nfa, const unsigned char *cur, unsigned 
             }
         }
     }
-    if (any) eps_closure(nfa, out);
+    if (any) eps_closure(nfa, out, sc);
     return any;
+}
+
+/* Byte equivalence classes: two bytes are equivalent when every NFA
+** edge treats them alike (both match it or neither does).  Then every
+** set moves identically on them, so subset construction computes one
+** move per class instead of per byte.  cls[b] = class id; rep[c] =
+** the smallest byte of class c.  Returns the number of classes.
+** Refinement: start with one class, split by each edge's byte set. */
+static int byte_classes(const LimeNfa *nfa, int cls[256], int rep[256]) {
+    for (int b = 0; b < 256; b++) cls[b] = 0;
+    int ncls = 1;
+    unsigned char in[256];
+    for (int i = 0; i < nfa->n_states; i++) {
+        for (LimeNfaEdge *e = nfa->states[i].edges; e; e = e->next) {
+            if (e->kind == LIME_NFA_EPS) continue;
+            for (int b = 0; b < 256; b++)
+                in[b] = e->kind == LIME_NFA_BYTE ? (e->u.byte == b)
+                                                 : (unsigned char)class_matches(e, (unsigned char)b);
+            /* split every class that has bytes both in and out */
+            int newid[256];
+            for (int c = 0; c < ncls; c++) newid[c] = -1;
+            for (int b = 0; b < 256; b++) {
+                if (!in[b]) continue;
+                int c = cls[b];
+                if (newid[c] == -1) {
+                    /* does class c have a byte outside the edge set? */
+                    int split = 0;
+                    for (int x = 0; x < 256 && !split; x++) split = cls[x] == c && !in[x];
+                    newid[c] = split ? ncls++ : c;
+                }
+                cls[b] = newid[c];
+            }
+        }
+    }
+    for (int c = 0; c < ncls; c++) rep[c] = -1;
+    for (int b = 0; b < 256; b++)
+        if (rep[cls[b]] < 0) rep[cls[b]] = b;
+    return ncls;
 }
 
 /* ============================================================
@@ -291,45 +340,69 @@ LimeDfa *lime_lex_nfa_to_dfa(const LimeNfa *nfa) {
     bld.nfa_bytes = bitmap_bytes_for(nfa->n_states);
     bld.dfa = dfa;
 
+    Scratch sc;
+    sc.stack = malloc((size_t)(nfa->n_states > 0 ? nfa->n_states : 1) * sizeof(int));
+    sc.members = malloc((size_t)(nfa->n_states > 0 ? nfa->n_states : 1) * sizeof(int));
+    int cls[256], rep[256];
+    int ncls = byte_classes(nfa, cls, rep);
+
     /* Seed with epsilon-closure of {nfa.start}. */
     unsigned char *seed = calloc(bld.nfa_bytes, 1);
-    if (!seed) goto fail;
+    if (!seed || !sc.stack || !sc.members) {
+        free(seed);
+        free(sc.stack);
+        free(sc.members);
+        goto fail;
+    }
     bmap_set(seed, nfa->start);
-    eps_closure(nfa, seed);
+    eps_closure(nfa, seed, &sc);
 
     int created = 0;
     int s0 = intern_state(&bld, seed, &created);
     free(seed);
-    if (s0 < 0) goto fail;
+    if (s0 < 0) goto fail_sc;
     dfa->start = s0;
-    if (worklist_push(&bld, s0) < 0) goto fail;
+    if (worklist_push(&bld, s0) < 0) goto fail_sc;
 
-    /* Process worklist. */
+    /* Process worklist.  Per DFA state: one move per byte class (the
+    ** class representative stands for all its bytes), then the target
+    ** is written for every byte of the class.  Interning happens in
+    ** byte order of the representatives, which is the same order the
+    ** per-byte loop discovered new states in, so state numbering is
+    ** unchanged. */
     int cur_id;
     unsigned char *next_set = malloc(bld.nfa_bytes);
-    if (!next_set) goto fail;
+    if (!next_set) goto fail_sc;
     while (worklist_pop(&bld, &cur_id)) {
-        const unsigned char *cur_set = bld.records[cur_id].set;
+        int nm = 0;
+        {
+            const unsigned char *cur_set = bld.records[cur_id].set;
+            for (int i = 0; i < nfa->n_states; i++)
+                if (bmap_has(cur_set, i)) sc.members[nm++] = i;
+        }
+        int cls_target[256];
+        for (int c = 0; c < ncls; c++) cls_target[c] = -2; /* not computed */
         for (int b = 0; b < 256; b++) {
-            if (!move_then_eps(nfa, cur_set, next_set, bld.nfa_bytes, (unsigned char)b)) {
-                continue;
-            }
-            int new_state = 0;
-            int next_id = intern_state(&bld, next_set, &new_state);
-            if (next_id < 0) {
-                free(next_set);
-                goto fail;
-            }
-            dfa->states[cur_id].trans[b] = next_id;
-            if (new_state) {
-                if (worklist_push(&bld, next_id) < 0) {
-                    free(next_set);
-                    goto fail;
+            int c = cls[b];
+            if (cls_target[c] == -2) {
+                cls_target[c] = -1;
+                if (move_then_eps(nfa, sc.members, nm, next_set, bld.nfa_bytes,
+                                  (unsigned char)rep[c], &sc)) {
+                    int new_state = 0;
+                    int next_id = intern_state(&bld, next_set, &new_state);
+                    if (next_id < 0 || (new_state && worklist_push(&bld, next_id) < 0)) {
+                        free(next_set);
+                        goto fail_sc;
+                    }
+                    cls_target[c] = next_id;
                 }
             }
+            dfa->states[cur_id].trans[b] = cls_target[c];
         }
     }
     free(next_set);
+    free(sc.stack);
+    free(sc.members);
 
     /* Free records (no longer needed once construction completes). */
     for (int i = 0; i < bld.dfa->n_states; i++)
@@ -339,6 +412,9 @@ LimeDfa *lime_lex_nfa_to_dfa(const LimeNfa *nfa) {
     free(bld.worklist);
     return dfa;
 
+fail_sc:
+    free(sc.stack);
+    free(sc.members);
 fail:
     if (bld.records) {
         for (int i = 0; i < bld.dfa->n_states; i++)
