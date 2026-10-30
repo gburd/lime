@@ -1026,6 +1026,8 @@ struct lime {
   ** `yylval.<field> = ...` from yylex().  NULL when no %union
   ** directive was seen.  See docs/SKINS.md. */
   char *union_body;
+  int is_yacc;             /* Track D: grammar was read by the yacc front
+                           ** end (yacc semantics apply); 0 for Lemon */
   char *yystype_header;    /* %yystype_header "name.h": basename for the
                            ** standalone token-defines + YYSTYPE header
                            ** that a separately-generated lexer can
@@ -1216,6 +1218,7 @@ const char *Strsafe_find(const char *);
 
 struct symbol *Symbol_new(const char *);
 int Symbolcmpp(const void *, const void *);
+static int g_symcmp_by_kind = 0;  /* Track D: sort yacc symbols by kind */
 void Symbol_init(void);
 int Symbol_insert(struct symbol *, const char *);
 struct symbol *Symbol_find(const char *);
@@ -5416,6 +5419,13 @@ static int g_skin_chumsky = 0;
 ** argument, which the host-reduce path cannot supply) are unaffected.
 ** Opt in only for grammars whose actions are self-contained. */
 static int g_host_reduce = 0;
+/* Track D: yacc front end.  g_yacc_mode: 0 = auto-detect (a `%%` line
+** at column 0 means yacc syntax), 1 = --yacc (force yacc), -1 = --lemon
+** (force Lemon/Lime syntax).  Lemon-syntax input never touches the
+** yacc reader, so its output is unchanged. */
+static int g_yacc_mode = 0;
+static void handle_yacc_flag(int v){ (void)v; g_yacc_mode = 1; }
+static void handle_lemon_flag(int v){ (void)v; g_yacc_mode = -1; }
 
 /* Letter 37: when set, CompressTables does NOT optimize away a
 ** single-RHS (unit) production's reduce action, even when the rule has
@@ -5956,6 +5966,10 @@ int main(int argc, char **argv){
     {OPT_FLAG, "l", (char*)&nolinenosflag, "Do not print #line statements."},
     {OPT_FLAG, "n", (char*)&snapshotFlag,
                     "Generate snapshot init code (*_snapshot.c)."},
+    {OPT_FFLAG, "-yacc", (char*)handle_yacc_flag,
+      "Read the grammar as yacc/bison syntax (default: auto-detect)."},
+    {OPT_FFLAG, "-lemon", (char*)handle_lemon_flag,
+      "Read the grammar as Lemon/Lime syntax, even with a %% line."},
     {OPT_FLAG, "-host-reduce", (char*)&g_host_reduce,
                     "With -n, wire the snapshot's host_reduce to the "
                     "generated <Name>HostReduce so the push parser runs "
@@ -9904,6 +9918,343 @@ static const char *resolve_extends_path(const char *current_file,
 ** would otherwise need to thread the saved filename through
 ** parse_lime_file_recursive's locals, which buys nothing.
 */
+/*************************** yacc/bison front end ****************************
+** Track D.  A second surface syntax for the same struct rule / struct
+** symbol the Lemon reader builds: no new state machine, no new tables.
+** Entered only for yacc-syntax input (a `%%` line at column 0, or --yacc),
+** so every Lemon/Lime grammar still goes through parseonetoken().
+**
+** The reader is a small recursive scanner over the whole buffer:
+**   declarations  %{ C %}  %token  %left  %right  %nonassoc  %start
+**   %%
+**   rules         lhs : a b | c | ;
+**   %%            epilogue (ignored for now)
+** Terminal vs nonterminal is decided by declaration, never by letter
+** case: a name given to %token/%left/%right/%nonassoc is a terminal,
+** every other name is a nonterminal.
+*/
+struct yacc_rd {
+  struct pstate *psp;
+  const char *filename;
+  char *cp;             /* Read cursor */
+  int lineno;
+};
+
+/* Skip whitespace and C comments; count newlines. */
+static void yacc_skip_ws(struct yacc_rd *r){
+  for(;;){
+    char c = *r->cp;
+    if( c=='\n' ){ r->lineno++; r->cp++; continue; }
+    if( ISSPACE(c) ){ r->cp++; continue; }
+    if( c=='/' && r->cp[1]=='*' ){
+      r->cp += 2;
+      while( *r->cp && !(r->cp[0]=='*' && r->cp[1]=='/') ){
+        if( *r->cp=='\n' ) r->lineno++;
+        r->cp++;
+      }
+      if( *r->cp ) r->cp += 2;
+      continue;
+    }
+    if( c=='/' && r->cp[1]=='/' ){
+      while( *r->cp && *r->cp!='\n' ) r->cp++;
+      continue;
+    }
+    return;
+  }
+}
+
+static int yacc_at_bol(struct yacc_rd *r, const char *buf){
+  return r->cp==buf || r->cp[-1]=='\n';
+}
+
+/* Read an identifier (letters, digits, '_', '.') into a Strsafe'd string.
+** bison also allows '-' inside names; not supported yet. */
+static const char *yacc_ident(struct yacc_rd *r){
+  char *s = r->cp, save;
+  const char *res;
+  while( ISALNUM(*r->cp) || *r->cp=='_' || *r->cp=='.' ) r->cp++;
+  save = *r->cp;
+  *r->cp = 0;
+  res = Strsafe(s);
+  *r->cp = save;
+  return res;
+}
+
+static void yacc_error(struct yacc_rd *r, const char *fmt, const char *arg){
+  ErrorMsg(r->filename, r->lineno, fmt, arg);
+  r->psp->errorcnt++;
+}
+
+/* Get or create a symbol without Symbol_new's letter-case rule.  New
+** symbols start as NONTERMINAL; declarations flip them to TERMINAL. */
+static struct symbol *yacc_symbol(const char *name, int is_terminal){
+  int fresh = Symbol_find(name)==0;
+  struct symbol *sp = Symbol_new(name);
+  if( fresh ){
+    /* Symbol_new guessed from the first letter; yacc decides by
+    ** declaration instead. */
+    sp->type = is_terminal ? TERMINAL : NONTERMINAL;
+  }else if( is_terminal ){
+    sp->type = TERMINAL;
+  }
+  return sp;
+}
+
+/* Append a %{ ... %} block to gp->include, the way %include does. */
+static void yacc_append_include(struct lime *gp, const char *s, size_t n){
+  size_t old = gp->include ? strlen(gp->include) : 0;
+  char *z = (char*)lime_realloc(gp->include, old + n + 2);
+  MemoryCheck(z);
+  memcpy(z + old, s, n);
+  z[old+n] = '\n';
+  z[old+n+1] = 0;
+  gp->include = z;
+}
+
+static void yacc_declarations(struct yacc_rd *r, char *buf){
+  struct pstate *psp = r->psp;
+  struct lime *gp = psp->gp;
+  for(;;){
+    yacc_skip_ws(r);
+    if( *r->cp==0 ){
+      yacc_error(r, "%s", "end of file before the first %% line");
+      return;
+    }
+    if( r->cp[0]=='%' && r->cp[1]=='%' ){
+      r->cp += 2;
+      return;
+    }
+    if( r->cp[0]=='%' && r->cp[1]=='{' && yacc_at_bol(r, buf) ){
+      char *s = r->cp + 2;
+      char *e = strstr(s, "\n%}");
+      if( e==0 ){
+        yacc_error(r, "%s", "%{ is not closed by a %} line");
+        r->cp += strlen(r->cp);
+        return;
+      }
+      e++;  /* points at "%}" */
+      yacc_append_include(gp, s, (size_t)(e - s));
+      for(; r->cp<e; r->cp++) if( *r->cp=='\n' ) r->lineno++;
+      r->cp = e + 2;
+      continue;
+    }
+    if( r->cp[0]=='%' && ISALPHA(r->cp[1]) ){
+      const char *kw;
+      int is_prec = 0;
+      enum e_assoc assoc = UNK;
+      r->cp++;
+      kw = yacc_ident(r);
+      if( strcmp(kw,"token")==0 ){
+        is_prec = 0;
+      }else if( strcmp(kw,"left")==0 ){
+        is_prec = 1; assoc = LEFT;
+      }else if( strcmp(kw,"right")==0 ){
+        is_prec = 1; assoc = RIGHT;
+      }else if( strcmp(kw,"nonassoc")==0 ){
+        is_prec = 1; assoc = NONE;
+      }else if( strcmp(kw,"start")==0 ){
+        yacc_skip_ws(r);
+        gp->start = (char*)yacc_ident(r);
+        continue;
+      }else{
+        yacc_error(r, "yacc declaration \"%%%s\" is not supported by "
+                   "Lime's yacc front end yet", kw);
+        /* Skip to end of line so one bad directive is one error. */
+        while( *r->cp && *r->cp!='\n' ) r->cp++;
+        continue;
+      }
+      if( is_prec ) psp->preccounter++;
+      /* Symbol list: stops at the next '%' or end of line run. */
+      for(;;){
+        yacc_skip_ws(r);
+        if( ISALPHA(*r->cp) || *r->cp=='_' ){
+          struct symbol *sp = yacc_symbol(yacc_ident(r), 1);
+          if( is_prec ){
+            if( sp->prec>=0 ){
+              yacc_error(r, "Symbol \"%s\" has already been given a "
+                         "precedence.", sp->name);
+            }else{
+              sp->prec = psp->preccounter;
+              sp->assoc = assoc;
+            }
+          }
+          continue;
+        }
+        break;
+      }
+      continue;
+    }
+    {
+      char bad[2] = { *r->cp, 0 };
+      yacc_error(r, "unexpected \"%s\" in the yacc declarations section",
+                 bad);
+      r->cp++;
+    }
+  }
+}
+
+/* Commit one alternative: lhs ::= rhs[0..nrhs-1].  Same allocation and
+** list linking as commit_current_rule(), minus %extends/%override. */
+static void yacc_commit_rule(struct yacc_rd *r, struct symbol *lhs,
+                             struct symbol **rhs, int nrhs, int line){
+  struct pstate *psp = r->psp;
+  struct rule *rp;
+  int i;
+  rp = (struct rule *)lime_calloc( sizeof(struct rule) +
+       sizeof(struct symbol*)*nrhs + sizeof(char*)*nrhs, 1);
+  MemoryCheck(rp);
+  rp->ruleline = line;
+  rp->rhs = (struct symbol**)&rp[1];
+  rp->rhsalias = (const char**)&(rp->rhs[nrhs]);
+  for(i=0; i<nrhs; i++){ rp->rhs[i] = rhs[i]; rp->rhsalias[i] = 0; }
+  rp->lhs = lhs;
+  rp->lhsalias = 0;
+  rp->nrhs = nrhs;
+  rp->code = 0;
+  rp->noCode = 1;
+  rp->precsym = 0;
+  rp->origin_file = Strsafe(r->filename);
+  rp->origin_line = line;
+  rp->override_depth = INT_MAX;
+  rp->index = psp->gp->nrule++;
+  rp->nextlhs = lhs->rule;
+  lhs->rule = rp;
+  rp->next = 0;
+  if( psp->firstrule==0 ){
+    psp->firstrule = psp->lastrule = rp;
+  }else{
+    psp->lastrule->next = rp;
+    psp->lastrule = rp;
+  }
+  psp->prevrule = rp;
+}
+
+static void yacc_rules(struct yacc_rd *r){
+  struct pstate *psp = r->psp;
+  struct symbol *rhs[MAXRHS];
+  for(;;){
+    struct symbol *lhs;
+    int line;
+    yacc_skip_ws(r);
+    if( *r->cp==0 ) return;
+    if( r->cp[0]=='%' && r->cp[1]=='%' ){ r->cp += 2; return; }
+    if( !(ISALPHA(*r->cp) || *r->cp=='_') ){
+      char bad[2] = { *r->cp, 0 };
+      yacc_error(r, "expected a rule name, saw \"%s\"", bad);
+      r->cp++;
+      continue;
+    }
+    lhs = yacc_symbol(yacc_ident(r), 0);
+    if( lhs->type==TERMINAL ){
+      yacc_error(r, "\"%s\" is declared as a token and cannot be the "
+                 "left-hand side of a rule", lhs->name);
+    }
+    if( psp->gp->start==0 ) psp->gp->start = (char*)lhs->name;
+    yacc_skip_ws(r);
+    if( *r->cp!=':' ){
+      yacc_error(r, "expected \":\" after the rule name \"%s\"", lhs->name);
+      continue;
+    }
+    r->cp++;
+    /* Alternatives, separated by '|', ended by ';' or by the next
+    ** `name :` (yacc makes the ';' optional). */
+    for(;;){
+      int nrhs = 0;
+      line = r->lineno;
+      for(;;){
+        yacc_skip_ws(r);
+        if( ISALPHA(*r->cp) || *r->cp=='_' ){
+          char *save = r->cp;
+          int saveline = r->lineno;
+          const char *name = yacc_ident(r);
+          yacc_skip_ws(r);
+          if( *r->cp==':' ){
+            /* `name :` starts the next rule: this alternative ended
+            ** without a ';'. */
+            r->cp = save;
+            r->lineno = saveline;
+            break;
+          }
+          if( nrhs>=MAXRHS ){
+            yacc_error(r, "too many symbols on the right-hand side of a "
+                       "rule for \"%s\"", lhs->name);
+          }else{
+            rhs[nrhs++] = yacc_symbol(name, 0);
+          }
+          continue;
+        }
+        break;
+      }
+      yacc_commit_rule(r, lhs, rhs, nrhs, line);
+      if( *r->cp=='|' ){ r->cp++; continue; }
+      if( *r->cp==';' ){ r->cp++; }
+      else if( !(ISALPHA(*r->cp) || *r->cp=='_' || *r->cp==0
+                 || (r->cp[0]=='%' && r->cp[1]=='%')) ){
+        char bad[2] = { *r->cp, 0 };
+        yacc_error(r, "unexpected \"%s\" in a yacc rule (actions are not "
+                   "supported by Lime's yacc front end yet)", bad);
+        r->cp++;
+      }
+      break;
+    }
+  }
+}
+
+/* Entry point: read the whole yacc grammar in buf. */
+static void yacc_parse_buffer(struct pstate *psp, char *buf,
+                              const char *filename){
+  struct yacc_rd rd;
+  struct lime *gp = psp->gp;
+  memset(&rd, 0, sizeof(rd));
+  rd.psp = psp;
+  rd.filename = filename;
+  rd.cp = buf;
+  rd.lineno = 1;
+  gp->is_yacc = 1;
+  psp->preccounter = 0;
+  psp->firstrule = psp->lastrule = psp->prevrule = 0;
+  gp->nrule = 0;
+  yacc_declarations(&rd, buf);
+  if( psp->errorcnt ) return;
+  yacc_rules(&rd);
+  /* Anything after the second %% is the epilogue (not emitted yet). */
+  if( psp->errorcnt || psp->firstrule==0 ) return;
+  /* yacc augments every grammar with `$accept : start $end`, so the
+  ** start symbol may appear on a right-hand side.  Lemon accepts on
+  ** reducing its start symbol at end of input, so `$accept : start`
+  ** is the same thing. */
+  {
+    struct symbol *start = Symbol_find(gp->start);
+    struct symbol *acc;
+    if( start==0 || start->type!=NONTERMINAL ){
+      ErrorMsg(filename, 0, "the start symbol \"%s\" is not a nonterminal "
+               "with rules", gp->start);
+      psp->errorcnt++;
+      return;
+    }
+    acc = yacc_symbol("$accept", 0);
+    yacc_commit_rule(&rd, acc, &start, 1, 0);
+    gp->start = (char*)acc->name;
+  }
+}
+
+/* A buffer is yacc syntax iff it has a line that is exactly `%%`
+** (trailing blanks or a comment allowed) at column 0. */
+static int yacc_detect(const char *buf){
+  const char *p = buf;
+  while( p && *p ){
+    if( p[0]=='%' && p[1]=='%' ){
+      const char *q = p + 2;
+      while( *q==' ' || *q=='\t' || *q=='\r' ) q++;
+      if( *q=='\n' || *q==0 || (q[0]=='/' && (q[1]=='*' || q[1]=='/')) )
+        return 1;
+    }
+    p = strchr(p, '\n');
+    if( p ) p++;
+  }
+  return 0;
+}
+
 /* ROADMAP-1 phase 2: tokenize an in-memory grammar buffer.
 **
 ** Caller owns `filebuf`.  This function mutates it in place
@@ -9939,6 +10290,15 @@ static void parse_lime_buffer_recursive(struct pstate *psp,
   /* Set the active filename for diagnostics + provenance.  Caller
   ** restores on return (in the %extends case). */
   psp->filename = (char *)filename;
+
+  /* Track D: yacc/bison input goes to the yacc reader, before any
+  ** Lemon preprocessing (%ifdef / %dialect mean nothing to yacc). */
+  if( is_top_level && g_yacc_mode>=0
+      && (g_yacc_mode==1 || yacc_detect(filebuf)) ){
+    if( gp->printPreprocessed ){ printf("%s\n", filebuf); return; }
+    yacc_parse_buffer(psp, filebuf, filename);
+    return;
+  }
 
   /* v0.4.0: %dialect desugaring runs before %ifdef preprocessing. */
   desugar_dialect_blocks(filebuf, filename);
@@ -14360,7 +14720,9 @@ static int lime_index_symbols(struct lime *lem, const char **fail_reason) {
     lem->symbols = Symbol_arrayof();
     int k;
     for(k=0; k<lem->nsymbol; k++) lem->symbols[k]->index = k;
+    g_symcmp_by_kind = lem->is_yacc;
     qsort(lem->symbols, lem->nsymbol, sizeof(struct symbol*), Symbolcmpp);
+    g_symcmp_by_kind = 0;
     for(k=0; k<lem->nsymbol; k++) lem->symbols[k]->index = k;
     while( k>0 && lem->symbols[k-1]->type==MULTITERMINAL ){ k--; }
     if( k<=0 || strcmp(lem->symbols[k-1]->name, "{default}")!=0 ){
@@ -14368,7 +14730,9 @@ static int lime_index_symbols(struct lime *lem, const char **fail_reason) {
         return -1;
     }
     lem->nsymbol = k - 1;
-    for(k=1; k<lem->nsymbol && ISUPPER(lem->symbols[k]->name[0]); k++){}
+    for(k=1; k<lem->nsymbol && (lem->is_yacc
+           ? lem->symbols[k]->type==TERMINAL
+           : ISUPPER(lem->symbols[k]->name[0])); k++){}
     lem->nterminal = k;
     return 0;
 }
@@ -15563,8 +15927,13 @@ int Symbolcmpp(const void *_a, const void *_b)
 {
   const struct symbol *a = *(const struct symbol **) _a;
   const struct symbol *b = *(const struct symbol **) _b;
-  int i1 = a->type==MULTITERMINAL ? 3 : a->name[0]>'Z' ? 2 : 1;
-  int i2 = b->type==MULTITERMINAL ? 3 : b->name[0]>'Z' ? 2 : 1;
+  /* yacc input: terminal-ness is the declared kind, not letter case. */
+  int i1 = a->type==MULTITERMINAL ? 3 : g_symcmp_by_kind
+           ? (a->type==NONTERMINAL && strcmp(a->name,"$")!=0 ? 2 : 1)
+           : a->name[0]>'Z' ? 2 : 1;
+  int i2 = b->type==MULTITERMINAL ? 3 : g_symcmp_by_kind
+           ? (b->type==NONTERMINAL && strcmp(b->name,"$")!=0 ? 2 : 1)
+           : b->name[0]>'Z' ? 2 : 1;
   return i1==i2 ? a->index - b->index : i1 - i2;
 }
 
