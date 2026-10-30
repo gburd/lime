@@ -630,7 +630,7 @@ that produces it can never disagree.
 | Piece | Library | When it runs |
 |---|---|---|
 | `lime_snapshot_set_lexicon(snap, keywords, n, operators, m, flags)` | liblime_compiler | once, on the base snapshot |
-| `lime_lex_compose(composed, base, mods, nmods)` | liblime_compiler | each compose, right after `publish_modified_snapshot` |
+| `lime_lex_compose(composed, base, mods, nmods)` | liblime_compiler | each compose: `publish_modified_snapshot` calls it, after the parse tables build; a host calls it directly only for snapshots it builds itself |
 | `lime_snapshot_lexicon(snap)`, `lime_kw_lookup(lx, s, n)`, `lime_op_match(lx, s, n, &code)` | liblime_parser | per token, lock-free |
 
 Items are `{ "spelling", "TOKEN_NAME" }`; names are resolved against
@@ -640,7 +640,8 @@ is off by default.
 
 **Compose.** `lime_lex_compose` rebuilds the tables from the base's
 items plus every `MOD_ADD_TOKEN.lexeme`: identifier bytes only ->
-keyword, anything else -> operator.  It fails, and the caller fails the publish, when:
+keyword, anything else -> operator.  It fails, and `publish_modified_snapshot` then fails the
+publish (no snapshot is returned; the old one keeps serving), when:
 - a base item's token code differs in the composed snapshot (base
   terminal codes must be stable, DESIGN.md invariant 4);
 - one spelling is claimed by two different tokens (base vs

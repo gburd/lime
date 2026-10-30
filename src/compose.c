@@ -27,6 +27,7 @@
 #include "extension.h"
 #include "conflict.h"
 #include "lime_compiler.h"
+#include "lime_lexer.h"
 #include "lime_policy.h"
 #include "mod_serialize.h"
 #include "multi_grammar.h"
@@ -177,17 +178,16 @@ static int policy_rejects(const LimeComposePolicy *p, const char *owner,
 ** no ranks) other than TOKEN_LEXEME fall through to the legacy check and
 ** the deprecated on_conflict callbacks (step 2b).
 **
-** SEAM(Track B): keyword ownership.  The policy is the only authority on
-** who owns a lexeme; Track B's keyword table (kw_table, built by
-** lime_lex_compose at the SEAM in publish_modified_snapshot) must not
-** re-decide.  The decision is handed over in the modification list that
-** reaches lime_lex_compose (`combined`, after step 2a): for each lexeme
-** exactly one MOD_ADD_TOKEN carries it (losers have lexeme == NULL), and
-** a soft owner carries fallback_to.  B1's builder already reads base
-** %keyword + MOD_ADD_TOKEN.lexeme, so it needs no extra input.  Two
-** claims on a BASE keyword (an extension token reusing a base lexeme) are
-** for B to report, since only the lexer side knows the base keyword set:
-** it should fail the compose unless `keyword "x" owner E` names E.
+** Keyword ownership between extensions is decided here, by the policy;
+** the lexicon builder (lime_lex_compose, step 3b of
+** publish_modified_snapshot) does not re-decide.  The decision is handed
+** over in the modification list that reaches it (`combined`, after step
+** 2a): for each lexeme exactly one MOD_ADD_TOKEN carries it (losers have
+** lexeme == NULL), and a soft owner carries fallback_to.  A claim on a
+** BASE keyword or operator (an extension token reusing a base spelling)
+** is caught by the builder, since only it knows the base lexicon, and
+** always fails the publish: a policy cannot hand a base spelling to an
+** extension.
 */
 typedef struct DeclOwner { const char *owner; int rank; } DeclOwner;
 
@@ -228,6 +228,38 @@ static void appendf(char **buf, const char *fmt, ...) {
         *buf = n;
     }
     va_end(ap);
+}
+
+/* Does `word` occur in `text` as a whole identifier? */
+static int has_word(const char *text, const char *word) {
+    size_t n = word ? strlen(word) : 0;
+    for (const char *p = text; n && (p = strstr(p, word)) != NULL; p++) {
+        char b = p > text ? p[-1] : ' ', a = p[n];
+        int ib = b == '_' || (b >= '0' && b <= '9') || ((b | 0x20) >= 'a' && (b | 0x20) <= 'z');
+        int ia = a == '_' || (a >= '0' && a <= '9') || ((a | 0x20) >= 'a' && (a | 0x20) <= 'z');
+        if (!ib && !ia) return 1;
+    }
+    return 0;
+}
+
+/* lime_lex_compose names tokens and lex rules, not extensions: append
+** " (extensions: A, B)" for every extension whose lexer input (a
+** MOD_ADD_TOKEN with a lexeme, a MOD_ADD_LEX_RULE) the message names. */
+static void lex_error_owners(char **buf, const char *lerr, const GrammarModification *mods,
+                             const ExtSlice *sl, uint32_t ns) {
+    int n = 0;
+    for (uint32_t i = 0; i < ns; i++) {
+        int hit = 0;
+        for (uint32_t m = sl[i].first; m < sl[i].first + sl[i].n && !hit; m++) {
+            const GrammarModification *g = &mods[m];
+            if (g->type == MOD_ADD_TOKEN && g->u.add_token.lexeme)
+                hit = has_word(lerr, g->u.add_token.name);
+            else if (g->type == MOD_ADD_LEX_RULE)
+                hit = has_word(lerr, g->u.add_lex_rule.name);
+        }
+        if (hit) appendf(buf, "%s%s", n++ ? ", " : " (extensions: ", sl[i].e->name);
+    }
+    if (n) appendf(buf, ")");
 }
 
 /* Who wins between owners x and y under p: 1 = x, 2 = y, 0 = no ranks,
@@ -626,8 +658,19 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
         lime_compose_report_free(rep);
     }
 
-    /* SEAM(Track B): lime_lex_compose goes here.  Any non-NULL error from
-    ** it must `goto out` (fail the publish; the caller's snapshot stays). */
+    /* 3b. The lexer tables (Track B): the base lexicon plus every
+    ** MOD_ADD_TOKEN.lexeme and MOD_ADD_LEX_RULE that survived the policy.
+    ** A failure fails the publish; the caller's snapshot stays. */
+    {
+        char *lerr = lime_lex_compose(new_snap, base, combined, total);
+        if (lerr != NULL) {
+            appendf(&cm_err, "publish_modified_snapshot: lexer: %s", lerr);
+            lex_error_owners(&cm_err, lerr, combined, slice, ns);
+            free(lerr);
+            if (cm_err == NULL) cm_err = strdup("publish_modified_snapshot: lexer: out of memory");
+            goto out;
+        }
+    }
 
     /* 4. Bind extension reduce callbacks by rule identity.  Must happen
     ** before `combined` is freed: it holds the only callback pointers. */

@@ -222,16 +222,7 @@ static ParserSnapshot *compose(ParserSnapshot *base) {
     if (out == NULL) printf("  publish failed: %s\n", err ? err : "?");
     free(err);
     destroy_extension_registry(reg);
-    if (out == NULL) return NULL;
-    /* The compose step (at merge: one call at the SEAM in compose.c). */
-    char *le = lime_lex_compose(out, base, g_mods, 4);
-    if (le != NULL) {
-        printf("  lime_lex_compose failed: %s\n", le);
-        free(le);
-        snapshot_release(out);
-        return NULL;
-    }
-    return out;
+    return out; /* publish_modified_snapshot composed the lexicon too */
 }
 
 static void test_compose(ParserSnapshot *base, ParserSnapshot *comp) {

@@ -216,17 +216,11 @@ static ParserSnapshot *compose(ParserSnapshot *base, char **why) {
         if (!publish_modified_snapshot(reg, base, &out, NULL, &err)) out = NULL;
     }
     destroy_extension_registry(reg);
-    if (!out) {
+    if (!out) { /* publish_modified_snapshot composes the lexicon too */
         *why = err ? err : strdup("publish failed");
         return NULL;
     }
     free(err);
-    char *e = lime_lex_compose(out, base, g_mods, (uint32_t)g_nmods);
-    if (e) {
-        *why = e;
-        snapshot_release(out);
-        return NULL;
-    }
     *why = NULL;
     return out;
 }

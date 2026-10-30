@@ -249,6 +249,23 @@ static void test_remove_rule_skipped(void)
     free(out);
 }
 
+/* MOD_ADD_LEX_RULE is lexer-only (lime_lex_compose): no grammar text,
+** not "skipped", no SKIPPED comment. */
+static void test_add_lex_rule_ignored(void)
+{
+    GrammarModification mod = {
+        .type = MOD_ADD_LEX_RULE,
+        .u.add_lex_rule = { .name = "tmpl", .pattern = "#[a-z]+", .token = "TMPL" },
+    };
+    uint32_t skipped = 7;
+    char *out = lime_modifications_to_grammar_text(&mod, 1, &skipped, NULL);
+    ASSERT(out != NULL, "lex rule serialization should succeed");
+    ASSERT(skipped == 0, "lex rule is not a skipped grammar modification");
+    ASSERT(!contains(out, "SKIPPED") && !contains(out, "tmpl"),
+           "lex rule writes nothing into the grammar text");
+    free(out);
+}
+
 static void test_mixed_sequence(void)
 {
     const char *rhs1[] = { "A", "B" };
@@ -301,6 +318,7 @@ int main(void)
     test_modify_precedence();
     test_add_type();
     test_remove_rule_skipped();
+    test_add_lex_rule_ignored();
     test_mixed_sequence();
 
     if (failures > 0) {

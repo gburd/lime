@@ -2584,6 +2584,17 @@ test_compose_failure_keeps_snapshot = executable('test_compose_failure_keeps_sna
 )
 test('compose_failure_keeps_snapshot', test_compose_failure_keeps_snapshot)
 
+# C9, the B<->C seam: publish_modified_snapshot composes the lexicon; a
+# lexer conflict (one lexeme, two tokens; a base spelling reused; a lex
+# rule declared twice) fails the publish, names the extensions, and the
+# active snapshot stays.
+test_compose_lexicon = executable('test_compose_lexicon',
+  'test_compose_lexicon.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('compose_lexicon', test_compose_lexicon)
+
 # C2: `lime --explain-compose` golden text + exit codes (0 clean, 1
 # unresolved, 2 error), on the tiny fixtures and on PG + the dialect
 # extension (1 and 219 unresolved).

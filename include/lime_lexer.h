@@ -26,10 +26,10 @@
 **   static const LimeLexItem op[] = {{"<=","LESS_EQUALS"},{"::","TYPECAST"}};
 **   lime_snapshot_set_lexicon(base, kw, 2, op, 2, LIME_LEX_FOLD_CASE);
 **
-**   // whenever extensions change (compose time)
-**   publish_modified_snapshot(reg, base, &snap, NULL, &err);
-**   char *e = lime_lex_compose(snap, base, mods, nmods);
-**   if (e) { snapshot_release(snap); fail(e); }   // keep the old one
+**   // whenever extensions change (compose time); this also rebuilds
+**   // the lexicon (lime_lex_compose), and fails if that fails
+**   if (!publish_modified_snapshot(reg, base, &snap, NULL, &err))
+**       fail(err);                                 // keep the old one
 **
 **   // per token (parse time; snap held by this parse)
 **   const LimeLexicon *lx = lime_snapshot_lexicon(snap);
@@ -177,9 +177,12 @@ char *lime_snapshot_set_lexicon(struct ParserSnapshot *snap, const LimeLexItem *
                                 size_t nkeywords, const LimeLexItem *operators,
                                 size_t noperators, unsigned flags);
 
-/* Compose-time rebuild: give `composed` (freshly built by
-** publish_modified_snapshot from `base` + `mods`, and not yet shared)
-** the base's lexicon plus every MOD_ADD_TOKEN.lexeme in `mods`.
+/* Compose-time rebuild: give `composed` (freshly built from `base` +
+** `mods`, and not yet shared) the base's lexicon plus every
+** MOD_ADD_TOKEN.lexeme and MOD_ADD_LEX_RULE in `mods`.
+** publish_modified_snapshot calls this itself, on the modifications
+** that survived the compose policy, and fails the publish on an error;
+** call it directly only for a snapshot you composed yourself.
 **
 ** Returns NULL on success.  On failure returns a malloc'd message, and
 ** the caller must fail the publish (release `composed`, keep serving

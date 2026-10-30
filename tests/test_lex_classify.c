@@ -10,8 +10,8 @@
 **      "select" is SELECT, "<=" is LE, "a<=-b" splits as IDENT LE OP(-)
 **      IDENT (longest-prefix split, rest pushed back);
 **   3. an extension then composes CONNECT ("connect") and ARROW2
-**      ("->>") at runtime (publish_modified_snapshot + lime_lex_compose,
-**      no compiler, no dlopen); the SAME compiled scanner, pointed at
+**      ("->>") at runtime (publish_modified_snapshot, which runs
+**      lime_lex_compose: no compiler, no dlopen); the SAME scanner, pointed at
 **      the composed snapshot, returns CONNECT and ARROW2, while the
 **      base snapshot still lexes them as IDENT and OP pieces;
 **   4. the token stream feeds the composed parser and is accepted.
@@ -147,17 +147,10 @@ static ParserSnapshot *compose(ParserSnapshot *base) {
         err = NULL;
         if (!publish_modified_snapshot(reg, base, &out, NULL, &err)) out = NULL;
     }
+    if (out == NULL) printf("  publish failed: %s\n", err ? err : "?");
     free(err);
     destroy_extension_registry(reg);
-    if (!out) return NULL;
-    char *e = lime_lex_compose(out, base, g_mods, 4);
-    if (e) {
-        printf("  lime_lex_compose: %s\n", e);
-        free(e);
-        snapshot_release(out);
-        return NULL;
-    }
-    return out;
+    return out; /* publish_modified_snapshot composed the lexicon too */
 }
 
 /* Map lexer output to parser codes: lexicon claims are 1000+code;

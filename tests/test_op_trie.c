@@ -114,17 +114,10 @@ static ParserSnapshot *compose(ParserSnapshot *base) {
         err = NULL;
         if (!publish_modified_snapshot(reg, base, &out, NULL, &err)) out = NULL;
     }
+    if (out == NULL) printf("  publish failed: %s\n", err ? err : "?");
     free(err);
     destroy_extension_registry(reg);
-    if (out == NULL) return NULL;
-    char *le = lime_lex_compose(out, base, g_mods, 4);
-    if (le) {
-        printf("  lime_lex_compose: %s\n", le);
-        free(le);
-        snapshot_release(out);
-        return NULL;
-    }
-    return out;
+    return out; /* publish_modified_snapshot composed the lexicon too */
 }
 
 static int is_op_char(unsigned char c) {

@@ -283,6 +283,9 @@ char *lime_modifications_to_grammar_text(const GrammarModification *mods, uint32
             emit_remove_rule(&tb, m);
             skipped++;
             break;
+        case MOD_ADD_LEX_RULE:
+            /* lexer-only: lime_lex_compose builds it into the lexicon */
+            break;
         default:
             tb_printf(&tb, "/* SKIPPED unknown modification type %d at index %u */\n", (int)m->type,
                       (unsigned)i);
