@@ -380,3 +380,312 @@ int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
     free(src);
     return emit_rc;
 }
+
+/* ============================================================
+** Track E: lex/flex personality and .l dispatch
+** ============================================================
+**
+** lime_lex_cli_hook() is the first thing lime.c's main() calls.  It
+** returns -1 (lime continues with its own option parsing, unchanged)
+** unless one of these holds:
+**   - argv[0]'s basename is `lex`, `flex` or `lime-lex` (optionally with
+**     an executable suffix), or argv[1] is `--lex`: the flex command line
+**     (lime_lex_flex_main);
+**   - `-X` is given and the input is lex syntax (a `%%` line), or
+**     `--flex` is given: the .l reader with Lime's -d output directory.
+** `-X --lime-lex` forces the .lex reader.  A .lex file never has a `%%`
+** line, so every existing -X invocation takes the old path unchanged.
+*/
+
+#include "flex_reader.h"
+
+int lime_flex_compile_and_emit(LimeFlexSpec *fs, const char *out_c, const char *out_h,
+                               int to_stdout);
+
+static const char *base_name(const char *p) {
+    const char *b = strrchr(p, '/');
+#ifdef _WIN32
+    const char *b2 = strrchr(p, '\\');
+    if (b2 && (!b || b2 > b)) b = b2;
+#endif
+    return b ? b + 1 : p;
+}
+
+static int name_is(const char *base, const char *want) {
+    size_t n = strlen(want);
+    if (strncmp(base, want, n) != 0) return 0;
+    return base[n] == 0 || strcmp(base + n, ".exe") == 0;
+}
+
+static void flex_usage(FILE *f, const char *prog) {
+    fprintf(f,
+            "Usage: %s [OPTIONS] [FILE]...\n"
+            "Generates programs that perform pattern-matching on text (lime, flex mode).\n"
+            "\n"
+            "  -o, --outfile=FILE      specify output filename (default lex.yy.c)\n"
+            "  -t, --stdout            write scanner on stdout instead of lex.yy.c\n"
+            "      --header-file=FILE  create a C header file in addition to the scanner\n"
+            "  -P, --prefix=STRING     use STRING as prefix instead of \"yy\"\n"
+            "  -i, --case-insensitive  ignore case in patterns\n"
+            "  -X, --posix-compat      maximal compatibility with POSIX lex\n"
+            "  -s, --nodefault         suppress default rule to ECHO unmatched text\n"
+            "  -R, --reentrant         generate a reentrant C scanner\n"
+            "      --bison-bridge      scanner for bison pure parser\n"
+            "      --bison-locations   include yylloc support\n"
+            "      --yylineno          track line count in yylineno\n"
+            "      --noyywrap          do not call yywrap at end of input\n"
+            "  -B, --batch / -I, --interactive\n"
+            "  -L, --noline            suppress #line directives in scanner\n"
+            "  -d, --debug             enable debug mode in scanner\n"
+            "  -8, -7, -f, -F, -C[aefFmr], -b, -p, -v, -w, -c, -n: accepted\n"
+            "  -V, --version           report version\n",
+            prog);
+}
+
+static int slurp_stream(FILE *f, char **out, size_t *out_len) {
+    size_t cap = 65536, len = 0;
+    char *buf = malloc(cap);
+    if (!buf) return 2;
+    for (;;) {
+        if (len + 4096 + 1 > cap) {
+            cap *= 2;
+            char *nb = realloc(buf, cap);
+            if (!nb) {
+                free(buf);
+                return 2;
+            }
+            buf = nb;
+        }
+        size_t got = fread(buf + len, 1, cap - len - 1, f);
+        len += got;
+        if (got == 0) break;
+    }
+    buf[len] = 0;
+    *out = buf;
+    *out_len = len;
+    return 0;
+}
+
+/* Value of a long option given as --name=VALUE or --name VALUE. */
+static const char *long_val(int argc, char **argv, int *i, const char *name) {
+    size_t n = strlen(name);
+    const char *a = argv[*i] + 2;
+    if (strncmp(a, name, n) != 0) return NULL;
+    if (a[n] == '=') return a + n + 1;
+    if (a[n] == 0 && *i + 1 < argc) return argv[++*i];
+    return NULL;
+}
+
+/* Read, compile and emit one .l source.  `path` NULL = stdin. */
+static int flex_run(const char *path, const LimeFlexCliOptions *cli, const char *out_c,
+                    const char *out_h, int to_stdout) {
+    char *src = NULL;
+    size_t len = 0;
+    int rc;
+    if (path) {
+        rc = slurp(path, &src, &len);
+    } else {
+        rc = slurp_stream(stdin, &src, &len);
+        if (rc) fprintf(stderr, "lime: out of memory reading <stdin>\n");
+    }
+    if (rc) return rc;
+    LimeFlexSpec *fs = lime_flex_read(path ? path : "<stdin>", src, len, cli);
+    if (!fs) {
+        free(src);
+        fprintf(stderr, "lime: out of memory\n");
+        return 2;
+    }
+    if (fs->error_count > 0) {
+        lime_flex_spec_free(fs);
+        free(src);
+        return 1;
+    }
+    rc = lime_flex_compile_and_emit(fs, out_c, out_h, to_stdout);
+    lime_flex_spec_free(fs);
+    free(src);
+    return rc;
+}
+
+/* The flex command line.  argv[first] is the first argument. */
+static int lime_lex_flex_main(int argc, char **argv, int first) {
+    LimeFlexCliOptions cli;
+    memset(&cli, 0, sizeof cli);
+    const char *outfile = NULL, *header = NULL;
+    int to_stdout = 0, nfiles = 0;
+    const char *files[64];
+    const char *prog = base_name(argv[0]);
+    for (int i = first; i < argc; i++) {
+        const char *a = argv[i];
+        if (a[0] != '-' || a[1] == 0) {
+            if (a[0] == '-' && a[1] == 0) a = NULL; /* "-" = stdin */
+            if (nfiles < 64) files[nfiles++] = a;
+            continue;
+        }
+        if (a[1] == '-') {
+            const char *v;
+            if (a[2] == 0) { /* "--": the rest are files */
+                for (i++; i < argc; i++)
+                    if (nfiles < 64) files[nfiles++] = argv[i];
+                break;
+            }
+            if ((v = long_val(argc, argv, &i, "outfile"))) outfile = v;
+            else if ((v = long_val(argc, argv, &i, "header-file"))) header = v;
+            else if ((v = long_val(argc, argv, &i, "prefix"))) cli.prefix = v;
+            else if (!strcmp(a, "--stdout")) to_stdout = 1;
+            else if (!strcmp(a, "--case-insensitive")) cli.caseless = 1;
+            else if (!strcmp(a, "--posix-compat") || !strcmp(a, "--posix")) cli.posix_compat = 1;
+            else if (!strcmp(a, "--nodefault")) cli.nodefault = 1;
+            else if (!strcmp(a, "--reentrant")) cli.reentrant = 1;
+            else if (!strcmp(a, "--bison-bridge")) cli.bison_bridge = 1;
+            else if (!strcmp(a, "--bison-locations")) cli.bison_locations = 1;
+            else if (!strcmp(a, "--yylineno")) cli.yylineno = 1;
+            else if (!strcmp(a, "--noyywrap")) cli.noyywrap = 1;
+            else if (!strcmp(a, "--batch")) cli.never_interactive = 1;
+            else if (!strcmp(a, "--interactive")) cli.always_interactive = 1;
+            else if (!strcmp(a, "--noline")) cli.noline = 1;
+            else if (!strcmp(a, "--nounistd")) cli.nounistd = 1;
+            else if (!strcmp(a, "--debug")) cli.debug = 1;
+            else if (!strcmp(a, "--help")) {
+                flex_usage(stdout, prog);
+                return 0;
+            } else if (!strcmp(a, "--version")) {
+                printf("%s 2.6.4 (lime %s)\n", prog, LIME_VERSION_STRING);
+                return 0;
+            } else if (!strcmp(a, "--8bit") || !strcmp(a, "--7bit") || !strcmp(a, "--ecs") ||
+                       !strcmp(a, "--meta-ecs") || !strcmp(a, "--align") || !strcmp(a, "--read") ||
+                       !strcmp(a, "--full") || !strcmp(a, "--fast") || !strcmp(a, "--backup") ||
+                       !strcmp(a, "--perf-report") || !strcmp(a, "--nowarn") ||
+                       !strcmp(a, "--verbose") || !strcmp(a, "--trace") || !strcmp(a, "--hex") ||
+                       !strcmp(a, "--stdinit") || !strncmp(a, "--no", 4)) {
+                /* Table-format, reporting and --noFUNCTION options:
+                ** accepted; lime's tables and runtime are always the same. */
+            } else if (!strcmp(a, "--c++") || !strncmp(a, "--yyclass", 9) ||
+                       !strncmp(a, "--tables-file", 13) || !strcmp(a, "--lex-compat") ||
+                       !strncmp(a, "--skel", 6)) {
+                fprintf(stderr, "%s: option %s is not supported by lime\n", prog, a);
+                return 1;
+            } else {
+                fprintf(stderr, "%s: unrecognized option '%s'\n", prog, a);
+                fprintf(stderr, "Try `%s --help' for more information.\n", prog);
+                return 1;
+            }
+            continue;
+        }
+        /* Short options, possibly bundled (-Cem, -t8). */
+        for (const char *p = a + 1; *p; p++) {
+            switch (*p) {
+            case 'o':
+            case 'P':
+            case 'S':
+            case 'D': {
+                const char *v = p[1] ? p + 1 : (i + 1 < argc ? argv[++i] : NULL);
+                if (!v) {
+                    fprintf(stderr, "%s: option requires an argument -- '%c'\n", prog, *p);
+                    return 1;
+                }
+                if (*p == 'o') outfile = v;
+                else if (*p == 'P') cli.prefix = v;
+                else if (*p == 'S') {
+                    fprintf(stderr, "%s: option -S (skeleton file) is not supported by lime\n",
+                            prog);
+                    return 1;
+                } else {
+                    fprintf(stderr, "%s: option -D is not supported by lime; put the #define "
+                                    "in a %%{ %%} block\n", prog);
+                    return 1;
+                }
+                p += strlen(p) - 1;
+                break;
+            }
+            case 'C':
+                /* -C[aefFmr]: table compression, accepted and ignored. */
+                p += strlen(p) - 1;
+                break;
+            case 't': to_stdout = 1; break;
+            case 'i': cli.caseless = 1; break;
+            case 'X': cli.posix_compat = 1; break;
+            case 's': cli.nodefault = 1; break;
+            case 'R': cli.reentrant = 1; break;
+            case 'B': cli.never_interactive = 1; break;
+            case 'I': cli.always_interactive = 1; break;
+            case 'L': cli.noline = 1; break;
+            case 'd': cli.debug = 1; break;
+            case '8': case '7': case 'f': case 'F': case 'b': case 'p':
+            case 'v': case 'w': case 'c': case 'n': case 'T':
+                break;
+            case 'h':
+            case '?':
+                flex_usage(stdout, prog);
+                return 0;
+            case 'V':
+                printf("%s 2.6.4 (lime %s)\n", prog, LIME_VERSION_STRING);
+                return 0;
+            case 'l':
+                fprintf(stderr, "%s: option -l (lex-compat) is not supported by lime\n", prog);
+                return 1;
+            case '+':
+                fprintf(stderr, "%s: option -+ (C++ scanner) is not supported by lime\n", prog);
+                return 1;
+            default:
+                fprintf(stderr, "%s: invalid option -- '%c'\n", prog, *p);
+                fprintf(stderr, "Try `%s --help' for more information.\n", prog);
+                return 1;
+            }
+        }
+    }
+    if (nfiles > 1) {
+        fprintf(stderr, "%s: more than one input file is not supported by lime\n", prog);
+        return 1;
+    }
+    return flex_run(nfiles ? files[0] : NULL, &cli, outfile, header, to_stdout);
+}
+
+int lime_lex_cli_hook(int argc, char **argv) {
+    if (argc < 1 || !argv || !argv[0]) return -1;
+    const char *b = base_name(argv[0]);
+    if (name_is(b, "lex") || name_is(b, "flex") || name_is(b, "lime-lex"))
+        return lime_lex_flex_main(argc, argv, 1);
+    if (argc >= 2 && !strcmp(argv[1], "--lex")) return lime_lex_flex_main(argc, argv, 2);
+
+    /* lime -X: decide .l vs .lex.  Only claim the run for .l input. */
+    int x = 0, force_flex = 0, force_lime = 0;
+    const char *input = NULL, *outdir = NULL;
+    for (int i = 1; i < argc; i++) {
+        const char *a = argv[i];
+        if (!strcmp(a, "-X")) x = 1;
+        else if (!strcmp(a, "--flex")) force_flex = 1;
+        else if (!strcmp(a, "--lime-lex")) force_lime = 1;
+        else if (!strncmp(a, "-d", 2) && a[1] == 'd') outdir = a + 2;
+        else if (a[0] != '-' && !strchr(a, '=') && !input) input = a;
+    }
+    if (!x || force_lime || !input) return -1;
+    if (!force_flex) {
+        char *src = NULL;
+        size_t len = 0;
+        FILE *f = fopen(input, "rb");
+        if (!f) return -1; /* lime reports the open error itself */
+        int rc = slurp_stream(f, &src, &len);
+        fclose(f);
+        if (rc) return -1;
+        int is_l = lime_flex_detect(src, len);
+        free(src);
+        if (!is_l) return -1;
+    }
+    /* lime -X on a .l: write <dir>/<stem>.c, like lime writes parsers. */
+    const char *base = base_name(input);
+    const char *dot = strrchr(base, '.');
+    size_t sn = dot ? (size_t)(dot - base) : strlen(base);
+    size_t dn = (outdir && *outdir) ? strlen(outdir) + 1 : 0;
+    char *out_c = malloc(dn + sn + 3);
+    if (!out_c) return 2;
+    out_c[0] = 0;
+    if (dn) {
+        strcpy(out_c, outdir);
+        strcat(out_c, "/");
+    }
+    strncat(out_c, base, sn);
+    strcat(out_c, ".c");
+    int rc = flex_run(input, NULL, out_c, NULL, 0);
+    free(out_c);
+    return rc;
+}

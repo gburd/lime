@@ -54,6 +54,8 @@
 ** enable the lex frontend.
 */
 #ifndef LIME_HAS_LEX_COMPILER
+/* Single-file build: no lex front end, so never take over main(). */
+int lime_lex_cli_hook(int argc, char **argv) { (void)argc; (void)argv; return -1; }
 int lime_lex_run_compiler(const char *input_path, const char *output_dir) {
     (void)input_path; (void)output_dir;
     fprintf(stderr,
@@ -6005,6 +6007,9 @@ static int yacc_personality(int argc, char ***pargv){
 }
 
 int main(int argc, char **argv){
+  extern int lime_lex_cli_hook(int argc, char **argv);
+  /* Track E: lex personality; must run before yacc personality */
+  { int lex_rc = lime_lex_cli_hook(argc, argv); if( lex_rc>=0 ) return lex_rc; }
 #if defined(_WIN32)
   /* Disable Windows text-mode \n -> \r\n translation on stdout/stderr.
   ** lime writes formatted grammar files, JSON-encoded lint output,

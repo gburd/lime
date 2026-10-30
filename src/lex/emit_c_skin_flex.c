@@ -604,3 +604,22 @@ int lime_emit_c_skin_flex(const LimeLexCompiled *compiled,
     }
     return 0;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Flex mode: a complete lex.yy.c from a .l source (Track E)         */
+/* ------------------------------------------------------------------ */
+
+#include "flex_reader.h"
+
+/* Compile fs->spec and write the scanner.  out_c NULL = flex's default
+** name (lex.<prefix>.c, or %option outfile).  Returns 0, 1 (diagnosed
+** error) or 2 (I/O). */
+int lime_flex_compile_and_emit(LimeFlexSpec *fs, const char *out_c, const char *out_h,
+                               int to_stdout) {
+    (void)fs;
+    (void)out_c;
+    (void)out_h;
+    (void)to_stdout;
+    fprintf(stderr, "lime: the flex-mode code generator is not built yet (Track E, step L1)\n");
+    return 1;
+}

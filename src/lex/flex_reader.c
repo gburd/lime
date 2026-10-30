@@ -751,7 +751,8 @@ typedef struct {
     int err;
     int has_nl;     /* pattern can match '\n' */
     int at_start;   /* nothing consumed yet (for ^ handling) */
-    int trail;      /* saw a trailing $ */
+    int in_trail;   /* parsing the s of r/s */
+    long last_len;  /* fixed byte length of the last item parsed, or -1 */
 } PP;
 
 static void pp_err(PP *p, const char *fmt, ...) {
@@ -1076,8 +1077,15 @@ static char *pp_singleton(PP *p) {
         pp_err(p, "unrecognized rule (stray '}' in a pattern)");
         return NULL;
     case '/':
-        pp_err(p, "trailing context (the r/s operator) is not supported by lime");
-        return NULL;
+        if (p->depth > 0) {
+            pp_err(p, "unrecognized rule (trailing context '/' inside parentheses)");
+            return NULL;
+        }
+        if (p->in_trail) {
+            pp_err(p, "trailing context used twice");
+            return NULL;
+        }
+        return NULL; /* ends r; translate_pattern parses s */
     case '$': {
         /* Only an EOL operator when it ends the rule. */
         int nx = pp_peek(p, 1);
@@ -1085,17 +1093,21 @@ static char *pp_singleton(PP *p) {
         p->i++;
         emit_byte(&b, '$');
         p->at_start = 0;
+        p->last_len = 1;
         return sb_take(&b);
     }
     case '.':
+        p->last_len = 1;
         p->i++;
         memset(&s, 0xff, sizeof s);
         if (!p->dotall) s.bits['\n' >> 3] &= (unsigned char)~(1u << ('\n' & 7));
-        note_nl(p, &s);
+        /* flex never counts '.' (even (?s:.)) as matching a newline for
+        ** yylineno (parse.y sets rule_has_nl only for CHAR and ccls). */
         emit_set(&b, &s);
         p->at_start = 0;
         return sb_take(&b);
     case '[':
+        p->last_len = 1;
         if (pp_fullccl(p, &s) < 0) return NULL;
         note_nl(p, &s);
         emit_set(&b, &s);
@@ -1130,6 +1142,7 @@ static char *pp_singleton(PP *p) {
             emit_set(&inner, &one);
             count++;
         }
+        p->last_len = count;
         if (count == 1) {
             p->at_start = 0;
             return sb_take(&inner);
@@ -1159,6 +1172,7 @@ static char *pp_singleton(PP *p) {
                     return NULL;
                 }
                 p->i++;
+                p->last_len = 0;
                 return xstrdup("()");
             }
             int on = 1;
@@ -1191,6 +1205,7 @@ static char *pp_singleton(PP *p) {
         p->ci = save_ci;
         p->dotall = save_dot;
         if (!inner) return NULL;
+        /* p->last_len is the group's length, set by pp_re. */
         if (pp_peek(p, 0) != ')') {
             free(inner);
             pp_err(p, "unbalanced parenthesis");
@@ -1204,6 +1219,7 @@ static char *pp_singleton(PP *p) {
         return sb_take(&b);
     }
     case '\\': {
+        p->last_len = 1;
         int ch = pp_escape(p);
         if (p->err) return NULL;
         Set one;
@@ -1215,6 +1231,7 @@ static char *pp_singleton(PP *p) {
         return sb_take(&b);
     }
     default: {
+        p->last_len = 1;
         p->i++;
         Set one;
         memset(&one, 0, sizeof one);
@@ -1229,7 +1246,7 @@ static char *pp_singleton(PP *p) {
 
 /* Parse {n}, {n,}, {n,m} at the cursor.  Returns 0 and the Lime
 ** quantifier text on success. */
-static int pp_repeat(PP *p, char *q, size_t qn) {
+static int pp_repeat(PP *p, char *q, size_t qn, long *rlo, long *rhi) {
     p->i++; /* { */
     long lo = 0, hi = -2;
     int got = 0;
@@ -1280,7 +1297,15 @@ static int pp_repeat(PP *p, char *q, size_t qn) {
         }
         snprintf(q, qn, "{%ld,%ld}", lo, hi);
     }
+    *rlo = lo;
+    *rhi = hi == -2 ? lo : hi;
     return 0;
+}
+
+/* Fixed length of x{lo,hi} given x's fixed length (or -1). */
+static long rep_len(long len, long lo, long hi) {
+    if (len < 0 || hi != lo) return -1;
+    return len * lo;
 }
 
 static char *wrap_q(char *atom, int quantified, const char *q) {
@@ -1296,7 +1321,7 @@ static char *wrap_q(char *atom, int quantified, const char *q) {
 static char *pp_series(PP *p) {
     SB acc = { 0 };
     int any = 0;
-    int series_quantified = 0;
+    long total = 0;
     for (;;) {
         if (p->err) break;
         if (!pp_at_end(p) && pp_peek(p, 0) == '{' && isdigit(pp_peek(p, 1)) && p->posix) {
@@ -1306,15 +1331,18 @@ static char *pp_series(PP *p) {
                 break;
             }
             char q[48];
-            if (pp_repeat(p, q, sizeof q) < 0) break;
+            long lo, hi;
+            if (pp_repeat(p, q, sizeof q, &lo, &hi) < 0) break;
             char *t = wrap_q(sb_take(&acc), 1, q);
             sb_puts(&acc, t);
             free(t);
-            (void)series_quantified;
+            total = rep_len(total, lo, hi);
             continue;
         }
+        p->last_len = -1;
         char *atom = pp_singleton(p);
         if (!atom) break;
+        long len = p->last_len;
         int quantified = 0;
         for (;;) {
             if (pp_at_end(p)) break;
@@ -1324,13 +1352,16 @@ static char *pp_series(PP *p) {
                 p->i++;
                 atom = wrap_q(atom, quantified, q);
                 quantified = 1;
+                len = -1;
                 continue;
             }
             if (c == '{' && isdigit(pp_peek(p, 1)) && !p->posix) {
                 char q[48];
-                if (pp_repeat(p, q, sizeof q) < 0) break;
+                long lo, hi;
+                if (pp_repeat(p, q, sizeof q, &lo, &hi) < 0) break;
                 atom = wrap_q(atom, quantified, q);
                 quantified = 1;
+                len = rep_len(len, lo, hi);
                 continue;
             }
             break;
@@ -1338,21 +1369,20 @@ static char *pp_series(PP *p) {
         sb_puts(&acc, atom);
         free(atom);
         any = 1;
+        total = (total < 0 || len < 0) ? -1 : total + len;
     }
-    if (p->err) {
+    if (p->err || !any) {
         free(acc.buf);
         return NULL;
     }
-    if (!any) {
-        free(acc.buf);
-        return NULL;
-    }
+    p->last_len = total;
     return sb_take(&acc);
 }
 
 static char *pp_re(PP *p) {
     SB acc = { 0 };
     int n_alt = 0;
+    long len = -2; /* -2 = no alternative yet */
     for (;;) {
         char *s = pp_series(p);
         if (p->err) {
@@ -1368,12 +1398,17 @@ static char *pp_re(PP *p) {
         if (n_alt++) sb_putc(&acc, '|');
         sb_puts(&acc, s);
         free(s);
+        if (len == -2)
+            len = p->last_len;
+        else if (len != p->last_len)
+            len = -1;
         if (!pp_at_end(p) && pp_peek(p, 0) == '|') {
             p->i++;
             continue;
         }
         break;
     }
+    p->last_len = len;
     return sb_take(&acc);
 }
 
@@ -1381,7 +1416,7 @@ static char *pp_re(PP *p) {
 ** the rule line).  On success returns the Lime regex and sets *consumed
 ** to the number of bytes of `text` used, *bol, *trail, *has_nl. */
 static char *translate_pattern(R *r, int line, const char *text, size_t *consumed, int *bol,
-                               int *trail, int *has_nl) {
+                               int *trail, int *head, int *has_nl) {
     PP p;
     memset(&p, 0, sizeof p);
     p.r = r;
@@ -1394,6 +1429,7 @@ static char *translate_pattern(R *r, int line, const char *text, size_t *consume
     p.at_start = 1;
     *bol = 0;
     *trail = 0;
+    *head = 0;
     /* A leading {name} whose definition starts with ^ makes that ^ the
     ** BOL operator, as in flex (it splices such a definition unwrapped). */
     if (pp_peek(&p, 0) == '{' && is_name_start(pp_peek(&p, 1))) {
@@ -1408,21 +1444,46 @@ static char *translate_pattern(R *r, int line, const char *text, size_t *consume
         p.i++;
     }
     char *re = pp_re(&p);
+    long rlen = p.last_len;
+    char *tc = NULL; /* s of r/s */
+    long slen = -1;
     if (re && !p.err) {
-        if (pp_peek(&p, 0) == '$' && (pp_peek(&p, 1) < 0 || is_blank(pp_peek(&p, 1)))) {
+        if (pp_peek(&p, 0) == '/') {
             p.i++;
-            *trail = 1;
+            p.in_trail = 1;
+            tc = pp_re(&p);
+            slen = p.last_len;
+            if (tc && !p.err && pp_peek(&p, 0) == '$' &&
+                (pp_peek(&p, 1) < 0 || is_blank(pp_peek(&p, 1))))
+                pp_err(&p, "trailing context used twice");
+        } else if (pp_peek(&p, 0) == '$' && (pp_peek(&p, 1) < 0 || is_blank(pp_peek(&p, 1)))) {
+            p.i++;
+            tc = xstrdup("\\x0a");
+            slen = 1;
         } else if (pp_peek(&p, 0) == ')') {
             pp_err(&p, "unbalanced parenthesis");
         }
     }
+    if (!p.err && tc) {
+        if (slen >= 0)
+            *trail = (int)slen;
+        else if (rlen >= 0)
+            *head = (int)rlen + 1;
+        else
+            pp_err(&p, "variable-length trailing context (r/s where neither r nor s has a "
+                       "fixed length) is not supported by lime");
+        if (!p.err && slen == 0)
+            pp_err(&p, "trailing context of length 0 (r/s where s matches only the empty string)");
+    }
     if (p.err) {
         free(re);
+        free(tc);
         free(p.s);
         return NULL;
     }
     if (p.i < p.exp_end) {
         free(re);
+        free(tc);
         free(p.s);
         pp_err(&p, "a {definition} used in this rule ends the pattern early");
         return NULL;
@@ -1432,12 +1493,15 @@ static char *translate_pattern(R *r, int line, const char *text, size_t *consume
     *consumed = strlen(text) - (p.n - p.i);
     *has_nl = p.has_nl;
     free(p.s);
-    if (*trail) {
+    if (tc) {
         SB b = { 0 };
         sb_putc(&b, '(');
         sb_puts(&b, re);
-        sb_puts(&b, ")\\x0a");
+        sb_puts(&b, ")(");
+        sb_puts(&b, tc);
+        sb_putc(&b, ')');
         free(re);
+        free(tc);
         return sb_take(&b);
     }
     return re;
@@ -1572,12 +1636,12 @@ static char *read_action(R *r, size_t start, int line, size_t *end, int *end_lin
         }
         i++;
     }
-    size_t e = i; /* at the terminating newline, or n */
+    size_t e = i; /* at the terminating newline (already counted in cur), or n */
     size_t te = e;
     if (te > a && src[te - 1] == '\r') te--;
     char *t = xstrndup(src + a, te - a);
     *end = e < n ? e + 1 : n;
-    *end_line = cur + (e < n ? 1 : 0);
+    *end_line = cur;
     return t;
 }
 
@@ -1738,6 +1802,20 @@ static void read_section2(R *r, CodeVec *prolog) {
                 continue;
             }
             scoped = 1;
+            /* flex allows the scope's `{` (or the rule) on a following
+            ** line: `<SC>` alone on a line continues on the next one. */
+            if (blank_line(s + i, n - i)) {
+                next_line(r);
+                while (!at_eof(r)) {
+                    cur_line(r, &s, &n);
+                    if (!blank_line(s, n)) break;
+                    next_line(r);
+                }
+                i = 0;
+                while (i < n && is_blank((unsigned char)s[i]))
+                    i++;
+                line = r->line;
+            }
             if (i < n && s[i] == '{' && blank_or_comment(s + i + 1, n - i - 1)) {
                 if (r->n_scopes == r->cap_scopes) {
                     int nc = r->cap_scopes ? r->cap_scopes * 2 : 8;
@@ -1767,16 +1845,26 @@ static void read_section2(R *r, CodeVec *prolog) {
             /* NUL-terminated copy of the rest of the line. */
             char *rest = xstrndup(s + i, n - i);
             size_t used = 0;
-            pat = translate_pattern(r, line, rest, &used, &fr.bol, &fr.trail, &fr.can_match_eol);
+            pat = translate_pattern(r, line, rest, &used, &fr.bol, &fr.trail, &fr.head,
+                                    &fr.can_match_eol);
             free(rest);
             if (!pat) {
+                /* Skip the action too, so its body is not read as rules:
+                ** assume the pattern ends at the first blank. */
+                size_t k = i;
+                while (k < n && !is_blank((unsigned char)s[k]))
+                    k++;
+                size_t end;
+                int end_line, cont, dummy = 0;
+                free(read_action(r, r->pos + k, line, &end, &end_line, &cont, &dummy, &dummy));
                 free(set);
-                next_line(r);
+                r->pos = end;
+                r->line = end_line;
                 continue;
             }
             act_start = r->pos + i + used;
             if (fr.bol) r->fs->bol_needed = 1;
-            if (fr.trail) r->fs->has_trail = 1;
+            if (fr.trail || fr.head) r->fs->has_trail = 1;
         }
         size_t end;
         int end_line, cont;
@@ -1869,7 +1957,7 @@ static int build_spec(R *r) {
         memset(&d, 0, sizeof d);
         d.line = r->line;
         d.is_default = 1;
-        d.can_match_eol = 1;
+        d.can_match_eol = 0; /* flex: the default rule never updates yylineno */
         d.action_rule = fs->n_rules;
         d.action_line = r->line;
         d.sc = sc_set_new(r);

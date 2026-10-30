@@ -20,7 +20,9 @@
 **     S__bol when some rule uses ^).  Every rule is qualified with the
 **     explicit list of Lime states it fires in, so %s/%x inclusiveness is
 **     resolved here, not by lime_lex_compile.
-**   - `r$` becomes `r\n` with trail = 1 (flex gives the newline back).
+**   - `r/s` becomes `rs`; with |s| fixed, trail = |s| (yyleng = match - trail),
+**     else with |r| fixed, head = |r| + 1 (yyleng = head - 1).  `r$` is
+**     `r/\n`.  Both sides variable is rejected by name.
 **   - <<EOF>> rules are LimeLexRules with is_eof = 1; the per-start-
 **     condition winner (flex: first <<EOF>> for a condition wins) is in
 **     LimeFlexSpec.sc_eof_rule.
@@ -43,7 +45,8 @@ typedef struct {
     int line;          /* .l line of the pattern */
     int is_eof;        /* <<EOF>> rule */
     int bol;           /* pattern began with ^ */
-    int trail;         /* bytes of trailing context to give back ($ = 1) */
+    int trail;         /* r/s with |s| fixed: bytes to give back ($ = 1), else 0 */
+    int head;          /* r/s with |r| fixed and |s| variable: |r| + 1, else 0 */
     int action_rule;   /* rule whose action runs: self, or the next rule
                        ** with a real action for a `|` rule */
     int action_line;   /* .l line where the action text starts */
@@ -96,7 +99,7 @@ typedef struct {
 
     /* Derived feature use. */
     int bol_needed;   /* some rule uses ^ */
-    int has_trail;    /* some rule uses $ */
+    int has_trail;    /* some rule uses $ or r/s */
     int uses_reject;  /* REJECT in an action, or %option reject */
     int uses_yymore;  /* yymore in an action, or %option yymore */
 
