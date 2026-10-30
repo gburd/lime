@@ -60,7 +60,13 @@ expect_reject "\$<type>N"        '%name T\n%token A B.\ns ::= A B. { u($<int>2);
 expect_reject "%expect mismatch" '%name T\n%expect 0\n%token A.\ns ::= e.\ne ::= e A e.\ne ::= A.\n' "Expected 0 conflict"
 
 # yacc syntax pasted into lime: one named diagnostic, not a cascade.
-expect_reject "%% section"       '%token NUM\n%%\nexp: NUM ;\n'                         "looks like a yacc/bison"
+# A %% line makes it a yacc grammar (Track D): the yacc front end reads it.
+expect_accept "%% section (yacc front end)" '%token NUM\n%%\nexp: NUM ;\n'
+# --lemon forces the Lemon reader, which still names the problem.
+printf '%%token NUM\n%%%%\nexp: NUM ;\n' > "$W/g.y"
+out=$(cd "$W" && "$LIME" --lemon -q -T"$TPL" g.y 2>&1)
+case "$out" in *"looks like a yacc/bison"*) echo "ok   --lemon %% section" ;;
+  *) echo "FAIL --lemon %% section: $out"; fails=$((fails + 1)) ;; esac
 expect_reject "%{ prologue"      '%{\n#include <stdio.h>\n%}\n%token A.\ns ::= A.\n'   "looks like a yacc/bison"
 expect_reject "yacc colon rule"  '%name T\n%token A.\ns : A ;\n'                         "lhs ::= a | b."
 expect_reject "char literal"     "%name T\ns ::= A '+' A.\n"                             "no character or string literal tokens"

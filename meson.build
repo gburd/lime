@@ -209,6 +209,12 @@ lime_exe = executable('lime',
 # a C parser unless every caller passed -T.
 install_data('limpar.c', install_dir : get_option('datadir') / 'lime')
 
+# Track D: `lime-yacc` runs lime with the yacc/bison command line.  The
+# yacc/bison names themselves are not installed (FRONTEND.md decision 4).
+# (install_symlink needs meson 0.61; this project's floor is 0.60.)
+meson.add_install_script('sh', '-c',
+  'ln -sf lime "$MESON_INSTALL_DESTDIR_PREFIX/' + get_option('bindir') + '/lime-yacc"')
+
 # The two libraries, by when their code runs:
 #
 #   liblime_parser    what runs per parse: the push parser, snapshots,

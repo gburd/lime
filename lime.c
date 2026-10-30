@@ -6717,7 +6717,14 @@ int main(int argc, char **argv){
         memcpy(base_id, bare, bare_len);
         base_id[bare_len] = 0;
       }
-      if( g_skin_bison && base_h && base_c && base_id ){
+      if( g_skin_bison && lem.is_yacc ){
+        /* Track D: yacc input already carries bison's API (yyparse,
+        ** yylval, enum yytokentype with char codes) in the main .c. */
+        fprintf(stderr, "%s: --target=c:bison is for Lime-syntax grammars; "
+                "yacc input already defines yyparse()/yylval with bison's "
+                "token codes in the generated .c\n", lem.filename);
+        lem.errorcnt++;
+      }else if( g_skin_bison && base_h && base_c && base_id ){
         if( lime_emit_c_skin_bison(&lem, base_h, base_c, base_id) != 0 ){
           lem.errorcnt++;
         }else if( !quiet ){
@@ -10126,6 +10133,18 @@ static const char *yacc_ident(struct yacc_rd *r){
   return res;
 }
 
+/* A directive name: letters, digits, '_' and '-' (%glr-parser). */
+static const char *yacc_directive(struct yacc_rd *r){
+  char *s = r->cp, save;
+  const char *res;
+  while( ISALNUM(*r->cp) || *r->cp=='_' || *r->cp=='-' ) r->cp++;
+  save = *r->cp;
+  *r->cp = 0;
+  res = Strsafe(s);
+  *r->cp = save;
+  return res;
+}
+
 static void yacc_error(struct yacc_rd *r, const char *fmt, const char *arg){
   ErrorMsg(r->filename, r->lineno, fmt, arg);
   r->psp->errorcnt++;
@@ -10329,7 +10348,7 @@ static void yacc_declarations(struct yacc_rd *r, char *buf){
       int is_prec = 0;
       enum e_assoc assoc = UNK;
       r->cp++;
-      kw = yacc_ident(r);
+      kw = yacc_directive(r);
       if( strcmp(kw,"token")==0 ){
         is_prec = 0;
       }else if( strcmp(kw,"union")==0 ){
@@ -10374,6 +10393,12 @@ static void yacc_declarations(struct yacc_rd *r, char *buf){
       }else if( strcmp(kw,"start")==0 ){
         yacc_skip_ws(r);
         gp->start = (char*)yacc_ident(r);
+        continue;
+      }else if( strcmp(kw,"glr-parser")==0 ){
+        yacc_error(r, "%s", "%glr-parser is not supported: Lime generates "
+                   "LALR(1) parsers (a separate glr_parse() API exists, see "
+                   "docs/GLR.md)");
+        while( *r->cp && *r->cp!='\n' ) r->cp++;
         continue;
       }else{
         yacc_error(r, "yacc declaration \"%%%s\" is not supported by "
@@ -10806,7 +10831,7 @@ static void yacc_rules(struct yacc_rd *r){
         if( r->cp[0]=='%' && ISALPHA(r->cp[1]) ){
           const char *kw;
           r->cp++;
-          kw = yacc_ident(r);
+          kw = yacc_directive(r);
           if( strcmp(kw,"prec")==0 ){
             yacc_skip_ws(r);
             if( *r->cp=='\'' ){
@@ -10853,7 +10878,9 @@ static void yacc_parse_buffer(struct pstate *psp, char *buf,
   gp->is_yacc = 1;
   /* bison's internal token 2: what yylex codes nobody declared map to.
   ** No rule uses it, so it is always a syntax error. */
-  yacc_token(&rd, yacc_symbol("$undefined", 1))->yacc_code = 257;
+  /* Its code is assigned like any undeclared token's: 257 unless an
+  ** explicit %token code above 256 pushes it up, as in bison. */
+  yacc_token(&rd, yacc_symbol("$undefined", 1));
   psp->preccounter = 0;
   psp->firstrule = psp->lastrule = psp->prevrule = 0;
   gp->nrule = 0;
@@ -13479,15 +13506,20 @@ static int yacc_tok_is_named(const struct symbol *sp){
   return sp->name[0]!='\'' && sp->name[0]!='$' && strcmp(sp->name,"error")!=0;
 }
 static void yacc_emit_shared_decls(FILE *out, struct lime *lemp, int *plineno){
-  int i, lineno = *plineno, first = 1;
+  int i, lineno = *plineno, first = 1, undef = 257;
   fprintf(out,"/* Debug traces.  */\n#ifndef YYDEBUG\n# define YYDEBUG %d\n#endif\n"
               "#if YYDEBUG\nextern int yydebug;\n#endif\n", lemp->yacc_debug);
   lineno += 7;
   fprintf(out,"/* Token kinds (bison numbering; yylex returns these). */\n");
   fprintf(out,"#ifndef YYTOKENTYPE\n# define YYTOKENTYPE\n");
   fprintf(out,"  enum yytokentype\n  {\n");
+  for(i=1; i<lemp->nterminal; i++){
+    if( strcmp(lemp->symbols[i]->name,"$undefined")==0 ) undef = lemp->symbols[i]->yacc_code;
+  }
+  /* shortcut: error is always 256; bison moves it when a %token claims
+  ** 256 explicitly.  Upgrade if a grammar does that. */
   fprintf(out,"    YYEMPTY = -2,\n    YYEOF = 0,\n    YYerror = 256,\n"
-              "    YYUNDEF = 257");
+              "    YYUNDEF = %d", undef);
   lineno += 10;
   for(i=1; i<lemp->nterminal; i++){
     struct symbol *sp = lemp->symbols[i];
@@ -13497,7 +13529,7 @@ static void yacc_emit_shared_decls(FILE *out, struct lime *lemp, int *plineno){
   fprintf(out,"\n  };\n  typedef enum yytokentype yytoken_kind_t;\n#endif\n");
   lineno += 4;
   fprintf(out,"#define YYEMPTY -2\n#define YYEOF 0\n#define YYerror 256\n"
-              "#define YYUNDEF 257\n");
+              "#define YYUNDEF %d\n", undef);
   lineno += 4;
   for(i=1; i<lemp->nterminal; i++){
     struct symbol *sp = lemp->symbols[i];
@@ -13521,13 +13553,18 @@ static void yacc_emit_shared_decls(FILE *out, struct lime *lemp, int *plineno){
   fprintf(out,"# define YYSTYPE_IS_TRIVIAL 1\n# define YYSTYPE_IS_DECLARED 1\n"
               "#endif\n\n");
   fprintf(out,"extern YYSTYPE yylval;\n\n");
-  /* bison -y declares these too (POSIX, austingroupbugs 1388). */
-  fprintf(out,"#if !defined yyerror && !defined YYERROR_IS_DECLARED\n"
-              "void yyerror (const char *msg);\n#endif\n"
-              "#if !defined yylex && !defined YYLEX_IS_DECLARED\n"
-              "int yylex (void);\n#endif\n\n");
+  /* bison declares yyerror()/yylex() only under POSIXLY_CORRECT; a
+  ** grammar's own prototypes (bc: yyerror(const char *, ...)) would
+  ** conflict, so do the same. */
+  if( getenv("POSIXLY_CORRECT") ){
+    fprintf(out,"#if !defined yyerror && !defined YYERROR_IS_DECLARED\n"
+                "void yyerror (const char *msg);\n#endif\n"
+                "#if !defined yylex && !defined YYLEX_IS_DECLARED\n"
+                "int yylex (void);\n#endif\n\n");
+    lineno += 7;
+  }
   fprintf(out,"int yyparse (void);\n");
-  lineno += 14;
+  lineno += 7;
   *plineno = lineno;
 }
 
@@ -13553,7 +13590,8 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
     if( sp->yacc_code>0 && sp->yacc_code<=mx ) xl[sp->yacc_code] = i;
   }
   fprintf(out,"\n/* yacc driver (Lime yacc front end). */\n"); lineno += 2;
-  fprintf(out,"#define YY_YACC_MAXCODE %d\n", mx); lineno++;
+  fprintf(out,"#define YY_YACC_MAXCODE %d\n#define YY_YACC_UNDEF %d\n", mx, undef);
+  lineno += 2;
   fprintf(out,"static const %s yy_yacc_xlat[] = {",
           minimum_size_type(0, lemp->nterminal, 0)); lineno++;
   for(i=0; i<=mx; i++){
@@ -13608,7 +13646,7 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
     "    if( yy_yacc_done ) break;\n"
     "    yychar = yylex();\n"
     "    if( yychar<=0 ) yyt = 0;\n"
-    "    else if( yychar>YY_YACC_MAXCODE ) yyt = yy_yacc_xlat[257];\n"
+    "    else if( yychar>YY_YACC_MAXCODE ) yyt = YY_YACC_UNDEF;\n"
     "    else yyt = yy_yacc_xlat[yychar];\n"
     "    %s(yyp, yyt, yylval);\n"
     "    if( yyt==0 && !yy_yacc_done && yychar!=YYEMPTY ){ yy_yacc_status = 1; break; }\n"

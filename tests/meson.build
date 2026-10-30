@@ -3003,6 +3003,18 @@ if host_machine.system() != 'windows'
   )
 endif
 
+# Track D: the yacc/bison front end (lime as lime-yacc): calc with char
+# literals, %union, %prec, mid-rule actions and error recovery; abort with
+# no error rule; bison token numbering; named diagnostics.
+if host_machine.system() != 'windows'
+  test('yacc_frontend',
+    find_program('test_yacc_frontend.sh'),
+    args : [lime_exe.full_path(), meson.project_source_root() / 'limpar.c'],
+    depends : [lime_exe],
+    timeout : 120,
+  )
+endif
+
 # v1.0.0: smoke test for scripts/lime-gdb.py.  Verifies the
 # pretty-printer + lime-* commands load and produce expected
 # output against a debug-built bench_parse_fanout.  Skipped when
