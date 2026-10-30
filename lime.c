@@ -1051,6 +1051,7 @@ struct lime {
   char *yacc_initial_action;/* Track D: %initial-action body */
   int yacc_initial_line;
   char *yacc_token_prefix; /* Track D: %define api.token.prefix */
+  int yacc_push;           /* Track D: api.push-pull: 0 pull, 1 push, 2 both */
   char *yystype_header;    /* %yystype_header "name.h": basename for the
                            ** standalone token-defines + YYSTYPE header
                            ** that a separately-generated lexer can
@@ -6786,7 +6787,35 @@ int main(int argc, char **argv){
   /* return 0 on success, 1 on failure.
   ** If %expect N is set, only fail when the actual conflict count
   ** differs from the expected count.  This matches Bison's behavior. */
-  if( lem.nexpect >= 0 ){
+  if( lem.is_yacc && (lem.nexpect >= 0 || lem.yacc_expect_rr >= 0) ){
+    /* bison: %expect counts shift/reduce, %expect-rr reduce/reduce
+    ** (0 when not given, once either is given). */
+    int sr = 0, rr = 0, k;
+    struct action *ap;
+    for(k=0; k<lem.nstate; k++){
+      for(ap=lem.sorted[k]->ap; ap; ap=ap->next){
+        if( ap->type==SRCONFLICT || ap->type==SSCONFLICT ) sr++;
+        else if( ap->type==RRCONFLICT ) rr++;
+      }
+    }
+    exitcode = (lem.errorcnt > 0) ? 1 : 0;
+    if( sr != (lem.nexpect<0 ? 0 : lem.nexpect) ){
+      fprintf(stderr,"%s: error: shift/reduce conflicts: %d found, %d expected\n",
+              lem.filename, sr, lem.nexpect<0 ? 0 : lem.nexpect);
+      exitcode = 1;
+    }
+    /* bison 3.8: "%expect-rr applies only to GLR parsers"; in LALR
+    ** mode any reduce/reduce conflict fails once %expect is given. */
+    if( lem.yacc_expect_rr>=0 ){
+      fprintf(stderr,"%s: warning: %%expect-rr applies only to GLR parsers\n",
+              lem.filename);
+    }
+    if( rr != 0 ){
+      fprintf(stderr,"%s: error: reduce/reduce conflicts: %d found, 0 expected\n",
+              lem.filename, rr);
+      exitcode = 1;
+    }
+  }else if( lem.nexpect >= 0 ){
     if( lem.nconflict != lem.nexpect ){
       fprintf(stderr,"Expected %d conflict(s) but found %d.\n",
               lem.nexpect, lem.nconflict);
@@ -10388,6 +10417,10 @@ static void yacc_define(struct yacc_rd *r){
   }
   if( strcmp(var,"api.token.prefix")==0 ){
     gp->yacc_token_prefix = val[0] ? (char*)Strsafe(val) : 0;
+  }else if( strcmp(var,"api.push-pull")==0 ){
+    if( strcmp(val,"push")==0 ) gp->yacc_push = 1;
+    else if( strcmp(val,"both")==0 ) gp->yacc_push = 2;
+    else gp->yacc_push = 0;
   }else if( strcmp(var,"api.token.raw")==0 ){
     /* Only renumbers tokens for a yylex() that returns the enum names,
     ** which work either way. */
@@ -14093,9 +14126,25 @@ static void yacc_emit_shared_decls(FILE *out, struct lime *lemp, int *plineno){
                 "int yylex (void);\n#endif\n\n");
     lineno += 7;
   }
-  fprintf(out,"int yyparse (%s);\n",
-          lemp->yacc_parse_params ? lemp->yacc_parse_params : "void");
-  lineno += 5;
+  if( lemp->yacc_push!=1 ){
+    fprintf(out,"int yyparse (%s);\n",
+            lemp->yacc_parse_params ? lemp->yacc_parse_params : "void");
+    lineno++;
+  }
+  if( lemp->yacc_push ){
+    fprintf(out,"#ifndef YYPUSH_MORE_DEFINED\n# define YYPUSH_MORE_DEFINED\n"
+                "enum { YYPUSH_MORE = 4 };\n#endif\n"
+                "typedef struct yypstate yypstate;\n"
+                "int yypush_parse (yypstate *ps%s%s%s%s);\n"
+                "yypstate *yypstate_new (void);\n"
+                "void yypstate_delete (yypstate *ps);\n",
+            lemp->yacc_pure ? ", int pushed_char, YYSTYPE const *pushed_val" : "",
+            (lemp->yacc_pure && lemp->has_locations) ? ", YYLTYPE *pushed_loc" : "",
+            lemp->yacc_parse_params ? ", " : "",
+            lemp->yacc_parse_params ? lemp->yacc_parse_params : "");
+    lineno += 8;
+  }
+  lineno += 4;
   yacc_emit_code(out, lemp->yacc_code_provides, &lineno);
   *plineno = lineno;
 }
@@ -14174,8 +14223,10 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
       "    if( yy_yacc_errflag ) yy_yacc_error_recover(yypParser, yyz.yy0);\n"
       "  }\n"
       "}\n"
-      "int yyparse(%s){\n", pp);
-    lineno += 31;
+      "%s"
+      "int yyparse(%s){\n",
+      lemp->yacc_push==1 ? "#if 0 /* push-only parser: no yyparse(), as bison */\n" : "", pp);
+    lineno += 31 + (lemp->yacc_push==1);
     if( pure ){
       fprintf(out, "  YYSTYPE yylval;\n  int yychar = YYEMPTY;\n  int yynerrs = 0;\n");
       lineno += 3;
@@ -14253,8 +14304,67 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
       "  %sFinalize(yyp);\n"
       "  yy_yacc_pp = 0;\n"
       "  return yy_yacc_status;\n"
-      "}\n", name);
-    lineno += 7;
+      "}\n%s", name, lemp->yacc_push==1 ? "#endif\n" : "");
+    lineno += 7 + (lemp->yacc_push==1);
+    if( lemp->yacc_push ){
+      /* bison's push API over Lime's push parser: each yypush_parse()
+      ** drains reduce-only states, then feeds one token. */
+      fprintf(out,
+        "struct yypstate { yyParser p; int status, done, nerrs, chr, started; };\n"
+        "yypstate *yypstate_new(void){\n"
+        "  yypstate *ps = (yypstate*)calloc(1, sizeof(yypstate));\n"
+        "  if( ps ) %sInit(&ps->p);\n"
+        "  return ps;\n"
+        "}\n"
+        "void yypstate_delete(yypstate *ps){\n"
+        "  if( ps ){ %sFinalize(&ps->p); free(ps); }\n"
+        "}\n"
+        "int yypush_parse(yypstate *ps%s%s%s%s){\n"
+        "  int yyt;\n",
+        name, name,
+        pure ? ", int yypushed_char, YYSTYPE const *yypushed_val" : "",
+        (pure && loc) ? ", YYLTYPE *yypushed_loc" : "",
+        lemp->yacc_parse_params ? ", " : "",
+        lemp->yacc_parse_params ? lemp->yacc_parse_params : "");
+      lineno += 11;
+      if( !pure ){
+        fprintf(out, "  int yypushed_char = yychar;\n  YYSTYPE const *yypushed_val = &yylval;\n");
+        lineno += 2;
+      }
+      if( lemp->yacc_parse_names ){
+        const char *nm = lemp->yacc_parse_names;
+        while( *nm ){
+          const char *ne = strstr(nm, ", ");
+          int nl = ne ? (int)(ne - nm) : (int)strlen(nm);
+          fprintf(out, "  ps->p.%.*s = %.*s;\n", nl, nm, nl, nm); lineno++;
+          nm += nl; if( *nm ) nm += 2;
+        }
+      }
+      fprintf(out,
+        "  if( ps->done ){ ps->done = 0; ps->status = 0; ps->nerrs = 0; ps->started = 0;\n"
+        "    %sFinalize(&ps->p); %sInit(&ps->p); }\n"
+        "#if YYDEBUG && !defined(NDEBUG)\n"
+        "  if( !ps->started && yydebug ) %sTrace(stderr, (char*)\"\");\n"
+        "#endif\n"
+        "  ps->started = 1;\n"
+        "  yy_yacc_status = ps->status; yy_yacc_done = 0;\n"
+        "  yy_yacc_nerrs = &ps->nerrs; yy_yacc_char = &ps->chr;\n"
+        "  yy_yacc_pp = &ps->p;\n"
+        "  ps->chr = yypushed_char;\n"
+        "  if( yypushed_char<=0 ) yyt = 0;\n"
+        "  else if( yypushed_char>YY_YACC_MAXCODE ) yyt = YY_YACC_UNDEF;\n"
+        "  else yyt = yy_yacc_xlat[yypushed_char];\n"
+        "  %s%s(&ps->p, yyt, *yypushed_val%s);\n"
+        "  if( !yy_yacc_done ) yy_yacc_drain(&ps->p);\n"
+        "  if( yyt==0 && !yy_yacc_done ){ yy_yacc_status = 1; yy_yacc_done = 1; }\n"
+        "  ps->status = yy_yacc_status; ps->done = yy_yacc_done;\n"
+        "  yy_yacc_pp = 0;\n"
+        "  return ps->done ? ps->status : YYPUSH_MORE;\n"
+        "}\n",
+        name, name, name, name, loc ? "Loc" : "",
+        (pure && loc) ? ", *yypushed_loc" : (loc ? ", yylloc" : ""));
+      lineno += 20;
+    }
   }
   *plineno = lineno;
 }
@@ -14412,6 +14522,12 @@ void ReportTable(
     static const char *const zRen[] = { "parse", "lex", "error", "debug",
       "nerrs", "lval", "char", "lloc" };
     int k, nren = lemp->yacc_pure ? 5 : (lemp->has_locations ? 8 : 7);
+    if( lemp->yacc_push ){
+      fprintf(out, "#define yypush_parse  %spush_parse\n#define yypstate_new  %spstate_new\n"
+              "#define yypstate_delete %spstate_delete\n#define yypstate      %spstate\n",
+              lemp->yacc_prefix, lemp->yacc_prefix, lemp->yacc_prefix, lemp->yacc_prefix);
+      lineno += 4;
+    }
     fprintf(out, "/* Substitute the variable and function names.  */\n");
     lineno++;
     for(k=0; k<nren; k++){

@@ -208,6 +208,14 @@ if grep -q 'calc_parse' "$W/pure.c" && ! grep -q '^YYSTYPE yylval;' "$W/pure.c";
 else
   fail "pure: globals / prefix"
 fi
+# %expect counts s/r only; r/r need %expect-rr (bison)
+printf '%%expect 0\n%%token A\n%%%%\ns : x | y ;\nx : A ;\ny : A ;\n' > "$W/rr.y"
+out=$(cd "$W" && ./lime-yacc rr.y 2>&1)
+case "$out" in *"reduce/reduce conflicts: 1 found, 0 expected"*) echo "ok   %expect-rr default 0" ;;
+  *) fail "%expect-rr: $out" ;; esac
+printf '%%expect 0\n%%expect-rr 1\n%%token A\n%%%%\ns : x | y ;\nx : A ;\ny : A ;\n' > "$W/rr.y"
+# bison 3.8 LALR: %expect-rr is ignored (GLR only), so this still fails
+(cd "$W" && ./lime-yacc rr.y >/dev/null 2>&1) && fail "%expect-rr 1 accepted (bison rejects)" || echo "ok   %expect-rr ignored, as bison"
 printf '%%expect 1\n%%token A\n%%%%\ns : A ;\n' > "$W/ex.y"
 out=$(cd "$W" && ./lime-yacc ex.y 2>&1); rc=$?
 [ $rc -ne 0 ] && echo "ok   %expect mismatch fails" || fail "%expect mismatch accepted: $out"
@@ -237,6 +245,42 @@ EOF
 if [ -x "$W/yyerr" ]; then
   run_case "YYERROR recover"  "$W/yyerr" '1+2\n0+1\n3\n' '= 3\nzero rejected\nrecovered\n= 3\nrc=0'
   run_case "YYERROR at eof"   "$W/yyerr" '0' 'zero rejected\nrc=1'
+fi
+
+# --- 3d. push parser (%define api.push-pull push), pure: yypush_parse()
+cat > "$W/push.y" <<'EOF'
+%{
+#include <stdio.h>
+#include <stdlib.h>
+void yyerror(const char *s) { printf("%s\n", s); }
+%}
+%define api.pure full
+%define api.push-pull push
+%define api.value.type {int}
+%token NUM
+%left '+'
+%%
+top : e { printf("%d\n", $1); } ;
+e : e '+' e { $$ = $1 + $3; } | NUM ;
+%%
+int main(int argc, char **argv){
+  const char *in = argc>1 ? argv[1] : "";
+  yypstate *ps = yypstate_new();
+  int st, k = 0;
+  do {
+    YYSTYPE v = 0; int c = in[k] ? in[k++] : 0;
+    if( c>='0' && c<='9' ){ v = c - '0'; c = NUM; }
+    st = yypush_parse(ps, c, &v);
+  } while( st==YYPUSH_MORE );
+  yypstate_delete(ps);
+  printf("rc=%d\n", st);
+  return 0;
+}
+EOF
+(cd "$W" && ./lime-yacc -o push.c push.y && $CC -w -o push push.c) || fail "push: build"
+if [ -x "$W/push" ]; then
+  out=$($TO "$W/push" '1+2+3'); [ "$out" = "$(printf '6\nrc=0')" ] && echo "ok   push accept" || fail "push accept: $out"
+  out=$($TO "$W/push" '1++');   [ "$out" = "$(printf 'syntax error\nrc=1')" ] && echo "ok   push error" || fail "push error: $out"
 fi
 
 # --- 4. named diagnostics for unsupported constructs
