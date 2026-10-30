@@ -59,6 +59,10 @@ typedef struct LimeLexicon LimeLexicon;
 
 /* Lexicon flags. */
 #define LIME_LEX_FOLD_CASE 0x1u /* keywords match ASCII case-insensitively (SQL) */
+#define LIME_LEX_OP_WHOLE 0x2u  /* lime_lexicon_classify: an operator-class match is a
+                                ** known operator only if it is one AS A WHOLE (PG: the
+                                ** run "<=>" is one Op, not "<=" ">"); default is the
+                                ** longest-prefix split (C: ">>=" after ">>=" ...). */
 
 /* One keyword or operator: its spelling and the NAME of the terminal it
 ** produces.  Names, not codes, because codes are reassigned by every
@@ -88,6 +92,18 @@ size_t lime_op_match(const LimeLexicon *lx, const char *s, size_t n, int *code);
 /* Counts, for diagnostics and tests. */
 uint32_t lime_lexicon_keyword_count(const LimeLexicon *lx);
 uint32_t lime_lexicon_operator_count(const LimeLexicon *lx);
+
+/* Classifier for scanners generated with %keyword_class / %operator_class
+** (docs/LEXER_DESIGN.md): pass it with the lexicon as `cls` to the
+** generated <P>LexSetClassifier.  kind is LIME_LEX_CLASS_KEYWORD or
+** LIME_LEX_CLASS_OPERATOR.  Returns the token code and sets *out_len to
+** the bytes it claims (the whole text for a keyword; the longest
+** operator prefix, or the whole text under LIME_LEX_OP_WHOLE, for an
+** operator), or returns -1 to let the rule's action run. */
+#define LIME_LEX_CLASS_KEYWORD 0
+#define LIME_LEX_CLASS_OPERATOR 1
+int lime_lexicon_classify(const void *lexicon, int kind, const char *text, size_t len,
+                          size_t *out_len);
 
 /* Free a lexicon.  Called by the snapshot that owns it; hosts never
 ** need it unless they detach one by hand. */

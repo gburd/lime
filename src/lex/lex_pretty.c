@@ -326,6 +326,16 @@ static void emit_lexer_includes(Buf *b, char **arr, int n) {
     buf_cstr(b, ".\n");
 }
 
+static void emit_class_rules(Buf *b, const char *dir, char **arr, int n) {
+    if (n <= 0) return;
+    buf_cstr(b, dir);
+    for (int i = 0; i < n; i++) {
+        if (i > 0) buf_cstr(b, ", ");
+        buf_cstr(b, arr[i]);
+    }
+    buf_cstr(b, ".\n");
+}
+
 /* ============================================================
 ** Public entry point
 ** ============================================================ */
@@ -348,6 +358,10 @@ char *lime_lex_spec_to_text(const LimeLexSpec *spec) {
     emit_literal_buffers(&b, spec->literal_buffers);
     emit_rulesets(&b, spec->rulesets);
     emit_lexer_includes(&b, spec->lexer_includes, spec->n_lexer_includes);
+    emit_class_rules(&b, "%keyword_class ", spec->keyword_class_rules,
+                     spec->n_keyword_class_rules);
+    emit_class_rules(&b, "%operator_class ", spec->operator_class_rules,
+                     spec->n_operator_class_rules);
     emit_rule_list(&b, spec->rules);
 
     if (!b.buf) {

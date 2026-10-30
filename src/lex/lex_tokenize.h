@@ -82,6 +82,8 @@ typedef enum {
     LIME_LEX_TOK_DIR_LITERAL_BUFFER,       /* %literal_buffer */
     LIME_LEX_TOK_DIR_RULESET,              /* %ruleset */
     LIME_LEX_TOK_DIR_LEXER_INCLUDE,        /* %lexer_include */
+    LIME_LEX_TOK_DIR_KEYWORD_CLASS,        /* %keyword_class */
+    LIME_LEX_TOK_DIR_OPERATOR_CLASS,       /* %operator_class */
     LIME_LEX_TOK_DIR_UNKNOWN,              /* %something else */
 
     LIME_LEX_TOK__COUNT

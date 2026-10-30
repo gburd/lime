@@ -39,6 +39,8 @@ here).
 | Trailing context `r/s` | Unsupported | 0/22 corpus scanners use it (checked by hand). |
 | `%option` | Unsupported | 12/22 corpus scanners use it. |
 | Case-insensitive matching | Emulated | Only per keyword table: `%keyword_table t (case_insensitive)` (`tests/test_lex_parse.c`). No `%option caseless`. |
+| Keyword lookup in the identifier action (`ScanKeywordLookup`) | Supported, runtime | `%keyword_class ident.` offers each identifier match to the snapshot keyword table (`include/lime_lexer.h`), case-folded when the host asks; keywords added by extensions at runtime resolve with no regeneration (`tests/test_lex_classify.c`, `tests/test_kw_table.c`). |
+| Fixed operator rules + `{operator}` re-classification (`"<="  return LESS_EQUALS;`) | Supported, runtime | `%operator_class op.` splits the match with the snapshot operator trie, longest match; checked against scan.l's operator rules on the PG regression SQL (`tests/test_op_trie.c`). |
 
 ## Action-body primitives (native lexer)
 

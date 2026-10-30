@@ -662,6 +662,32 @@ static void parse_lexer_include(Parser *p) {
     p->spec->n_lexer_includes = n;
 }
 
+/* %keyword_class RULE, RULE, ... .   /   %operator_class RULE, ... .
+** Appends rule names; lex_resolve checks that each names a rule. */
+static void parse_class_rules(Parser *p, char ***arr_io, int *n_io, const char *what) {
+    pull(p); /* eat the directive */
+    char **arr = *arr_io;
+    int n = *n_io;
+    for (;;) {
+        if (!at(p, LIME_LEX_TOK_IDENT)) {
+            error_here(p, "expected rule name in %s", what);
+            synchronise(p);
+            break;
+        }
+        char **na = realloc(arr, (size_t)(n + 1) * sizeof(char *));
+        if (!na) break;
+        arr = na;
+        arr[n++] = strndup_lexeme(&p->cur);
+        pull(p);
+        if (!consume(p, LIME_LEX_TOK_COMMA)) {
+            expect(p, LIME_LEX_TOK_DOT, "'.' to terminate the directive");
+            break;
+        }
+    }
+    *arr_io = arr;
+    *n_io = n;
+}
+
 /* Parse a state list `<NAME, NAME, ...>` (the LANGLE token is
 ** at the current cursor on entry).  Stores the result in *out;
 ** returns 1 on success, 0 on parse error (after emitting the
@@ -979,6 +1005,14 @@ static void parse_one_top_level(Parser *p) {
         break;
     case LIME_LEX_TOK_DIR_LEXER_INCLUDE:
         parse_lexer_include(p);
+        break;
+    case LIME_LEX_TOK_DIR_KEYWORD_CLASS:
+        parse_class_rules(p, &p->spec->keyword_class_rules, &p->spec->n_keyword_class_rules,
+                          "%keyword_class");
+        break;
+    case LIME_LEX_TOK_DIR_OPERATOR_CLASS:
+        parse_class_rules(p, &p->spec->operator_class_rules, &p->spec->n_operator_class_rules,
+                          "%operator_class");
         break;
     case LIME_LEX_TOK_DIR_UNKNOWN:
         error_here(p, "unknown directive '%.*s'", (int)p->cur.length, p->cur.lexeme);

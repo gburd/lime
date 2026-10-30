@@ -252,6 +252,16 @@ static int expand_string(LimeLexSpec *spec, const char *src, int caller_line, Bu
     return ok;
 }
 
+/* Find a rule by name among top-level and ruleset rules. */
+static const LimeLexRule *find_rule_named(const LimeLexSpec *spec, const char *name) {
+    for (const LimeLexRule *r = spec->rules; r; r = r->next)
+        if (r->name && strcmp(r->name, name) == 0) return r;
+    for (const LimeLexRuleset *rs = spec->rulesets; rs; rs = rs->next)
+        for (const LimeLexRule *r = rs->rules; r; r = r->next)
+            if (r->name && strcmp(r->name, name) == 0) return r;
+    return NULL;
+}
+
 /* Resolve every rule in a list (top-level or ruleset). */
 static int resolve_rule_list(LimeLexSpec *spec, LimeLexRule *r) {
     int ok = 1;
@@ -295,6 +305,32 @@ int lime_lex_resolve_patterns(LimeLexSpec *spec) {
         while (rs) {
             if (!resolve_rule_list(spec, rs->rules)) ok = 0;
             rs = rs->next;
+        }
+    }
+
+    /* Phase 3 (B3): %keyword_class / %operator_class must name a
+    ** non-EOF rule, and a rule may be in only one of the two. */
+    for (int w = 0; w < 2; w++) {
+        char **arr = w ? spec->operator_class_rules : spec->keyword_class_rules;
+        int n = w ? spec->n_operator_class_rules : spec->n_keyword_class_rules;
+        const char *dir = w ? "%operator_class" : "%keyword_class";
+        for (int i = 0; i < n; i++) {
+            const LimeLexRule *r = find_rule_named(spec, arr[i]);
+            if (!r) {
+                resolver_error(spec, 0, "%s names no rule '%s'", dir, arr[i]);
+                ok = 0;
+            } else if (r->is_eof) {
+                resolver_error(spec, r->line, "%s rule '%s' is an <<EOF>> rule", dir, arr[i]);
+                ok = 0;
+            }
+            if (w)
+                for (int k = 0; k < spec->n_keyword_class_rules; k++)
+                    if (strcmp(spec->keyword_class_rules[k], arr[i]) == 0) {
+                        resolver_error(spec, r ? r->line : 0,
+                                       "rule '%s' is in both %%keyword_class and %%operator_class",
+                                       arr[i]);
+                        ok = 0;
+                    }
         }
     }
 

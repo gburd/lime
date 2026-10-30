@@ -135,6 +135,8 @@ static const struct {
     { "literal_buffer", LIME_LEX_TOK_DIR_LITERAL_BUFFER },
     { "ruleset", LIME_LEX_TOK_DIR_RULESET },
     { "lexer_include", LIME_LEX_TOK_DIR_LEXER_INCLUDE },
+    { "keyword_class", LIME_LEX_TOK_DIR_KEYWORD_CLASS },
+    { "operator_class", LIME_LEX_TOK_DIR_OPERATOR_CLASS },
 };
 
 static LimeLexTokKind directive_kind(const char *name, size_t len) {
@@ -222,6 +224,10 @@ const char *lime_lex_tok_kind_name(LimeLexTokKind kind) {
         return "DIR_RULESET";
     case LIME_LEX_TOK_DIR_LEXER_INCLUDE:
         return "DIR_LEXER_INCLUDE";
+    case LIME_LEX_TOK_DIR_KEYWORD_CLASS:
+        return "DIR_KEYWORD_CLASS";
+    case LIME_LEX_TOK_DIR_OPERATOR_CLASS:
+        return "DIR_OPERATOR_CLASS";
     case LIME_LEX_TOK_DIR_UNKNOWN:
         return "DIR_UNKNOWN";
     case LIME_LEX_TOK__COUNT:

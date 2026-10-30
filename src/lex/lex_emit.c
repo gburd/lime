@@ -374,6 +374,109 @@ int lime_lex_collect_rule_names(const LimeLexSpec *spec, char ***names_out, int 
 }
 
 /* ============================================================
+** B3: runtime classification hook (%keyword_class / %operator_class)
+** ============================================================ */
+
+int lime_lex_has_classes(const LimeLexSpec *spec) {
+    return spec && (spec->n_keyword_class_rules > 0 || spec->n_operator_class_rules > 0);
+}
+
+static int name_in(char **arr, int n, const char *name) {
+    for (int i = 0; i < n; i++)
+        if (name && strcmp(arr[i], name) == 0) return 1;
+    return 0;
+}
+
+typedef struct {
+    const LimeLexSpec *spec;
+    signed char *cls; /* [n_rules]: -1 none, 0 keyword, 1 operator */
+    int n, cap;
+} ClassVec;
+
+static int class_visit(const LimeLexRule *r, void *user) {
+    ClassVec *v = (ClassVec *)user;
+    if (v->n >= v->cap) return -1;
+    signed char k = -1;
+    if (!r->is_eof) {
+        if (name_in(v->spec->keyword_class_rules, v->spec->n_keyword_class_rules, r->name)) k = 0;
+        if (name_in(v->spec->operator_class_rules, v->spec->n_operator_class_rules, r->name)) k = 1;
+    }
+    v->cls[v->n++] = k;
+    return 0;
+}
+
+int lime_lex_emit_classify_h(const LimeLexSpec *spec, const char *name_prefix, FILE *out) {
+    if (!lime_lex_has_classes(spec)) return 0;
+    const char *prefix = eff_prefix(name_prefix);
+    char *PREFIX = upper_prefix(name_prefix);
+    if (!PREFIX) return -1;
+    fprintf(out,
+            "/* ===== Runtime classification (%%keyword_class / %%operator_class) =====\n"
+            "** A match of a class rule is first offered to the installed\n"
+            "** classifier (e.g. lime_lexicon_classify over a snapshot lexicon,\n"
+            "** include/lime_lexer.h).  A claim (code >= 0) emits that code over\n"
+            "** the first *out_len bytes, pushes back the rest, and skips the\n"
+            "** rule's action; -1 (or no classifier) runs the action as usual. */\n"
+            "#define %s_CLASS_KEYWORD  0\n"
+            "#define %s_CLASS_OPERATOR 1\n"
+            "typedef int (*%sClassifyFn)(const void *cls, int kind,\n"
+            "                            const char *text, size_t len,\n"
+            "                            size_t *out_len);\n"
+            "void %sLexSetClassifier(%sLexer *yyl, %sClassifyFn fn, const void *cls);\n"
+            "/* The decision itself, for skins that drive %s_match directly:\n"
+            "** -1 unless `rule` is a class rule and fn claims a prefix of text. */\n"
+            "int %s_classify(%sClassifyFn fn, const void *cls, int rule,\n"
+            "                const char *text, size_t len, size_t *out_len);\n\n",
+            PREFIX, PREFIX, prefix, prefix, prefix, prefix, prefix, prefix, prefix);
+    free(PREFIX);
+    return ferror(out) ? -1 : 0;
+}
+
+int lime_lex_emit_classify_c(const LimeLexSpec *spec, const char *name_prefix, int n_rules,
+                             FILE *out) {
+    if (!lime_lex_has_classes(spec)) return 0;
+    const char *prefix = eff_prefix(name_prefix);
+    ClassVec v = { spec, NULL, 0, n_rules };
+    v.cls = malloc((size_t)(n_rules > 0 ? n_rules : 1));
+    if (!v.cls) return -1;
+    if (lime_lex_walk_rules(spec, class_visit, &v) != 0 || v.n != n_rules) {
+        free(v.cls);
+        return -1;
+    }
+    fprintf(out,
+            "/* ===== Runtime classification (B3) ===== */\n"
+            "/* Per rule: -1 = none, 0 = %%keyword_class, 1 = %%operator_class. */\n"
+            "static const signed char %s_rule_class[%d] = {",
+            prefix, n_rules > 0 ? n_rules : 1);
+    for (int i = 0; i < n_rules; i++) {
+        if (i % 16 == 0) fprintf(out, "\n   ");
+        fprintf(out, " %d%s", v.cls[i], i + 1 < n_rules ? "," : "");
+    }
+    if (n_rules == 0) fprintf(out, " -1");
+    fprintf(out,
+            "\n};\n\n"
+            "int %s_classify(%sClassifyFn fn, const void *cls, int rule,\n"
+            "                const char *text, size_t len, size_t *out_len) {\n"
+            "    size_t n = 0;\n"
+            "    int code;\n"
+            "    if (!fn || rule < 0 || rule >= %d || %s_rule_class[rule] < 0) return -1;\n"
+            "    code = fn(cls, %s_rule_class[rule], text, len, &n);\n"
+            "    if (code < 0 || n == 0 || n > len) return -1;\n"
+            "    *out_len = n;\n"
+            "    return code;\n"
+            "}\n\n"
+            "void %sLexSetClassifier(%sLexer *yyl, %sClassifyFn fn, const void *cls) {\n"
+            "    if (yyl) {\n"
+            "        yyl->classify = fn;\n"
+            "        yyl->classify_cls = cls;\n"
+            "    }\n"
+            "}\n\n",
+            prefix, prefix, n_rules, prefix, prefix, prefix, prefix, prefix);
+    free(v.cls);
+    return ferror(out) ? -1 : 0;
+}
+
+/* ============================================================
 ** Header emission
 ** ============================================================ */
 
@@ -666,6 +769,12 @@ int lime_lex_emit_h(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
             "** original LexFeedBytes buffer or is idle). */\n"
             "int           %sLexIncludeDepth(const %sLexer *yyl);\n\n",
             prefix, prefix);
+
+    /* B3: runtime classification hook (nothing when no class rules). */
+    if (lime_lex_emit_classify_h(spec, name_prefix, out) != 0) {
+        free(PREFIX);
+        return -1;
+    }
 
     /* M4.3: per-rule test entry-point declarations. */
     if (spec) {
@@ -1340,6 +1449,11 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
             prefix, PREFIX);
     /* M3.7: per-buffer storage fields. */
     emit_buf_struct_fields(spec, out);
+    if (lime_lex_has_classes(spec)) {
+        fprintf(out, "    %sClassifyFn classify;     /* B3: runtime classifier */\n"
+                     "    const void  *classify_cls;\n",
+                prefix);
+    }
     fprintf(out, "};\n\n");
 
     /* M3.7: per-buffer grow + take static helpers (defined now
@@ -1359,6 +1473,10 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
             prefix, prefix, prefix, prefix);
     /* M3.7: zero-initialise per-buffer storage. */
     emit_buf_alloc_init(spec, out);
+    if (lime_lex_has_classes(spec)) {
+        fprintf(out, "    yyl->classify = 0;\n"
+                     "    yyl->classify_cls = 0;\n");
+    }
     fprintf(out, "    return yyl;\n"
                  "}\n\n");
     fprintf(out,
@@ -1373,6 +1491,10 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
     fprintf(out, "    }\n"
                  "    if (yyl && freeProc) freeProc(yyl);\n"
                  "}\n\n");
+    if (lime_lex_emit_classify_c(spec, name_prefix, n_rules, out) != 0) {
+        free(PREFIX);
+        return -1;
+    }
 
     /* M3.4: action-body inlining + LEX_* macros.
     **
@@ -1721,9 +1843,24 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
             "        matched_len = consumed;\n"
             "        lex = yyl;\n"
             "        state = lex->state;\n"
-            "        _action_emitted = 0;\n"
-            "        switch (rule) {\n",
+            "        _action_emitted = 0;\n",
             prefix, PREFIX);
+    if (lime_lex_has_classes(spec)) {
+        fprintf(out,
+                "        /* B3: offer a class-rule match to the runtime classifier. */\n"
+                "        if (yyl->classify) {\n"
+                "            size_t _cls_len = 0;\n"
+                "            int _cls_code = %s_classify(yyl->classify, yyl->classify_cls,\n"
+                "                                        rule, matched, matched_len, &_cls_len);\n"
+                "            if (_cls_code >= 0) {\n"
+                "                yyl->stack[top].pos = fpos + _cls_len;\n"
+                "                if (emit) emit(user, _cls_code, matched, _cls_len);\n"
+                "                continue;\n"
+                "            }\n"
+                "        }\n",
+                prefix);
+    }
+    fprintf(out, "        switch (rule) {\n");
 
     if (have_actions) {
         for (int i = 0; i < n_rules; i++) {

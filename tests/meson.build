@@ -2523,6 +2523,24 @@ if host_machine.system() != 'windows'
   )
   test('kw_table', test_kw_table, timeout : 120)
 
+  # Track B3: %keyword_class / %operator_class.  The scanner is compiled
+  # by lime -X at build time with no keywords; an extension composes
+  # CONNECT and ->> at runtime and the same scanner returns them.
+  test_lex_classify_gen = custom_target('test_lex_classify_lex',
+    input   : ['test_lex_classify_grammar.lex'],
+    output  : ['test_lex_classify_grammar_lex.c',
+               'test_lex_classify_grammar_lex.h'],
+    command : [lime_exe, '-X', '-d@OUTDIR@', '@INPUT@'],
+  )
+  test_lex_classify = executable('test_lex_classify',
+    'test_lex_classify.c',
+    test_lex_classify_gen,
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, lime_compiler_dep],
+    export_dynamic : true,
+  )
+  test('lex_classify', test_lex_classify)
+
   # Track B measurements (tests/bench_lexicon.c).  The meson test only
   # runs the agreement check (BENCH_CHECK_ONLY=1): PostgreSQL's keyword
   # list from examples/pg/pg_kwlist.h, every identifier in the in-tree

@@ -122,5 +122,7 @@ void lime_lex_spec_free(LimeLexSpec *spec) {
     free_ruleset_list(spec->rulesets);
     free_rule_list(spec->rules);
     free_string_array(spec->lexer_includes, spec->n_lexer_includes);
+    free_string_array(spec->keyword_class_rules, spec->n_keyword_class_rules);
+    free_string_array(spec->operator_class_rules, spec->n_operator_class_rules);
     free(spec);
 }

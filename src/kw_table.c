@@ -57,6 +57,24 @@ size_t lime_op_match(const LimeLexicon *lx, const char *s, size_t n, int *code) 
     return best;
 }
 
+int lime_lexicon_classify(const void *lexicon, int kind, const char *text, size_t len,
+                          size_t *out_len) {
+    const LimeLexicon *lx = lexicon;
+    int code = -1;
+    if (kind == LIME_LEX_CLASS_KEYWORD) {
+        code = lime_kw_lookup(lx, text, len);
+        if (code >= 0) *out_len = len;
+        return code;
+    }
+    if (kind == LIME_LEX_CLASS_OPERATOR) {
+        size_t m = lime_op_match(lx, text, len, &code);
+        if (m == 0 || (m != len && (lx->flags & LIME_LEX_OP_WHOLE))) return -1;
+        *out_len = m;
+        return code;
+    }
+    return -1;
+}
+
 uint32_t lime_lexicon_operator_count(const LimeLexicon *lx) {
     return lx ? lx->op_count : 0;
 }

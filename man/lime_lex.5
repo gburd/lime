@@ -323,6 +323,54 @@ ahead of a catch\-all identifier rule.
 See
 .B EXAMPLES
 below.
+.SS "Runtime Keywords and Operators"
+.TP
+.BI %keyword_class " rule1, rule2, ...".
+.PD 0
+.TP
+.BI %operator_class " rule1, rule2, ...".
+.PD
+Offer every match of the named rules to a runtime classifier
+before the rule's action runs.
+The classifier is installed on a lexer with
+.BI <P> LexSetClassifier( lex ", fn, cls" );
+Lime's runtime provides
+.B lime_lexicon_classify
+over a parser snapshot's keyword table and operator trie
+.RB ( lime_lexer.h ),
+so one generated scanner returns keywords and operators that
+extensions add at runtime, with no regeneration.
+A claim (a token code \(>= 0) emits that code over the
+claimed prefix, pushes back the rest of the match, and skips
+the action; a decline, or no classifier, runs the action as
+written.
+This is the declarative form of flex's hand\-written
+.B ScanKeywordLookup
+and operator trimming.
+A scanner without either directive is byte\-identical to
+one generated before the directives existed.
+Each name must be a non\-EOF rule, and a rule may be in only
+one class.
+.IP
+.RS
+.EX
+%keyword_class ident.
+%operator_class op.
+rule ident matches /[A\-Za\-z_][A\-Za\-z_0\-9]*/ { LEX_EMIT(IDENT); }
+rule op    matches /[<>=!\-]+/              { LEX_EMIT(OP); }
+.EE
+.RE
+.IP
+.EX
+ClsLexSetClassifier(lex, lime_lexicon_classify,
+                    lime_snapshot_lexicon(snap));
+.EE
+.IP
+Skins that drive
+.BI <P> _match
+directly call
+.BI <P> _classify( fn ", cls, rule, text, len, &n" )
+after each match for the same decision.
 .SS "Literal Buffers"
 .TP
 .B %literal_buffer

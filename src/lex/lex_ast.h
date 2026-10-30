@@ -134,6 +134,17 @@ struct LimeLexSpec {
     const char *filename;
     int line_count;  /* total lines in source */
     int error_count; /* parse errors encountered */
+
+    /* Runtime classification (Track B3): %keyword_class RULE. and
+    ** %operator_class RULE.  A match of a named rule is first offered to
+    ** the host's runtime keyword table / operator trie (the snapshot
+    ** lexicon, include/lime_lexer.h); see docs/LEXER_DESIGN.md.  Rule
+    ** names, in declaration order; NULL / 0 when absent, in which case
+    ** the emitted scanner is byte-identical to one without the feature. */
+    char **keyword_class_rules;
+    int n_keyword_class_rules;
+    char **operator_class_rules;
+    int n_operator_class_rules;
 };
 
 /* AST allocation / release.  Every alloc returns a zeroed node

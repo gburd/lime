@@ -21,6 +21,7 @@
 #include "lex_ast.h"
 #include "lex_parse.h"
 #include "lex_pretty.h"
+#include "lex_resolve.h"
 
 static int fails = 0;
 
@@ -176,6 +177,16 @@ static int specs_equivalent(const LimeLexSpec *a, const LimeLexSpec *b) {
         }
     }
 
+    /* B3: %keyword_class / %operator_class lists. */
+    for (int w = 0; w < 2; w++) {
+        char **xa = w ? a->operator_class_rules : a->keyword_class_rules;
+        char **xb = w ? b->operator_class_rules : b->keyword_class_rules;
+        int na = w ? a->n_operator_class_rules : a->n_keyword_class_rules;
+        int nb = w ? b->n_operator_class_rules : b->n_keyword_class_rules;
+        EXPECT(na == nb, "n class rules %d vs %d", na, nb);
+        for (int i = 0; i < na && i < nb; i++) EXPECT_STR_EQ(xa[i], xb[i], "class rule");
+    }
+
     local = fails - saved;
     return local == 0;
 }
@@ -300,7 +311,38 @@ static int test_bootscanner_shape(void) {
         "rule comma matches /,/ { LEX_EMIT_NOVAL(BOOT_COMMA); }\n");
 }
 
+static int test_class_directives(void) {
+    return round_trip("class_directives",
+        "%keyword_class ident, qident.\n"
+        "%operator_class op.\n"
+        "rule ident matches /[a-z]+/ { }\n"
+        "rule qident matches /\"[a-z]+\"/ { }\n"
+        "rule op matches /[<>=]+/ { }\n");
+}
+
+/* B3: lime_lex_resolve_patterns rejects a class directive that names
+** no rule, an <<EOF>> rule, or a rule in both classes. */
+static int test_class_directive_errors(void) {
+    static const char *bad[] = {
+        "%keyword_class nope.\nrule a matches /a/ { }\n",
+        "%keyword_class e.\nrule e matches <<EOF>> { }\n",
+        "%keyword_class a.\n%operator_class a.\nrule a matches /a/ { }\n",
+    };
+    int ok = 1;
+    for (int i = 0; i < 3; i++) {
+        LimeLexSpec *sp = lime_lex_parse("<class-err>", bad[i], strlen(bad[i]));
+        EXPECT(sp && sp->error_count == 0, "case %d did not parse", i);
+        int rc = sp ? lime_lex_resolve_patterns(sp) : 0;
+        EXPECT(rc != 0, "case %d: resolve accepted a bad class directive", i);
+        if (rc == 0) ok = 0;
+        lime_lex_spec_free(sp);
+    }
+    return ok;
+}
+
 int main(void) {
+    test_class_directives();
+    test_class_directive_errors();
     test_minimal();
     test_directives();
     test_patterns();

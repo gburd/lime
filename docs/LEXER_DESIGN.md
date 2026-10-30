@@ -673,6 +673,33 @@ regression SQL (322,581 tokens) and all 1-4 byte operator strings
 a dense `[node][byte class]` uint16 table; classes are the bytes that
 occur in some operator, so PG's set is ~40 nodes x ~25 classes.
 
+**In a generated scanner** (`%keyword_class` / `%operator_class`).
+Mark the rules whose matches the lexicon should see:
+
+```
+%keyword_class ident.
+%operator_class op.
+rule ident matches /[A-Za-z_][A-Za-z_0-9]*/ { LEX_EMIT(IDENT); }
+rule op    matches /{op_chars}+/            { LEX_EMIT(OP); }
+```
+
+and install the runtime classifier once per lexer:
+
+```
+FooLexSetClassifier(lex, lime_lexicon_classify, lime_snapshot_lexicon(snap));
+```
+
+Each match of a class rule is offered first.  A claim emits the
+lexicon's token code over the claimed prefix (the whole identifier;
+the longest operator prefix, or the whole run under
+`LIME_LEX_OP_WHOLE`) and pushes back the rest; a decline runs the
+rule's action as written.  The generated `Foo_classify(fn, cls, rule,
+text, len, &n)` is the same decision for skins that call `Foo_match`
+themselves (the flex skin's `yylex`), documented in
+`src/lex/lex_emit.h`.  Without either directive the emitted scanner
+is byte-identical to before (checked on every `.lex` in the tree and
+the PostgreSQL port, native and flex skin).
+
 **Layout.** Open addressing, power-of-two slots at load factor <= 1/2,
 FNV-1a over the case-folded bytes, the full hash stored per slot so a
 probe rejects most misses without a string compare, and a max-length
