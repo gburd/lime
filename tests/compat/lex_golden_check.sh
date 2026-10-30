@@ -8,14 +8,22 @@
 # basename), in four modes: plain -X, -X --target=c:flex (the flex skin),
 # -X --lex-no-vectorize, and -X --target=rust.  Every generated file and
 # every exit status must be identical.  BASE_LIME is a lime built from the
-# reference commit (35eefbc for Track E).  Exit 0 = identical, 1 = differs.
+# reference commit.  LEX_GOLDEN_EXTRA="a.lex b.lex" adds files outside
+# the tree (e.g. the PG port's scanners).  Exit 0 = identical, 1 = differs.
 set -u
 base=$1; new=$2; src=${3:-$(cd "$(dirname "$0")/../.." && pwd)}
 tmp=$(mktemp -d)
 cleanup() { find "$tmp" -depth -mindepth 1 -delete 2>/dev/null; rmdir "$tmp" 2>/dev/null; }
 trap cleanup EXIT
 nfiles=0; nout=0; bad=0
-for f in $(cd "$src" && git ls-files '*.lex'); do
+for f in $(cd "$src" && git ls-files '*.lex') ${LEX_GOLDEN_EXTRA:-}; do
+  case $f in /*) path=$f ;; *) path=$src/$f ;; esac
+  # Class directives (%keyword_class ...) are new output by definition;
+  # identity is about every other scanner (same rule as
+  # scripts/lex_output_identity.sh).
+  if grep -q '^%\(keyword_class\|operator_class\|runtime_rules\)' "$path"; then
+    echo "skip (class directives): $f"; continue
+  fi
   nfiles=$((nfiles+1))
   for mode in plain flex novec rust; do
     case $mode in
@@ -26,7 +34,7 @@ for f in $(cd "$src" && git ls-files '*.lex'); do
     esac
     for who in base new; do
       mkdir -p "$tmp/$who/out"
-      cp "$src/$f" "$tmp/$who/in.lex"
+      cp "$path" "$tmp/$who/in.lex"
       eval bin=\$$who
       (cd "$tmp/$who" && "$bin" $args -dout in.lex >/dev/null 2>"$tmp/$who.err"; echo $? >"$tmp/$who.rc")
     done

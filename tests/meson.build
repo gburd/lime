@@ -2448,6 +2448,30 @@ test_lex_classify = executable('test_lex_classify',
 )
 test('lex_classify', test_lex_classify)
 
+# Track E: the flex skin's yylex() goes through the same classification
+# hook (yy_set_classifier), so an extension keyword composed at run time
+# comes back from the flex-API scanner.
+# Same grammar under its own name: two targets may not write the same
+# files in one build directory.
+test_skin_flex_classify_lex = configure_file(
+  input : 'test_lex_classify_grammar.lex',
+  output : 'test_skin_flex_classify_grammar.lex',
+  copy : true,
+)
+test_skin_flex_classify_gen = custom_target('test_skin_flex_classify_lex',
+  input   : [test_skin_flex_classify_lex],
+  output  : ['test_skin_flex_classify_grammar_lex.c', 'test_skin_flex_classify_grammar_lex.h',
+             'test_skin_flex_classify_grammar_flex.c', 'test_skin_flex_classify_grammar_flex.h'],
+  command : [lime_exe, '-X', '--target=c:flex', '-d@OUTDIR@', '@INPUT@'],
+)
+test_skin_flex_classify = executable('test_skin_flex_classify',
+  'test_skin_flex_classify.c',
+  test_skin_flex_classify_gen,
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('skin_flex_classify', test_skin_flex_classify)
+
 # Track B5: a new literal syntax added at runtime (MOD_ADD_LEX_RULE +
 # %runtime_rules), together with a keyword, a soft keyword and an
 # operator, on one build-time-generated scanner.
