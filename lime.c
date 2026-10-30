@@ -6637,6 +6637,10 @@ int main(int argc, char **argv){
     }else{
       exitcode = (lem.errorcnt > 0) ? 1 : 0;
     }
+  }else if( lem.is_yacc ){
+    /* yacc/bison: conflicts are a warning (resolved shift-over-reduce,
+    ** earlier rule first), not a failure, unless %expect says otherwise. */
+    exitcode = (lem.errorcnt > 0) ? 1 : 0;
   }else{
     exitcode = ((lem.errorcnt > 0) || (lem.nconflict > 0)) ? 1 : 0;
   }
@@ -9943,6 +9947,8 @@ PRIVATE char *append_str(const char *zText, int n, int p1, int p2);
 struct yacc_rd {
   struct symbol **toks;  /* Terminals in the order they became tokens */
   int ntok, ntokalloc;
+  struct { const char *alias; struct symbol *sp; } *al;  /* "str" -> token */
+  int nal, nalalloc;
   struct pstate *psp;
   const char *filename;
   char *cp;             /* Read cursor */
@@ -10073,6 +10079,43 @@ static struct symbol *yacc_charlit(struct yacc_rd *r){
   sp = yacc_token(r, Symbol_new(name));
   sp->yacc_code = code;
   return sp;
+}
+
+/* Read a "string" at r->cp, returning it with the quotes, Strsafe'd. */
+static const char *yacc_string(struct yacc_rd *r){
+  char *s = r->cp, *p = s + 1, save;
+  const char *res;
+  while( *p && *p!='"' && *p!='\n' ){ if( *p=='\\' && p[1] ) p++; p++; }
+  if( *p!='"' ){
+    yacc_error(r, "%s", "unterminated string literal");
+    r->cp = p;
+    return 0;
+  }
+  p++;
+  save = *p; *p = 0;
+  res = Strsafe(s);
+  *p = save;
+  r->cp = p;
+  return res;
+}
+
+/* bison's string alias: `%token NAME "str"` lets "str" stand for NAME. */
+static void yacc_add_alias(struct yacc_rd *r, const char *alias,
+                           struct symbol *sp){
+  if( r->nal>=r->nalalloc ){
+    r->nalalloc = r->nalalloc*2 + 16;
+    r->al = lime_realloc(r->al, sizeof(r->al[0])*r->nalalloc);
+    MemoryCheck(r->al);
+  }
+  r->al[r->nal].alias = alias;
+  r->al[r->nal].sp = sp;
+  r->nal++;
+}
+static struct symbol *yacc_alias_sym(struct yacc_rd *r, const char *alias){
+  int i;
+  for(i=0; i<r->nal; i++) if( r->al[i].alias==alias ) return r->al[i].sp;
+  yacc_error(r, "string literal %s is not an alias of any %%token", alias);
+  return 0;
 }
 
 /* Append text to a malloc'd string slot. */
@@ -10214,10 +10257,14 @@ static void yacc_declarations(struct yacc_rd *r, char *buf){
       /* Symbol list: stops at the next '%' or end of line run. */
       for(;;){
         yacc_skip_ws(r);
-        if( ISALPHA(*r->cp) || *r->cp=='_' || *r->cp=='\'' ){
+        if( ISALPHA(*r->cp) || *r->cp=='_' || *r->cp=='\'' || *r->cp=='"' ){
           struct symbol *sp;
           if( *r->cp=='\'' ){
             sp = yacc_charlit(r);
+            if( sp==0 ) continue;
+          }else if( *r->cp=='"' ){
+            const char *al = yacc_string(r);
+            sp = al ? yacc_alias_sym(r, al) : 0;
             if( sp==0 ) continue;
           }else{
             sp = yacc_token(r, yacc_symbol(yacc_ident(r), 1));
@@ -10228,6 +10275,11 @@ static void yacc_declarations(struct yacc_rd *r, char *buf){
             sp->yacc_code = (int)strtol(r->cp, &r->cp, 10);
           }
           if( tag ) sp->union_field = tag;
+          yacc_skip_ws(r);
+          if( *r->cp=='"' && !is_prec ){
+            const char *al = yacc_string(r);
+            if( al ) yacc_add_alias(r, al, sp);
+          }
           if( is_prec ){
             if( sp->prec>=0 ){
               yacc_error(r, "Symbol \"%s\" has already been given a "
@@ -10417,6 +10469,12 @@ static char *yacc_translate(struct yacc_rd *r, const char *body, int line,
         r->psp->errorcnt++;
       }
     }
+    if( c=='Y' && strncmp(p,"YYERROR",7)==0 && !ISALNUM(p[7]) && p[7]!='_'
+        && (p==body || (!ISALNUM(p[-1]) && p[-1]!='_')) ){
+      ErrorMsg(r->filename, line, "YYERROR in an action is not supported "
+               "by Lime's yacc front end yet (rule for \"%s\")", lhs->name);
+      r->psp->errorcnt++;
+    }
     yacc_raw(p, 1);
     p++;
   }
@@ -10588,8 +10646,14 @@ static void yacc_rules(struct yacc_rd *r){
           }
           continue;
         }
-        if( *r->cp=='\'' ){
-          struct symbol *sp = yacc_charlit(r);
+        if( *r->cp=='\'' || *r->cp=='"' ){
+          struct symbol *sp;
+          if( *r->cp=='"' ){
+            const char *al = yacc_string(r);
+            sp = al ? yacc_alias_sym(r, al) : 0;
+          }else{
+            sp = yacc_charlit(r);
+          }
           if( sp==0 ) continue;
           yacc_flush_midrule(r, &alt);
           if( alt.nrhs>=MAXRHS ){
@@ -10702,6 +10766,7 @@ static void yacc_parse_buffer(struct pstate *psp, char *buf,
     for(i=0; i<rd.ntok; i++) if( rd.toks[i]->yacc_code==0 ) rd.toks[i]->yacc_code = ++mx;
     gp->yacc_maxcode = mx;
     lime_free(rd.toks);
+    lime_free(rd.al);
   }
   if( psp->errorcnt || psp->firstrule==0 ) return;
   /* yacc augments every grammar with `$accept : start $end`, so the
@@ -13301,8 +13366,13 @@ static void yacc_emit_shared_decls(FILE *out, struct lime *lemp, int *plineno){
   fprintf(out,"# define YYSTYPE_IS_TRIVIAL 1\n# define YYSTYPE_IS_DECLARED 1\n"
               "#endif\n\n");
   fprintf(out,"extern YYSTYPE yylval;\n\n");
+  /* bison -y declares these too (POSIX, austingroupbugs 1388). */
+  fprintf(out,"#if !defined yyerror && !defined YYERROR_IS_DECLARED\n"
+              "void yyerror (const char *msg);\n#endif\n"
+              "#if !defined yylex && !defined YYLEX_IS_DECLARED\n"
+              "int yylex (void);\n#endif\n\n");
   fprintf(out,"int yyparse (void);\n");
-  lineno += 7;
+  lineno += 14;
   *plineno = lineno;
 }
 
@@ -13344,6 +13414,30 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
     "#if YYDEBUG\n"
     "int yydebug;\n"
     "#endif\n"
+    "/* bison reads no lookahead in a state whose only action is a\n"
+    "** reduction; fire those first, so yylex() runs when bison's would. */\n"
+    "static void yy_yacc_drain(yyParser *yypParser){\n"
+    "  YYMINORTYPE yyz;\n"
+    "  memset(&yyz, 0, sizeof(yyz));\n"
+    "  while( !yy_yacc_done ){\n"
+    "    YYACTIONTYPE st = yypParser->yytos->stateno, def;\n"
+    "    int i;\n"
+    "    if( st>=YY_MIN_REDUCE && st<=YY_MAX_REDUCE ){\n"
+    "      yy_reduce(yypParser, st - YY_MIN_REDUCE, YYNOCODE, yyz.yy0);\n"
+    "      continue;\n"
+    "    }\n"
+    "    if( st>YY_MAX_SHIFT ) return;\n"
+    "    def = yy_default[st];\n"
+    "    if( def<YY_MIN_REDUCE || def>YY_MAX_REDUCE ) return;\n"
+    "    if( st<=YY_SHIFT_COUNT ){\n"
+    "      for(i=0; i<YYNTOKEN; i++){\n"
+    "        int j = yy_shift_ofst[st] + i;\n"
+    "        if( j>=0 && j<YY_ACTTAB_COUNT && yy_lookahead[j]==(YYCODETYPE)i ) return;\n"
+    "      }\n"
+    "    }\n"
+    "    yy_reduce(yypParser, def - YY_MIN_REDUCE, YYNOCODE, yyz.yy0);\n"
+    "  }\n"
+    "}\n"
     "int yyparse(void){\n"
     "  void *yyp = %sAlloc(malloc);\n"
     "  if( yyp==0 ){ yyerror(\"memory exhausted\"); return 2; }\n"
@@ -13355,7 +13449,7 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
     "  yy_yacc_done = 0;\n"
     "  while( !yy_yacc_done ){\n"
     "    int yyt;\n"
-    "    %s_drain(yyp);\n"
+    "    yy_yacc_drain((yyParser*)yyp);\n"
     "    if( yy_yacc_done ) break;\n"
     "    yychar = yylex();\n"
     "    if( yychar<=0 ) yyt = 0;\n"
@@ -13363,12 +13457,14 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
     "    else yyt = yy_yacc_xlat[yychar];\n"
     "    %s(yyp, yyt, yylval);\n"
     "    if( yyt==0 && !yy_yacc_done ){ yy_yacc_status = 1; break; }\n"
+    "    /* bison resumes error messages after 3 shifts; Lemon after 4. */\n"
+    "    if( ((yyParser*)yyp)->yyerrcnt==0 ) ((yyParser*)yyp)->yyerrcnt = -1;\n"
     "  }\n"
     "  yychar = YYEMPTY;\n"
     "  %sFree(yyp, free);\n"
     "  return yy_yacc_status;\n"
-    "}\n", name, name, name, name, name);
-  lineno += 31;
+    "}\n", name, name, name, name);
+  lineno += 56;
   *plineno = lineno;
 }
 
@@ -13533,8 +13629,16 @@ void ReportTable(
     yacc_emit_shared_decls(out, lemp, &lineno);
     fprintf(out,"static int yy_yacc_status;  /* yyparse() result */\n"
                 "static int yy_yacc_done;    /* parse finished */\n"
-                "extern int yychar, yynerrs;\n");
-    lineno += 3;
+                "extern int yychar, yynerrs;\n"
+                "/* yacc action macros, over the Lime parser state. */\n"
+                "#define yyerrok (yypParser->yyerrcnt = -1)\n"
+                "#define yyclearin (yypParser->yyLookaheadCleared = 1, yychar = YYEMPTY)\n"
+                "#define YYRECOVERING() (yypParser->yyerrcnt >= 0)\n"
+                "#define YYACCEPT do{ yy_yacc_status = 0; yy_yacc_done = 1; "
+                "yypParser->yyLookaheadCleared = 1; return; }while(0)\n"
+                "#define YYABORT do{ yy_yacc_status = 1; yy_yacc_done = 1; "
+                "yypParser->yyLookaheadCleared = 1; return; }while(0)\n");
+    lineno += 9;
     if( lemp->yacc_post_prologue ){
       tplt_print(out, lemp, lemp->yacc_post_prologue, &lineno);
     }
