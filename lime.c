@@ -10136,6 +10136,7 @@ static const char *resolve_extends_path(const char *current_file,
 */
 PRIVATE char *append_str(const char *zText, int n, int p1, int p2);
 struct yacc_rd {
+  int nmid;              /* Mid-rule actions so far ($@1, $@2, ...) */
   struct symbol **toks;  /* Terminals in the order they became tokens */
   int ntok, ntokalloc;
   struct { const char *alias; struct symbol *sp; } *al;  /* "str" -> token */
@@ -11192,11 +11193,11 @@ static void yacc_translate_pending(struct yacc_rd *r){
 /* A pending action followed by more symbols is a mid-rule action:
 ** bison turns it into `$@N : %empty { action }` and puts $@N here. */
 static void yacc_flush_midrule(struct yacc_rd *r, struct yacc_alt *a){
-  static int nmid = 0;
   char name[32];
+  int nmid = ++r->nmid;
   struct symbol *mid;
   if( a->act==0 ) return;
-  lemon_sprintf(name, "$@%d", ++nmid);
+  lemon_sprintf(name, "$@%d", nmid);
   mid = yacc_symbol(name, 0);
   mid->union_field = 0;
   yacc_commit_rule(r, mid, 0, 0, a->actline);
