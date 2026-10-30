@@ -5430,6 +5430,13 @@ static int g_host_reduce = 0;
 ** (force Lemon/Lime syntax).  Lemon-syntax input never touches the
 ** yacc reader, so its output is unchanged. */
 static int g_yacc_mode = 0;
+/* Track D: yacc CLI output names.  g_yacc_out_c is the .c path (-o, or
+** <b>.tab.c / y.tab.c), g_yacc_out_h the header path; NULL in Lime mode. */
+static char *g_yacc_out_c = 0;
+static char *g_yacc_out_h = 0;
+static char *g_yacc_out_v = 0;
+static int g_yacc_defines = 0;
+static int g_yacc_debug_flag = 0;
 static void handle_yacc_flag(int v){ (void)v; g_yacc_mode = 1; }
 static void handle_lemon_flag(int v){ (void)v; g_yacc_mode = -1; }
 
@@ -5846,6 +5853,125 @@ static int emit_rust_sibling_skin(struct lime *lem, const char *suffix,
 ** context API in-process; main() is omitted in that build because
 ** the test provides its own driver. */
 #ifndef LIME_TEST_HARNESS
+/* Track D: yacc/bison command line.  Active when argv[0]'s basename is
+** yacc, bison or lime-yacc, or when the first option is --yacc.  It
+** reads the POSIX yacc flags and common bison ones, sets the output
+** names, and rewrites argv into Lime options (-q, -l, -P, --yacc, the
+** grammar).  Returns the new argc, or argc unchanged when inactive. */
+static char *yacc_strcat3(const char *a, const char *b, const char *c){
+  char *z = (char*)malloc(strlen(a)+strlen(b)+strlen(c)+1);
+  if( z==0 ){ fprintf(stderr, "out of memory\n"); exit(1); }
+  strcpy(z, a); strcat(z, b); strcat(z, c);
+  return z;
+}
+static int yacc_personality(int argc, char **argv){
+  const char *base = strrchr(argv[0], '/');
+  const char *outfile = 0, *prefix = 0, *bprefix = 0, *grammar = 0;
+  const char *hdr = 0;
+  int yflag = 0, vflag = 0, lflag = 0, i, n;
+  static char *nargv[16];
+  base = base ? base + 1 : argv[0];
+  if( !(strcmp(base,"yacc")==0 || strcmp(base,"bison")==0
+        || strcmp(base,"lime-yacc")==0
+        || (argc>1 && strcmp(argv[1],"--yacc")==0)) ){
+    return argc;
+  }
+  if( strcmp(base,"bison")!=0 ) yflag = 1;  /* yacc names y.tab.c */
+  for(i=1; i<argc; i++){
+    const char *a = argv[i];
+    if( strcmp(a,"--yacc")==0 || strcmp(a,"-y")==0 ){ yflag = 1; continue; }
+    if( strcmp(a,"-d")==0 || strcmp(a,"--defines")==0 || strcmp(a,"--header")==0 ){
+      g_yacc_defines = 1; continue;
+    }
+    if( strncmp(a,"--defines=",10)==0 ){ g_yacc_defines = 1; hdr = a+10; continue; }
+    if( strncmp(a,"--header=",9)==0 ){ g_yacc_defines = 1; hdr = a+9; continue; }
+    if( strcmp(a,"-v")==0 || strcmp(a,"--verbose")==0 || strcmp(a,"--report=all")==0 ){
+      vflag = 1; continue;
+    }
+    if( strcmp(a,"-t")==0 || strcmp(a,"--debug")==0 ){ g_yacc_debug_flag = 1; continue; }
+    if( strcmp(a,"-l")==0 || strcmp(a,"--no-lines")==0 ){ lflag = 1; continue; }
+    if( strcmp(a,"-o")==0 && i+1<argc ){ outfile = argv[++i]; continue; }
+    if( strncmp(a,"-o",2)==0 && a[2] ){ outfile = a+2; continue; }
+    if( strncmp(a,"--output=",9)==0 ){ outfile = a+9; continue; }
+    if( strcmp(a,"-b")==0 && i+1<argc ){ bprefix = argv[++i]; continue; }
+    if( strncmp(a,"-b",2)==0 && a[2] ){ bprefix = a+2; continue; }
+    if( strncmp(a,"--file-prefix=",14)==0 ){ bprefix = a+14; continue; }
+    if( strcmp(a,"-p")==0 && i+1<argc ){ prefix = argv[++i]; continue; }
+    if( strncmp(a,"-p",2)==0 && a[2] ){ prefix = a+2; continue; }
+    if( strncmp(a,"--name-prefix=",14)==0 ){ prefix = a+14; continue; }
+    if( strncmp(a,"-W",2)==0 || strncmp(a,"--warnings",10)==0 ) continue;
+    if( strcmp(a,"--version")==0 || strcmp(a,"-V")==0 ){
+      printf("%s (Lime) %s\n", base, LIME_VERSION_STRING);
+      exit(0);
+    }
+    if( a[0]=='-' && a[1] ){
+      fprintf(stderr, "%s: option \"%s\" is not supported by Lime's yacc "
+              "mode\n", base, a);
+      exit(1);
+    }
+    if( grammar ){
+      fprintf(stderr, "%s: more than one grammar file given\n", base);
+      exit(1);
+    }
+    grammar = a;
+  }
+  if( grammar==0 ){
+    fprintf(stderr, "%s: no grammar file given\n", base);
+    exit(1);
+  }
+  if( prefix && strcmp(prefix,"yy")!=0 ){
+    fprintf(stderr, "%s: -p/--name-prefix (other than yy) is not "
+            "supported by Lime's yacc mode yet\n", base);
+    exit(1);
+  }
+  /* Output names, as bison: -o wins; else <b>.tab.c, b = -b, or "y"
+  ** under -y/yacc, or the grammar's name minus its extension. */
+  if( outfile ){
+    const char *dot = strrchr(outfile, '.');
+    const char *sl = strrchr(outfile, '/');
+    size_t stem = (dot && (!sl || dot>sl)) ? (size_t)(dot - outfile) : strlen(outfile);
+    char *st = (char*)malloc(stem + 1);
+    if( st==0 ){ fprintf(stderr, "out of memory\n"); exit(1); }
+    memcpy(st, outfile, stem); st[stem] = 0;
+    g_yacc_out_c = yacc_strcat3(outfile, "", "");
+    /* bison: foo.c -> foo.h, foo.cc -> foo.hh; .y -> .tab.h */
+    g_yacc_out_h = yacc_strcat3(st, ".h", "");
+    g_yacc_out_v = yacc_strcat3(st, ".output", "");
+    free(st);
+  }else{
+    char *stem;
+    if( bprefix ){
+      stem = yacc_strcat3(bprefix, "", "");
+    }else if( yflag ){
+      stem = yacc_strcat3("y", "", "");
+    }else{
+      const char *sl = strrchr(grammar, '/');
+      const char *g = sl ? sl + 1 : grammar;
+      const char *dot = strrchr(g, '.');
+      size_t len = dot ? (size_t)(dot - g) : strlen(g);
+      stem = (char*)malloc(len + 1);
+      if( stem==0 ){ fprintf(stderr, "out of memory\n"); exit(1); }
+      memcpy(stem, g, len); stem[len] = 0;
+    }
+    g_yacc_out_c = yacc_strcat3(stem, ".tab.c", "");
+    g_yacc_out_h = yacc_strcat3(stem, ".tab.h", "");
+    g_yacc_out_v = yacc_strcat3(stem, yflag ? "" : ".output", yflag ? ".output" : "");
+    free(stem);
+  }
+  if( hdr ){ free(g_yacc_out_h); g_yacc_out_h = yacc_strcat3(hdr, "", ""); }
+  if( !vflag ){ free(g_yacc_out_v); g_yacc_out_v = 0; }
+  n = 0;
+  nargv[n++] = argv[0];
+  nargv[n++] = (char*)"--yacc";
+  if( !vflag ) nargv[n++] = (char*)"-q";
+  if( lflag ) nargv[n++] = (char*)"-l";
+  nargv[n++] = (char*)grammar;
+  nargv[n] = 0;
+  g_yacc_mode = 1;
+  for(i=0; i<=n; i++) argv[i] = nargv[i];
+  return n;
+}
+
 int main(int argc, char **argv){
 #if defined(_WIN32)
   /* Disable Windows text-mode \n -> \r\n translation on stdout/stderr.
@@ -6108,6 +6234,8 @@ int main(int argc, char **argv){
   ** glued form before OptInit's prefix matcher sees them.  Allows
   ** `-t rust` and `-e simd,memchr` syntax in addition to lime's
   ** traditional `-trust` / `-esimd,memchr` glued form. */
+  /* Track D: yacc/bison personality (argv[0] or --yacc first). */
+  argc = yacc_personality(argc, argv);
   splice_short_value_args(argc, argv);
 
   OptInit(argv,options,stderr);
@@ -6542,7 +6670,10 @@ int main(int argc, char **argv){
     /* Produce a header file for use by the scanner.  (This step is
     ** omitted if the "-m" option is used because makeheaders will
     ** generate the file for us.) */
-    if( !mhflag && !rust_only ) ReportHeader(&lem);
+    /* Track D: under the yacc CLI the header is written only with -d. */
+    if( !mhflag && !rust_only && !(lem.is_yacc && g_yacc_out_c && !g_yacc_defines) ){
+      ReportHeader(&lem);
+    }
 
     /* Standalone token-defines + YYSTYPE header for a separately-
     ** generated lexer (--type-header flag or %yystype_header
@@ -10741,6 +10872,7 @@ static void yacc_parse_buffer(struct pstate *psp, char *buf,
   ** YYSTYPE; a syntax error calls yyerror(), and aborts the parse when
   ** the grammar has no `error` rule; the stack grows like bison's. */
   gp->tokentype = (char*)"YYSTYPE";
+  if( g_yacc_debug_flag ) gp->yacc_debug = 1;
   if( gp->union_body==0 && gp->yacc_stype==0 ) gp->yacc_stype = (char*)"int";
   gp->name = (char*)"yyParse";
   gp->error = (char*)
@@ -11378,6 +11510,19 @@ PRIVATE char *file_makename(struct lime *lemp, const char *suffix)
   char *filename = lemp->filename;
   int sz;
 
+  /* Track D: the yacc CLI chose the output names. */
+  if( lemp->is_yacc && g_yacc_out_c ){
+    const char *pick = strcmp(suffix,".c")==0 ? g_yacc_out_c
+                     : strcmp(suffix,".h")==0 ? g_yacc_out_h
+                     : strcmp(suffix,".out")==0 ? g_yacc_out_v : 0;
+    if( pick ){
+      name = (char*)lime_malloc(lemonStrlen(pick) + 1);
+      MemoryCheck(name);
+      lemon_strcpy(name, pick);
+      return name;
+    }
+  }
+
   if( outputDir ){
     /* Strip the directory prefix from filename so the output
     ** lands in outputDir/<basename> rather than
@@ -11928,15 +12073,25 @@ PRIVATE int compute_action(struct lime *lemp, struct action *ap)
 ** if name!=0, then any word that begin with "Parse" is changed to
 ** begin with *name instead.
 */
+/* Track D: template lines that start with "%Y " belong to yacc input
+** only: dropped for Lemon/Lime grammars (so their output is unchanged),
+** emitted without the marker for yacc grammars. */
+static int g_tplt_yacc = 0;
+static int g_tplt_saw_yacc = 0;
 PRIVATE void tplt_xfer(char *name, FILE *in, FILE *out, int *lineno)
 {
   int i, iStart;
   char line[LINESIZE];
   while( fgets(line,LINESIZE,in) && (line[0]!='%' || line[1]!='%') ){
-    (*lineno)++;
     iStart = 0;
+    if( line[0]=='%' && line[1]=='Y' && line[2]==' ' ){
+      g_tplt_saw_yacc++;
+      if( !g_tplt_yacc ) continue;
+      iStart = 3;
+    }
+    (*lineno)++;
     if( name ){
-      for(i=0; line[i]; i++){
+      for(i=iStart; line[i]; i++){
         if( line[i]=='P' && strncmp(&line[i],"Parse",5)==0
           && (i==0 || !ISALPHA(line[i-1]))
         ){
@@ -13456,15 +13611,13 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
     "    else if( yychar>YY_YACC_MAXCODE ) yyt = yy_yacc_xlat[257];\n"
     "    else yyt = yy_yacc_xlat[yychar];\n"
     "    %s(yyp, yyt, yylval);\n"
-    "    if( yyt==0 && !yy_yacc_done ){ yy_yacc_status = 1; break; }\n"
-    "    /* bison resumes error messages after 3 shifts; Lemon after 4. */\n"
-    "    if( ((yyParser*)yyp)->yyerrcnt==0 ) ((yyParser*)yyp)->yyerrcnt = -1;\n"
+    "    if( yyt==0 && !yy_yacc_done && yychar!=YYEMPTY ){ yy_yacc_status = 1; break; }\n"
     "  }\n"
     "  yychar = YYEMPTY;\n"
     "  %sFree(yyp, free);\n"
     "  return yy_yacc_status;\n"
     "}\n", name, name, name, name);
-  lineno += 56;
+  lineno += 54;
   *plineno = lineno;
 }
 
@@ -13498,6 +13651,8 @@ void ReportTable(
 
   in = tplt_open(lemp);
   if( in==0 ) return;
+  g_tplt_yacc = lemp->is_yacc;
+  g_tplt_saw_yacc = 0;
   if( sqlFlag ){
     FILE *sql = file_open(lemp, ".sql", "wb");
     if( sql==0 ){
@@ -13633,7 +13788,7 @@ void ReportTable(
                 "/* yacc action macros, over the Lime parser state. */\n"
                 "#define yyerrok (yypParser->yyerrcnt = -1)\n"
                 "#define yyclearin (yypParser->yyLookaheadCleared = 1, yychar = YYEMPTY)\n"
-                "#define YYRECOVERING() (yypParser->yyerrcnt >= 0)\n"
+                "#define YYRECOVERING() (yypParser->yyerrcnt > 0)\n"
                 "#define YYACCEPT do{ yy_yacc_status = 0; yy_yacc_done = 1; "
                 "yypParser->yyLookaheadCleared = 1; return; }while(0)\n"
                 "#define YYABORT do{ yy_yacc_status = 1; yy_yacc_done = 1; "
@@ -14519,7 +14674,16 @@ void ReportTable(
   tplt_print(out,lemp,lemp->accept,&lineno);
   tplt_xfer(lemp->name,in,out,&lineno);
 
-  if( lemp->is_yacc ) yacc_emit_driver(out, lemp, &lineno);
+  if( lemp->is_yacc ){
+    yacc_emit_driver(out, lemp, &lineno);
+    if( g_tplt_saw_yacc==0 ){
+      fprintf(stderr, "%s: the parser template has no \"%%Y \" lines (yacc "
+              "error recovery); yacc input needs the limpar.c shipped with "
+              "this lime.\n", lemp->filename);
+      lemp->errorcnt++;
+    }
+  }
+  g_tplt_yacc = 0;
 
   /* Append any addition code the user desires */
   tplt_print(out,lemp,lemp->extracode,&lineno);

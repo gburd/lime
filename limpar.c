@@ -1531,6 +1531,40 @@ void Parse(
       **    shifted successfully.
       **
       */
+%Y       /* yacc error recovery, as bison's yyerrlab (Lime yacc front end).
+%Y       ** No message while recovering (yyerrcnt>0).  A lookahead that fails
+%Y       ** before 3 shifts since the last recovery is discarded (at end of
+%Y       ** input the parse aborts).  Then pop to a state that shifts `error`,
+%Y       ** shift it, and retry the lookahead if it was kept. */
+%Y       {
+%Y         int yydiscard = 0;
+%Y         (void)yyerrorhit; yymx = 0; (void)yymx;
+%Y         if( yypParser->yyerrcnt<=0 ){
+%Y           YY_SYNTAX_ERROR(yypParser,yymajorExternal,yyminor);
+%Y         }
+%Y         if( yypParser->yyerrcnt==3 ){
+%Y           if( yymajor==0 ){ yy_parse_failed(yypParser); break; }
+%Y           yy_destructor(yypParser,(YYCODETYPE)yymajor,&yyminorunion);
+%Y           yydiscard = 1;
+%Y         }
+%Y         for(;;){
+%Y           yyact = yy_find_reduce_action(yypParser->yytos->stateno, YYERRORSYMBOL);
+%Y           if( yyact<=YY_MAX_SHIFTREDUCE ) break;
+%Y           if( yypParser->yytos<=yypParser->yystack ) break;
+%Y           yy_pop_parser_stack(yypParser);
+%Y         }
+%Y         if( yyact>YY_MAX_SHIFTREDUCE ){
+%Y           if( !yydiscard ) yy_destructor(yypParser,(YYCODETYPE)yymajor,&yyminorunion);
+%Y           yy_parse_failed(yypParser);
+%Y           break;
+%Y         }
+%Y         yy_shift(yypParser,yyact,YYERRORSYMBOL,yyminor);
+%Y         yypParser->yyerrcnt = 3;
+%Y         if( yydiscard ) break;
+%Y         yyact = yypParser->yytos->stateno;
+%Y         continue;
+%Y       }
+%Y #if 0 /* Lemon's recovery, replaced above for yacc input */
       if( yypParser->yyerrcnt<0 ){
         /* yymajorExternal is the offset-corrected token code that the
         ** caller passed to Parse(); user %syntax_error code expects to
@@ -1569,6 +1603,7 @@ void Parse(
       yyerrorhit = 1;
       if( yymajor==YYNOCODE ) break;
       yyact = yypParser->yytos->stateno;
+%Y #endif
 #elif defined(YYNOERRORRECOVERY)
       /* If the YYNOERRORRECOVERY macro is defined, then do not attempt to
       ** do any kind of error recovery.  Instead, simply invoke the syntax
