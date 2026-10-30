@@ -177,6 +177,8 @@ static int specs_equivalent(const LimeLexSpec *a, const LimeLexSpec *b) {
         }
     }
 
+    EXPECT(a->runtime_rules == b->runtime_rules, "runtime_rules %d vs %d", a->runtime_rules,
+           b->runtime_rules);
     /* B3: %keyword_class / %operator_class lists. */
     for (int w = 0; w < 2; w++) {
         char **xa = w ? a->operator_class_rules : a->keyword_class_rules;
@@ -314,6 +316,7 @@ static int test_bootscanner_shape(void) {
 static int test_class_directives(void) {
     return round_trip("class_directives",
         "%keyword_class ident, qident.\n"
+        "%runtime_rules.\n"
         "%operator_class op.\n"
         "rule ident matches /[a-z]+/ { }\n"
         "rule qident matches /\"[a-z]+\"/ { }\n"

@@ -75,6 +75,41 @@ int lime_lexicon_classify(const void *lexicon, int kind, const char *text, size_
     return -1;
 }
 
+int lime_lexicon_ext_resolve(const void *lexicon, const char *state, const unsigned char **lead) {
+    const LimeLexicon *lx = lexicon;
+    if (lead) *lead = NULL;
+    if (lx == NULL || state == NULL) return -1;
+    for (uint32_t i = 0; i < lx->ext_nstates; i++)
+        if (strcmp(lx->ext_state[i], state) == 0) {
+            if (lead) *lead = lx->ext_lead[i];
+            return (int)i;
+        }
+    return -1;
+}
+
+int lime_lexicon_ext_match(const void *lexicon, int es, const char *text, size_t len,
+                           size_t base_len, size_t *out_len) {
+    const LimeLexicon *lx = lexicon;
+    if (lx == NULL || es < 0 || (uint32_t)es >= lx->ext_nstates || len <= base_len ||
+        !lx->ext_lead[es][(unsigned char)text[0]])
+        return -1;
+    int rule;
+    size_t n;
+    if (!lime_lex_program_match(lx->ext_prog, es, text, len, &rule, &n) || n <= base_len)
+        return -1;
+    int code = lx->ext_code[rule];
+    if (lx->ext_action[rule]) {
+        code = lx->ext_action[rule](lx->ext_action_user[rule], code, text, n);
+        if (code < 0) code = LIME_LEX_EXT_SKIP;
+    }
+    *out_len = n;
+    return code;
+}
+
+uint32_t lime_lexicon_ext_rule_count(const LimeLexicon *lx) {
+    return lx ? lx->ext_nrules : 0;
+}
+
 uint32_t lime_lexicon_operator_count(const LimeLexicon *lx) {
     return lx ? lx->op_count : 0;
 }

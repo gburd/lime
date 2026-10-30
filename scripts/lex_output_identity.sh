@@ -19,9 +19,9 @@ mkdir "$WORK/in"
 n=0
 for f in $(cd "$ROOT" && git ls-files '*.lex') "$@"; do
     case $f in /*) src=$f ;; *) src=$ROOT/$f ;; esac
-    # A scanner that uses %keyword_class / %operator_class is new output
+    # A scanner that uses %keyword_class / %operator_class / %runtime_rules is new output
     # by definition (an older lime rejects it); identity is about the rest.
-    if grep -q '^%\(keyword\|operator\)_class' "$src"; then
+    if grep -q '^%\(keyword_class\|operator_class\|runtime_rules\)' "$src"; then
         echo "skip (uses the class directives): $f"
         continue
     fi

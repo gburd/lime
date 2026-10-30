@@ -715,6 +715,60 @@ against the generated scanner on PostgreSQL's scanner
 actions) over the REL_18 regression SQL: identical token streams
 (`tests/test_lex_program.c`).  Numbers are in the B4 commit.
 
+**Extension lexical rules (`MOD_ADD_LEX_RULE`, `%runtime_rules`).**
+An extension adds a new literal syntax with no compiler:
+
+```c
+m.type = MOD_ADD_LEX_RULE;
+m.u.add_lex_rule.name    = "tmpl";
+m.u.add_lex_rule.pattern = "#\\{[^}]*\\}";   /* .lex regex syntax */
+m.u.add_lex_rule.token   = "TEMPLATE";         /* a terminal it also adds */
+m.u.add_lex_rule.action  = NULL;               /* optional host-linked hook */
+```
+
+`lime_lex_compose` compiles every such rule (sorted by name, so the
+result is a function of the rule set) into one in-process DFA program
+on the composed snapshot's lexicon, plus a per-state leading-byte set.
+A scanner generated with `%runtime_rules.` gets
+`FooLexSetRuntimeRules(lex, fn, cls)`; with
+`fn = lime_lexicon_ext_match` and `cls = lime_snapshot_lexicon(snap)`,
+after each base match LexFeedBytes asks for a **strictly longer**
+extension match.  The leading-byte test rejects almost every position
+before any DFA runs; a base token of equal length keeps winning, which
+is how flex resolves a rule appended at the end of the file.  The
+extension's action, if any, may return -1 to skip the text.  Compose
+fails on a bad regex, an unknown token, a duplicate rule name, an
+unescaped `/`, or a pattern that matches the empty string.
+
+The gate is emitted BEFORE the base match (its operands are already in
+registers there), xlead[] never holds NULL (a static all-zero table
+stands for "no extension rule in this state"), and everything past the
+one-byte test is an out-of-line, cold helper that redoes the base match
+itself.  Measured base cost (B5 commit): PostgreSQL's scanner over the
+REL_18 regression SQL, with an extension rule whose leading byte never
+occurs and with one on `#` (a PG operator byte, 474 times in the
+corpus): 0.995-1.001x the scanner without the hook compiled in, inside
+the 0.998-1.013x of a second, identical scanner (the code-layout noise
+floor).  Two earlier layouts measured 1.026-1.031x (gate after the base
+match, inline) and 1.037-1.042x (gate table copied into the lexer).
+
+**What an extension can and cannot add lexically**
+
+| can, at runtime, no compiler | how |
+|---|---|
+| keyword (reserved) | `MOD_ADD_TOKEN.lexeme` "connect" |
+| soft keyword | the same + `fallback_to` (parser `%fallback`) |
+| operator (longest match, `->>` vs `->`) | `MOD_ADD_TOKEN.lexeme` "->>" |
+| new literal syntax, any regex, any lexer state | `MOD_ADD_LEX_RULE` + `%runtime_rules` |
+| host-linked action on that syntax | `add_lex_rule.action` (a function the host links) |
+
+| cannot | why |
+|---|---|
+| run C code it ships as text | no compiler at runtime, by design |
+| add a lexer state, or change a base rule's action | states/actions are in the generated scanner; rules go into existing states only |
+| win a tie against a base rule | strictly-longer-only keeps base lexing unchanged |
+| change how the base lexes text it already matches longest | same rule |
+
 **Layout.** Open addressing, power-of-two slots at load factor <= 1/2,
 FNV-1a over the case-folded bytes, the full hash stored per slot so a
 probe rejects most misses without a string compare, and a max-length

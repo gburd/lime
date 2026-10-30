@@ -125,4 +125,29 @@ int lime_lex_emit_classify_h(const LimeLexSpec *spec, const char *prefix, FILE *
 int lime_lex_emit_classify_c(const LimeLexSpec *spec, const char *prefix, int n_rules,
                              FILE *out);
 
+/* ============================================================
+** B5: runtime extension rules (%runtime_rules.)
+** ============================================================
+**
+** With `%runtime_rules.` the scanner gets
+**
+**   typedef int (*<P>RuntimeRulesFn)(const void *cls, int ext_state,
+**                                    const char *text, size_t len,
+**                                    size_t base_len, size_t *out_len);
+**   typedef int (*<P>RuntimeStateFn)(const void *cls, const char *state,
+**                                    const unsigned char **lead);
+**   void <P>LexSetRuntimeRules(<P>Lexer *, <P>RuntimeRulesFn,
+**                              <P>RuntimeStateFn, const void *cls);
+**
+** The setter resolves, once per scanner state, an extension-state index
+** and a 256-byte leading-byte table.  LexFeedBytes then tests
+** lead[byte] inline before each token (one load when nothing can start
+** there) and only on a hit calls fn for a STRICTLY longer match than the
+** base scanner's.  fn returns a token code (emitted over *out_len bytes,
+** base action skipped), -2 (consume, emit nothing) or -1 (keep the base
+** match).  include/lime_lexer.h's lime_lexicon_ext_match /
+** lime_lexicon_ext_resolve have these signatures.  Without the directive
+** nothing is emitted (byte-identical output). */
+int lime_lex_emit_runtime_rules_h(const LimeLexSpec *spec, const char *prefix, FILE *out);
+
 #endif /* LIME_LEX_EMIT_H */

@@ -259,6 +259,158 @@ char *lime_snapshot_set_lexicon(ParserSnapshot *snap, const LimeLexItem *keyword
     return err;
 }
 
+/* ------------------------------------------------------------------ */
+/*  B5: extension lexical rules -> one DFA program                     */
+/* ------------------------------------------------------------------ */
+
+static int xr_cmp(const void *a, const void *b) {
+    const GrammarModification *x = *(const GrammarModification *const *)a;
+    const GrammarModification *y = *(const GrammarModification *const *)b;
+    return strcmp(x->u.add_lex_rule.name, y->u.add_lex_rule.name);
+}
+
+static const char *xr_state(const GrammarModification *m) {
+    return m->u.add_lex_rule.state ? m->u.add_lex_rule.state : "INITIAL";
+}
+
+static int ident_ok(const char *s) {
+    if (!s || !*s || (*s >= '0' && *s <= '9')) return 0;
+    for (; *s; s++)
+        if (!((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') || (*s >= '0' && *s <= '9') ||
+              *s == '_'))
+            return 0;
+    return 1;
+}
+
+/* Append to a growable string; returns 0 on OOM. */
+typedef struct {
+    char *p;
+    size_t n, cap;
+} Str;
+static int str_add(Str *b, const char *s) {
+    size_t k = strlen(s);
+    if (b->n + k + 1 > b->cap) {
+        size_t nc = (b->n + k + 1) * 2;
+        char *np = realloc(b->p, nc);
+        if (!np) return 0;
+        b->p = np;
+        b->cap = nc;
+    }
+    memcpy(b->p + b->n, s, k + 1);
+    b->n += k;
+    return 1;
+}
+
+/* Rules are sorted by name, so rule order (the tie break between two
+** extension rules matching the same length) is a function of the rule
+** SET.  Each distinct state gets an %state (inclusive: there is no
+** catch-all to exclude) and every rule is qualified with its state.
+** The generated text is ordinary .lex, compiled by the same in-process
+** pipeline as everything else (lime_lex_program_compile). */
+static char *build_ext(const ParserSnapshot *snap, LimeLexicon *lx, const GrammarModification **xr,
+                       uint32_t n) {
+    qsort(xr, n, sizeof *xr, xr_cmp);
+    for (uint32_t i = 0; i < n; i++) {
+        const GrammarModification *m = xr[i];
+        const char *nm = m->u.add_lex_rule.name;
+        if (!ident_ok(nm)) return fmt("lexicon: extension lex rule name '%s' is not an identifier", nm ? nm : "(null)");
+        if (i > 0 && strcmp(nm, xr[i - 1]->u.add_lex_rule.name) == 0)
+            return fmt("lexicon: extension lex rule '%s' declared twice", nm);
+        if (!ident_ok(xr_state(m))) return fmt("lexicon: lex rule %s: bad state name", nm);
+        const char *pat = m->u.add_lex_rule.pattern;
+        if (!pat || !*pat || strchr(pat, '\n')) return fmt("lexicon: lex rule %s: empty or multi-line pattern", nm);
+        for (const char *c = pat; *c; c++) /* an unescaped '/' would end the regex */
+            if (*c == '\\' && c[1]) c++;
+            else if (*c == '/') return fmt("lexicon: lex rule %s: escape '/' as \\/ in the pattern", nm);
+        int code = lime_snapshot_token_code(snap, m->u.add_lex_rule.token ? m->u.add_lex_rule.token : "");
+        if (code <= (int)snap->yy_first_token || (uint32_t)(code - snap->yy_first_token) >= snap->nterminal)
+            return fmt("lexicon: lex rule %s -> %s, which is not a terminal of the snapshot", nm,
+                       m->u.add_lex_rule.token ? m->u.add_lex_rule.token : "(null)");
+    }
+    /* distinct states, in first-use (= name) order */
+    char **states = calloc(n, sizeof *states);
+    uint32_t ns = 0;
+    if (!states) return oom();
+    for (uint32_t i = 0; i < n; i++) {
+        const char *st = xr_state(xr[i]);
+        uint32_t k = 0;
+        while (k < ns && strcmp(states[k], st) != 0) k++;
+        if (k == ns) states[ns++] = (char *)st;
+    }
+    Str t = { 0 };
+    int ok = str_add(&t, "%name_prefix LimeExt.\n");
+    for (uint32_t k = 0; ok && k < ns; k++)
+        if (strcmp(states[k], "INITIAL") != 0)
+            ok = str_add(&t, "%state ") && str_add(&t, states[k]) && str_add(&t, ".\n");
+    for (uint32_t i = 0; ok && i < n; i++) {
+        const GrammarModification *m = xr[i];
+        ok = str_add(&t, "<") && str_add(&t, xr_state(m)) && str_add(&t, "> rule ") &&
+             str_add(&t, m->u.add_lex_rule.name) && str_add(&t, " matches /") &&
+             str_add(&t, m->u.add_lex_rule.pattern) && str_add(&t, "/ { }\n");
+    }
+    if (!ok) {
+        free(t.p);
+        free(states);
+        return oom();
+    }
+    char *perr = NULL;
+    LimeLexProgram *prog = lime_lex_program_compile(t.p, t.n, &perr);
+    free(t.p);
+    if (!prog) {
+        free(states);
+        char *e = fmt("lexicon: extension lex rules do not compile: %s", perr ? perr : "?");
+        free(perr);
+        return e;
+    }
+    free(states);
+    /* ext state k == program state k (INITIAL first, then the %state
+    ** lines in order); names come from the program itself. */
+    ns = (uint32_t)lime_lex_program_state_count(prog);
+    lx->ext_prog = prog;
+    lx->ext_nrules = n;
+    lx->ext_nstates = ns;
+    lx->ext_state = calloc(ns, sizeof(char *));
+    lx->ext_lead = calloc(ns, sizeof *lx->ext_lead);
+    lx->ext_code = calloc(n, sizeof(int32_t));
+    lx->ext_action = calloc(n, sizeof *lx->ext_action);
+    lx->ext_action_user = calloc(n, sizeof(void *));
+    lx->ext_rule_name = calloc(n, sizeof(char *));
+    lx->ext_rule_pattern = calloc(n, sizeof(char *));
+    lx->ext_rule_token = calloc(n, sizeof(char *));
+    ok = lx->ext_state && lx->ext_lead && lx->ext_code && lx->ext_action && lx->ext_action_user &&
+         lx->ext_rule_name && lx->ext_rule_pattern && lx->ext_rule_token;
+    for (uint32_t k = 0; ok && k < ns; k++) {
+        lx->ext_state[k] = strdup(prog->state_names[k]);
+        ok = lx->ext_state[k] != NULL;
+    }
+    for (uint32_t k = 0; ok && k < ns; k++) {
+        /* leading bytes: transitions out of the program state's start */
+        const LimeLexProgState *ps = &prog->st[k];
+        for (int b = 0; ps->nstates > 0 && b < 256; b++)
+            lx->ext_lead[k][b] = ps->trans[ps->start][b] >= 0;
+    }
+    for (uint32_t i = 0; ok && i < n; i++) {
+        const GrammarModification *m = xr[i];
+        /* program rule i is xr[i]: same order (one rule per line) */
+        ok = strcmp(lime_lex_program_rule_name(prog, (int)i), m->u.add_lex_rule.name) == 0;
+        lx->ext_code[i] = lime_snapshot_token_code(snap, m->u.add_lex_rule.token);
+        lx->ext_action[i] = m->u.add_lex_rule.action;
+        lx->ext_action_user[i] = m->u.add_lex_rule.action_user;
+        lx->ext_rule_name[i] = strdup(m->u.add_lex_rule.name);
+        lx->ext_rule_pattern[i] = strdup(m->u.add_lex_rule.pattern);
+        lx->ext_rule_token[i] = strdup(m->u.add_lex_rule.token);
+        ok = ok && lx->ext_rule_name[i] && lx->ext_rule_pattern[i] && lx->ext_rule_token[i];
+    }
+    /* an extension rule that matches the empty string would fire everywhere */
+    for (uint32_t k = 0; ok && k < ns; k++) {
+        const LimeLexProgState *ps = &prog->st[k];
+        if (ps->nstates > 0 && ps->accept[ps->start] >= 0)
+            return fmt("lexicon: extension lex rule %s matches the empty string",
+                       lime_lex_program_rule_name(prog, ps->accept[ps->start]));
+    }
+    return ok ? NULL : oom();
+}
+
 /* A lexeme made only of identifier bytes is a keyword; anything else
 ** (punctuation) is an operator. */
 static unsigned lexeme_kind(const char *s) {
@@ -300,9 +452,24 @@ char *lime_lex_compose(ParserSnapshot *composed, const ParserSnapshot *base,
         err = pv_add(&pv, composed, lexeme_kind(lex), lex, strlen(lex), m->u.add_token.name,
                      flags);
     }
+    /* B5: extension lexical rules. */
+    const GrammarModification **xr = NULL;
+    uint32_t nxr = 0;
+    for (uint32_t i = 0; i < nmods && err == NULL; i++)
+        if (mods[i].type == MOD_ADD_LEX_RULE) nxr++;
+    if (err == NULL && nxr > 0) {
+        xr = malloc(nxr * sizeof *xr);
+        if (!xr) err = oom();
+        nxr = 0;
+        for (uint32_t i = 0; xr && i < nmods; i++)
+            if (mods[i].type == MOD_ADD_LEX_RULE) xr[nxr++] = &mods[i];
+    }
     LimeLexicon *lx = NULL;
-    if (err == NULL && pv.n > 0) err = build(&pv, flags, &lx);
+    if (err == NULL && (pv.n > 0 || nxr > 0)) err = build(&pv, flags, &lx);
     pv_free(&pv);
+    if (err == NULL && nxr > 0) err = build_ext(composed, lx, xr, nxr);
+    free(xr);
     if (err == NULL) attach(composed, lx);
+    else lime_lexicon_destroy(lx);
     return err;
 }

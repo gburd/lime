@@ -105,6 +105,25 @@ uint32_t lime_lexicon_operator_count(const LimeLexicon *lx);
 int lime_lexicon_classify(const void *lexicon, int kind, const char *text, size_t len,
                           size_t *out_len);
 
+/* Extension lexical rules (MOD_ADD_LEX_RULE, B5), for scanners generated
+** with `%runtime_rules.`: hand both functions and the lexicon to
+**   <P>LexSetRuntimeRules(lex, lime_lexicon_ext_match,
+**                         lime_lexicon_ext_resolve, lime_snapshot_lexicon(snap));
+** The setter calls ext_resolve once per scanner state: it returns that
+** state's index among the extension states (or -1: no extension rule
+** there) and its 256-entry leading-byte table, which the scanner tests
+** inline before every token.  Only when the byte can start an extension
+** match does the scanner call ext_match, which returns the token code
+** and *out_len when an extension rule matches STRICTLY more than
+** base_len bytes (LIME_LEX_EXT_SKIP when the rule's action said skip),
+** else -1.  The lead table belongs to the lexicon: keep the snapshot
+** for as long as the scanner uses it. */
+#define LIME_LEX_EXT_SKIP (-2)
+int lime_lexicon_ext_resolve(const void *lexicon, const char *state, const unsigned char **lead);
+int lime_lexicon_ext_match(const void *lexicon, int ext_state, const char *text, size_t len,
+                           size_t base_len, size_t *out_len);
+uint32_t lime_lexicon_ext_rule_count(const LimeLexicon *lx);
+
 /* Free a lexicon.  Called by the snapshot that owns it; hosts never
 ** need it unless they detach one by hand. */
 void lime_lexicon_free(LimeLexicon *lx);

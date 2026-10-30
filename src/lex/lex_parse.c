@@ -1014,6 +1014,11 @@ static void parse_one_top_level(Parser *p) {
         parse_class_rules(p, &p->spec->operator_class_rules, &p->spec->n_operator_class_rules,
                           "%operator_class");
         break;
+    case LIME_LEX_TOK_DIR_RUNTIME_RULES:
+        pull(p);
+        expect(p, LIME_LEX_TOK_DOT, "'.' after %runtime_rules");
+        p->spec->runtime_rules = 1;
+        break;
     case LIME_LEX_TOK_DIR_UNKNOWN:
         error_here(p, "unknown directive '%.*s'", (int)p->cur.length, p->cur.lexeme);
         pull(p);

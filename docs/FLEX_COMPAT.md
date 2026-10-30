@@ -40,6 +40,7 @@ here).
 | `%option` | Unsupported | 12/22 corpus scanners use it. |
 | Case-insensitive matching | Emulated | Only per keyword table: `%keyword_table t (case_insensitive)` (`tests/test_lex_parse.c`). No `%option caseless`. |
 | Keyword lookup in the identifier action (`ScanKeywordLookup`) | Supported, runtime | `%keyword_class ident.` offers each identifier match to the snapshot keyword table (`include/lime_lexer.h`), case-folded when the host asks; keywords added by extensions at runtime resolve with no regeneration (`tests/test_lex_classify.c`, `tests/test_kw_table.c`). |
+| Adding a rule (new literal syntax) after the scanner is built | Supported, runtime (Lime only) | flex needs a rebuild.  `%runtime_rules.` + `MOD_ADD_LEX_RULE`: an extension's regex is compiled in process and wins only when strictly longer than the base match, like a rule appended at the end of a `.l` (`tests/test_lex_ext_rule.c`, `tests/bench_lex_gate.c`). |
 | Fixed operator rules + `{operator}` re-classification (`"<="  return LESS_EQUALS;`) | Supported, runtime | `%operator_class op.` splits the match with the snapshot operator trie, longest match; checked against scan.l's operator rules on the PG regression SQL (`tests/test_op_trie.c`). |
 
 ## Action-body primitives (native lexer)

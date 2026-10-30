@@ -371,6 +371,20 @@ Skins that drive
 directly call
 .BI <P> _classify( fn ", cls, rule, text, len, &n" )
 after each match for the same decision.
+.TP
+.B %runtime_rules.
+Let rules that an extension adds at runtime
+.RB ( MOD_ADD_LEX_RULE )
+take part in matching.
+The scanner gets
+.BI <P> LexSetRuntimeRules( lex ", fn, cls" );
+with
+.B lime_lexicon_ext_match
+over a snapshot lexicon, each base match is offered a strictly
+longer extension match, which emits the extension's token instead.
+A per\-state leading\-byte set keeps the cost of a position no
+extension rule can start at to one table load.
+Without the directive the output is unchanged.
 .SS "Literal Buffers"
 .TP
 .B %literal_buffer

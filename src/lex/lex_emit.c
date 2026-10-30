@@ -476,6 +476,30 @@ int lime_lex_emit_classify_c(const LimeLexSpec *spec, const char *name_prefix, i
     return ferror(out) ? -1 : 0;
 }
 
+int lime_lex_emit_runtime_rules_h(const LimeLexSpec *spec, const char *name_prefix, FILE *out) {
+    if (!spec || !spec->runtime_rules) return 0;
+    const char *prefix = eff_prefix(name_prefix);
+    fprintf(out,
+            "/* ===== Runtime extension rules (%%runtime_rules) =====\n"
+            "** The setter resolves each state's leading-byte table once (resolve);\n"
+            "** LexFeedBytes tests it inline and, when the byte can start an\n"
+            "** extension match, asks fn for a strictly longer match than the\n"
+            "** base scanner's (e.g. lime_lexicon_ext_match/_resolve over a\n"
+            "** snapshot lexicon, include/lime_lexer.h).  fn returns a token code\n"
+            "** (emitted over *out_len bytes, base action skipped), -2 (consume,\n"
+            "** emit nothing) or -1 (keep the base match).  The lead tables belong\n"
+            "** to cls and must outlive their use. */\n"
+            "typedef int (*%sRuntimeRulesFn)(const void *cls, int ext_state,\n"
+            "                                const char *text, size_t len,\n"
+            "                                size_t base_len, size_t *out_len);\n"
+            "typedef int (*%sRuntimeStateFn)(const void *cls, const char *state,\n"
+            "                                const unsigned char **lead);\n"
+            "void %sLexSetRuntimeRules(%sLexer *yyl, %sRuntimeRulesFn fn,\n"
+            "                          %sRuntimeStateFn resolve, const void *cls);\n\n",
+            prefix, prefix, prefix, prefix, prefix, prefix);
+    return ferror(out) ? -1 : 0;
+}
+
 /* ============================================================
 ** Header emission
 ** ============================================================ */
@@ -772,6 +796,11 @@ int lime_lex_emit_h(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
 
     /* B3: runtime classification hook (nothing when no class rules). */
     if (lime_lex_emit_classify_h(spec, name_prefix, out) != 0) {
+        free(PREFIX);
+        return -1;
+    }
+    /* B5: runtime extension rules (nothing without %runtime_rules). */
+    if (lime_lex_emit_runtime_rules_h(spec, name_prefix, out) != 0) {
         free(PREFIX);
         return -1;
     }
@@ -1433,6 +1462,11 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
 
     /* ===== M3.3 + M3.5: push-driven runtime ===== */
     fprintf(out, "/* ===== Push-driven runtime (M3.3 + M3.5) ===== */\n\n");
+    if (spec && spec->runtime_rules) {
+        fprintf(out, "/* B5: the leading-byte gate of a state with no extension rule. */\n"
+                     "static const unsigned char %s_xnone[256];\n\n",
+                prefix);
+    }
     fprintf(out,
             "/* Buffer stack frame.  Caller-supplied bytes are NOT copied\n"
             "** -- the caller retains ownership.  pos is the next-byte-to-\n"
@@ -1453,6 +1487,14 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
         fprintf(out, "    %sClassifyFn classify;     /* B3: runtime classifier */\n"
                      "    const void  *classify_cls;\n",
                 prefix);
+    }
+    if (spec && spec->runtime_rules) {
+        int ns = c->n_states > 0 ? c->n_states : 1;
+        fprintf(out, "    %sRuntimeRulesFn xrules;   /* B5: runtime extension rules */\n"
+                     "    const void  *xrules_cls;\n"
+                     "    int          xstate[%d];   /* extension state per scanner state */\n"
+                     "    const unsigned char *xlead[%d]; /* leading-byte gate, never NULL */\n",
+                prefix, ns, ns);
     }
     fprintf(out, "};\n\n");
 
@@ -1477,6 +1519,18 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
         fprintf(out, "    yyl->classify = 0;\n"
                      "    yyl->classify_cls = 0;\n");
     }
+    if (spec && spec->runtime_rules) {
+        fprintf(out, "    yyl->xrules = 0;\n"
+                     "    yyl->xrules_cls = 0;\n"
+                     "    {\n"
+                     "        int _i;\n"
+                     "        for (_i = 0; _i < %d; _i++) {\n"
+                     "            yyl->xstate[_i] = -1;\n"
+                     "            yyl->xlead[_i] = %s_xnone;\n"
+                     "        }\n"
+                     "    }\n",
+                c->n_states > 0 ? c->n_states : 1, prefix);
+    }
     fprintf(out, "    return yyl;\n"
                  "}\n\n");
     fprintf(out,
@@ -1494,6 +1548,52 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
     if (lime_lex_emit_classify_c(spec, name_prefix, n_rules, out) != 0) {
         free(PREFIX);
         return -1;
+    }
+    if (spec && spec->runtime_rules) {
+        fprintf(out, "/* ===== Runtime extension rules (B5) ===== */\n"
+                     "static const char *const %s_state_name[%d] = {",
+                prefix, c->n_states > 0 ? c->n_states : 1);
+        for (int i = 0; i < c->n_states; i++)
+            fprintf(out, "%s\"%s\"", i ? ", " : " ", c->states[i].state_name);
+        if (c->n_states == 0) fprintf(out, " \"INITIAL\"");
+        fprintf(out,
+                " };\n\n"
+                "void %sLexSetRuntimeRules(%sLexer *yyl, %sRuntimeRulesFn fn,\n"
+                "                          %sRuntimeStateFn resolve, const void *cls) {\n"
+                "    int i;\n"
+                "    if (!yyl) return;\n"
+                "    yyl->xrules = fn;\n"
+                "    yyl->xrules_cls = cls;\n"
+                "    for (i = 0; i < %d; i++) {\n"
+                "        const unsigned char *lead = 0;\n"
+                "        int es = (fn && resolve) ? resolve(cls, %s_state_name[i], &lead) : -1;\n"
+                "        yyl->xstate[i] = es;\n"
+                "        yyl->xlead[i] = (es >= 0 && lead) ? lead : %s_xnone;\n"
+                "    }\n"
+                "}\n\n",
+                prefix, prefix, prefix, prefix, c->n_states > 0 ? c->n_states : 1, prefix, prefix);
+        /* The rare path: ask the hook, take a strictly longer match.
+        ** Kept out of LexFeedBytes so the gate costs one load inline. */
+        fprintf(out,
+                "#if defined(__GNUC__) || defined(__clang__)\n"
+                "__attribute__((noinline, cold))\n"
+                "#endif\n"
+                "static int %s_xrule(%sLexer *yyl, int top, size_t fpos, size_t flen,\n"
+                "                    const char *fbytes, %sEmitFn emit, void *user) {\n"
+                "    int rule = -1;\n"
+                "    size_t base_len = 0, x_len = 0;\n"
+                "    int x_code;\n"
+                "    if (!%s_match(yyl->state, fbytes + fpos, flen - fpos, &rule, &base_len))\n"
+                "        base_len = 0;\n"
+                "    x_code = yyl->xrules(yyl->xrules_cls, yyl->xstate[yyl->state],\n"
+                "                         fbytes + fpos, flen - fpos, base_len, &x_len);\n"
+                "    if (x_code < -2 || x_code == -1 || x_len <= base_len || x_len > flen - fpos)\n"
+                "        return 0; /* the caller runs the base match as usual */\n"
+                "    yyl->stack[top].pos = fpos + x_len;\n"
+                "    if (x_code >= 0 && emit) emit(user, x_code, fbytes + fpos, x_len);\n"
+                "    return 1;\n"
+                "}\n\n",
+                prefix, prefix, prefix, prefix);
     }
 
     /* M3.4: action-body inlining + LEX_* macros.
@@ -1822,11 +1922,28 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
             "            yyl->depth--;\n"
             "            continue;\n"
             "        }\n"
-            "        fbytes = yyl->stack[top].bytes;\n"
+            "        fbytes = yyl->stack[top].bytes;\n");
+    if (spec && spec->runtime_rules) {
+        /* Before the base match: fbytes/fpos are live here as its
+        ** arguments, so the gate is three loads and a branch.  xlead[]
+        ** always points at a table (all zero when no extension rule
+        ** applies), so there is no NULL test. */
+        fprintf(out,
+                "        /* B5: runtime extension rules; one table load when no\n"
+                "        ** rule can start at this byte, the rest out of line. */\n"
+                "        if ((unsigned)yyl->state < %du\n"
+                "            && yyl->xlead[yyl->state][(unsigned char)fbytes[fpos]]\n"
+                "            && %s_xrule(yyl, top, fpos, flen, fbytes, emit, user))\n"
+                "            continue;\n",
+                c->n_states > 0 ? c->n_states : 1, prefix);
+    }
+    fprintf(out,
             "        rule = -1;\n"
             "        consumed = 0;\n"
             "        ok = %s_match(yyl->state, fbytes + fpos, flen - fpos,\n"
-            "                          &rule, &consumed);\n"
+            "                          &rule, &consumed);\n",
+            prefix);
+    fprintf(out,
             "        if (!ok || consumed == 0) {\n"
             "            yyl->err_msg = \"unmatched input\";\n"
             "            _result = %s_LEX_ERROR;\n"
@@ -1844,7 +1961,7 @@ int lime_lex_emit_c(const LimeLexCompiled *c, const LimeLexSpec *spec, const cha
             "        lex = yyl;\n"
             "        state = lex->state;\n"
             "        _action_emitted = 0;\n",
-            prefix, PREFIX);
+            PREFIX);
     if (lime_lex_has_classes(spec)) {
         fprintf(out,
                 "        /* B3: offer a class-rule match to the runtime classifier. */\n"

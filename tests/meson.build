@@ -2541,6 +2541,23 @@ if host_machine.system() != 'windows'
   )
   test('lex_classify', test_lex_classify)
 
+  # Track B5: a new literal syntax added at runtime (MOD_ADD_LEX_RULE +
+  # %runtime_rules), together with a keyword, a soft keyword and an
+  # operator, on one build-time-generated scanner.
+  test_lex_ext_rule_gen = custom_target('test_lex_ext_rule_lex',
+    input   : ['test_lex_ext_rule_grammar.lex'],
+    output  : ['test_lex_ext_rule_grammar_lex.c', 'test_lex_ext_rule_grammar_lex.h'],
+    command : [lime_exe, '-X', '-d@OUTDIR@', '@INPUT@'],
+  )
+  test_lex_ext_rule = executable('test_lex_ext_rule',
+    'test_lex_ext_rule.c',
+    test_lex_ext_rule_gen,
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, lime_compiler_dep],
+    export_dynamic : true,
+  )
+  test('lex_ext_rule', test_lex_ext_rule)
+
   # Track B4: the runtime DFA interpreter vs the lime -X generated scanner
   # on PostgreSQL's scanner (tests/pg_scan_core.lex = the PG Lime port's
   # scan.lex with PG-free actions).  meson runs it on the in-tree SQL;
@@ -2557,6 +2574,50 @@ if host_machine.system() != 'windows'
     dependencies : [lime_parser_dep, lime_compiler_dep],
     export_dynamic : true,
   )
+  # Track B5 bench + check: the same PG scanner with %runtime_rules,
+  # base throughput with and without an extension rule loaded.  The
+  # .lex is pg_scan_core.lex with the prefix changed to Gate and the
+  # directive added (generated here, so the two cannot drift).
+  pg_scan_gate_src = custom_target('pg_scan_gate_src',
+    input : ['pg_scan_core.lex'],
+    output : 'pg_scan_gate.lex',
+    command : ['sed', '-e', 's/^%name_prefix Core[.]/%name_prefix Gate./',
+               '-e', '/^%name_prefix Gate[.]/a %runtime_rules.', '@INPUT@'],
+    capture : true,
+  )
+  pg_scan_gate_gen = custom_target('pg_scan_gate_lex',
+    input   : [pg_scan_gate_src],
+    output  : ['pg_scan_gate_lex.c', 'pg_scan_gate_lex.h'],
+    command : [lime_exe, '-X', '-d@OUTDIR@', '@INPUT@'],
+  )
+  # A/B layout control: the plain scanner again under another prefix (no
+  # directive), so "plain vs gate" can be read against "plain vs twin".
+  pg_scan_twin_src = custom_target('pg_scan_twin_src',
+    input : ['pg_scan_core.lex'],
+    output : 'pg_scan_twin.lex',
+    command : ['sed', '-e', 's/^%name_prefix Core[.]/%name_prefix Twin./', '@INPUT@'],
+    capture : true,
+  )
+  pg_scan_twin_gen = custom_target('pg_scan_twin_lex',
+    input   : [pg_scan_twin_src],
+    output  : ['pg_scan_twin_lex.c', 'pg_scan_twin_lex.h'],
+    command : [lime_exe, '-X', '-d@OUTDIR@', '@INPUT@'],
+  )
+  bench_lex_gate = executable('bench_lex_gate',
+    'bench_lex_gate.c',
+    pg_scan_core_gen,
+    pg_scan_gate_gen,
+    pg_scan_twin_gen,
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, lime_compiler_dep],
+    export_dynamic : true,
+  )
+  test('lex_gate_agree', bench_lex_gate,
+    args : [meson.project_source_root() / 'examples/pg/tests/select_basic.sql',
+            meson.project_source_root() / 'examples/pg/tests/select_columns.sql',
+            meson.project_source_root() / 'examples/pg/tests/select_join.sql',
+            meson.project_source_root() / 'examples/pg/pg_grammar.lime'])
+
   test('lex_program', test_lex_program,
     args : [meson.project_source_root() / 'examples/pg/tests/select_basic.sql',
             meson.project_source_root() / 'examples/pg/tests/select_columns.sql',

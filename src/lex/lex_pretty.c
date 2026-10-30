@@ -362,6 +362,7 @@ char *lime_lex_spec_to_text(const LimeLexSpec *spec) {
                      spec->n_keyword_class_rules);
     emit_class_rules(&b, "%operator_class ", spec->operator_class_rules,
                      spec->n_operator_class_rules);
+    if (spec->runtime_rules) buf_cstr(&b, "%runtime_rules.\n");
     emit_rule_list(&b, spec->rules);
 
     if (!b.buf) {

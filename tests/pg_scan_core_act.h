@@ -60,7 +60,7 @@ enum {
 };
 
 /* scan.c's scan_lex_op_keep, verbatim logic. */
-static size_t pgsc_op_keep(const char *text, size_t len) {
+static inline size_t pgsc_op_keep(const char *text, size_t len) {
     const char *slashstar = NULL, *dashdash = NULL;
     size_t nchars = len;
     for (size_t i = 0; i + 1 < len; i++) {
@@ -85,11 +85,11 @@ static size_t pgsc_op_keep(const char *text, size_t len) {
     return nchars;
 }
 
-static int pgsc_is_surrogate_first(unsigned long c) {
+static inline int pgsc_is_surrogate_first(unsigned long c) {
     return c >= 0xD800 && c <= 0xDBFF;
 }
 
-static unsigned long pgsc_hex(const char *s, size_t n) {
+static inline unsigned long pgsc_hex(const char *s, size_t n) {
     unsigned long v = 0;
     for (size_t i = 0; i < n; i++) {
         char c = s[i];
@@ -103,7 +103,7 @@ static unsigned long pgsc_hex(const char *s, size_t n) {
 /* Run the action for `rule` on text[0..len) (len = 0 and text = end of
 ** input for an <<EOF>> rule) in `state`.  Fills *o.  The token offsets
 ** are relative to cx->base. */
-static void pgsc_action(PgscCtx *cx, int rule, const char *text, size_t len, int state,
+static inline void pgsc_action(PgscCtx *cx, int rule, const char *text, size_t len, int state,
                         PgscOut *o) {
     size_t at = (size_t)(text - cx->base);
     o->keep = len;

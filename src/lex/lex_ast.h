@@ -145,6 +145,12 @@ struct LimeLexSpec {
     int n_keyword_class_rules;
     char **operator_class_rules;
     int n_operator_class_rules;
+
+    /* Runtime extension rules (Track B5): `%runtime_rules.` makes the
+    ** emitted scanner ask a host hook (lime_lexicon_ext_match over a
+    ** snapshot lexicon) for a longer match from rules an extension added
+    ** at runtime (MOD_ADD_LEX_RULE).  0 = byte-identical output. */
+    int runtime_rules;
 };
 
 /* AST allocation / release.  Every alloc returns a zeroed node

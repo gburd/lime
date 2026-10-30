@@ -16,6 +16,7 @@
 #ifndef EXTENSION_H
 #define EXTENSION_H
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include "lime_threads.h"
@@ -113,6 +114,7 @@ typedef enum GrammarModType {
     MOD_MODIFY_PRECEDENCE, /* Change precedence of an existing rule */
     MOD_ADD_TYPE,          /* Add a new non-terminal type           */
     MOD_REMOVE_RULE,       /* Remove an existing rule               */
+    MOD_ADD_LEX_RULE,      /* Add a lexical pattern (Track B5)      */
 } GrammarModType;
 
 /*
@@ -195,6 +197,28 @@ typedef struct GrammarModification {
             const char *lhs;
             int rule_index; /* Index of rule to remove, or -1 for all */
         } remove_rule;
+
+        /* MOD_ADD_LEX_RULE: a new lexical syntax, added at runtime with
+        ** no compiler (include/lime_lexer.h, docs/LEXER_DESIGN.md).
+        ** lime_lex_compose compiles `pattern` (Lime .lex regex syntax,
+        ** no slashes) into the composed snapshot's extension DFA.  A
+        ** scanner generated with `%runtime_rules.` tries it only when
+        ** the input byte can start an extension match, and takes it
+        ** only when it is STRICTLY longer than the base scanner's match
+        ** (a base token of equal length keeps winning, as flex resolves
+        ** a rule appended at the end).  On a match it emits `token`'s
+        ** code over the matched text, after calling `action` when set. */
+        struct {
+            const char *name;    /* rule name, unique per extension set */
+            const char *state;   /* lexer state; NULL = "INITIAL"       */
+            const char *pattern; /* regex, e.g. "#\\{[^}]*\\}"      */
+            const char *token;   /* terminal emitted on a match         */
+            /* Optional host-linked hook.  Called with the matched text;
+            ** returns the token code to emit (normally `code`), or -1 to
+            ** skip the text (like LEX_SKIP). */
+            int (*action)(void *user, int code, const char *text, size_t len);
+            void *action_user;
+        } add_lex_rule;
     } u;
 } GrammarModification;
 
