@@ -9933,6 +9933,7 @@ static const char *resolve_extends_path(const char *current_file,
 ** case: a name given to %token/%left/%right/%nonassoc is a terminal,
 ** every other name is a nonterminal.
 */
+PRIVATE char *append_str(const char *zText, int n, int p1, int p2);
 struct yacc_rd {
   struct pstate *psp;
   const char *filename;
@@ -9989,6 +9990,9 @@ static void yacc_error(struct yacc_rd *r, const char *fmt, const char *arg){
 ** symbols start as NONTERMINAL; declarations flip them to TERMINAL. */
 static struct symbol *yacc_symbol(const char *name, int is_terminal){
   int fresh = Symbol_find(name)==0;
+  /* Lemon's `error` symbol is indexed among the nonterminals (it is
+  ** shifted through the goto table); keep that for yacc input too. */
+  if( strcmp(name,"error")==0 ) is_terminal = 0;
   struct symbol *sp = Symbol_new(name);
   if( fresh ){
     /* Symbol_new guessed from the first letter; yacc decides by
@@ -10093,6 +10097,180 @@ static void yacc_declarations(struct yacc_rd *r, char *buf){
   }
 }
 
+/* Scan a `{ ... }` action starting at r->cp (which points at '{').
+** Returns the body (between the braces, NUL-terminated copy) and
+** leaves r->cp after the closing brace.  Skips strings, character
+** constants and comments so braces inside them do not count. */
+static char *yacc_scan_action(struct yacc_rd *r){
+  char *start = r->cp + 1, *p = start, *body;
+  int level = 1;
+  while( *p ){
+    char c = *p;
+    if( c=='\n' ){ r->lineno++; p++; continue; }
+    if( c=='"' || c=='\'' ){
+      p++;
+      while( *p && *p!=c ){
+        if( *p=='\\' && p[1] ){ if( p[1]=='\n' ) r->lineno++; p++; }
+        else if( *p=='\n' ) r->lineno++;
+        p++;
+      }
+      if( *p ) p++;
+      continue;
+    }
+    if( c=='/' && p[1]=='*' ){
+      p += 2;
+      while( *p && !(p[0]=='*' && p[1]=='/') ){ if( *p=='\n' ) r->lineno++; p++; }
+      if( *p ) p += 2;
+      continue;
+    }
+    if( c=='/' && p[1]=='/' ){
+      while( *p && *p!='\n' ) p++;
+      continue;
+    }
+    if( c=='{' ) level++;
+    if( c=='}' && --level==0 ) break;
+    p++;
+  }
+  if( *p==0 ){
+    yacc_error(r, "%s", "action is not closed by a '}'");
+    r->cp = p;
+    return 0;
+  }
+  body = (char*)lime_malloc((size_t)(p - start) + 1);
+  MemoryCheck(body);
+  memcpy(body, start, (size_t)(p - start));
+  body[p - start] = 0;
+  r->cp = p + 1;
+  return body;
+}
+
+/* Translate yacc's $$ / $N / $<t>N / @$ / @N in an action body into the
+** stack references Lime's per-rule functions use.  `m` is the number of
+** symbols to the left of the action ($m is yymsp[0]); `rhs` holds them.
+** Every symbol's value lives in yy0 (YYSTYPE), as on bison's stack;
+** with %union, a typed symbol's $N reads its union member.
+** Sets *uses_lhs when $$ appears. */
+/* append_str() expands "%d"; user C text must be copied raw, so feed
+** it one byte at a time (a lone byte never matches "%d"). */
+static void yacc_raw(const char *z, int n){
+  while( n-- > 0 ) append_str(z++, 1, 0, 0);
+}
+
+static char *yacc_translate(struct yacc_rd *r, const char *body, int line,
+                            struct symbol *lhs, struct symbol **rhs, int m,
+                            int *uses_lhs){
+  struct lime *gp = r->psp->gp;
+  const char *p = body;
+  char num[64];
+  *uses_lhs = 0;
+  append_str(0,0,0,0);
+  while( *p ){
+    char c = *p;
+    if( c=='"' || c=='\'' ){
+      const char *q = p + 1;
+      while( *q && *q!=c ){ if( *q=='\\' && q[1] ) q++; q++; }
+      if( *q ) q++;
+      yacc_raw(p, (int)(q - p));
+      p = q;
+      continue;
+    }
+    if( c=='/' && p[1]=='*' ){
+      const char *q = strstr(p + 2, "*/");
+      q = q ? q + 2 : p + strlen(p);
+      yacc_raw(p, (int)(q - p));
+      p = q;
+      continue;
+    }
+    if( c=='/' && p[1]=='/' ){
+      const char *q = p;
+      while( *q && *q!='\n' ) q++;
+      yacc_raw(p, (int)(q - p));
+      p = q;
+      continue;
+    }
+    if( (c=='$' || c=='@') && p[1]!=0 ){
+      const char *q = p + 1;
+      const char *tag = 0;
+      int taglen = 0;
+      if( c=='$' && *q=='<' ){
+        tag = q + 1;
+        while( *q && *q!='>' ) q++;
+        if( *q==0 ){ yacc_raw(p, 1); p++; continue; }
+        taglen = (int)(q - tag);
+        q++;
+      }
+      if( *q=='$' ){
+        if( c=='$' ){
+          *uses_lhs = 1;
+          append_str("yylhsminor.yy0", 0, 0, 0);
+          if( gp->union_body ){
+            if( tag ){
+              append_str(".", 1, 0, 0); yacc_raw(tag, taglen);
+            }else if( lhs->union_field ){
+              append_str(".", 1, 0, 0); append_str(lhs->union_field, 0, 0, 0);
+            }else{
+              ErrorMsg(r->filename, line, "$$ of \"%s\" has no declared "
+                       "type", lhs->name);
+              r->psp->errorcnt++;
+            }
+          }
+        }else{
+          gp->has_locations = 1;
+          append_str("yyloc_lhs", 0, 0, 0);
+        }
+        p = q + 1;
+        continue;
+      }
+      if( ISDIGIT(*q) || (*q=='-' && ISDIGIT(q[1])) ){
+        int k = atoi(q);
+        if( *q=='-' ) q++;
+        while( ISDIGIT(*q) ) q++;
+        if( k>m ){
+          lemon_sprintf(num, "%d", k);
+          ErrorMsg(r->filename, line, "%c%s exceeds the number of symbols "
+                   "before this action in a rule for \"%s\"", c, num,
+                   lhs->name);
+          r->psp->errorcnt++;
+        }
+        lemon_sprintf(num, "yymsp[%d]", k - m);
+        append_str(num, 0, 0, 0);
+        if( c=='@' ){
+          gp->has_locations = 1;
+          append_str(".yyloc", 0, 0, 0);
+        }else{
+          append_str(".minor.yy0", 0, 0, 0);
+          if( gp->union_body ){
+            const char *f = 0;
+            if( tag ){
+              append_str(".", 1, 0, 0); yacc_raw(tag, taglen);
+            }else if( k>=1 && k<=m && (f = rhs[k-1]->union_field)!=0 ){
+              append_str(".", 1, 0, 0); append_str(f, 0, 0, 0);
+            }else{
+              lemon_sprintf(num, "%d", k);
+              ErrorMsg(r->filename, line, "$%s of \"%s\" has no declared "
+                       "type", num, lhs->name);
+              r->psp->errorcnt++;
+            }
+          }
+        }
+        p = q;
+        continue;
+      }
+      if( c=='$' && (ISALPHA(*q) || *q=='_' || *q=='[') ){
+        ErrorMsg(r->filename, line, "named reference \"$%c...\" is not "
+                 "supported by Lime's yacc front end yet; use $N", *q);
+        r->psp->errorcnt++;
+      }
+    }
+    yacc_raw(p, 1);
+    p++;
+  }
+  {
+    char *res = append_str(0,0,0,0);
+    return (char*)Strsafe(res ? res : "");
+  }
+}
+
 /* Commit one alternative: lhs ::= rhs[0..nrhs-1].  Same allocation and
 ** list linking as commit_current_rule(), minus %extends/%override. */
 static void yacc_commit_rule(struct yacc_rd *r, struct symbol *lhs,
@@ -10129,12 +10307,82 @@ static void yacc_commit_rule(struct yacc_rd *r, struct symbol *lhs,
   psp->prevrule = rp;
 }
 
+/* One alternative being read.  An action is held in `act` until the
+** next item shows whether it is the final action or a mid-rule one. */
+struct yacc_alt {
+  struct symbol *lhs;
+  struct symbol *rhs[MAXRHS];
+  int nrhs;
+  char *act;            /* Pending action body, or NULL */
+  int actline;
+  struct symbol *prec;  /* %prec symbol, or NULL */
+  int line;
+};
+
+/* Attach a translated action to rule rp.  $$ is a local (yylhsminor)
+** that starts as $1 and is pushed when the action ends, as in bison;
+** without $$ the slot already holds $1. */
+static void yacc_set_action(struct yacc_rd *r, struct rule *rp,
+                            const char *body, int line,
+                            struct symbol **ctx, int m){
+  int uses_lhs = 0;
+  char *code = yacc_translate(r, body, line, rp->lhs, ctx, m, &uses_lhs);
+  if( uses_lhs ){
+    char pre[80], post[80];
+    int n = rp->nrhs;
+    pre[0] = 0;
+    if( n>0 ) lemon_sprintf(pre, "yylhsminor.yy0 = yymsp[%d].minor.yy0;", 1-n);
+    lemon_sprintf(post, "\n  yymsp[%d].minor.yy0 = yylhsminor.yy0;", 1-n);
+    append_str(0,0,0,0);
+    append_str(pre,0,0,0);
+    yacc_raw(code, (int)strlen(code));
+    append_str(post,0,0,0);
+    code = (char*)Strsafe(append_str(0,0,0,0));
+  }
+  rp->code = code;
+  rp->line = line;
+  rp->noCode = 0;
+}
+
+/* A pending action followed by more symbols is a mid-rule action:
+** bison turns it into `$@N : %empty { action }` and puts $@N here. */
+static void yacc_flush_midrule(struct yacc_rd *r, struct yacc_alt *a){
+  static int nmid = 0;
+  char name[32];
+  struct symbol *mid;
+  if( a->act==0 ) return;
+  lemon_sprintf(name, "$@%d", ++nmid);
+  mid = yacc_symbol(name, 0);
+  mid->union_field = 0;
+  yacc_commit_rule(r, mid, 0, 0, a->actline);
+  yacc_set_action(r, r->psp->prevrule, a->act, a->actline, a->rhs, a->nrhs);
+  lime_free(a->act);
+  a->act = 0;
+  if( a->nrhs>=MAXRHS ){
+    yacc_error(r, "too many symbols on the right-hand side of a rule for "
+               "\"%s\"", a->lhs->name);
+    return;
+  }
+  a->rhs[a->nrhs++] = mid;
+}
+
+static void yacc_finish_alt(struct yacc_rd *r, struct yacc_alt *a){
+  struct rule *rp;
+  yacc_commit_rule(r, a->lhs, a->rhs, a->nrhs, a->line);
+  rp = r->psp->prevrule;
+  rp->precsym = a->prec;
+  if( a->act ){
+    yacc_set_action(r, rp, a->act, a->actline, a->rhs, a->nrhs);
+    lime_free(a->act);
+    a->act = 0;
+  }
+}
+
 static void yacc_rules(struct yacc_rd *r){
   struct pstate *psp = r->psp;
-  struct symbol *rhs[MAXRHS];
+  struct yacc_alt alt;
   for(;;){
     struct symbol *lhs;
-    int line;
     yacc_skip_ws(r);
     if( *r->cp==0 ) return;
     if( r->cp[0]=='%' && r->cp[1]=='%' ){ r->cp += 2; return; }
@@ -10159,8 +10407,9 @@ static void yacc_rules(struct yacc_rd *r){
     /* Alternatives, separated by '|', ended by ';' or by the next
     ** `name :` (yacc makes the ';' optional). */
     for(;;){
-      int nrhs = 0;
-      line = r->lineno;
+      memset(&alt, 0, sizeof(alt));
+      alt.lhs = lhs;
+      alt.line = r->lineno;
       for(;;){
         yacc_skip_ws(r);
         if( ISALPHA(*r->cp) || *r->cp=='_' ){
@@ -10175,24 +10424,51 @@ static void yacc_rules(struct yacc_rd *r){
             r->lineno = saveline;
             break;
           }
-          if( nrhs>=MAXRHS ){
+          yacc_flush_midrule(r, &alt);
+          if( alt.nrhs>=MAXRHS ){
             yacc_error(r, "too many symbols on the right-hand side of a "
                        "rule for \"%s\"", lhs->name);
           }else{
-            rhs[nrhs++] = yacc_symbol(name, 0);
+            alt.rhs[alt.nrhs++] = yacc_symbol(name, 0);
+          }
+          continue;
+        }
+        if( *r->cp=='{' ){
+          int line = r->lineno;
+          char *body;
+          yacc_flush_midrule(r, &alt);  /* two actions in a row */
+          body = yacc_scan_action(r);
+          if( body ){ alt.act = body; alt.actline = line; }
+          continue;
+        }
+        if( r->cp[0]=='%' && ISALPHA(r->cp[1]) ){
+          const char *kw;
+          r->cp++;
+          kw = yacc_ident(r);
+          if( strcmp(kw,"prec")==0 ){
+            yacc_skip_ws(r);
+            if( ISALPHA(*r->cp) || *r->cp=='_' ){
+              alt.prec = yacc_symbol(yacc_ident(r), 1);
+            }else{
+              yacc_error(r, "%s", "%prec must be followed by a token name");
+            }
+          }else if( strcmp(kw,"empty")==0 ){
+            /* bison's explicit empty-rule marker: nothing to add. */
+          }else{
+            yacc_error(r, "\"%%%s\" in a rule is not supported by Lime's "
+                       "yacc front end", kw);
           }
           continue;
         }
         break;
       }
-      yacc_commit_rule(r, lhs, rhs, nrhs, line);
+      yacc_finish_alt(r, &alt);
       if( *r->cp=='|' ){ r->cp++; continue; }
       if( *r->cp==';' ){ r->cp++; }
       else if( !(ISALPHA(*r->cp) || *r->cp=='_' || *r->cp==0
                  || (r->cp[0]=='%' && r->cp[1]=='%')) ){
         char bad[2] = { *r->cp, 0 };
-        yacc_error(r, "unexpected \"%s\" in a yacc rule (actions are not "
-                   "supported by Lime's yacc front end yet)", bad);
+        yacc_error(r, "unexpected \"%s\" in a yacc rule", bad);
         r->cp++;
       }
       break;
@@ -10216,6 +10492,9 @@ static void yacc_parse_buffer(struct pstate *psp, char *buf,
   gp->nrule = 0;
   yacc_declarations(&rd, buf);
   if( psp->errorcnt ) return;
+  /* yacc's YYSTYPE is int unless %union or api.value.type says
+  ** otherwise; every symbol's value lives in that one type (yy0). */
+  if( gp->union_body==0 && gp->tokentype==0 ) gp->tokentype = "int";
   yacc_rules(&rd);
   /* Anything after the second %% is the epilogue (not emitted yet). */
   if( psp->errorcnt || psp->firstrule==0 ) return;
