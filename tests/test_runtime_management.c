@@ -313,6 +313,7 @@ static void test_add_static_null_args(void) {
     PASS();
 }
 
+#ifdef LIME_PLUGIN_LOADER /* parser_op_add_dynamic is in the opt-in loader */
 static void test_add_dynamic_null_args(void) {
     TEST("add_dynamic: NULL arguments");
     ParserOpResult r = parser_op_add_dynamic(NULL, "/foo.so", NULL, NULL);
@@ -361,6 +362,8 @@ static void test_add_dynamic_nonexistent(void) {
     parser_manager_destroy(mgr);
     PASS();
 }
+
+#endif
 
 /* ================================================================== */
 /*  Remove operation tests                                             */
@@ -1229,8 +1232,10 @@ int main(void) {
     test_add_static_null_grammar();
     test_add_static_activation_failure_rollback();
     test_add_static_null_args();
+#ifdef LIME_PLUGIN_LOADER
     test_add_dynamic_null_args();
     test_add_dynamic_nonexistent();
+#endif
 
     printf("\n[Remove Operations]\n");
     test_remove_inactive_plugin();

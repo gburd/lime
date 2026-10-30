@@ -3,22 +3,21 @@
 ** Phase 3 of the in-process LALR rebuild library.  Adds the public
 ** function lime_compile_grammar_in_process(text, len, &snap, &err)
 ** which takes grammar text and produces a ParserSnapshot directly
-** in-process, bypassing the lime + cc + dlopen subprocess pipeline
-** used today by lime_compile_grammar_text() in src/snapshot_create.c.
+** in-process.  (lime_compile_grammar_text() in src/snapshot_create.c is
+** now a thin wrapper over it; there is no subprocess pipeline.)
 **
 ** Sub-tests (8 total):
 **   1. basic_compile           - calc grammar -> snap, drive 1+2*3
 **   2. error_syntax            - malformed grammar -> NULL snap, error
 **   3. error_conflict          - unresolved LALR conflict surfaces
 **   4. error_bad_directive     - %unknown_directive -> error
-**   5. functional_equivalence  - in-process vs subprocess parse results
-**                                across a 6-stream test corpus.  Skipped
-**                                when LIME_BIN/`lime` is unavailable.
+**   5. functional_equivalence  - lime_compile_grammar_text (the public
+**                                wrapper) vs the direct call agree on a
+**                                6-stream corpus.
 **   6. isolation               - back-to-back compiles produce
 **                                independently-parsing snapshots.
 **   7. perf_smoke              - 100 compiles in a tight loop;
-**                                reports ms/compile so a regression
-**                                vs the subprocess path is obvious.
+**                                reports ms/compile.
 **   8. bad_arguments           - NULL/zero-length args rejected cleanly.
 **
 ** Build: -DLIME_TEST_HARNESS -DLIME_HAVE_SNAPSHOT_BUILD ; #include "../lime.c"
@@ -72,7 +71,7 @@ static int n_fail = 0;
     }                                                                   \
 } while (0)
 
-/* Forward decl for the subprocess path used by test 5. */
+/* The public wrapper (src/snapshot_create.c, compiled into this test). */
 extern ParserSnapshot *lime_compile_grammar_text(const char *grammar_text,
                                                  size_t len, char **error);
 
@@ -269,7 +268,7 @@ static void test_error_bad_directive(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Sub-test 5: functional equivalence with the subprocess pipeline     */
+/*  Sub-test 5: functional equivalence: wrapper vs direct call         */
 /* ------------------------------------------------------------------ */
 
 /* Token stream + expected parse outcome for the equivalence corpus. */
@@ -280,16 +279,11 @@ typedef struct {
 } TokenStream;
 
 static void test_functional_equivalence(void) {
-    /* Feed the same calc grammar through both pipelines.  If
-    ** lime_compile_grammar_text fails (no `lime` binary on PATH,
-    ** no cc, or otherwise -- common in restricted CI),
-    ** report the test as skipped without flagging a fail. */
     char *err_sub = NULL;
     ParserSnapshot *snap_sub =
         lime_compile_grammar_text(k_calc_grammar, strlen(k_calc_grammar), &err_sub);
+    CHECK(snap_sub != NULL, "func_equiv: lime_compile_grammar_text succeeded");
     if (snap_sub == NULL) {
-        printf("SKIP: functional_equivalence (subprocess path unavailable: %s)\n",
-               err_sub ? err_sub : "no error message");
         if (err_sub) free(err_sub);
         return;
     }
@@ -427,46 +421,9 @@ static void test_perf_smoke(void) {
     printf("  perf_smoke: in-process %d compiles in %.2f ms = %.3f ms/compile\n",
            N_ITERS, total_ms, per_compile_ms);
 
-    /* Side-by-side comparison with the subprocess path when it is
-    ** available.  We do far fewer subprocess iterations because
-    ** each one forks lime + cc + dlopen and easily dominates the
-    ** test's wall-clock budget. */
-    enum { N_SUB = 3 };
-    char *err_probe = NULL;
-    ParserSnapshot *probe =
-        lime_compile_grammar_text(k_calc_grammar, strlen(k_calc_grammar),
-                                  &err_probe);
-    if (probe == NULL) {
-        if (err_probe) free(err_probe);
-        printf("  perf_smoke: subprocess path unavailable, skipping comparison\n");
-    } else {
-        snapshot_release(probe);
-        if (err_probe) free(err_probe);
-        double s0 = now_ms();
-        int sub_ok = 0;
-        for (int i = 0; i < N_SUB; i++) {
-            char *e = NULL;
-            ParserSnapshot *s =
-                lime_compile_grammar_text(k_calc_grammar,
-                                          strlen(k_calc_grammar), &e);
-            if (s) { sub_ok++; snapshot_release(s); }
-            if (e) free(e);
-        }
-        double s1 = now_ms();
-        double sub_per = (s1 - s0) / (double)N_SUB;
-        printf("  perf_smoke: subprocess %d compiles in %.2f ms = %.3f ms/compile\n",
-               N_SUB, s1 - s0, sub_per);
-        printf("  perf_smoke: in-process speedup vs subprocess: %.1fx\n",
-               sub_per / per_compile_ms);
-        CHECK(sub_per > per_compile_ms,
-              "perf_smoke: in-process strictly faster than subprocess");
-    }
-
     CHECK(n_ok == N_ITERS,
           "perf_smoke: every compile succeeded");
-    /* Subprocess pipeline costs ~150-300 ms per compile (fork +
-    ** lime + cc + dlopen).  Anything sub-50 ms here is order-of-
-    ** magnitude proof.  Generous threshold avoids flaky CI. */
+    /* Generous threshold avoids flaky CI; sub-millisecond when tuned. */
     CHECK(per_compile_ms < 50.0,
           "perf_smoke: < 50 ms/compile (sub-millisecond on tuned machines)");
 }

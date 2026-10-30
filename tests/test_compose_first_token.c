@@ -101,11 +101,6 @@ static int admissible(ParserSnapshot *s, int code) {
 int main(void) {
     int fail = 0;
 
-    /* The subprocess fallback (if path A is unavailable) needs lime +
-    ** template; point them at the build tree as test_extension_rebuild
-    ** does. */
-    setenv("LIME_TEMPLATE", "limpar.c", 0);
-
     ParserSnapshot *base = FtbBuildSnapshot();
     CHECK(base != NULL, "FtbBuildSnapshot");
     if (!base) return 1;

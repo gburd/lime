@@ -4,11 +4,9 @@
 ** Emits a `.lime`-syntax text fragment from an array of
 ** GrammarModifications.  When concatenated with the base grammar text
 ** and re-parsed by the `lime` generator, the result is equivalent to
-** applying the modifications to a freshly-built snapshot -- the
-** "subprocess fallback" path for runtime grammar modification that
-** works today by routing the merged grammar through the lime + cc
-** + dlopen subprocess pipeline (src/snapshot_create.c).  A pure
-** in-process LALR rebuild is open as ROADMAP item 1.
+** applying the modifications to a freshly-built snapshot.  This is
+** what publish_modified_snapshot (src/compose.c) composes, rebuilding
+** the merged text in-process.
 **
 ** Not all modifications round-trip cleanly:
 **
@@ -20,7 +18,7 @@
 **   * MOD_REMOVE_RULE is skipped.  The .lime concatenation model
 **     cannot express rule removal; the caller must either filter the
 **     base grammar text before concatenation, or accept that removals
-**     won't take effect in a subprocess rebuild.
+**     won't take effect in the rebuild.
 **
 **   * MOD_ADD_RULE's integer `.precedence` field cannot round-trip
 **     through .lime syntax (which uses a [SYMBOL] marker, not a
@@ -29,8 +27,7 @@
 **     should carry the precedence symbol name as a string.
 **
 ** The count of skipped entries is reported via `*skipped_out` when
-** non-NULL so callers can decide whether subprocess fallback is
-** viable for their modification set.
+** non-NULL so callers can see what the rebuild will not contain.
 */
 #ifndef LIME_MOD_SERIALIZE_H
 #define LIME_MOD_SERIALIZE_H

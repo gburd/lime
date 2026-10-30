@@ -141,9 +141,8 @@ ParserSnapshot *snapshot_build_from_tables(const LimeParserTables *t) {
     }
 
     /* Deep-copy the original grammar source text so the snapshot
-    ** outlives the LimeParserTables struct (and the .so it came
-    ** from, in the dlopen path).  publish_modified_snapshot reads
-    ** this to drive the subprocess rebuild path. */
+    ** outlives the LimeParserTables struct.  publish_modified_snapshot
+    ** reads this to rebuild a composed grammar. */
     if (t->grammar_source != NULL && t->grammar_source_len > 0) {
         snap->grammar_source = malloc(t->grammar_source_len + 1);
         if (snap->grammar_source != NULL) {

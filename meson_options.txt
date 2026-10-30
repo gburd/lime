@@ -43,3 +43,12 @@ option('contrib',
                 'hard error if meson.build wiring for a subdirectory ' +
                 'is missing; disabled: skip contrib/ entirely.',
 )
+
+option('plugin_loader',
+  type        : 'feature',
+  value       : 'disabled',
+  description : 'Build liblime_plugin_loader: parser_manager_load() and ' +
+                'friends, which dlopen() parser plugins.  Off by default: ' +
+                'the default build cannot load a shared object or spawn a ' +
+                'process at runtime (tests/check_no_runtime_loader.sh).',
+)

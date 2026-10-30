@@ -58,7 +58,9 @@ typedef struct ParserSnapshot ParserSnapshot;  /* Opaque handle */
 ParserSnapshot *lime_snapshot_create(const char *grammar_file, char **error);
 ```
 
-Create a base snapshot by parsing a Lemon grammar file. On success, returns
+Create a base snapshot by reading a Lemon grammar file and building its
+tables in-process (no subprocess, compiler or shared object). Defined in
+`liblime_compiler` (`pkg-config lime-compiler`). On success, returns
 a snapshot with reference count 1 and sets `*error` to `NULL`. On failure,
 returns `NULL` and sets `*error` to a `malloc`'d error message that the
 caller must `free()`.
@@ -663,11 +665,10 @@ typedef enum ConflictResolution {
 **Available since:** v0.5.4 (in-process compile), v0.10.0 (in-process lint).
 
 These entry points compile or lint a grammar in the calling process,
-without `fork`, `exec`, or a temp file. Eliminates the ~200 ms
-latency of the subprocess pipeline used by `lime_compile_grammar_text`
-and removes the runtime dependency on a C compiler. Required by
-`lime-lsp`'s diagnostic refresh path and by daemon-startup grammar
-composition.
+without `fork`, `exec`, or a temp file.  They are the only way Lime builds
+tables at runtime: `lime_compile_grammar_text`, `create_base_snapshot`
+and `publish_modified_snapshot` (all in this library) call them, and
+there is no subprocess alternative.  Compose needs liblime_compiler.
 
 ### Functions
 
@@ -731,19 +732,21 @@ Measured ~10% / 200 ms saved per LSP request on PostgreSQL's 21 k-line
 path by default; the meson option `-Dlime_lsp_in_process=enabled`
 controls it explicitly.
 
-#### Subprocess fallback warning
+#### lime_compile_grammar_in_process_ex2
 
-When `lime_compile_grammar_text` (the subprocess pipeline in
-`src/snapshot_create.c`) is called and `lime_compile_grammar_in_process`
-is not linked in, Lime emits a one-shot stderr warning naming the
-missing link contract:
-
-```text
-lime: warning: subprocess pipeline (link -llime-compiler for in-process)
+```c
+int lime_compile_grammar_in_process_ex2(const char *grammar_text, size_t len,
+                                        const LimeCompileHook *hook,
+                                        struct ParserSnapshot **out_snapshot,
+                                        LimeCompileStats *stats, char **error);
 ```
 
-The warning fires once per process. Set `LIME_FORCE_SUBPROCESS=1` to
-opt in to the subprocess path explicitly and suppress the warning.
+The one pipeline the other entry points forward to.  `hook` (may be
+NULL) is offered every conflict precedence cannot settle, and may
+settle it (keep the shift / a reduce); its choice becomes an ordinary
+resolved action.  With `out_snapshot == NULL` it stops after
+`FindActions` (conflict analysis only).  Composition (`include/
+lime_policy.h`, `docs/EXTENSIONS.md`) is built on it.
 
 ### Modification Serializer
 
@@ -761,12 +764,9 @@ char *lime_modifications_to_grammar_text(
 Render an array of `GrammarModification`s as `.lime`-syntax text that,
 when concatenated after a base grammar and re-parsed by the `lime`
 generator, produces a parser equivalent to applying the modifications.
-This is the mechanism behind `publish_modified_snapshot`'s subprocess
-rebuild path: the merged grammar is fed back through the `lime + cc +
-dlopen` pipeline (`src/snapshot_create.c`).  The pure in-process LALR
-rebuild remains the open item in `docs/ROADMAP.md` (item 1 -- structural
-decoupling of `lime.c`'s `Find*` pipeline from file I/O and global
-state).
+This is what `publish_modified_snapshot` composes: each extension's
+fragment is appended to the base grammar text and the whole is rebuilt
+in-process (`src/compose.c`).
 
 **Returns:** malloc'd NUL-terminated buffer; `NULL` on allocation
 failure or bad arguments.  Caller owns the buffer.
@@ -779,28 +779,6 @@ failure or bad arguments.  Caller owns the buffer.
 | `MOD_REMOVE_RULE` | Always skipped; concat cannot express removal.  Filter the base grammar text if removals must take effect. |
 | `MOD_MODIFY_PRECEDENCE` with `new_assoc == 0` | Emitted as a comment (no single `.lime` directive expresses "no associativity"). |
 | Integer `.precedence` on `MOD_ADD_RULE` | Emitted as a `/* NOTE */` comment; `.lime` uses `[SYMBOL]` markers, not numbers. |
-
-Typical subprocess-fallback usage:
-
-```c
-uint32_t skipped = 0;
-char *err = NULL;
-char *fragment = lime_modifications_to_grammar_text(
-    mods, nmods, &skipped, &err);
-if (fragment == NULL) {
-    fprintf(stderr, "serialization failed: %s\n", err);
-    free(err);
-    return -1;
-}
-
-/* concat base grammar text + fragment, write to tempfile,
-** spawn `lime`, compile the output, dlopen the result */
-FILE *tmp = fopen(tmpfile, "w");
-fputs(base_grammar_text, tmp);
-fputs(fragment, tmp);
-fclose(tmp);
-free(fragment);
-```
 
 ---
 

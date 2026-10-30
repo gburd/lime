@@ -37,7 +37,7 @@ In scope:
 - Crashes, hangs, or unbounded resource consumption triggered by attacker-
   controlled *parser input* to a generated parser built from a trusted
   grammar.
-- Defects in the dynamic extension loader (`dlopen`-based plugin loading)
+- Defects in the opt-in plugin loader (`-Dplugin_loader=enabled`, `dlopen`-based); the default build loads no shared objects
   that let an attacker escalate beyond loading a plugin they were already
   authorized to load.
 

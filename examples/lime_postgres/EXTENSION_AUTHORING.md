@@ -277,6 +277,10 @@ if (!extension_registry_check_dependencies(reg, &error)) {
 
 ## Step 4: Build as Shared Library
 
+Lime itself never loads a shared library.  Build your extension as a
+`.so` only if the *host* loads it (PostgreSQL's own loader, for
+example); the host then registers it with `register_extension()`.
+
 ### With GCC/Clang
 
 ```makefile
@@ -318,7 +322,8 @@ No shared library is needed.
 /* Initialize the registry */
 lime_extension_registry_init();
 
-/* Create a base snapshot from a grammar file */
+/* Create a base snapshot from a grammar file (in-process; link
+** lime-compiler, which also provides publish_modified_snapshot) */
 char *error = NULL;
 ParserSnapshot *snap = lime_snapshot_create("base_grammar.y", &error);
 

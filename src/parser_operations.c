@@ -69,39 +69,6 @@ void parser_op_result_cleanup(ParserOpResult *result) {
 /*  Add operations                                                     */
 /* ================================================================== */
 
-ParserOpResult parser_op_add_dynamic(ParserManager *mgr, const char *library_path,
-                                     const char *grammar_file, void *user_data) {
-    if (mgr == NULL || library_path == NULL) {
-        return err_result(PM_ERR_INVALID_ARG, LIME_PLUGIN_HANDLE_INVALID,
-                          "parser_op_add_dynamic: NULL argument");
-    }
-
-    /* Step 1: Load the plugin */
-    LimePluginHandle handle;
-    ParserManagerStatus st = parser_manager_load(mgr, library_path, user_data, &handle);
-    if (st != PM_OK) {
-        return make_result(st, LIME_PLUGIN_HANDLE_INVALID, "failed to load plugin from '%s': %s",
-                           library_path, parser_manager_status_string(st));
-    }
-
-    /* Step 2: Activate with grammar (if provided) */
-    if (grammar_file != NULL) {
-        st = parser_manager_set_active(mgr, handle, grammar_file);
-        if (st != PM_OK) {
-            /* Rollback: unload the plugin we just loaded */
-            ParserManagerStatus unload_st = parser_manager_unload(mgr, handle);
-            (void)unload_st; /* best effort */
-
-            return make_result(st, LIME_PLUGIN_HANDLE_INVALID,
-                               "loaded plugin from '%s' but activation "
-                               "failed (rolled back): %s",
-                               library_path, parser_manager_status_string(st));
-        }
-    }
-
-    return ok_result(handle);
-}
-
 ParserOpResult parser_op_add_static(ParserManager *mgr, const LimeParserPlugin *plugin,
                                     const char *grammar_file, void *user_data) {
     if (mgr == NULL || plugin == NULL) {
@@ -193,88 +160,33 @@ ParserOpResult parser_op_remove_by_name(ParserManager *mgr, const char *name,
 /*  Update operations                                                  */
 /* ================================================================== */
 
+/* Swapping in a plugin from a shared library (new_library_path != NULL)
+** needs the opt-in loader: parser_op_update_from_library() in
+** liblime_plugin_loader (-Dplugin_loader=enabled).  This library loads
+** nothing, so here a library path is refused. */
 ParserOpResult parser_op_update(ParserManager *mgr, const char *new_library_path,
                                 const char *grammar_file, bool version_check, void *user_data) {
+    (void)version_check;
+    (void)user_data;
     if (mgr == NULL) {
         return err_result(PM_ERR_INVALID_ARG, LIME_PLUGIN_HANDLE_INVALID,
                           "parser_op_update: NULL manager");
     }
-
     if (grammar_file == NULL) {
         return err_result(PM_ERR_INVALID_ARG, LIME_PLUGIN_HANDLE_INVALID,
                           "parser_op_update: grammar_file is required");
     }
-
-    LimePluginHandle old_handle = parser_manager_get_active(mgr);
-
-    /*
-    ** If new_library_path is NULL, reload with the current active plugin.
-    */
-    if (new_library_path == NULL) {
-        if (old_handle == LIME_PLUGIN_HANDLE_INVALID) {
-            return err_result(PM_ERR_NO_ACTIVE_PLUGIN, LIME_PLUGIN_HANDLE_INVALID,
-                              "no active plugin to reload");
-        }
-        return parser_op_reload_grammar(mgr, grammar_file);
+    if (new_library_path != NULL) {
+        return make_result(PM_ERR_DLOPEN_FAILED, LIME_PLUGIN_HANDLE_INVALID,
+                           "cannot load '%s': liblime_parser loads no shared objects; link "
+                           "liblime_plugin_loader and call parser_op_update_from_library()",
+                           new_library_path);
     }
-
-    /* Get version info for the current active plugin (for version check) */
-    LimePluginVersion old_version = { 0, 0, 0 };
-    if (version_check && old_handle != LIME_PLUGIN_HANDLE_INVALID) {
-        LimePluginInfo old_info;
-        ParserManagerStatus st = parser_manager_get_plugin_info(mgr, old_handle, &old_info);
-        if (st == PM_OK) {
-            old_version = old_info.version;
-        }
+    if (parser_manager_get_active(mgr) == LIME_PLUGIN_HANDLE_INVALID) {
+        return err_result(PM_ERR_NO_ACTIVE_PLUGIN, LIME_PLUGIN_HANDLE_INVALID,
+                          "no active plugin to reload");
     }
-
-    /* Step 1: Load the new plugin */
-    LimePluginHandle new_handle;
-    ParserManagerStatus st = parser_manager_load(mgr, new_library_path, user_data, &new_handle);
-    if (st != PM_OK) {
-        return make_result(st, LIME_PLUGIN_HANDLE_INVALID,
-                           "failed to load new plugin from '%s': %s", new_library_path,
-                           parser_manager_status_string(st));
-    }
-
-    /* Step 2: Version check (if requested) */
-    if (version_check && old_handle != LIME_PLUGIN_HANDLE_INVALID) {
-        LimePluginInfo new_info;
-        st = parser_manager_get_plugin_info(mgr, new_handle, &new_info);
-        if (st == PM_OK) {
-            if (lime_plugin_version_compare(new_info.version, old_version) < 0) {
-                /* Downgrade detected -- rollback */
-                parser_manager_unload(mgr, new_handle);
-
-                char old_vbuf[16], new_vbuf[16];
-                lime_plugin_version_string(old_version, old_vbuf, sizeof(old_vbuf));
-                lime_plugin_version_string(new_info.version, new_vbuf, sizeof(new_vbuf));
-
-                return make_result(PM_ERR_ABI_MISMATCH, LIME_PLUGIN_HANDLE_INVALID,
-                                   "version downgrade rejected: current=%s, "
-                                   "new=%s (use version_check=false to force)",
-                                   old_vbuf, new_vbuf);
-            }
-        }
-    }
-
-    /* Step 3: Hot-swap to the new plugin */
-    st = parser_manager_hot_swap(mgr, new_handle, grammar_file);
-    if (st != PM_OK) {
-        /* Rollback: unload the new plugin, old remains active */
-        parser_manager_unload(mgr, new_handle);
-
-        return make_result(st, LIME_PLUGIN_HANDLE_INVALID,
-                           "hot-swap to new plugin failed (rolled back): %s",
-                           parser_manager_status_string(st));
-    }
-
-    /* Step 4: Unload the old plugin (if there was one) */
-    if (old_handle != LIME_PLUGIN_HANDLE_INVALID) {
-        parser_manager_unload(mgr, old_handle);
-    }
-
-    return ok_result(new_handle);
+    return parser_op_reload_grammar(mgr, grammar_file);
 }
 
 ParserOpResult parser_op_reload_grammar(ParserManager *mgr, const char *grammar_file) {

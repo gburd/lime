@@ -106,7 +106,11 @@ macOS, `.dll` on Windows) that export a single entry point:
 LIME_PLUGIN_EXPORT const LimeParserPlugin *lime_plugin_entry(void);
 ```
 
-The manager's `parser_manager_load()` function performs:
+`parser_manager_load()` is OPT-IN: it lives in `liblime_plugin_loader`,
+built only with `meson setup -Dplugin_loader=enabled`.  The default
+libraries load no shared objects (`tests/check_no_runtime_loader.sh`);
+host-linked plugins use `parser_manager_register()` (below).  When built,
+`parser_manager_load()` performs:
 
 1. **Path resolution**: If the path is relative, search each directory in
    `config.plugin_search_paths` for a matching file.

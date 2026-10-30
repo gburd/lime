@@ -238,9 +238,8 @@ the base-vs-extension dispatcher.  See `docs/HOST_REDUCE.md` for the
 host-reduce contract and `docs/REDUCE_DISPATCH.md` for a worked routing
 example.
 
-The subprocess `cc` pipeline is no longer required for extension
-reduces.  It remains available only as a design-validation aid (see
-`lime_modifications_to_grammar_text()` in `docs/API.md`).
+There is no subprocess `cc` pipeline: extension reduces are host-linked
+function pointers, and composition rebuilds tables in-process.
 
 ### Modifying Precedence (`MOD_MODIFY_PRECEDENCE`)
 

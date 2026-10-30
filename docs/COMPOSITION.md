@@ -71,9 +71,11 @@ The startup sequence:
 
 ParserManager *mgr = parser_manager_create(NULL);
 
-/* Each shared_preload_libraries entry registers itself by
-** dlopen()ing into the postmaster.  Lime extensions hand back
-** their snapshot via the LimeParserPlugin contract. */
+/* Each shared_preload_libraries entry is loaded by the HOST (PG's own
+** loader); Lime never dlopens.  Plugins hand back their snapshot via the
+** LimeParserPlugin contract.  parser_manager_load() below is the opt-in
+** liblime_plugin_loader (-Dplugin_loader=enabled); hosts that link their
+** plugins use parser_manager_register(). */
 LimePluginHandle plugin_handles[N];
 ParserSnapshot *snapshots[N];
 for (int i = 0; i < N; i++) {
@@ -242,12 +244,16 @@ rule deduplication, action-table concatenation) all run in the
 process, but a full LALR rebuild from the merged grammar
 requires either:
 
-- forking `lime` + a C compiler subprocess (~200ms per merge),
-  same path as `lime_snapshot_create()`, or
+- the in-process rebuild `publish_modified_snapshot()` performs
+  (liblime_compiler; ~0.7-1 s for PostgreSQL + a 30-rule dialect, with
+  the conflict policy of docs/EXTENSIONS.md), or
 - accepting the snapshot-table-merging-only result, which
   *combines* the action tables but does not recompute conflict
   resolutions across newly-juxtaposed rules from different
   inputs.
+
+(There is no subprocess option: Lime cannot run `lime` or a C compiler
+at runtime.)
 
 Both are correct; both are not what production PG-startup
 extension loading wants.  Sub-millisecond composition is the
@@ -319,11 +325,11 @@ that produces the input snapshots.
 
 ## Worked example
 
-`tests/test_composition_e2e.c` is the live worked example.  It
-builds three small `.so` plugins under
-`tests/composition_e2e_fixtures/` (each with distinct grammar
-counts), dlopens them, runs them through composition, and
-asserts on:
+`tests/test_composition_e2e.c` is the live worked example (built only
+with `-Dplugin_loader=enabled`).  It builds three small `.so` plugins
+under `tests/composition_e2e_fixtures/` (each with distinct grammar
+counts), loads them through the opt-in plugin loader, runs them through
+composition, and asserts on:
 
 - summed dimensions of the composed snapshot
 - determinism of the merkle root across two compose calls

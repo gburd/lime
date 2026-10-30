@@ -10,7 +10,7 @@
  *
  * @par Basic Usage
  * @code
- *   // Create a snapshot from a grammar file
+ *   // Create a snapshot from a grammar file (in-process; liblime_compiler)
  *   char *error = NULL;
  *   ParserSnapshot *snap = lime_snapshot_create("sql.y", &error);
  *   if (!snap) { fprintf(stderr, "%s\n", error); free(error); return 1; }
@@ -155,8 +155,11 @@ const char *lime_snapshot_rule_id(const ParserSnapshot *snap, int ruleno);
 /**
  * @brief Create a base snapshot by parsing a grammar file.
  *
- * Runs the Lime parser generator on @p grammar_file and produces a
- * snapshot containing the compiled action tables.
+ * Reads @p grammar_file and builds its tables with the in-process
+ * LALR(1) compiler.  No subprocess, C compiler or shared object is
+ * involved.  Defined in liblime_compiler (link `lime-compiler`); a
+ * recognition-only consumer that links only liblime_parser gets a link
+ * error, not a fallback.
  *
  * @param grammar_file Path to the grammar file.
  * @param[out] error   On failure, set to a malloc'd message the caller
@@ -168,11 +171,8 @@ ParserSnapshot *lime_snapshot_create(const char *grammar_file, char **error);
 /**
  * @brief Build a base snapshot from in-memory grammar text.
  *
- * Same pipeline as lime_snapshot_create() but takes the grammar
- * source as a buffer rather than a file path.  Internally writes
- * the buffer to a temp file and runs lime + cc on it.  Used by
- * lime_snapshot_extend() and by callers that hold the grammar
- * text in memory (e.g. embedded in a config blob).
+ * Same in-process pipeline as lime_snapshot_create() but takes the
+ * grammar source as a buffer.  In liblime_compiler.
  *
  * @param grammar_text  Pointer to the grammar source bytes.
  * @param len           Byte length (NOT including any NUL).

@@ -192,16 +192,12 @@ static bool ext_b_get_modifications(void *user_data, const struct ParserSnapshot
 static void test_grammar_file_path(void) {
     SECTION("Claim C3: lime_snapshot_create(\"file.y\") works");
 
-    /* lime_snapshot_create now runs the lime parser generator as a
-    ** subprocess on the grammar file, compiles the resulting
-    ** *_snapshot.c into a shared library, and dlopen()s it to
-    ** retrieve the populated ParserSnapshot.  See src/snapshot_create.c.
+    /* lime_snapshot_create reads the file and builds the tables with
+    ** the in-process compiler (liblime_compiler; no subprocess, no cc,
+    ** no dlopen).  See src/snapshot_create.c.
     **
     ** Test 1a: graceful failure on a missing file.
-    ** Test 1b: real success on a valid grammar (covered by
-    **          tests/test_snapshot_create.c -- not duplicated here
-    **          because that test needs lime + cc on PATH and skips
-    **          cleanly when they are missing). */
+    ** Test 1b: real success on a valid grammar (tests/test_snapshot_create.c). */
     char *err = NULL;
     ParserSnapshot *snap = lime_snapshot_create("nonexistent.y", &err);
     if (snap == NULL && err != NULL) {

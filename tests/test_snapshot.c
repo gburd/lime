@@ -212,39 +212,50 @@ static void test_fields_preserved(void) {
     if (ok) PASS();
 }
 
-/* Test: create_base_snapshot stub returns error */
-static void test_create_base_snapshot_stub(void) {
-    TEST("create_base_snapshot (stub) returns error");
+/* Test: create_base_snapshot reads + compiles a real grammar file
+** (in-process; it used to need lime + cc on PATH) and reports a missing
+** file as an error. */
+static void test_create_base_snapshot_file(void) {
+    TEST("create_base_snapshot(file) builds a real snapshot");
+    const char *path = "test_snapshot_cbs.lime";
+    FILE *f = fopen(path, "wb");
+    if (f == NULL) { FAIL("cannot write grammar"); return; }
+    fputs("%token A B.\nstart ::= A B.\n", f);
+    fclose(f);
     char *error = NULL;
-    ParserSnapshot *snap = create_base_snapshot("dummy.y", &error);
-
-    if (snap != NULL) {
-        FAIL("expected NULL from stub");
-        snapshot_release(snap);
-        free(error);
-        return;
-    }
-    if (error == NULL) {
-        FAIL("expected error message from stub");
-        return;
-    }
-    /* The stub should provide an error message */
-    if (strlen(error) == 0) {
-        FAIL("error message is empty");
+    ParserSnapshot *snap = create_base_snapshot(path, &error);
+    remove(path);
+    if (snap == NULL) {
+        FAIL(error ? error : "NULL snapshot");
         free(error);
         return;
     }
     free(error);
+    bool ok = snap->nrule == 1 && snap->yy_action != NULL;
+    snapshot_release(snap);
+    if (!ok) { FAIL("unexpected snapshot shape"); return; }
     PASS();
 }
 
-/* Test: create_base_snapshot with NULL error pointer */
-static void test_create_base_snapshot_null_error(void) {
-    TEST("create_base_snapshot with NULL error pointer");
-    ParserSnapshot *snap = create_base_snapshot("dummy.y", NULL);
+/* Test: missing file -> NULL + message; NULL error pointer is allowed */
+static void test_create_base_snapshot_missing(void) {
+    TEST("create_base_snapshot(missing file) returns NULL + error");
+    char *error = NULL;
+    ParserSnapshot *snap = create_base_snapshot("no_such_dir/dummy.y", &error);
     if (snap != NULL) {
-        FAIL("expected NULL from stub");
+        FAIL("expected NULL");
         snapshot_release(snap);
+        free(error);
+        return;
+    }
+    if (error == NULL || strstr(error, "dummy.y") == NULL) {
+        FAIL("expected an error naming the file");
+        free(error);
+        return;
+    }
+    free(error);
+    if (create_base_snapshot("no_such_dir/dummy.y", NULL) != NULL) {
+        FAIL("expected NULL with NULL error pointer");
         return;
     }
     PASS();
@@ -380,8 +391,8 @@ int main(void) {
     test_acquire_increments();
     test_multiple_acquire_release();
     test_fields_preserved();
-    test_create_base_snapshot_stub();
-    test_create_base_snapshot_null_error();
+    test_create_base_snapshot_file();
+    test_create_base_snapshot_missing();
     test_clone_snapshot();
     test_clone_null();
     test_public_wrappers();

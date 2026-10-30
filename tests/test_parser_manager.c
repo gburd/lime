@@ -1216,6 +1216,7 @@ static void test_status_strings(void) {
     PASS();
 }
 
+#ifdef LIME_PLUGIN_LOADER /* parser_manager_load is in the opt-in loader */
 /* ================================================================== */
 /*  Dynamic loading tests (limited - no actual .so in test env)        */
 /* ================================================================== */
@@ -1318,6 +1319,8 @@ static void test_load_null_args(void) {
     parser_manager_destroy(mgr);
     PASS();
 }
+
+#endif /* LIME_PLUGIN_LOADER */
 
 /* ================================================================== */
 /*  Concurrency tests                                                  */
@@ -1646,9 +1649,11 @@ int main(void) {
     test_status_strings();
 
     printf("\n[Dynamic Loading]\n");
+#ifdef LIME_PLUGIN_LOADER
     test_load_nonexistent_library();
     test_load_library_without_entry_point();
     test_load_null_args();
+#endif
 
     printf("\n[Concurrency]\n");
     test_concurrent_get_snapshot();

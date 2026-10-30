@@ -77,22 +77,22 @@ keyed on `host_machine.system() != 'windows'`:
 
 * `test_lex_emit` -- relies on `open_memstream(3)` (POSIX-only).
 * `test_lex_lexer_include` -- relies on `pipe(2)` to capture stderr.
-* `test_snapshot_create` -- relies on the `fork+exec+dlopen`
-  pipeline, which is stubbed on Windows pending a `CreateProcess`
-  rewrite.
-* `test_extension_rebuild` -- same `fork+exec+dlopen` dependency.
+`test_snapshot_create`, `test_extension_rebuild` and the other compose
+tests run on Windows too: snapshot construction and composition are
+in-process only (the fork+exec+dlopen pipeline is deleted).
 
-Note this is *not* the same code path as `ParserManager`'s plugin
-loader: `parser_manager_load()` maps to `LoadLibrary` /
-`GetProcAddress` / `FreeLibrary` on Windows (see the `pm_dl_*` shim
-in `src/parser_manager.c`) and works on every Windows row.  What
-remains Unix-only is `src/snapshot_create.c`'s subprocess pipeline
-(fork + exec `lime` + exec `cc`), which has a documented
-in-process alternative that is cross-platform.
-`test_composition_e2e` / `test_parse_manager_cli` are still
-Windows-skipped, but only because their plugin fixtures are built
-as `.so` with POSIX-specific link args, not because the loader is
-missing.
+`no_runtime_loader` (`tests/check_no_runtime_loader.sh`) fails the build
+if `liblime_parser.a` or `liblime_compiler.a` references fork, exec*,
+dlopen, dlsym, LoadLibrary, posix_spawn, system or popen, or if
+liblime_parser references `lime_compile_grammar_in_process*` at all.  It
+runs wherever `nm` is found.
+
+The plugin loader (`parser_manager_load`, `LoadLibrary`/`GetProcAddress`
+on Windows) is opt-in, `-Dplugin_loader=enabled`, in its own archive.
+`test_composition_e2e` / `test_parse_manager_cli` /
+`plugin_host_smoke` need that option, and are additionally
+Windows-skipped because their plugin fixtures are built as `.so` with
+POSIX-specific link args.
 
 These skips are expected and don't fail the suite; the rest of
 the Windows test surface passes on every toolchain row.

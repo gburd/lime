@@ -78,9 +78,10 @@ parse_end(ctx);
 lime_snapshot_release(snap);
 ```
 
-`lime_snapshot_create("grammar.lime", &err)` does the equivalent
-of `lime grammar.lime + cc -shared` internally and returns a
-ParserSnapshot the runtime engine can drive.  Subsequent
+`lime_snapshot_create("grammar.lime", &err)` (liblime_compiler) reads
+the grammar and builds its tables in-process (no subprocess, no
+compiler, no `.so`) and returns a ParserSnapshot the runtime engine can
+drive.  Subsequent
 `parse_token` calls walk the same LALR(1) action tables a static
 `Parse()` would, but they go through the runtime engine in
 `src/parse_engine.c` rather than the generated dispatch.

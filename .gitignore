@@ -146,3 +146,7 @@ contrib/*/xml_query_demo
 build-dist/
 bench-runs/
 lime-v0.10-upgrade-blocker.md
+
+# lime -F output the formatter tests write next to their fixtures
+tests/*.lime.formatted
+tests/*.lime.formatted.formatted

@@ -117,10 +117,9 @@ ParserSnapshot *clone_snapshot(const ParserSnapshot *base) {
     ** base snapshot (and Lemon's internal arenas behind it).  A real
     ** deep copy of those structures is the in-process LALR rebuild
     ** path tracked as item 1 of docs/ROADMAP.md ("In-process LALR(1)
-    ** automaton rebuild library"); the subprocess + dlopen path used
-    ** by `lime_compile_grammar_text` covers the practical need today.
-    ** Pointers + counts are enough for the metadata-only path used
-    ** by create_modified_snapshot. */
+    ** automaton rebuild library"); composition itself now rebuilds
+    ** in-process (publish_modified_snapshot) and no longer uses this.
+    ** Pointers + counts are enough for create_modified_snapshot. */
     snap->nsymbol = base->nsymbol;
     snap->nterminal = base->nterminal;
     snap->nrule = base->nrule;

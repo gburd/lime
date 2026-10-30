@@ -23,13 +23,13 @@
 **      whenever it fires.  `.code` is also supplied (documentation /
 **      generator-time fallback per docs/EXTENSIONS.md) so the
 **      modification is still serializable via
-**      lime_modifications_to_grammar_text() and the subprocess
+**      lime_modifications_to_grammar_text() and the in-process
 **      rebuild in publish_modified_snapshot() succeeds -- exactly
 **      the same shape test_extension_rebuild.c exercises.
 **
-**   3. publish_modified_snapshot() rebuilds via the lime+cc
-**      subprocess pipeline, producing a real ParserSnapshot whose
-**      action tables include the new BANG token and rule.
+**   3. publish_modified_snapshot() rebuilds in-process, producing a
+**      real ParserSnapshot whose action tables include the new BANG
+**      token and rule.
 **
 **   4. Drive parse_token() with "NUM BANG EOF" -- input that must
 **      reduce through the new rule to reach accept.
@@ -57,8 +57,6 @@
 **   2  Confirmed gap: parse accepted (the table-driven engine is
 **      fine) but the reduce callback never ran. This is the
 **      documented, known state of the runtime today.
-**   77 Skipped: `lime`/`cc` unavailable in this environment (the
-**      subprocess rebuild pipeline could not even be attempted).
 */
 
 #define _POSIX_C_SOURCE 200809L
@@ -144,7 +142,7 @@ static bool fact_get_modifications(void *user_data, const struct ParserSnapshot 
     ext_mods[1].u.add_rule.nrhs = 2;
     /* `.code` is kept as a harmless placeholder so
     ** lime_modifications_to_grammar_text() can still serialize this
-    ** rule for the subprocess rebuild (see mod_serialize.c:
+    ** rule for the rebuild (see mod_serialize.c:
     ** emit_add_rule() skips serialization when .reduce != NULL AND
     ** .code == NULL).  Per docs/EXTENSIONS.md, `.reduce` is supposed
     ** to take precedence over `.code` at parse time when both are
@@ -164,11 +162,6 @@ static bool fact_get_modifications(void *user_data, const struct ParserSnapshot 
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-static bool tool_available(const char *cmd) {
-    char buf[256];
-    snprintf(buf, sizeof(buf), "command -v %s >/dev/null 2>&1", cmd);
-    return system(buf) == 0;
-}
 
 /* Token codes, same declaration-order convention as
 ** test_extension_rebuild.c: NUM=1, PLUS=2, MINUS=3, STAR=4, SLASH=5,
@@ -180,33 +173,6 @@ int main(void) {
     printf("Lime extension reduce-callback dispatch end-to-end test\n");
     printf("=========================================================\n");
 
-    if (!tool_available("cc")) {
-        printf("  [SKIP] cc not on PATH; run inside `nix develop` to enable.\n");
-        return 77;
-    }
-    struct stat st;
-    /* Honour LIME_BIN when the harness provides it (meson does, via
-    ** env:).  The builddir/ probes below only work when the build
-    ** directory happens to be named builddir/; any other name made
-    ** this test skip silently in every non-default build tree. */
-    const char *env_bin = getenv("LIME_BIN");
-    if (env_bin != NULL && env_bin[0] != '\0' && stat(env_bin, &st) == 0) {
-        /* already set; keep it */
-    } else if (stat("builddir/lime", &st) == 0) {
-        setenv("LIME_BIN", "builddir/lime", 1);
-    } else if (stat("../builddir/lime", &st) == 0) {
-        setenv("LIME_BIN", "../builddir/lime", 1);
-    } else if (!tool_available("lime")) {
-        printf("  [SKIP] lime not in builddir/ or on PATH; "
-               "build with `ninja -C builddir lime` first.\n");
-        return 77;
-    }
-    if (stat("limpar.c", &st) == 0) {
-        setenv("LIME_TEMPLATE", "limpar.c", 1);
-    } else if (stat("../limpar.c", &st) == 0) {
-        setenv("LIME_TEMPLATE", "../limpar.c", 1);
-    }
-
     /* Step 1: base snapshot. */
     ParserSnapshot *base = ArithBuildSnapshot();
     if (base == NULL) {
@@ -215,7 +181,7 @@ int main(void) {
     }
     if (base->grammar_source == NULL || base->grammar_source_len == 0) {
         fprintf(stderr, "  [BROKEN] base snapshot has no grammar_source; "
-                        "subprocess rebuild path cannot run\n");
+                        "rebuild cannot run\n");
         snapshot_release(base);
         return 1;
     }

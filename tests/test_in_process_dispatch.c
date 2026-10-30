@@ -1,48 +1,16 @@
-/* tests/test_in_process_dispatch.c -- ROADMAP item 1, phase 4.
+/* tests/test_in_process_dispatch.c -- lime_compile_grammar_text and
+** publish_modified_snapshot run the in-process compiler, and nothing else.
 **
-** Phase 4 wires src/snapshot_create.c::lime_compile_grammar_text and,
-** transitively, src/extension.c::publish_modified_snapshot to dispatch
-** through the in-process LALR rebuild library
-** (lime_compile_grammar_in_process from include/lime_compiler.h)
-** instead of forking lime + cc + dlopen.  The subprocess pipeline is
-** preserved as a fallback for grammars / scenarios the in-process
-** path does not yet support, and as an explicit opt-out via the
-** LIME_FORCE_SUBPROCESS=1 environment variable.
-**
-** Sub-tests (5 total):
-**   1. default_fast_path     - lime_compile_grammar_text on the calc
-**                              grammar should dispatch in-process and
-**                              come back in well under 1ms once warm.
-**   2. forced_subprocess     - LIME_FORCE_SUBPROCESS=1 disables the
-**                              in-process branch and we fall through
-**                              to the fork+exec pipeline; latency
-**                              jumps by orders of magnitude (>10ms
-**                              even on tuned hardware).
-**   3. fallback_on_failure   - When the in-process compile yields an
-**                              error (here: empty grammar), the
-**                              wrapper falls through to the
-**                              subprocess pipeline.  The diagnostic
-**                              we surface is the subprocess one, not
-**                              the in-process one -- evidence the
-**                              fallback fired.
+** There is no subprocess pipeline any more (no fork/exec of lime or cc,
+** no dlopen), and no LIME_FORCE_SUBPROCESS knob.  Sub-tests:
+**   1. default_fast_path     - calc grammar compiles in-process, < 1 ms warm.
+**   2. no_subprocess_knob    - LIME_FORCE_SUBPROCESS=1 and an empty PATH
+**                              change nothing: the compile still succeeds.
+**   3. error_is_in_process   - an empty grammar fails with the in-process
+**                              compiler's own diagnostic; nothing retries.
 **   4. composition_perf      - publish_modified_snapshot composes a
-**                              5-extension stack against an arithmetic
-**                              base.  The transitive in-process
-**                              dispatch should keep the whole
-**                              pipeline well under 10ms.
-**   5. two_context_isolation - Two sequential in-process compiles
-**                              produce snapshots whose token codes
-**                              and rule counts are independent;
-**                              the second compilation does not pick
-**                              up state from the first.
-**
-** This test executable explicitly links lime_compiler_dep so the
-** weak `lime_compile_grammar_in_process` reference inside
-** src/snapshot_create.c resolves to the real implementation in
-** liblime_compiler.a.  Tests that omit lime_compiler_dep (the
-** majority of the suite) keep the v0.5.4 behaviour: the weak
-** reference is NULL and lime_compile_grammar_text dispatches to the
-** subprocess pipeline as before.
+**                              5-extension stack in well under 10 ms.
+**   5. two_context_isolation - two sequential compiles do not share state.
 */
 
 #define _POSIX_C_SOURCE 200809L
@@ -158,11 +126,6 @@ static const char k_alpha_grammar[] =
 /* ------------------------------------------------------------------ */
 
 static void test_default_fast_path(void) {
-    /* Make sure no stale opt-out from a previous environment is set
-    ** (defensive; meson does not run tests with LIME_FORCE_SUBPROCESS
-    ** by default for this target). */
-    unsetenv("LIME_FORCE_SUBPROCESS");
-
     /* Warm the compiler arena once so we measure steady-state cost
     ** rather than first-touch allocations and code-cache misses. */
     char *err = NULL;
@@ -209,94 +172,39 @@ static void test_default_fast_path(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Sub-test 2: forced_subprocess                                       */
+/*  Sub-test 2: no_subprocess_knob                                      */
 /* ------------------------------------------------------------------ */
 
-static void test_forced_subprocess(void) {
-    /* Honour the documented opt-out.  With LIME_FORCE_SUBPROCESS=1
-    ** the wrapper must skip the in-process branch entirely and go
-    ** straight to fork + lime + cc + dlopen.  Latency should be
-    ** dominated by the cc invocation. */
+static void test_no_subprocess_knob(void) {
+    /* The removed opt-out must not resurrect a subprocess path, and an
+    ** empty PATH (no lime, no cc) must not matter. */
+    const char *old_path = getenv("PATH");
+    char *saved = old_path ? strdup(old_path) : NULL;
     setenv("LIME_FORCE_SUBPROCESS", "1", 1);
-
+    setenv("PATH", "", 1);
     char *err = NULL;
-    double t0 = now_ms();
-    ParserSnapshot *snap =
-        lime_compile_grammar_text(k_calc_grammar, strlen(k_calc_grammar), &err);
-    double elapsed = now_ms() - t0;
-    printf("  forced_subprocess: 1 compile in %.2f ms\n", elapsed);
-
-    CHECK(snap != NULL, "forced_subprocess: subprocess compile succeeded");
-    if (err != NULL && snap == NULL) {
-        fprintf(stderr, "  unexpected error: %s\n", err);
-    }
-    free(err);
-    if (snap != NULL) snapshot_release(snap);
-
-    /* The fork+exec+cc+dlopen pipeline can never finish in under
-    ** ~10 ms on real hardware; if the assertion below fires, the
-    ** opt-out is broken and we accidentally took the in-process
-    ** path.  We deliberately use a generous floor so the test
-    ** survives both fast hardware and slow CI: in-process is
-    ** sub-millisecond, subprocess is hundreds of ms. */
-    CHECK(elapsed > 10.0,
-          "forced_subprocess: > 10 ms (subprocess pipeline actually ran)");
-
+    ParserSnapshot *snap = lime_compile_grammar_text(k_calc_grammar, strlen(k_calc_grammar), &err);
     unsetenv("LIME_FORCE_SUBPROCESS");
+    if (saved) { setenv("PATH", saved, 1); free(saved); }
+    CHECK(snap != NULL, "no_subprocess_knob: compiles with LIME_FORCE_SUBPROCESS=1 and PATH=''");
+    if (err) printf("  error: %s\n", err);
+    free(err);
+    snapshot_release(snap);
 }
 
 /* ------------------------------------------------------------------ */
-/*  Sub-test 3: fallback_on_failure                                     */
+/*  Sub-test 3: error_is_in_process                                     */
 /* ------------------------------------------------------------------ */
 
-/*
-** When the in-process path returns non-zero (here: empty grammar
-** body, which fails before LALR construction), the wrapper must
-** discard the in-process error and rerun the subprocess pipeline.
-** We can't construct an "in-process fails, subprocess succeeds"
-** scenario without committing to a private grammar feature, but we
-** can prove the fallback fired by examining the surfaced error: it
-** must come from the subprocess (mentioning the lime binary or the
-** temp-file pipeline) rather than from the in-process compiler.
-*/
-static void test_fallback_on_failure(void) {
-    unsetenv("LIME_FORCE_SUBPROCESS");
-
-    /* A grammar with only directives and no rules.  The in-process
-    ** compiler short-circuits with "empty grammar"; the subprocess
-    ** pipeline lets `lime` parse it, errors, and surfaces a
-    ** "<lime> exited with status N" message. */
-    static const char rules_missing[] =
-        "%name FallbackG\n"
-        "%token A.\n";
-
+static void test_error_is_in_process(void) {
+    static const char rules_missing[] = "%name FallbackG\n%token A.\n";
     char *err = NULL;
     ParserSnapshot *snap =
         lime_compile_grammar_text(rules_missing, sizeof(rules_missing) - 1, &err);
-
-    CHECK(snap == NULL,
-          "fallback_on_failure: empty-grammar compile rejected");
-
-    /* Either both paths agreed it was bad (subprocess ran and
-    ** produced its own error) or only the in-process path ran.
-    ** Distinguish by inspecting the message: subprocess errors
-    ** mention the external pipeline. */
-    bool err_present = (err != NULL);
-    bool subprocess_flavor = false;
-    if (err != NULL) {
-        printf("  fallback_on_failure: surfaced error: %s\n", err);
-        if (strstr(err, "exited with status") != NULL ||
-            strstr(err, "lime") != NULL ||
-            strstr(err, "compile_grammar") != NULL ||
-            strstr(err, "limpar") != NULL) {
-            subprocess_flavor = true;
-        }
-    }
-
-    CHECK(err_present, "fallback_on_failure: error string populated");
-    CHECK(subprocess_flavor,
-          "fallback_on_failure: error came from subprocess pipeline (fallback fired)");
-
+    CHECK(snap == NULL, "error_is_in_process: empty-grammar compile rejected");
+    CHECK(err != NULL && strstr(err, "empty grammar") != NULL,
+          "error_is_in_process: the in-process diagnostic ('empty grammar'), no retry");
+    if (err) printf("  error: %s\n", err);
     free(err);
 }
 
@@ -345,7 +253,6 @@ static const char k_base_arith[] =
 ** evolution that the extension layer is under.
 */
 static void test_composition_perf(void) {
-    unsetenv("LIME_FORCE_SUBPROCESS");
 
     /* Five "plugins" each contribute one extra token + one rule.  We
     ** simulate the merge by concatenating into a single grammar text
@@ -433,7 +340,6 @@ static void test_composition_perf(void) {
 ** grammar's symbol counts or token codes.
 */
 static void test_two_context_isolation(void) {
-    unsetenv("LIME_FORCE_SUBPROCESS");
 
     char *err = NULL;
     ParserSnapshot *snap_calc =
@@ -503,12 +409,12 @@ static void test_two_context_isolation(void) {
 /* ------------------------------------------------------------------ */
 
 int main(void) {
-    printf("ROADMAP-1 phase 4: in-process dispatch via lime_compile_grammar_text\n");
+    printf("in-process compile: lime_compile_grammar_text / publish_modified_snapshot\n");
     printf("=====================================================================\n");
 
     test_default_fast_path();
-    test_forced_subprocess();
-    test_fallback_on_failure();
+    test_no_subprocess_knob();
+    test_error_is_in_process();
     test_composition_perf();
     test_two_context_isolation();
 

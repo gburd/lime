@@ -68,6 +68,9 @@ void parser_op_result_cleanup(ParserOpResult *result);
 */
 ParserOpResult parser_op_add_dynamic(ParserManager *mgr, const char *library_path,
                                      const char *grammar_file, void *user_data);
+/* parser_op_add_dynamic and parser_op_update_from_library load a shared
+** library: they are in the opt-in liblime_plugin_loader
+** (-Dplugin_loader=enabled), not in liblime_parser. */
 
 /*
 ** Register a static plugin and activate it immediately.
@@ -131,6 +134,12 @@ ParserOpResult parser_op_remove_by_name(ParserManager *mgr, const char *name,
 */
 ParserOpResult parser_op_update(ParserManager *mgr, const char *new_library_path,
                                 const char *grammar_file, bool version_check, void *user_data);
+/* In liblime_parser, parser_op_update() refuses a non-NULL new_library_path
+** (PM_ERR_DLOPEN_FAILED): it loads nothing.  With liblime_plugin_loader,
+** parser_op_update_from_library() does the load + hot-swap. */
+ParserOpResult parser_op_update_from_library(ParserManager *mgr, const char *new_library_path,
+                                             const char *grammar_file, bool version_check,
+                                             void *user_data);
 
 /*
 ** Reload the grammar for the currently active plugin.

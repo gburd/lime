@@ -209,33 +209,21 @@ lime_exe = executable('lime',
 # a C parser unless every caller passed -T.
 install_data('limpar.c', install_dir : get_option('datadir') / 'lime')
 
-# ROADMAP item 1, phase 4 (in-process LALR rebuild library).
+# The two libraries, by when their code runs:
 #
-# lime_compiler_lib compiles lime.c with -DLIME_HAVE_SNAPSHOT_BUILD
-# (turning on the in-process snapshot path) and -DLIME_TEST_HARNESS
-# (omitting main() so the object can be linked into other programs).
-# The resulting archive exports the public symbol
-# `lime_compile_grammar_in_process` declared in include/lime_compiler.h.
+#   liblime_parser    what runs per parse: the push parser, snapshots,
+#                     the extension registry.  No compiler, no process
+#                     creation, no dynamic loader.
+#   liblime_compiler  what runs at compose time: lime.c built as a
+#                     library (-DLIME_HAVE_SNAPSHOT_BUILD, -DLIME_TEST_
+#                     HARNESS drops main()), publish_modified_snapshot,
+#                     the compose policy, create_base_snapshot /
+#                     lime_compile_grammar_text.
 #
-# Consumers wire it up by adding `lime_compiler_dep` to their target's
-# dependencies.  We deliberately do NOT add this archive to
-# `lime_parser_dep` so:
-#
-#   1. Existing tests that already #include "../lime.c" with
-#      LIME_HAVE_SNAPSHOT_BUILD (test_lime_compile_in_process) keep
-#      their unique strong definition and link without conflict.
-#
-#   2. lime_parser_lib stays small for downstream consumers that don't
-#      need runtime compilation (the LALR engine is ~200 KB; the lime
-#      compiler is ~1.2 MB).
-#
-# src/snapshot_create.c declares lime_compile_grammar_in_process as a
-# weak external reference so it can dispatch in-process when this
-# library is linked into the consuming executable, and gracefully
-# falls back to the subprocess pipeline when it is not.  The
-# LIME_FORCE_SUBPROCESS=1 environment variable forces the subprocess
-# path even when the symbol is present, for testing and for debugging
-# compiler-bug regressions.
+# A consumer that composes (or builds a snapshot from grammar text) links
+# lime_compiler_dep explicitly.  There is no weak reference and no runtime
+# fallback: forgetting it is a link error.  tests/check_no_runtime_loader.sh
+# (meson test no_runtime_loader) enforces both rules on the built archives.
 #
 # We do not pass -DLIME_HAS_LEX_COMPILER here because the in-process
 # compile path never invokes the .lex frontend; the stub in lime.c
@@ -257,9 +245,12 @@ lime_compiler_lib = static_library('lime_compiler',
   'src/lex/lex_dfa.c',
   'src/lex/lex_dfa_min.c',
   'src/lex/lex_compile.c',
-  # Compose time: publish_modified_snapshot + the conflict policy.
+  # Compose time: publish_modified_snapshot, the conflict policy, and
+  # grammar file/text -> snapshot (create_base_snapshot,
+  # lime_compile_grammar_text).
   'src/compose.c',
   'src/compose_policy.c',
+  'src/snapshot_create.c',
   dependencies : [thread_dep],
   include_directories : [inc, include_directories('src'),
                          include_directories('src/lex')],
@@ -269,14 +260,9 @@ lime_compiler_lib = static_library('lime_compiler',
 )
 
 lime_compiler_dep = declare_dependency(
-  # link_whole forces the linker to pull in every object from
-  # liblime_compiler.a, even when the references in the consuming
-  # executable are weak (which is exactly the case for the
-  # `lime_compile_grammar_in_process` call site in
-  # src/snapshot_create.c).  Without this, the static-archive lookup
-  # silently leaves the weak reference unresolved at link time and
-  # snapshot_create.c falls through to the subprocess pipeline at
-  # runtime -- precisely the regression phase 4 was meant to avoid.
+  # link_whole: lime.c's in-process entry points are reached only through
+  # other archive members (compose.c, snapshot_create.c); pull every object
+  # in so a consumer never depends on archive member order.
   link_whole : [lime_compiler_lib],
   include_directories : inc,
   dependencies : [lime_parser_dep],
@@ -306,7 +292,9 @@ pkgconfig_mod.generate(
   lime_parser_lib,
   name              : 'lime',
   filebase          : 'lime',
-  description       : 'Lime parser generator runtime library',
+  description       : 'Lime runtime: the push parser and snapshots (per-parse code). '
+                      + 'Composing extensions or building a snapshot from grammar '
+                      + 'text needs lime-compiler.',
   version           : meson.project_version(),
   url               : 'https://codeberg.org/gregburd/lime',
   # No `subdirs:` -- we want callers to write  #include <lime/foo.h>
@@ -315,44 +303,28 @@ pkgconfig_mod.generate(
   # name).  Cflags resolves to -I${prefix}/include and our headers
   # all live in include/lime/ inside that.
   extra_cflags      : ['-pthread'],
-  libraries_private : ['-ldl'],
 )
 
-# Second pkg-config file `lime-compiler` for the in-process compile API.
+# Second pkg-config file `lime-compiler`: what runs at compose time.
 #
-# Lime ships TWO archives:
+#   liblime_parser.a    per parse: parse_begin / parse_token / parse_end,
+#                       snapshots, the extension registry.
+#                       `pkg-config --cflags --libs lime`
+#   liblime_compiler.a  compose time: publish_modified_snapshot, the
+#                       compose policy, lime_compile_grammar_in_process,
+#                       create_base_snapshot / lime_compile_grammar_text.
+#                       `pkg-config --cflags --libs lime-compiler`
 #
-#   liblime_parser.a      - runtime LALR(1) push parser, ~200 KB.
-#                            Includes parse_begin / parse_token /
-#                            parse_end + ParserSnapshot owners.
-#                            Use `pkg-config --cflags --libs lime`.
-#
-#   liblime_compiler.a    - in-process LALR(1) construction, ~1.2 MB.
-#                            Provides lime_compile_grammar_in_process()
-#                            so callers can build a ParserSnapshot from
-#                            grammar text WITHOUT forking the lime
-#                            binary or invoking cc + dlopen.
-#                            Use `pkg-config --cflags --libs lime-compiler`.
-#
-# The compiler archive is the strong-definition home of the weak
-# reference declared in src/snapshot_create.c.  Consumers that want
-# the documented ~1800x cold-rebuild speedup (vs the subprocess
-# pipeline) MUST link both libraries.  Linking only `lime` falls
-# through to fork+exec+cc+dlopen at runtime -- the same path PG's
-# parser_extension.c uses today.
-#
-# Why two pkg-config files instead of one .pc that pulls in both?
-# Most consumers want only the runtime parser; the compiler
-# (1.2 MB) is dead weight for them.  Splitting the .pc files lets
-# downstream packagers ship `lime-runtime` (just the parser) and
-# `lime-compiler` (the full thing) as separate package variants
-# while sharing the headers.
+# Compose needs liblime_compiler.  Neither library can spawn a process or
+# load a shared object; linking only `lime` and calling a compose entry
+# point is a link error, not a slower path.  Most consumers that only
+# parse want just `lime` (the compiler is ~1.2 MB).
 pkgconfig_mod.generate(
   lime_compiler_lib,
   name              : 'lime-compiler',
   filebase          : 'lime-compiler',
-  description       : 'Lime in-process LALR(1) compiler API '
-                      + '(lime_compile_grammar_in_process)',
+  description       : 'Lime compose-time library: in-process LALR(1) rebuild, '
+                      + 'extension composition and conflict policy. Needed to compose.',
   version           : meson.project_version(),
   url               : 'https://codeberg.org/gregburd/lime',
   # The compiler archive depends on the runtime parser at link time
@@ -361,7 +333,6 @@ pkgconfig_mod.generate(
   # they ask for -llime-compiler.
   requires_private  : 'lime',
   extra_cflags      : ['-pthread'],
-  libraries_private : ['-ldl'],
 )
 
 # Multi-grammar context-switch example (SQL host + JSON
@@ -371,18 +342,14 @@ pkgconfig_mod.generate(
 # See the directory's README.md for the architecture walk-through.
 subdir('examples/multi_grammar_sql_json')
 
-# Plugin-template example: builds the example sql_plugin.so + host
-# binaries and runs the load/identity/unload smoke test.  Wired BEFORE
-# subdir('tests') so the e2e composition test in tests/ can reference
-# sql_plugin_lib.full_path() if it ever needs a stand-in plugin path.
-# Skipped at configure time on Windows (the directory's meson.build
-# calls subdir_done() before declaring any targets).
-subdir('examples/plugin_template')
-
-# parse-manager CLI tool: meson-built replacement for the old
-# tools/Makefile.  Links lime_parser_dep directly -- no stubs -- and
-# installs to ${prefix}/bin/parse-manager.
-subdir('tools')
+# Plugin-template example and the parse-manager CLI load parser plugins
+# from shared libraries, so they exist only with the opt-in loader
+# (-Dplugin_loader=enabled).  Wired BEFORE subdir('tests'), which
+# references sql_plugin_lib / parse_manager_exe under the same option.
+if get_option('plugin_loader').enabled()
+  subdir('examples/plugin_template')
+  subdir('tools')
+endif
 
 # Build tests
 subdir('tests')

@@ -28,8 +28,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
-extern int lime_compile_grammar_in_process(const char *, size_t, ParserSnapshot **, char **)
-    __attribute__((weak));
+#include "lime_compiler.h"
 extern int lime_snapshot_token_code(const ParserSnapshot *snap, const char *name);
 
 static const char *BASE =
@@ -113,10 +112,6 @@ static void check(const char *what, int got, int want) {
 }
 
 int main(void) {
-    if (lime_compile_grammar_in_process == NULL) {
-        printf("  [SKIP] in-process compiler not linked\n");
-        return 77;
-    }
     ParserSnapshot *base = NULL;
     char *err = NULL;
     if (lime_compile_grammar_in_process(BASE, strlen(BASE), &base, &err) != 0 || base == NULL) {

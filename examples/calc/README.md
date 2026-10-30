@@ -4,7 +4,10 @@ A four-operation calculator built with the Lime parser generator, extended at
 runtime with shared library plugins.  This example demonstrates:
 
 - Base grammar definition with Lime
-- Runtime extension loading via `dlopen`
+- Runtime extension loading via `dlopen` *in this example's own host
+  program* (each `.so` is a complete, separately generated parser).  Lime's
+  libraries load nothing; to extend a grammar at runtime use the extension
+  API (`register_extension` + `publish_modified_snapshot`, docs/EXTENSIONS.md)
 - **Conflicting grammar extensions** and conflict detection/resolution
 
 ## Files

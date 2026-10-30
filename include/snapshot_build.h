@@ -13,10 +13,9 @@
  *
  * Two ways to use this:
  *
- *   1. Call lime_snapshot_create("foo.y", &err) which subprocesses
- *      `lime -n foo.y` to produce a *_snapshot.c file, compiles it,
- *      dlopens it, and calls the registration entry point below.
- *      Used for true runtime grammar loading.
+ *   1. Call lime_snapshot_create("foo.y", &err) (liblime_compiler),
+ *      which builds the tables in-process and hands them to
+ *      snapshot_build_from_tables().  Used for runtime grammar loading.
  *
  *   2. The generated parser's *_snapshot.c file calls
  *      snapshot_build_from_tables() at static init / on-demand to
@@ -109,8 +108,8 @@ typedef struct LimeParserTables {
     ** so the runtime extension framework can rebuild the LALR(1)
     ** automaton from a base snapshot plus a list of modifications:
     ** publish_modified_snapshot() concatenates this text with
-    ** lime_modifications_to_grammar_text(mods) and reruns the
-    ** subprocess pipeline (lime + cc) on the merged grammar.
+    ** lime_modifications_to_grammar_text(mods) and rebuilds the
+    ** merged grammar in-process.
     **
     ** NULL when the snapshot was built by a path that did not have
     ** access to the original .y text (e.g. a hand-built snapshot

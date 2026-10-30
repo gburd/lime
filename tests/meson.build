@@ -54,7 +54,7 @@ test('tokenize', test_tokenize)
 
 test_snapshot = executable('test_snapshot',
   'test_snapshot.c',
-  dependencies : lime_parser_dep,
+  dependencies : [lime_parser_dep, lime_compiler_dep],
   include_directories : include_directories('../src'),
 )
 
@@ -115,14 +115,15 @@ test('compiler_context', test_compiler_context)
 # LIME_TEST_HARNESS so main() is omitted; LIME_HAVE_SNAPSHOT_BUILD
 # additionally turns on the in-process snapshot path inside lime.c
 # and pulls in the runtime headers.  Linking lime_parser_dep gives
-# us snapshot_build_from_tables, parse_begin/parse_token/parse_end,
-# snapshot_release, and (for the equivalence sub-test) the
-# subprocess-driven lime_compile_grammar_text comparison baseline.
+# us snapshot_build_from_tables, parse_begin/parse_token/parse_end and
+# snapshot_release; src/snapshot_create.c is compiled in for the
+# lime_compile_grammar_text wrapper (the equivalence sub-test).
 # include_directories includes ../src so snapshot.h / snapshot_build.h
 # resolve when lime.c is compiled with LIME_HAVE_SNAPSHOT_BUILD.
 if host_machine.system() != 'windows'
   test_lime_compile_in_process = executable('test_lime_compile_in_process',
     'test_lime_compile_in_process.c',
+    '../src/snapshot_create.c',
     link_with : [lime_lex_compiler_lib],
     dependencies : lime_parser_dep,
     include_directories : [inc, include_directories('../src'),
@@ -130,112 +131,21 @@ if host_machine.system() != 'windows'
     c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAVE_SNAPSHOT_BUILD',
               '-DLIME_HAS_LEX_COMPILER',
             ] + lime_warning_suppress,
-    # Export the executable's runtime symbols so the .so produced
-    # by the subprocess path's dlopen (used in the equivalence sub-
-    # test) can resolve snapshot_release / parse_token / etc.
-    # Same trick test_snapshot_create + test_extension_rebuild use.
-    export_dynamic : true,
   )
 
   test('lime_compile_in_process', test_lime_compile_in_process,
-    # Point the subprocess fallback at the just-built lime + parser lib
-    # so the equivalence and perf-comparison sub-tests run against the
-    # real subprocess pipeline rather than skipping when `lime` is not
-    # on $PATH.  This is a runtime env, not a build-time link.
-    # LIME_INCLUDE / LIME_SRC_INCLUDE are read by snapshot_create.c so
-    # the subprocess `cc` invocation finds the runtime headers.
-    #
-    # ROADMAP-1 phase 4: this test predates the in-process dispatch
-    # default in src/snapshot_create.c::lime_compile_grammar_text and
-    # explicitly compares the in-process and subprocess pipelines.
-    # Force subprocess for `lime_compile_grammar_text` so the
-    # comparison still measures the fork+exec pipeline rather than the
-    # transparently-dispatched in-process path.  Direct calls to
-    # `lime_compile_grammar_in_process` (the subject of this test) are
-    # unaffected by LIME_FORCE_SUBPROCESS.
-    env : [
-      'LIME_BIN=' + lime_exe.full_path(),
-      'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
-      'LIME_INCLUDE=' + meson.project_source_root() / 'include',
-      'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
-      'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
-      'LIME_FORCE_SUBPROCESS=1',
-    ],
-    depends : [lime_exe],
     workdir : meson.project_source_root(),
     timeout : 60)
 endif
 
-# ROADMAP item 1, phase 4: in-process dispatch through
-# lime_compile_grammar_text and (transitively) publish_modified_snapshot
-# / parser_composition.  This test executable is the only consumer
-# that links lime_compiler_dep, so the weak
-# `lime_compile_grammar_in_process` reference inside
-# src/snapshot_create.c resolves and the fast path activates.  The
-# rest of the suite continues to dispatch to the subprocess pipeline
-# (weak ref unresolved -> NULL -> fallback), preserving v0.5.4
-# functional behaviour.  See src/snapshot_create.c for the dispatch
-# policy and LIME_FORCE_SUBPROCESS opt-out.
-#
-# Skipped on Windows along with test_snapshot_create / test_extension_rebuild:
-# the subprocess fallback path uses fork/exec/dlopen which is stubbed
-# on Windows, so several sub-tests would unconditionally fail there.
-if host_machine.system() != 'windows'
-  test_in_process_dispatch = executable('test_in_process_dispatch',
-    'test_in_process_dispatch.c',
-    include_directories : include_directories('../src'),
-    dependencies : [lime_parser_dep, lime_compiler_dep],
-    # Export executable symbols so the .so produced by the
-    # subprocess fallback (sub-tests 2 + 3) at runtime can resolve
-    # snapshot_release / parse_token / etc. via dlopen against the
-    # parent binary.  Same trick test_snapshot_create uses.
-    export_dynamic : true,
-  )
-
-  test('in_process_dispatch', test_in_process_dispatch,
-    # The forced-subprocess and fallback sub-tests need a working
-    # external pipeline; supply the same env wiring test_snapshot_create
-    # uses so the runtime cc + lime invocations find the correct lime
-    # binary, library, and headers from this build tree.
-    env : [
-      'LIME_BIN=' + lime_exe.full_path(),
-      'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
-      'LIME_INCLUDE=' + meson.project_source_root() / 'include',
-      'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
-      'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
-    ],
-    depends : [lime_exe],
-    workdir : meson.project_source_root(),
-    is_parallel : false,
-    timeout : 120)
-endif
-
-# v0.6.x: regression for the dlopen-handle-leak fix in
-# src/snapshot_create.c.  Verifies destroy_snapshot's new
-# snapshot_dlopen_release hook actually dlclose()s the .so when the
-# snapshot's last reference drops to zero.  Skipped at runtime when
-# the lime CLI isn't reachable (the subprocess pipeline can't run).
-if host_machine.system() != 'windows'
-  test_snapshot_dlopen_cleanup = executable('test_snapshot_dlopen_cleanup',
-    'test_snapshot_dlopen_cleanup.c',
-    include_directories : include_directories('../src'),
-    dependencies : lime_parser_dep,
-    export_dynamic : true,
-  )
-
-  test('snapshot_dlopen_cleanup', test_snapshot_dlopen_cleanup,
-    env : [
-      'LIME_BIN=' + lime_exe.full_path(),
-      'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
-      'LIME_INCLUDE=' + meson.project_source_root() / 'include',
-      'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
-      'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
-    ],
-    depends : [lime_exe],
-    workdir : meson.project_source_root(),
-    is_parallel : false,
-    timeout : 120)
-endif
+# lime_compile_grammar_text and publish_modified_snapshot run the in-process
+# compiler only: no subprocess knob, no fallback, no PATH dependence.
+test_in_process_dispatch = executable('test_in_process_dispatch',
+  'test_in_process_dispatch.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('in_process_dispatch', test_in_process_dispatch, is_parallel : false, timeout : 120)
 
 # v0.6.x: %extends multi-file graph stress test.  Builds 100+ file
 # graphs at runtime in tmpdir and runs lime on the leaf to verify
@@ -1053,9 +963,25 @@ test('shared_token_lifetime', test_shared_token_lifetime, timeout : 120)
 #   3. Composing with a different plugin yields a different merkle
 #      root (regression guard against silent cache-key drift).
 #
-# Skipped on Windows: ParserManager's plugin loader is dlopen()-based.
-# Same skip rationale as test_snapshot_create above.
-if host_machine.system() != 'windows'
+# Needs the opt-in plugin loader (-Dplugin_loader=enabled): the default
+# build loads no shared objects.  Skipped on Windows (dlopen()-based).
+if get_option('plugin_loader').enabled() and host_machine.system() != 'windows'
+  # The loader-only cases of the manager / runtime-operation unit tests.
+  test_parser_manager_loader = executable('test_parser_manager_loader',
+    'test_parser_manager.c',
+    c_args : ['-DLIME_PLUGIN_LOADER'],
+    dependencies : lime_plugin_loader_dep,
+    include_directories : include_directories('../src'),
+  )
+  test('parser_manager_loader', test_parser_manager_loader, timeout : 120)
+  test_runtime_management_loader = executable('test_runtime_management_loader',
+    'test_runtime_management.c',
+    c_args : ['-DLIME_PLUGIN_LOADER'],
+    dependencies : lime_plugin_loader_dep,
+    include_directories : include_directories('../src'),
+  )
+  test('runtime_management_loader', test_runtime_management_loader, timeout : 120)
+
   # Plugin .so build args mirror examples/plugin_template/meson.build:
   # plugins do not link the parser dep -- they resolve at dlopen()
   # time against the host process (the test driver, built with
@@ -1093,7 +1019,7 @@ if host_machine.system() != 'windows'
 
   test_composition_e2e = executable('test_composition_e2e',
     'test_composition_e2e.c',
-    dependencies : lime_parser_dep,
+    dependencies : lime_plugin_loader_dep,
     include_directories : include_directories('../src'),
     export_dynamic : true,
   )
@@ -1129,7 +1055,7 @@ if host_machine.system() != 'windows'
   # subdir('tests').
   test_parse_manager_bin = executable('test_parse_manager',
     'test_parse_manager.c',
-    dependencies : lime_parser_dep,
+    dependencies : lime_plugin_loader_dep,
     include_directories : include_directories('../src'),
   )
 
@@ -2207,7 +2133,7 @@ test('mod_serialize', test_mod_serialize)
 test_claims_proof = executable('test_claims_proof',
   'test_claims_proof.c',
   include_directories : include_directories('../src'),
-  dependencies : lime_parser_dep,
+  dependencies : [lime_parser_dep, lime_compiler_dep],
 )
 
 test('claims_proof', test_claims_proof)
@@ -2394,328 +2320,242 @@ test_extension_e2e = executable('test_extension_e2e',
 
 test('extension_e2e', test_extension_e2e)
 
-# End-to-end test of lime_snapshot_create() -- the runtime
-# subprocess pipeline that takes a .y file, runs lime + cc on it,
-# dlopens the result, and returns a ParserSnapshot.  Skipped at
-# runtime when lime/cc are not available.  Skipped at configure
-# time on Windows: the underlying fork/exec/dlopen path is
-# stubbed (returns NULL with a "not yet supported" error) on
-# this platform, so the test would always skip-at-runtime; no
-# value in compiling it.
-if host_machine.system() != 'windows'
-  test_snapshot_create = executable('test_snapshot_create',
-    'test_snapshot_create.c',
-    include_directories : include_directories('../src'),
-    dependencies : lime_parser_dep,
-    # Export executable symbols so the .so produced by
-    # lime_snapshot_create at runtime can resolve snapshot_release /
-    # create_base_snapshot / etc. via dlopen against the parent
-    # binary.  Required on FreeBSD (where the default is hidden);
-    # harmless on Linux / macOS where the default is already export.
-    export_dynamic : true,
-  )
+# lime_snapshot_create("file.y"): read + in-process LALR(1) build.  Runs
+# with PATH emptied (no lime, no cc) on every platform.
+test_snapshot_create = executable('test_snapshot_create',
+  'test_snapshot_create.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('snapshot_create', test_snapshot_create, is_parallel : false)
 
-  test('snapshot_create', test_snapshot_create,
-    env : [
-      'LIME_BIN=' + lime_exe.full_path(),
-      'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
-      'LIME_INCLUDE=' + meson.project_source_root() / 'include',
-      'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
-      'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
-    ],
-    depends : [lime_exe],
-    workdir : meson.project_source_root(),
-    is_parallel : false,
-  )
-endif
-
-# v0.6.x: cross-platform regression for lime_snapshot_create routed
-# through the in-process API.  On Windows this exercises the path that
-# was previously stubbed (no fork/dlopen); on Unix it confirms the
-# in-process fast path and the LIME_FORCE_SUBPROCESS=1 fallback both
-# work.  Links lime_compiler_dep so the weak
-# lime_compile_grammar_in_process reference in src/snapshot_create.c
-# resolves; without it the fast path is silently skipped.
+# create_base_snapshot / lime_compile_grammar_text on every platform,
+# including Windows (it used to be refused there: no fork/dlopen).
 test_windows_snapshot_create = executable('test_windows_snapshot_create',
   'test_windows_snapshot_create.c',
   include_directories : include_directories('../src'),
   dependencies : [lime_parser_dep, lime_compiler_dep],
-  export_dynamic : true,
 )
-
 test('windows_snapshot_create', test_windows_snapshot_create,
-  workdir : meson.project_source_root(),
+  workdir : meson.current_build_dir(),
   is_parallel : false,
 )
 
-# End-to-end exercise of runtime LALR(1) automaton rebuild via the
-# subprocess pipeline.  Adds a postfix-factorial extension to the
-# arithmetic grammar, calls publish_modified_snapshot which
-# concatenates the original grammar source with the serialised
-# modifications and reruns lime+cc, then parses input that exercises
-# the new rule.  Skipped at runtime when lime or cc is unavailable.
-# Same Windows-skip rationale as test_snapshot_create above.
-if host_machine.system() != 'windows'
-  test_extension_rebuild = executable('test_extension_rebuild',
-    'test_extension_rebuild.c',
-    test_runtime_arith_gen,
-    include_directories : include_directories('../src'),
-    dependencies : [lime_parser_dep, lime_compiler_dep],
-    export_dynamic : true,
-  )
+# Runtime LALR(1) rebuild: a postfix-factorial extension composed onto the
+# arithmetic grammar by publish_modified_snapshot (in-process), then
+# parsed through the new rule.
+test_extension_rebuild = executable('test_extension_rebuild',
+  'test_extension_rebuild.c',
+  test_runtime_arith_gen,
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('extension_rebuild', test_extension_rebuild)
 
-  test('extension_rebuild', test_extension_rebuild,
-    env : [
-      'LIME_BIN=' + lime_exe.full_path(),
-      'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
-      'LIME_INCLUDE=' + meson.project_source_root() / 'include',
-      'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
-      'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
-    ],
-    depends : [lime_exe],
-    workdir : meson.project_source_root(),
-    is_parallel : false,
-  )
+# PG Track B repro/regression: compose over a %first_token 257 base
+# and assert (a) base token codes survive composition and (b) a
+# valid base query parses through the composed snapshot.  Generated
+# with `lime -n` so the base embeds grammar_source.
+test_compose_ft_gen = custom_target('test_compose_ft_parser',
+  input   : ['ft_base_grammar.lime'],
+  output  : ['ft_base_grammar.c', 'ft_base_grammar.h',
+             'ft_base_grammar_snapshot.c'],
+  command : [
+    lime_exe,
+    '-T' + meson.project_source_root() / 'limpar.c',
+    '-n',
+    '-d@OUTDIR@',
+    '@INPUT@',
+  ],
+)
+test_compose_first_token = executable('test_compose_first_token',
+  'test_compose_first_token.c',
+  test_compose_ft_gen,
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+  c_args : ['-DLIME_HAVE_SNAPSHOT_BUILD'],
+)
+test('compose_first_token', test_compose_first_token)
 
-  # PG Track B repro/regression: compose over a %first_token 257 base
-  # and assert (a) base token codes survive composition and (b) a
-  # valid base query parses through the composed snapshot.  Generated
-  # with `lime -n` so the base embeds grammar_source.
-  test_compose_ft_gen = custom_target('test_compose_ft_parser',
-    input   : ['ft_base_grammar.lime'],
-    output  : ['ft_base_grammar.c', 'ft_base_grammar.h',
-               'ft_base_grammar_snapshot.c'],
-    command : [
-      lime_exe,
-      '-T' + meson.project_source_root() / 'limpar.c',
-      '-n',
-      '-d@OUTDIR@',
-      '@INPUT@',
-    ],
-  )
+# MOD_ADD_TOKEN.fallback_to: an extension keyword must not break an
+# existing identifier of the same spelling (SQLite-style %fallback).
+test_ext_soft_keyword = executable('test_ext_soft_keyword',
+  'test_ext_soft_keyword.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('ext_soft_keyword', test_ext_soft_keyword)
 
-  test_compose_first_token = executable('test_compose_first_token',
-    'test_compose_first_token.c',
-    test_compose_ft_gen,
-    include_directories : include_directories('../src'),
-    # Link the in-process compiler so publish_modified_snapshot takes
-    # the real recompile path PG uses (path A), which rebuilds the
-    # token-name table from the merged grammar -- so the extension's
-    # new token resolves via lime_snapshot_token_code.
-    dependencies : [lime_parser_dep, lime_compiler_dep],
-    c_args : ['-DLIME_HAVE_SNAPSHOT_BUILD'],
-    export_dynamic : true,
-  )
+# Is a composed grammar a function of the extension SET, or of the
+# order load_extension() was called in?  Composes 3 extensions in all
+# 6 orders and compares parse tables and assigned token codes.
+test_compose_order = executable('test_compose_order',
+  'test_compose_order.c',
+  test_runtime_arith_gen,
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('compose_order', test_compose_order)
 
-  test('compose_first_token', test_compose_first_token,
-    workdir : meson.project_source_root(),
-    is_parallel : false,
-  )
+# Goal B end to end: an extension's MOD_ADD_RULE `reduce` callback runs
+# at parse time on a snapshot rebuilt by publish_modified_snapshot(),
+# with no host_reduce bound, and its LHS value reaches parse_result()
+# through the base grammar's rules.
+test_extension_reduce_e2e = executable('test_extension_reduce_e2e',
+  'test_extension_reduce_e2e.c',
+  test_runtime_arith_gen,
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('extension_reduce_e2e', test_extension_reduce_e2e)
 
-  # MOD_ADD_TOKEN.fallback_to: an extension keyword must not break an
-  # existing identifier of the same spelling (SQLite-style %fallback).
-  test_ext_soft_keyword = executable('test_ext_soft_keyword',
-    'test_ext_soft_keyword.c',
-    include_directories : include_directories('../src'),
-    dependencies : [lime_parser_dep, lime_compiler_dep],
-    export_dynamic : true,
-  )
-  test('ext_soft_keyword', test_ext_soft_keyword, workdir : meson.project_source_root())
+# Track B1: the snapshot keyword table (include/lime_lexer.h) --
+# 1000 keywords, case folding, compose from MOD_ADD_TOKEN.lexeme,
+# base-code stability, and concurrent readers across snapshot swaps
+# (run this one under -Db_sanitize=thread too).
+test_kw_table = executable('test_kw_table',
+  'test_kw_table.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('kw_table', test_kw_table, timeout : 120)
 
-  # Track B1: the snapshot keyword table (include/lime_lexer.h) --
-  # 1000 keywords, case folding, compose from MOD_ADD_TOKEN.lexeme,
-  # base-code stability, and concurrent readers across snapshot swaps
-  # (run this one under -Db_sanitize=thread too).
-  test_kw_table = executable('test_kw_table',
-    'test_kw_table.c',
-    include_directories : include_directories('../src'),
-    dependencies : [lime_parser_dep, lime_compiler_dep],
-    export_dynamic : true,
-  )
-  test('kw_table', test_kw_table, timeout : 120)
+# Track B3: %keyword_class / %operator_class.  The scanner is compiled
+# by lime -X at build time with no keywords; an extension composes
+# CONNECT and ->> at runtime and the same scanner returns them.
+test_lex_classify_gen = custom_target('test_lex_classify_lex',
+  input   : ['test_lex_classify_grammar.lex'],
+  output  : ['test_lex_classify_grammar_lex.c',
+             'test_lex_classify_grammar_lex.h'],
+  command : [lime_exe, '-X', '-d@OUTDIR@', '@INPUT@'],
+)
+test_lex_classify = executable('test_lex_classify',
+  'test_lex_classify.c',
+  test_lex_classify_gen,
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('lex_classify', test_lex_classify)
 
-  # Track B3: %keyword_class / %operator_class.  The scanner is compiled
-  # by lime -X at build time with no keywords; an extension composes
-  # CONNECT and ->> at runtime and the same scanner returns them.
-  test_lex_classify_gen = custom_target('test_lex_classify_lex',
-    input   : ['test_lex_classify_grammar.lex'],
-    output  : ['test_lex_classify_grammar_lex.c',
-               'test_lex_classify_grammar_lex.h'],
-    command : [lime_exe, '-X', '-d@OUTDIR@', '@INPUT@'],
-  )
-  test_lex_classify = executable('test_lex_classify',
-    'test_lex_classify.c',
-    test_lex_classify_gen,
-    include_directories : include_directories('../src'),
-    dependencies : [lime_parser_dep, lime_compiler_dep],
-    export_dynamic : true,
-  )
-  test('lex_classify', test_lex_classify)
+# Track B5: a new literal syntax added at runtime (MOD_ADD_LEX_RULE +
+# %runtime_rules), together with a keyword, a soft keyword and an
+# operator, on one build-time-generated scanner.
+test_lex_ext_rule_gen = custom_target('test_lex_ext_rule_lex',
+  input   : ['test_lex_ext_rule_grammar.lex'],
+  output  : ['test_lex_ext_rule_grammar_lex.c', 'test_lex_ext_rule_grammar_lex.h'],
+  command : [lime_exe, '-X', '-d@OUTDIR@', '@INPUT@'],
+)
+test_lex_ext_rule = executable('test_lex_ext_rule',
+  'test_lex_ext_rule.c',
+  test_lex_ext_rule_gen,
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('lex_ext_rule', test_lex_ext_rule)
 
-  # Track B5: a new literal syntax added at runtime (MOD_ADD_LEX_RULE +
-  # %runtime_rules), together with a keyword, a soft keyword and an
-  # operator, on one build-time-generated scanner.
-  test_lex_ext_rule_gen = custom_target('test_lex_ext_rule_lex',
-    input   : ['test_lex_ext_rule_grammar.lex'],
-    output  : ['test_lex_ext_rule_grammar_lex.c', 'test_lex_ext_rule_grammar_lex.h'],
-    command : [lime_exe, '-X', '-d@OUTDIR@', '@INPUT@'],
-  )
-  test_lex_ext_rule = executable('test_lex_ext_rule',
-    'test_lex_ext_rule.c',
-    test_lex_ext_rule_gen,
-    include_directories : include_directories('../src'),
-    dependencies : [lime_parser_dep, lime_compiler_dep],
-    export_dynamic : true,
-  )
-  test('lex_ext_rule', test_lex_ext_rule)
+# Track B4: the runtime DFA interpreter vs the lime -X generated scanner
+# on PostgreSQL's scanner (tests/pg_scan_core.lex = the PG Lime port's
+# scan.lex with PG-free actions).  meson runs it on the in-tree SQL;
+# the REL_18 regression suite is run by hand (see the B4 commit).
+pg_scan_core_gen = custom_target('pg_scan_core_lex',
+  input   : ['pg_scan_core.lex'],
+  output  : ['pg_scan_core_lex.c', 'pg_scan_core_lex.h'],
+  command : [lime_exe, '-X', '-d@OUTDIR@', '@INPUT@'],
+)
+test_lex_program = executable('test_lex_program',
+  'test_lex_program.c',
+  pg_scan_core_gen,
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+# Track B5 bench + check: the same PG scanner with %runtime_rules,
+# base throughput with and without an extension rule loaded.  The
+# .lex is pg_scan_core.lex with the prefix changed to Gate and the
+# directive added (generated here, so the two cannot drift).
+pg_scan_gate_src = custom_target('pg_scan_gate_src',
+  input : ['pg_scan_core.lex'],
+  output : 'pg_scan_gate.lex',
+  command : ['sed', '-e', 's/^%name_prefix Core[.]/%name_prefix Gate./',
+             '-e', '/^%name_prefix Gate[.]/a %runtime_rules.', '@INPUT@'],
+  capture : true,
+)
+pg_scan_gate_gen = custom_target('pg_scan_gate_lex',
+  input   : [pg_scan_gate_src],
+  output  : ['pg_scan_gate_lex.c', 'pg_scan_gate_lex.h'],
+  command : [lime_exe, '-X', '-d@OUTDIR@', '@INPUT@'],
+)
+# A/B layout control: the plain scanner again under another prefix (no
+# directive), so "plain vs gate" can be read against "plain vs twin".
+pg_scan_twin_src = custom_target('pg_scan_twin_src',
+  input : ['pg_scan_core.lex'],
+  output : 'pg_scan_twin.lex',
+  command : ['sed', '-e', 's/^%name_prefix Core[.]/%name_prefix Twin./', '@INPUT@'],
+  capture : true,
+)
+pg_scan_twin_gen = custom_target('pg_scan_twin_lex',
+  input   : [pg_scan_twin_src],
+  output  : ['pg_scan_twin_lex.c', 'pg_scan_twin_lex.h'],
+  command : [lime_exe, '-X', '-d@OUTDIR@', '@INPUT@'],
+)
+bench_lex_gate = executable('bench_lex_gate',
+  'bench_lex_gate.c',
+  pg_scan_core_gen,
+  pg_scan_gate_gen,
+  pg_scan_twin_gen,
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('lex_gate_agree', bench_lex_gate,
+  args : [meson.project_source_root() / 'examples/pg/tests/select_basic.sql',
+          meson.project_source_root() / 'examples/pg/tests/select_columns.sql',
+          meson.project_source_root() / 'examples/pg/tests/select_join.sql',
+          meson.project_source_root() / 'examples/pg/pg_grammar.lime'])
 
-  # Track B4: the runtime DFA interpreter vs the lime -X generated scanner
-  # on PostgreSQL's scanner (tests/pg_scan_core.lex = the PG Lime port's
-  # scan.lex with PG-free actions).  meson runs it on the in-tree SQL;
-  # the REL_18 regression suite is run by hand (see the B4 commit).
-  pg_scan_core_gen = custom_target('pg_scan_core_lex',
-    input   : ['pg_scan_core.lex'],
-    output  : ['pg_scan_core_lex.c', 'pg_scan_core_lex.h'],
-    command : [lime_exe, '-X', '-d@OUTDIR@', '@INPUT@'],
-  )
-  test_lex_program = executable('test_lex_program',
-    'test_lex_program.c',
-    pg_scan_core_gen,
-    include_directories : include_directories('../src'),
-    dependencies : [lime_parser_dep, lime_compiler_dep],
-    export_dynamic : true,
-  )
-  # Track B5 bench + check: the same PG scanner with %runtime_rules,
-  # base throughput with and without an extension rule loaded.  The
-  # .lex is pg_scan_core.lex with the prefix changed to Gate and the
-  # directive added (generated here, so the two cannot drift).
-  pg_scan_gate_src = custom_target('pg_scan_gate_src',
-    input : ['pg_scan_core.lex'],
-    output : 'pg_scan_gate.lex',
-    command : ['sed', '-e', 's/^%name_prefix Core[.]/%name_prefix Gate./',
-               '-e', '/^%name_prefix Gate[.]/a %runtime_rules.', '@INPUT@'],
-    capture : true,
-  )
-  pg_scan_gate_gen = custom_target('pg_scan_gate_lex',
-    input   : [pg_scan_gate_src],
-    output  : ['pg_scan_gate_lex.c', 'pg_scan_gate_lex.h'],
-    command : [lime_exe, '-X', '-d@OUTDIR@', '@INPUT@'],
-  )
-  # A/B layout control: the plain scanner again under another prefix (no
-  # directive), so "plain vs gate" can be read against "plain vs twin".
-  pg_scan_twin_src = custom_target('pg_scan_twin_src',
-    input : ['pg_scan_core.lex'],
-    output : 'pg_scan_twin.lex',
-    command : ['sed', '-e', 's/^%name_prefix Core[.]/%name_prefix Twin./', '@INPUT@'],
-    capture : true,
-  )
-  pg_scan_twin_gen = custom_target('pg_scan_twin_lex',
-    input   : [pg_scan_twin_src],
-    output  : ['pg_scan_twin_lex.c', 'pg_scan_twin_lex.h'],
-    command : [lime_exe, '-X', '-d@OUTDIR@', '@INPUT@'],
-  )
-  bench_lex_gate = executable('bench_lex_gate',
-    'bench_lex_gate.c',
-    pg_scan_core_gen,
-    pg_scan_gate_gen,
-    pg_scan_twin_gen,
-    include_directories : include_directories('../src'),
-    dependencies : [lime_parser_dep, lime_compiler_dep],
-    export_dynamic : true,
-  )
-  test('lex_gate_agree', bench_lex_gate,
-    args : [meson.project_source_root() / 'examples/pg/tests/select_basic.sql',
-            meson.project_source_root() / 'examples/pg/tests/select_columns.sql',
-            meson.project_source_root() / 'examples/pg/tests/select_join.sql',
-            meson.project_source_root() / 'examples/pg/pg_grammar.lime'])
+test('lex_program', test_lex_program,
+  args : [meson.project_source_root() / 'examples/pg/tests/select_basic.sql',
+          meson.project_source_root() / 'examples/pg/tests/select_columns.sql',
+          meson.project_source_root() / 'examples/pg/tests/select_join.sql',
+          meson.project_source_root() / 'examples/pg/pg_grammar.lime',
+          meson.project_source_root() / 'tests/pg_scan_core.lex'],
+  env : ['PG_SCAN_CORE_LEX=' + meson.current_source_dir() / 'pg_scan_core.lex'],
+  timeout : 120)
 
-  test('lex_program', test_lex_program,
-    args : [meson.project_source_root() / 'examples/pg/tests/select_basic.sql',
-            meson.project_source_root() / 'examples/pg/tests/select_columns.sql',
-            meson.project_source_root() / 'examples/pg/tests/select_join.sql',
-            meson.project_source_root() / 'examples/pg/pg_grammar.lime',
-            meson.project_source_root() / 'tests/pg_scan_core.lex'],
-    env : ['PG_SCAN_CORE_LEX=' + meson.current_source_dir() / 'pg_scan_core.lex'],
-    timeout : 120)
+# Track B measurements (tests/bench_lexicon.c).  The meson test only
+# runs the agreement check (BENCH_CHECK_ONLY=1): PostgreSQL's keyword
+# list from examples/pg/pg_kwlist.h, every identifier in the in-tree
+# SQL, lexicon vs TokenTable.  The timed runs are by hand; see
+# docs/LEXER_DESIGN.md "Runtime lexicon".
+bench_lexicon = executable('bench_lexicon',
+  'bench_lexicon.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('lexicon_kw_agree', bench_lexicon,
+  args : ['kw', meson.project_source_root() / 'examples/pg/pg_kwlist.h',
+          meson.project_source_root() / 'examples/pg/tests/select_basic.sql',
+          meson.project_source_root() / 'examples/pg/tests/select_columns.sql',
+          meson.project_source_root() / 'examples/pg/tests/select_join.sql',
+          meson.project_source_root() / 'examples/pg/pg_grammar.lime'],
+  env : ['BENCH_CHECK_ONLY=1'],
+)
+test('lexicon_op_agree', bench_lexicon,
+  args : ['op',
+          meson.project_source_root() / 'examples/pg/tests/select_basic.sql',
+          meson.project_source_root() / 'examples/pg/tests/select_columns.sql',
+          meson.project_source_root() / 'examples/pg/tests/select_join.sql',
+          meson.project_source_root() / 'examples/pg/pg_grammar.lime'],
+  env : ['BENCH_CHECK_ONLY=1'],
+)
 
-  # Track B measurements (tests/bench_lexicon.c).  The meson test only
-  # runs the agreement check (BENCH_CHECK_ONLY=1): PostgreSQL's keyword
-  # list from examples/pg/pg_kwlist.h, every identifier in the in-tree
-  # SQL, lexicon vs TokenTable.  The timed runs are by hand; see
-  # docs/LEXER_DESIGN.md "Runtime lexicon".
-  bench_lexicon = executable('bench_lexicon',
-    'bench_lexicon.c',
-    include_directories : include_directories('../src'),
-    dependencies : [lime_parser_dep, lime_compiler_dep],
-    export_dynamic : true,
-  )
-  test('lexicon_kw_agree', bench_lexicon,
-    args : ['kw', meson.project_source_root() / 'examples/pg/pg_kwlist.h',
-            meson.project_source_root() / 'examples/pg/tests/select_basic.sql',
-            meson.project_source_root() / 'examples/pg/tests/select_columns.sql',
-            meson.project_source_root() / 'examples/pg/tests/select_join.sql',
-            meson.project_source_root() / 'examples/pg/pg_grammar.lime'],
-    env : ['BENCH_CHECK_ONLY=1'],
-  )
-  test('lexicon_op_agree', bench_lexicon,
-    args : ['op',
-            meson.project_source_root() / 'examples/pg/tests/select_basic.sql',
-            meson.project_source_root() / 'examples/pg/tests/select_columns.sql',
-            meson.project_source_root() / 'examples/pg/tests/select_join.sql',
-            meson.project_source_root() / 'examples/pg/pg_grammar.lime'],
-    env : ['BENCH_CHECK_ONLY=1'],
-  )
-
-  # Is a composed grammar a function of the extension SET, or of the
-  # order load_extension() was called in?  Composes 3 extensions in all
-  # 6 orders and compares parse tables and assigned token codes.
-  test_compose_order = executable('test_compose_order',
-    'test_compose_order.c',
-    test_runtime_arith_gen,
-    include_directories : include_directories('../src'),
-    dependencies : [lime_parser_dep, lime_compiler_dep],
-    export_dynamic : true,
-  )
-  test('compose_order', test_compose_order,
-    env : [
-      'LIME_BIN=' + lime_exe.full_path(),
-      'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
-      'LIME_INCLUDE=' + meson.project_source_root() / 'include',
-      'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
-      'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
-    ],
-    depends : [lime_exe],
-    workdir : meson.project_source_root(),
-    is_parallel : false,
-  )
-
-  # Goal B end to end: an extension's MOD_ADD_RULE `reduce` callback runs
-  # at parse time on a snapshot rebuilt by publish_modified_snapshot(),
-  # with no host_reduce bound, and its LHS value reaches parse_result()
-  # through the base grammar's rules.  This was a known-gap canary (exit
-  # 2) until callbacks were bound onto the snapshot by rule identity; it
-  # is now a regression test.  Same subprocess-rebuild pipeline (and
-  # therefore the same Windows skip) as test_extension_rebuild above.
-  test_extension_reduce_e2e = executable('test_extension_reduce_e2e',
-    'test_extension_reduce_e2e.c',
-    test_runtime_arith_gen,
-    include_directories : include_directories('../src'),
-    dependencies : [lime_parser_dep, lime_compiler_dep],
-    export_dynamic : true,
-  )
-
-  test('extension_reduce_e2e', test_extension_reduce_e2e,
-    env : [
-      'LIME_BIN=' + lime_exe.full_path(),
-      'LIME_LIBDIR=' + meson.current_build_dir() / '..' / 'src',
-      'LIME_INCLUDE=' + meson.project_source_root() / 'include',
-      'LIME_SRC_INCLUDE=' + meson.project_source_root() / 'src',
-      'LIME_SNAPSHOT_BUILD_C=' + meson.project_source_root() / 'src' / 'snapshot_build.c',
-    ],
-    depends : [lime_exe],
-    workdir : meson.project_source_root(),
-    is_parallel : false,
-  )
+# C6: no library a consumer links can spawn a process or load a shared
+# object (fork/exec*/dlopen/dlsym/LoadLibrary/posix_spawn/system/popen),
+# and liblime_parser has no reference to the in-process compiler (weak or
+# strong).  Checks the default build's archives.
+nm_prog = find_program('nm', 'llvm-nm', required : false)
+if nm_prog.found()
+  test('no_runtime_loader', find_program('check_no_runtime_loader.sh'),
+    args : [nm_prog.full_path(), lime_parser_lib.full_path(), lime_compiler_lib.full_path()],
+    depends : [lime_parser_lib, lime_compiler_lib])
 endif
 
 # C1: an extension's LALR conflicts must be resolved explicitly, or the

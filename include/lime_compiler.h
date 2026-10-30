@@ -2,12 +2,11 @@
  * @file lime_compiler.h
  * @brief In-process Lime grammar compilation.
  *
- * Replaces the subprocess pipeline (lime + cc + dlopen) used by
- * `lime_compile_grammar_text` in src/snapshot_create.c with a
- * direct in-process call.  Eliminates the ~200ms fork+exec
- * latency and the runtime C-compiler dependency, making
- * runtime grammar composition viable for daemon-startup
- * extension loading.
+ * The only way Lime builds parse tables at runtime:
+ * lime_compile_grammar_text / create_base_snapshot (src/snapshot_create.c)
+ * and publish_modified_snapshot (src/compose.c) call it.  There is no
+ * subprocess pipeline: Lime never runs `lime` or a C compiler and never
+ * loads a shared object at runtime.
  *
  * Available since: v0.5.4 (ROADMAP item 1, phase 3).
  */

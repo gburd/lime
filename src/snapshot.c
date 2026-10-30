@@ -12,34 +12,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Weak hook called by destroy_snapshot to release a snapshot's
-** dlopen handle (if any).  The strong definition lives in
-** src/snapshot_create.c, alongside the registry that pairs each
-** subprocess-built snapshot with its .so handle.  Builds that
-** don't include snapshot_create.c (the dynamically-built .so
-** consumer side, or static-parser-only consumers) get NULL via
-** the weak reference and destroy_snapshot skips the dlclose.
-** Added v0.6.x to fix the documented dlopen-handle leak.
-*/
-#if (defined(__GNUC__) || defined(__clang__)) && (!defined(_WIN32) || defined(__MINGW32__))
-__attribute__((weak))
-void snapshot_dlopen_release(ParserSnapshot *snap);
-
-/* Weak stub definition.  Apple's ld errors on unresolved weak
-** undefineds at static-link time; a weak stub keeps consumers that
-** don't link snapshot_create.c (e.g. the dynamically-built .so for
-** snapshot_create's subprocess pipeline) linkable.  When the strong
-** definition in snapshot_create.c IS linked, it wins. */
-__attribute__((weak))
-void snapshot_dlopen_release(ParserSnapshot *snap) { (void)snap; }
-#else
-/* Windows: no .so / dlopen machinery; provide a strong no-op so
-** destroy_snapshot's call site links cleanly.  When the day comes
-** to port the subprocess + LoadLibrary path to Win32, replace this
-** with a real implementation in snapshot_create.c (Win32 branch). */
-static void snapshot_dlopen_release(ParserSnapshot *snap) { (void)snap; }
-#endif
-
 /* ------------------------------------------------------------------ */
 /*  Internal helpers                                                    */
 /* ------------------------------------------------------------------ */
@@ -100,26 +72,6 @@ static void destroy_snapshot(ParserSnapshot *snap) {
     /* Lexer tables (keyword table / operator trie). */
     lime_lexicon_destroy(snap->lexicon);
 
-    /* dlopen handle (if any).  When this snapshot was constructed by
-    ** lime_snapshot_create()'s subprocess pipeline, it owns a dlopen
-    ** handle to the .so the action tables were memcpy'd out of.
-    ** snapshot_dlopen_release is defined as a strong symbol in
-    ** src/snapshot_create.c; in builds that don't include that file
-    ** (notably the .so produced by the subprocess pipeline itself)
-    ** the weak reference resolves to NULL and we skip the call.
-    ** Added v0.6.x; prior to that the handle was deliberately leaked
-    ** at process scope. */
-    /* On Windows snapshot_dlopen_release is a static no-op (no
-    ** dlopen machinery); on POSIX it's a weak symbol that may
-    ** resolve to NULL if snapshot_create.c isn't linked. */
-#if defined(_WIN32) && !defined(__MINGW32__)
-    snapshot_dlopen_release(snap);
-#else
-    if (snapshot_dlopen_release != NULL) {
-        snapshot_dlopen_release(snap);
-    }
-#endif
-
     free(snap);
 }
 
@@ -166,18 +118,6 @@ void snapshot_release(ParserSnapshot *snap) {
     }
 }
 
-/*
-** create_base_snapshot is defined in src/snapshot_create.c.  It runs
-** the lime parser generator as a subprocess on the grammar file,
-** compiles the resulting *_snapshot.c into a shared library, and
-** dlopen()s it to retrieve the populated ParserSnapshot.
-**
-** Removed the weak fallback that previously lived here: when both
-** the weak default and the strong definition are in the same static
-** archive (liblime_parser.a), the linker resolves to whichever it
-** sees first inside snapshot.c.o, which silently shadows the strong
-** def in snapshot_create.c.o.
-*/
 
 /* ------------------------------------------------------------------ */
 /*  Public lime_snapshot_* wrappers (declared in parser.h)            */
@@ -262,6 +202,6 @@ const char *lime_snapshot_rule_id(const ParserSnapshot *snap, int ruleno) {
     return snap->rule_ids[ruleno];
 }
 
-ParserSnapshot *lime_snapshot_create(const char *grammar_file, char **error) {
-    return create_base_snapshot(grammar_file, error);
-}
+/* lime_snapshot_create / create_base_snapshot live in src/snapshot_create.c
+** (liblime_compiler): building a snapshot from grammar text needs the
+** in-process compiler. */

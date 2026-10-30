@@ -2,19 +2,13 @@
 ** test_snapshot_create.c -- end-to-end test of
 ** lime_snapshot_create("foo.y", &err).
 **
-** Drives the full subprocess-based grammar-to-snapshot pipeline:
-**
 **   1. Write a tiny grammar file to a temp path.
-**   2. Call lime_snapshot_create() on it.
+**   2. Call lime_snapshot_create() on it: read + in-process LALR(1)
+**      build (liblime_compiler).  No `lime` or `cc` on PATH is needed,
+**      and the test runs with PATH emptied to prove it.
 **   3. Verify the returned ParserSnapshot is populated and that
 **      parse_begin/parse_token/parse_end can drive it.
-**
-** This test exercises the runtime LALR rebuild path that is the
-** answer to docs/ROADMAP.md item 1 (in-process for the v1 path is
-** subprocess; in-process is the long-term replacement).  The
-** subprocess path requires `lime` and `cc` to be available; the
-** test detects their absence and skips with a clear message rather
-** than failing.
+**   4. A missing file returns NULL with an error naming it.
 */
 
 #define _POSIX_C_SOURCE 200809L
@@ -90,55 +84,13 @@ static int write_grammar_to(const char *path) {
     return (w == n) ? 0 : -1;
 }
 
-static bool tool_available(const char *cmd) {
-    char buf[256];
-    snprintf(buf, sizeof(buf), "command -v %s >/dev/null 2>&1", cmd);
-    return system(buf) == 0;
-}
 
 int main(void) {
     printf("Lime lime_snapshot_create() end-to-end test\n");
     printf("============================================\n");
 
-    if (!tool_available("cc")) {
-        printf("  [SKIP] cc not on PATH; "
-               "run inside `nix develop` or install a C compiler.\n");
-        return 77;
-    }
-
-    /* Locate the lime binary -- prefer the one in the local builddir
-    ** so we don't accidentally pick up a stale system install.  Fall
-    ** back to PATH if neither builddir variant exists. */
-    struct stat st;
-    bool have_lime = false;
-    /* Honour LIME_BIN when the harness provides it (meson does, via
-    ** env:).  The builddir/ probes below only work when the build
-    ** directory happens to be named builddir/; any other name made
-    ** this test skip silently in every non-default build tree. */
-    const char *env_bin = getenv("LIME_BIN");
-    if (env_bin != NULL && env_bin[0] != '\0' && stat(env_bin, &st) == 0) {
-        /* already set; keep it */
-        have_lime = true;
-    } else if (stat("builddir/lime", &st) == 0) {
-        setenv("LIME_BIN", "builddir/lime", 1);
-        have_lime = true;
-    } else if (stat("../builddir/lime", &st) == 0) {
-        setenv("LIME_BIN", "../builddir/lime", 1);
-        have_lime = true;
-    } else if (tool_available("lime")) {
-        have_lime = true;
-    }
-    if (!have_lime) {
-        printf("  [SKIP] lime not in builddir/ or on PATH; "
-               "build with `ninja -C builddir lime` first.\n");
-        return 77;
-    }
-    /* Same trick for the limpar.c template. */
-    if (stat("limpar.c", &st) == 0) {
-        setenv("LIME_TEMPLATE", "limpar.c", 1);
-    } else if (stat("../limpar.c", &st) == 0) {
-        setenv("LIME_TEMPLATE", "../limpar.c", 1);
-    }
+    /* Nothing on PATH: the old pipeline exec'd `lime` and `cc` from it. */
+    setenv("PATH", "", 1);
 
     /* Step 1: write the grammar to a temp file. */
     char path[256] = "/tmp/lime_snap_test_XXXXXX";
@@ -200,6 +152,13 @@ int main(void) {
 
     snapshot_release(snap);
     unlink(ypath);
+
+    /* Step 4: a missing file is an error, not a crash or a fallback. */
+    err = NULL;
+    snap = lime_snapshot_create(ypath, &err);
+    CHECK(snap == NULL && err != NULL && strstr(err, ypath) != NULL,
+          "missing file: NULL + error naming the path");
+    free(err);
 
     printf("\n=== Summary === Pass: %d Fail: %d\n", n_pass, n_fail);
     return n_fail == 0 ? 0 : 1;

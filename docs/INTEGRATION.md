@@ -58,6 +58,23 @@ executable('my_app', 'main.c',
   dependencies : lime_dep)
 ```
 
+### Two libraries: parse vs compose
+
+| library | pkg-config | meson dep | what runs |
+|---|---|---|---|
+| `liblime_parser` | `lime` | `lime_parser_dep` | per parse: `parse_begin`/`parse_token`, snapshots, the extension registry |
+| `liblime_compiler` | `lime-compiler` | `lime_compiler_dep` | at compose time: `publish_modified_snapshot`, the compose policy, `lime_compile_grammar_in_process`, `create_base_snapshot` / `lime_snapshot_create` / `lime_compile_grammar_text` |
+
+**Compose needs liblime_compiler.**  A program that only parses, with
+snapshots built by `lime -n` at build time, links `lime` alone.  A program
+that composes extensions, or builds a snapshot from grammar text at
+runtime, also links `lime-compiler` (`pkg-config --libs lime-compiler`
+pulls in `lime` too).  If you forget, the result is a link error
+(`undefined reference to publish_modified_snapshot`).  There is no
+silent fallback to a slower path, because no such path exists: neither
+library can start a process or load a shared object.  The meson test
+`no_runtime_loader` checks this with `nm -u` on both archives.
+
 This gives you the full extension framework: `include/parser.h`,
 `include/extension_registry.h`, `include/conflict.h`, etc.
 
@@ -85,7 +102,7 @@ LIME_SRC = snapshot.c snapshot_modify.c extension.c extension_registry.c \
            strategy_priority.c strategy_fork_resolve.c \
            execution_policy.c context_switch.c grammar_context.c \
            parser_fork.c parser_manager.c parser_composition.c \
-           parser_operations.c parser_plugin.c \
+           parser_operations.c parser_plugin.c strategy_bayesian.c \
            tokenize.c tokenize_simd.c token_table.c \
            parse_context.c merkle_tree.c dependency_resolver.c \
            glr.c utf8.c lime_ast.c version.c
@@ -99,8 +116,14 @@ liblime_parser.a: $(LIME_OBJ)
 	$(AR) rcs $@ $^
 
 my_app: main.c liblime_parser.a
-	$(CC) -std=c11 -Ilime/include -o $@ $< -L. -llime_parser -lpthread -ldl
+	$(CC) -std=c11 -Ilime/include -o $@ $< -L. -llime_parser -lpthread
 ```
+
+To compose extensions, also build `liblime_compiler.a` from `lime.c`
+(with `-DLIME_TEST_HARNESS -DLIME_HAVE_SNAPSHOT_BUILD`), `src/compose.c`,
+`src/compose_policy.c` and `src/snapshot_create.c`, and link it *before*
+`-llime_parser`.  Lime's own `Makefile` does exactly this
+(`lib/liblime_compiler.a`).
 
 ### CMake
 
@@ -120,10 +143,10 @@ The extension framework requires:
 | Library | Required | Purpose |
 |---------|----------|---------|
 | `pthreads` | Yes | Thread-safe registry, snapshot refcounting |
-| `libdl` | Yes (Linux) | `dlopen`/`dlsym` for shared library extensions |
 | `libm` | Optional | Math functions in benchmarks |
 
-On macOS, `dlopen` is in `libSystem` (no `-ldl` needed).
+No `libdl`: the default libraries load no shared objects.  Only the
+opt-in plugin loader (below) needs it.
 
 ## Headers
 
@@ -165,26 +188,55 @@ If you use option 3 and need only the parser generator, you can drop
 `Parse()` / `XxxAlloc()` symbols that have no dependency on any
 particular tokenizer.
 
-## Runtime Extension Loading
+## Runtime Extensions
 
-Extensions can be compiled as shared libraries and loaded at runtime:
+An extension is host-linked C code (a `GrammarModification` array plus
+optional `reduce` callbacks).  The host registers it and composes:
 
 ```c
-#include <dlfcn.h>
-#include "extension_registry.h"
+#include "extension.h"
+#include "lime_policy.h"
 
-/* Load extension shared library */
-void *lib = dlopen("./libmy_extension.so", RTLD_NOW);
-ExtensionInitFunc init = dlsym(lib, "extension_init");
+ExtensionRegistry *reg = create_extension_registry();
+extension_registry_set_policy(reg, &my_policy);   /* who wins; NULL = fail on any new conflict */
+register_extension(reg, &my_ext_info, &id);
+load_extension(reg, id, base, &err);
 
-/* Register and load */
-ExtensionRegistry *reg = extension_registry_create();
-init(reg);  /* extension registers itself */
+ParserSnapshot *next = NULL;
+if (publish_modified_snapshot(reg, base, &next, NULL, &err)) {
+    /* swap `next` in; parses already running keep their snapshot */
+} else {
+    /* err explains (for conflicts: the full report); keep serving the old snapshot */
+}
 ```
 
-See `examples/calc/` for a complete working example of dlopen-based
-extension loading, and `examples/plugin_template/` for a reusable
-template.
+Composition rebuilds the LALR(1) tables in-process (liblime_compiler).
+Lime never forks, never runs `lime` or `cc`, and never loads a `.so`.  Every
+LALR conflict the extensions introduce must be resolved by the host's
+policy, or the compose fails, whatever the base's `%expect` says; see
+`docs/EXTENSIONS.md` and `lime --explain-compose base.lime ext.lime`.
+
+### Opt-in: `-Dplugin_loader=enabled` brings dlopen back
+
+`meson setup -Dplugin_loader=enabled` builds one more archive,
+`liblime_plugin_loader`, and **that archive calls `dlopen`/`dlsym`
+(`LoadLibrary`/`GetProcAddress` on Windows)**.  It provides
+`parser_manager_load()`, `parser_op_add_dynamic()` and
+`parser_op_update_from_library()`, which load a parser plugin from a
+`.so`/`.dll` at runtime.  `examples/plugin_template/` and
+`tools/parse-manager` are built only with this option.
+
+It is off by default because loading a shared object at runtime means
+running native code that was not part of the program you built and
+reviewed.  A parser library has no business doing that on its own: an
+extension should be code the host linked, or code the host chose to load
+with its own loader under its own trust rules (PostgreSQL's
+`shared_preload_libraries`, for example), and then registered with
+`register_extension()` / `parser_manager_register()`.  The default build
+cannot load anything, which the `no_runtime_loader` meson test checks on
+the default `liblime_parser.a` and `liblime_compiler.a`.  Enable the
+loader only if you really want Lime to open plugin files itself, and link
+`liblime_plugin_loader` explicitly.  The default libraries never pull it in.
 
 ## Generating Parsers at Build Time
 

@@ -5,6 +5,9 @@
 #   bin/lime              -- parser generator (single-file build by
 #                            default; pass LEX=1 to bundle the .lex
 #                            compiler into the same binary)
+#   lib/liblime_compiler.a -- compose-time library (in-process LALR
+#                            rebuild, publish_modified_snapshot, policy);
+#                            link it before liblime_parser.a to compose
 #   lib/liblime_parser.a  -- runtime library (snapshot, parse_engine,
 #                            extension framework, conflict detection,
 #                            disambiguation)
@@ -56,13 +59,16 @@ LIB       := lib
 
 LIME_BIN  := $(BIN)/lime
 LIME_LIB  := $(LIB)/liblime_parser.a
+# Compose time: in-process LALR rebuild + extension composition.
+LIME_CLIB := $(LIB)/liblime_compiler.a
+CLIB_OBJ  := $(BUILD)/clib/lime.o $(BUILD)/clib/compose.o \
+             $(BUILD)/clib/compose_policy.o $(BUILD)/clib/snapshot_create.o
 
 # Library translation units.
 LIB_SRC := \
   src/version.c            \
   src/snapshot.c           \
   src/snapshot_build.c     \
-  src/snapshot_create.c    \
   src/snapshot_modify.c    \
   src/token_table.c        \
   src/kw_table.c           \
@@ -77,6 +83,7 @@ LIB_SRC := \
   src/disambiguation.c     \
   src/strategy_priority.c  \
   src/strategy_fork_resolve.c \
+  src/strategy_bayesian.c  \
   src/mod_serialize.c      \
   src/dependency_resolver.c \
   src/parser_manager.c     \
@@ -113,7 +120,7 @@ TEST_BINS := $(addprefix $(BUILD)/test/,$(TEST_LIST))
 # -------------------------------------------------------------------
 
 .PHONY: all
-all: $(LIME_BIN) $(LIME_LIB) $(TEST_BINS)
+all: $(LIME_BIN) $(LIME_LIB) $(LIME_CLIB) $(TEST_BINS)
 
 # -------------------------------------------------------------------
 # lime generator
@@ -143,6 +150,18 @@ $(BUILD)/src/lex/%.o: src/lex/%.c | $(BUILD)/src/lex
 $(LIME_LIB): $(LIB_OBJ) | $(LIB)
 	$(AR) rcs $@ $^
 
+$(LIME_CLIB): $(CLIB_OBJ) | $(LIB)
+	$(AR) rcs $@ $^
+
+$(BUILD)/clib/lime.o: lime.c | $(BUILD)/clib
+	$(CC) $(CFLAGS_ALL) -DLIME_TEST_HARNESS -DLIME_HAVE_SNAPSHOT_BUILD -c $< -o $@
+
+$(BUILD)/clib/%.o: src/%.c | $(BUILD)/clib
+	$(CC) $(CFLAGS_ALL) -c $< -o $@
+
+$(BUILD)/clib:
+	mkdir -p $@
+
 $(BUILD)/src/%.o: src/%.c | $(BUILD)/src
 	$(CC) $(CFLAGS_ALL) -c $< -o $@
 
@@ -156,8 +175,8 @@ $(BUILD)/src/%.o: src/%.c | $(BUILD)/src
 # emitted into $(BUILD)/test/.
 # -------------------------------------------------------------------
 
-$(BUILD)/test/test_claims_proof: tests/test_claims_proof.c $(LIME_LIB) | $(BUILD)/test
-	$(CC) $(CFLAGS_ALL) -o $@ $< $(LIME_LIB) \
+$(BUILD)/test/test_claims_proof: tests/test_claims_proof.c $(LIME_LIB) $(LIME_CLIB) | $(BUILD)/test
+	$(CC) $(CFLAGS_ALL) -o $@ $< $(LIME_CLIB) $(LIME_LIB) \
 	  $(LDFLAGS_ALL)
 
 $(BUILD)/test/bench_arith_grammar.c \
@@ -178,12 +197,12 @@ $(BUILD)/test/test_runtime_parse: tests/test_runtime_parse.c \
 $(BUILD)/test/test_extension_e2e: tests/test_extension_e2e.c \
     $(BUILD)/test/bench_arith_grammar.c \
     $(BUILD)/test/bench_arith_grammar_snapshot.c \
-    $(LIME_LIB) | $(BUILD)/test
+    $(LIME_LIB) $(LIME_CLIB) | $(BUILD)/test
 	$(CC) $(CFLAGS_ALL) -I$(BUILD)/test -o $@ \
 	  tests/test_extension_e2e.c \
 	  $(BUILD)/test/bench_arith_grammar.c \
 	  $(BUILD)/test/bench_arith_grammar_snapshot.c \
-	  $(LIME_LIB) $(LDFLAGS_ALL)
+	  $(LIME_CLIB) $(LIME_LIB) $(LDFLAGS_ALL)
 
 $(BUILD)/test/test_destructor_grammar.c \
 $(BUILD)/test/test_destructor_grammar.h: tests/test_destructor_grammar.y $(LIME_BIN) | $(BUILD)/test
@@ -215,12 +234,12 @@ format:
 	  tests/test_claims_proof.c tests/test_runtime_parse.c \
 	  tests/test_destructor.c tests/test_extension_e2e.c
 
-install: $(LIME_BIN) $(LIME_LIB)
+install: $(LIME_BIN) $(LIME_LIB) $(LIME_CLIB)
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -d $(DESTDIR)$(PREFIX)/lib
 	install -d $(DESTDIR)$(PREFIX)/include/lime
 	install -m 0755 $(LIME_BIN) $(DESTDIR)$(PREFIX)/bin/
-	install -m 0644 $(LIME_LIB) $(DESTDIR)$(PREFIX)/lib/
+	install -m 0644 $(LIME_LIB) $(LIME_CLIB) $(DESTDIR)$(PREFIX)/lib/
 	install -m 0644 include/*.h $(DESTDIR)$(PREFIX)/include/lime/
 	install -m 0644 src/snapshot.h src/snapshot_modify.h src/extension.h \
 	    $(DESTDIR)$(PREFIX)/include/lime/

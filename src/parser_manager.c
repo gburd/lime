@@ -7,10 +7,11 @@
 ** by a pthread_rwlock_t.  The active snapshot is stored as an atomic
 ** pointer for lock-free reads via parser_manager_get_snapshot().
 **
-** Dynamic plugin loading goes through the three-call shim below
-** (pm_dl_open / pm_dl_entry / pm_dl_close), which maps to
-** dlopen/dlsym/dlclose on POSIX and LoadLibrary/GetProcAddress/
-** FreeLibrary on Windows.
+** This file registers HOST-LINKED plugins only (parser_manager_register).
+** It loads nothing: no dlopen, no LoadLibrary.  Loading a plugin from a
+** shared library (parser_manager_load) is the opt-in liblime_plugin_loader
+** (src/parser_manager_loader.c, meson -Dplugin_loader=enabled), which
+** registers through parser_manager_register_loaded() below.
 */
 #include "parser_manager.h"
 #include "parser.h"
@@ -21,98 +22,6 @@
 #include <stdio.h>
 #include <stdatomic.h>
 #include "lime_threads.h"
-
-#ifdef _WIN32
-#include <windows.h> /* also pulled in by lime_threads.h; guarded */
-#else
-#include <dlfcn.h>
-#endif
-
-/* ================================================================== */
-/*  Dynamic library shim (POSIX dlopen <-> Win32 LoadLibrary)          */
-/* ================================================================== */
-/*
-** Lime needs exactly three operations from the platform loader:
-** open a plugin, resolve its entry point, close it.  They are
-** wrapped here so the rest of this file (and PluginEntry.dl_handle,
-** which stays a plain `void *`) is platform-agnostic.
-**
-** Mapping -- pragmatic rather than faithful, in the same spirit as
-** include/lime_threads.h:
-**
-**   pm_dl_open   dlopen(path, RTLD_NOW|RTLD_LOCAL) -> LoadLibraryA(path)
-**   pm_dl_entry  dlsym(h, LIME_PLUGIN_ENTRY_SYMBOL) -> GetProcAddress(h, ...)
-**   pm_dl_close  dlclose(h)                         -> FreeLibrary((HMODULE)h)
-**
-** Where the Windows side is deliberately less than POSIX:
-**
-**   - RTLD_NOW and RTLD_LOCAL have no LoadLibrary equivalent and
-**     need none: the Windows loader always resolves imports eagerly,
-**     and DLL exports are never published into a process-global
-**     symbol namespace, so both flags are implicit.
-**   - dlerror() has no equivalent.  Failures collapse to the same
-**     PM_ERR_DLOPEN_FAILED / PM_ERR_NO_ENTRY_POINT codes the POSIX
-**     path returns; GetLastError() is not plumbed into the public
-**     ParserManagerStatus enum (see parser_manager_status_string()).
-**   - LoadLibraryA takes an ANSI (active code page) path, matching
-**     Lime's `const char *` API.  Plugin paths containing characters
-**     outside the ACP would need the -W variant and UTF-8 -> UTF-16
-**     conversion; not implemented.
-**   - The default DLL search order applies (no
-**     LOAD_WITH_ALTERED_SEARCH_PATH), so a plugin whose own
-**     dependent DLLs sit next to it must be loaded with those DLLs
-**     already reachable.
-*/
-
-/* Directory separator used when joining a search path to a filename. */
-#ifdef _WIN32
-#define PM_PATH_SEP '\\'
-#else
-#define PM_PATH_SEP '/'
-#endif
-
-/*
-** Open a shared library.  Returns an opaque handle, or NULL on failure.
-*/
-static void *pm_dl_open(const char *path) {
-#ifdef _WIN32
-    return (void *)LoadLibraryA(path);
-#else
-    return dlopen(path, RTLD_NOW | RTLD_LOCAL);
-#endif
-}
-
-/*
-** Resolve the plugin entry point in an open library.  Returns NULL if
-** the symbol is absent.
-*/
-static LimePluginEntryFn pm_dl_entry(void *handle) {
-#ifdef _WIN32
-    FARPROC sym = GetProcAddress((HMODULE)handle, LIME_PLUGIN_ENTRY_SYMBOL);
-    if (sym == NULL) return NULL;
-    /* GetProcAddress returns FARPROC (int(*)()).  Copy the bits rather
-    ** than cast: a direct function-pointer cast trips GCC/clang
-    ** -Wcast-function-type (on under -Wextra, i.e. meson
-    ** warning_level=2) and MSVC C4191. */
-    LimePluginEntryFn fn;
-    memcpy(&fn, &sym, sizeof(fn));
-    return fn;
-#else
-    return (LimePluginEntryFn)dlsym(handle, LIME_PLUGIN_ENTRY_SYMBOL);
-#endif
-}
-
-/*
-** Close a library opened with pm_dl_open().  NULL is a no-op.
-*/
-static void pm_dl_close(void *handle) {
-    if (handle == NULL) return;
-#ifdef _WIN32
-    FreeLibrary((HMODULE)handle);
-#else
-    dlclose(handle);
-#endif
-}
 
 /* ================================================================== */
 /*  Internal data structures                                           */
@@ -126,9 +35,10 @@ static void pm_dl_close(void *handle) {
 typedef struct PluginEntry {
     LimePluginHandle handle;
     const LimeParserPlugin *plugin;
-    void *dl_handle;    /* dlopen handle, NULL for static */
-    char *library_path; /* strdup'd path, NULL for static */
+    void *dl_handle;    /* loader's library handle, NULL for host-linked */
+    char *library_path; /* strdup'd path, NULL for host-linked */
     bool is_dynamic;
+    void (*close_fn)(void *dl_handle); /* loader's close, NULL for host-linked */
 } PluginEntry;
 
 /*
@@ -256,55 +166,6 @@ static void release_active_snapshot(ParserManager *mgr) {
     }
 }
 
-/*
-** Try to resolve a plugin library path.  If the path is absolute or
-** the file exists as given, return a strdup'd copy.  Otherwise search
-** the configured search paths.  Returns NULL if not found.
-*/
-static char *resolve_library_path(const ParserManagerConfig *config, const char *path) {
-    if (path == NULL) return NULL;
-
-    /* An explicitly-rooted or explicitly-relative path is used as given
-    ** and never joined against the search paths. */
-    if (path[0] == '/' || path[0] == '.') {
-        return dup_string(path);
-    }
-#ifdef _WIN32
-    /* Windows also spells those: "\dir\p.dll", "\\server\share\p.dll",
-    ** "C:\p.dll", "C:p.dll". */
-    if (path[0] == '\\') return dup_string(path);
-    if (((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
-        path[1] == ':') {
-        return dup_string(path);
-    }
-#endif
-
-    /* Try search paths */
-    if (config->plugin_search_paths != NULL) {
-        for (const char **dir = config->plugin_search_paths; *dir != NULL; dir++) {
-            size_t dlen = strlen(*dir);
-            size_t plen = strlen(path);
-            /* +2 for the separator and NUL */
-            char *full = malloc(dlen + plen + 2);
-            if (full == NULL) continue;
-            memcpy(full, *dir, dlen);
-            full[dlen] = PM_PATH_SEP;
-            memcpy(full + dlen + 1, path, plen + 1);
-
-            /* Check if the file exists (best effort) */
-            FILE *f = fopen(full, "r");
-            if (f != NULL) {
-                fclose(f);
-                return full;
-            }
-            free(full);
-        }
-    }
-
-    /* Fall back to the path as given */
-    return dup_string(path);
-}
-
 /* ================================================================== */
 /*  Status string                                                      */
 /* ================================================================== */
@@ -397,9 +258,7 @@ void parser_manager_destroy(ParserManager *mgr) {
         if (e->plugin != NULL && e->plugin->destroy != NULL) {
             e->plugin->destroy();
         }
-        if (e->is_dynamic) {
-            pm_dl_close(e->dl_handle);
-        }
+        if (e->close_fn != NULL) e->close_fn(e->dl_handle);
         free(e->library_path);
     }
 
@@ -474,56 +333,32 @@ static ParserManagerStatus register_plugin_locked(ParserManager *mgr,
 }
 
 /* ================================================================== */
-/*  Plugin loading                                                     */
+/*  Plugin registration                                                */
 /* ================================================================== */
 
-ParserManagerStatus parser_manager_load(ParserManager *mgr, const char *path, void *user_data,
-                                        LimePluginHandle *handle_out) {
-    if (mgr == NULL || path == NULL || handle_out == NULL) {
+/* Used by the opt-in loader (src/parser_manager_loader.c) to register a
+** plugin it opened.  On success the manager owns library_path and calls
+** close_fn(dl_handle) at unload/destroy; on failure the caller still owns
+** both (library_path is freed here either way). */
+ParserManagerStatus parser_manager_register_loaded(ParserManager *mgr,
+                                                   const LimeParserPlugin *plugin,
+                                                   void *dl_handle, void (*close_fn)(void *),
+                                                   char *library_path, void *user_data,
+                                                   LimePluginHandle *handle_out) {
+    if (mgr == NULL || plugin == NULL || handle_out == NULL) {
+        free(library_path);
         return PM_ERR_INVALID_ARG;
     }
-
-    /* Resolve the library path */
-    char *resolved = resolve_library_path(&mgr->config, path);
-    if (resolved == NULL) return PM_ERR_ALLOC;
-
-    /* Open the shared library */
-    void *dl_handle = pm_dl_open(resolved);
-    if (dl_handle == NULL) {
-        free(resolved);
-        return PM_ERR_DLOPEN_FAILED;
-    }
-
-    /* Look up entry point */
-    LimePluginEntryFn entry_fn = pm_dl_entry(dl_handle);
-    if (entry_fn == NULL) {
-        pm_dl_close(dl_handle);
-        free(resolved);
-        return PM_ERR_NO_ENTRY_POINT;
-    }
-
-    /* Call entry point to get plugin struct */
-    const LimeParserPlugin *plugin = entry_fn();
-    if (plugin == NULL) {
-        pm_dl_close(dl_handle);
-        free(resolved);
-        return PM_ERR_NO_ENTRY_POINT;
-    }
-
-    /* Register under write lock */
     pthread_rwlock_wrlock(&mgr->lock);
     ParserManagerStatus st =
-        register_plugin_locked(mgr, plugin, dl_handle, resolved, true, user_data, handle_out);
+        register_plugin_locked(mgr, plugin, dl_handle, library_path, true, user_data, handle_out);
+    if (st == PM_OK) mgr->entries[mgr->count - 1].close_fn = close_fn;
     LIME_RWLOCK_WRUNLOCK(&mgr->lock);
-
-    if (st != PM_OK) {
-        /* On failure, close the library.  Note: register_plugin_locked
-        ** already freed resolved on failure paths before the init call,
-        ** but if init fails we still need to close dl_handle. */
-        pm_dl_close(dl_handle);
-    }
-
     return st;
+}
+
+const ParserManagerConfig *parser_manager_config(const ParserManager *mgr) {
+    return mgr ? &mgr->config : NULL;
 }
 
 ParserManagerStatus parser_manager_register(ParserManager *mgr, const LimeParserPlugin *plugin,
@@ -580,9 +415,7 @@ ParserManagerStatus parser_manager_unload(ParserManager *mgr, LimePluginHandle h
         entry.plugin->destroy();
     }
 
-    if (entry.is_dynamic) {
-        pm_dl_close(entry.dl_handle);
-    }
+    if (entry.close_fn != NULL) entry.close_fn(entry.dl_handle);
 
     free(entry.library_path);
 

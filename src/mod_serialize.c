@@ -159,7 +159,7 @@ static int emit_add_rule(TextBuf *tb, const GrammarModification *mod) {
     ** The integer .precedence field has no direct .lime representation
     ** (the [SYMBOL] marker takes a symbol name, not a number).  Note
     ** this as a comment on the emitted rule so reviewers see that the
-    ** subprocess-rebuilt parser will not honour the override.
+    ** rebuilt parser will not honour the override.
     */
     if (mod->u.add_rule.precedence >= 0) {
         tb_printf(tb,

@@ -12,7 +12,8 @@ extension system.
 
 **What it demonstrates:**
 - Base grammar definition (`calc.lime`: `+`, `-`, `*`, `/`)
-- Runtime extension loading via `dlopen`
+- Runtime extension loading via `dlopen` in the example's own host (Lime's
+  libraries load nothing; see docs/EXTENSIONS.md for the extension API)
 - Conflicting extensions and conflict detection
 
 Two extensions both define the `^` (caret) token:

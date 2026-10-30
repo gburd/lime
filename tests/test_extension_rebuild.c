@@ -1,6 +1,6 @@
 /*
 ** test_extension_rebuild.c -- end-to-end exercise of runtime
-** LALR(1) automaton rebuild via the subprocess pipeline.
+** LALR(1) automaton rebuild (in-process; no subprocess, no compiler).
 **
 ** Strategy:
 **
@@ -14,10 +14,9 @@
 **      (Postfix factorial doesn't conflict with any existing rule
 **      in the base grammar.)
 **
-**   3. publish_modified_snapshot() takes the subprocess path because
-**      the base has grammar_source.  The merged grammar text is
-**      handed to lime + cc, the resulting .so is dlopen()ed, and
-**      the new ParserSnapshot has fully recomputed action tables.
+**   3. publish_modified_snapshot() rebuilds the base's grammar_source
+**      plus the serialised extension in-process; the new
+**      ParserSnapshot has fully recomputed action tables.
 **
 **   4. Drive parse_token() against the modified snapshot with input
 **      that exercises the new rule.  Verify the parser accepts.
@@ -25,8 +24,6 @@
 **   5. As a control, drive the SAME input against the base snapshot
 **      and verify it fails (proving the new rule is what enabled
 **      the parse, not just the base).
-**
-** Skipped at runtime when `lime` or `cc` is unreachable.
 */
 
 #define _POSIX_C_SOURCE 200809L
@@ -101,11 +98,6 @@ static bool fact_get_modifications(void *user_data, const struct ParserSnapshot 
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-static bool tool_available(const char *cmd) {
-    char buf[256];
-    snprintf(buf, sizeof(buf), "command -v %s >/dev/null 2>&1", cmd);
-    return system(buf) == 0;
-}
 
 /*
 ** Map a token name (as it appears in the base grammar) to the code
@@ -139,37 +131,8 @@ static int parse_seq(ParserSnapshot *snap, const int *codes, int n) {
 /* ------------------------------------------------------------------ */
 
 int main(void) {
-    printf("Lime in-process LALR rebuild test (subprocess path)\n");
+    printf("Lime in-process LALR rebuild test\n");
     printf("===================================================\n");
-
-    if (!tool_available("cc")) {
-        printf("  [SKIP] cc not on PATH; run inside `nix develop` to enable.\n");
-        return 77;
-    }
-    /* Locate the local lime binary the same way test_snapshot_create
-    ** does, so we don't depend on a system install. */
-    struct stat st;
-    /* Honour LIME_BIN when the harness provides it (meson does, via
-    ** env:).  The builddir/ probes below only work when the build
-    ** directory happens to be named builddir/; any other name made
-    ** this test skip silently in every non-default build tree. */
-    const char *env_bin = getenv("LIME_BIN");
-    if (env_bin != NULL && env_bin[0] != '\0' && stat(env_bin, &st) == 0) {
-        /* already set; keep it */
-    } else if (stat("builddir/lime", &st) == 0) {
-        setenv("LIME_BIN", "builddir/lime", 1);
-    } else if (stat("../builddir/lime", &st) == 0) {
-        setenv("LIME_BIN", "../builddir/lime", 1);
-    } else if (!tool_available("lime")) {
-        printf("  [SKIP] lime not in builddir/ or on PATH; "
-               "build with `ninja -C builddir lime` first.\n");
-        return 77;
-    }
-    if (stat("limpar.c", &st) == 0) {
-        setenv("LIME_TEMPLATE", "limpar.c", 1);
-    } else if (stat("../limpar.c", &st) == 0) {
-        setenv("LIME_TEMPLATE", "../limpar.c", 1);
-    }
 
     /* Step 1: base snapshot. */
     ParserSnapshot *base = ArithBuildSnapshot();
@@ -201,7 +164,7 @@ int main(void) {
     err = NULL;
 
     /* Step 3: publish a modified snapshot.  publish_modified_snapshot
-    ** picks the subprocess path because base has grammar_source. */
+    ** rebuilds in-process from the base grammar_source. */
     ParserSnapshot *modified = NULL;
     ConflictSet *cs = NULL;
     bool ok = publish_modified_snapshot(reg, base, &modified, &cs, &err);
@@ -214,7 +177,7 @@ int main(void) {
         printf("  conflicts: %u\n", cs->count);
         conflict_set_destroy(cs);
     }
-    CHECK(ok && modified != NULL, "publish_modified_snapshot succeeds via subprocess");
+    CHECK(ok && modified != NULL, "publish_modified_snapshot succeeds (in-process rebuild)");
 
     if (modified == NULL) {
         destroy_extension_registry(reg);

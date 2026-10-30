@@ -1,22 +1,17 @@
 /*
 ** test_windows_snapshot_create.c -- cross-platform snapshot_create tests.
 **
-** Exercises lime_compile_grammar_text on both Unix and Windows by
-** routing through the v0.5.4 in-process API
-** (lime_compile_grammar_in_process).  Before v0.6.x, Windows returned
-** NULL with a "not yet supported" stub at the top of
-** src/snapshot_create.c.  That stub is gone; the in-process path is
-** the cross-platform default, with the subprocess fallback retained
-** as a Unix-only escape hatch.
+** Exercises lime_compile_grammar_text and create_base_snapshot (file)
+** on every platform.  Both are in-process only (no fork/exec/dlopen), so
+** the same code runs on Windows; create_base_snapshot used to return a
+** "not available on Windows" error there.
 **
 ** Sub-tests:
 **   1. In-process path: lime_compile_grammar_text returns a snapshot
 **      with sane counts.  The snapshot is functional (release works
 **      cleanly under valgrind; no leaks).
-**   2. LIME_FORCE_SUBPROCESS=1 on Windows: returns NULL with a clear
-**      error (subprocess fallback is Unix-only).  On Unix this is
-**      skipped because it requires `lime` to be reachable on PATH or
-**      via cwd, which the test runner may not arrange.
+**   2. create_base_snapshot(file) SUCCEEDS on every platform, and
+**      LIME_FORCE_SUBPROCESS (removed) has no effect.
 **   3. Cross-platform behavior equivalence: the same grammar text
 **      produces snapshots with identical action-table counts on every
 **      platform we run on.  The expected counts are baked in.
@@ -90,8 +85,6 @@ static const char *arith_grammar =
 static void test_in_process_path(void) {
     TEST("in-process path: lime_compile_grammar_text succeeds");
 
-    unsetenv("LIME_FORCE_SUBPROCESS");
-
     char *err = NULL;
     ParserSnapshot *snap = lime_compile_grammar_text(
         arith_grammar, strlen(arith_grammar), &err);
@@ -108,38 +101,30 @@ static void test_in_process_path(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Sub-test 2: LIME_FORCE_SUBPROCESS=1 -- platform semantics          */
+/*  Sub-test 2: create_base_snapshot(file) works on every platform     */
 /* ------------------------------------------------------------------ */
 
-static void test_force_subprocess(void) {
-    TEST("LIME_FORCE_SUBPROCESS=1: Unix succeeds (or skips if lime "
-         "unreachable), Windows returns NULL with error");
+static void test_create_from_file(void) {
+    TEST("create_base_snapshot(file) succeeds; LIME_FORCE_SUBPROCESS is ignored");
 
-#ifdef _WIN32
-    setenv("LIME_FORCE_SUBPROCESS", "1", 1);
+    char path[64];
+    snprintf(path, sizeof path, "lime_wsc_%d.lime", (int)(size_t)&path % 100000);
+    FILE *f = fopen(path, "wb");
+    ASSERT(f != NULL, "cannot write temp grammar");
+    fwrite(arith_grammar, 1, strlen(arith_grammar), f);
+    fclose(f);
+
+    setenv("LIME_FORCE_SUBPROCESS", "1", 1); /* removed knob: must not matter */
     char *err = NULL;
-    ParserSnapshot *snap = lime_compile_grammar_text(
-        arith_grammar, strlen(arith_grammar), &err);
+    ParserSnapshot *snap = create_base_snapshot(path, &err);
     unsetenv("LIME_FORCE_SUBPROCESS");
+    remove(path);
 
-    if (snap != NULL) {
-        snapshot_release(snap);
-        ASSERT(0, "Windows should not have a subprocess fallback");
-    }
-    ASSERT(err != NULL, "Windows should provide an error message");
-    /* Error should mention either 'Windows' or 'subprocess fallback' */
-    int has_explanation = (strstr(err, "Windows") != NULL ||
-                          strstr(err, "subprocess") != NULL);
+    ASSERT(snap != NULL, err ? err : "returned NULL");
     free(err);
-    ASSERT(has_explanation, "error should explain Windows constraint");
+    ASSERT(snap->nrule == 5, "nrule mismatch");
+    snapshot_release(snap);
     PASS();
-#else
-    /* Unix: subprocess path requires `lime` on PATH or cwd.  The meson
-    ** test runner doesn't arrange that here.  We skip rather than
-    ** failing -- this sub-test is the Windows-side guarantee.  Unix
-    ** subprocess coverage lives in test_in_process_dispatch. */
-    SKIP("Unix subprocess path covered by test_in_process_dispatch");
-#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -148,8 +133,6 @@ static void test_force_subprocess(void) {
 
 static void test_cross_platform_equivalence(void) {
     TEST("cross-platform equivalence: snapshot counts match baseline");
-
-    unsetenv("LIME_FORCE_SUBPROCESS");
 
     char *err = NULL;
     ParserSnapshot *snap = lime_compile_grammar_text(
@@ -188,8 +171,6 @@ static void test_cross_platform_equivalence(void) {
 static void test_memory_cleanup(void) {
     TEST("memory cleanup: 16 compile/release cycles, valgrind-clean");
 
-    unsetenv("LIME_FORCE_SUBPROCESS");
-
     for (int i = 0; i < 16; i++) {
         char *err = NULL;
         ParserSnapshot *snap = lime_compile_grammar_text(
@@ -219,7 +200,7 @@ int main(void) {
 #endif
 
     test_in_process_path();
-    test_force_subprocess();
+    test_create_from_file();
     test_cross_platform_equivalence();
     test_memory_cleanup();
 

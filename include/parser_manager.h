@@ -507,6 +507,11 @@ void parser_manager_destroy(ParserManager *mgr);
 /**
  * @brief Load a parser plugin from a shared library.
  *
+ * OPT-IN: defined only in liblime_plugin_loader (meson
+ * -Dplugin_loader=enabled).  liblime_parser loads no shared objects; in
+ * the default build, register host-linked plugins with
+ * parser_manager_register().
+ *
  * The manager:
  *   1. dlopen()s the library
  *   2. Looks up the "lime_plugin_entry" symbol

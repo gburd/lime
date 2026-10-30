@@ -4,7 +4,6 @@ lib_sources = files(
   'snapshot.c',
   'rule_inline.c',
   'snapshot_build.c',
-  'snapshot_create.c',
   'snapshot_diff.c',
   'token_table.c',
   'kw_table.c',
@@ -41,6 +40,7 @@ lib_sources = files(
 )
 
 thread_dep = dependency('threads')
+# libdl is linked only by the opt-in plugin loader (-Dplugin_loader).
 dl_dep = cc.find_library('dl', required : false)
 
 # Check if coverage is enabled
@@ -66,7 +66,7 @@ lime_parser_lib = static_library('lime_parser',
   include_directories : inc,
   c_args : coverage_args,
   link_args : coverage_link_args,
-  dependencies : [thread_dep, dl_dep],
+  dependencies : [thread_dep],
   link_with : [tokenize_simd_lib],
   install : true,
 )
@@ -79,8 +79,28 @@ lime_parser_dep = declare_dependency(
   # contents but lld-link does not.
   link_with : [lime_parser_lib],
   include_directories : inc,
-  dependencies : [thread_dep, dl_dep],
+  dependencies : [thread_dep],
 )
+
+# OPT-IN plugin loader: parser_manager_load() / parser_op_add_dynamic() /
+# parser_op_update_from_library() dlopen a parser plugin.  Off by default
+# (-Dplugin_loader=enabled to build it): the default libraries can neither
+# spawn a process nor load a shared object, which
+# tests/check_no_runtime_loader.sh enforces.
+lime_plugin_loader_dep = disabler()
+if get_option('plugin_loader').enabled()
+  lime_plugin_loader_lib = static_library('lime_plugin_loader',
+    'parser_manager_loader.c',
+    include_directories : inc,
+    dependencies : [thread_dep, dl_dep],
+    install : true,
+  )
+  lime_plugin_loader_dep = declare_dependency(
+    link_with : [lime_plugin_loader_lib, lime_parser_lib],
+    include_directories : inc,
+    dependencies : [thread_dep, dl_dep],
+  )
+endif
 
 # .lex source-language frontend (M1 of the lexer project).
 # Built as a separate static library because it is part of the

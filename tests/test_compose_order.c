@@ -23,7 +23,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 
 extern ParserSnapshot *ArithBuildSnapshot(void);
 extern int lime_snapshot_token_code(const ParserSnapshot *snap, const char *name);
@@ -87,14 +86,6 @@ static uint64_t table_fingerprint(const ParserSnapshot *s) {
 static const int perms[6][3] = {{0,1,2},{0,2,1},{1,0,2},{1,2,0},{2,0,1},{2,1,0}};
 
 int main(void) {
-    struct stat st;
-    const char *bin = getenv("LIME_BIN");
-    if (!(bin && stat(bin, &st) == 0)) {
-        printf("  [SKIP] LIME_BIN not set; this test needs the rebuild pipeline\n");
-        return 77;
-    }
-    if (stat("limpar.c", &st) == 0) setenv("LIME_TEMPLATE", "limpar.c", 1);
-
     ParserSnapshot *base = ArithBuildSnapshot();
     if (base == NULL || base->grammar_source == NULL) {
         printf("  [SKIP] base snapshot has no grammar_source\n");

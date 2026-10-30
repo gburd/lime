@@ -34,25 +34,13 @@ consumer parses it differently.
 
 **Conclusion:** native-only.  Cross-arch nonsensical.
 
-### 2. `lime_snapshot_create` subprocess pipeline
+### 2. `lime_snapshot_create` / `create_base_snapshot`
 
-`src/snapshot_create.c::compile_grammar_file_to_snapshot` runs:
-1. `lime` (parser generator) on the grammar.
-2. `cc` (system compiler) on the generated `.c`.
-3. `dlopen` on the resulting `.so`.
-4. `dlsym` to find `lime_snapshot_entry`.
-5. Call the entry function; it returns a `ParserSnapshot *` whose
-   tables were `memcpy`'d out of static arrays inside the `.so`.
+Reads the grammar file and calls `lime_compile_grammar_in_process` (3).
+(It used to run `lime` + `cc` and `dlopen` a native `.so`; that pipeline
+is deleted.)
 
-The `cc` invocation produces a native-arch `.so`.  The static
-arrays embedded in that `.so` are also native-arch.  The `.so` is
-loaded into the same process that called `lime_snapshot_create`,
-so the consuming address space and the producing address space
-are identical.
-
-**Conclusion:** native-only by construction.  A snapshot produced
-on x86_64 cannot be `dlopen`'d on aarch64 (the `.so` itself is
-arch-specific, would fail at load time before any field access).
+**Conclusion:** same as 3.
 
 ### 3. `lime_compile_grammar_in_process` (v0.5.4+)
 

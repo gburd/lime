@@ -40,15 +40,16 @@ The LTS line is **v1.3.x** through June 2028.  See
 - `lime -n` emits a `<Prefix>BuildSnapshot()` builder AND embeds the
   original grammar source as a `static const unsigned char[]` so the
   runtime can rebuild against a merged grammar.
-- `lime_snapshot_create("foo.y", &err)` runs the lime + cc
-  subprocess pipeline on a grammar file and returns a populated
-  snapshot.  See `src/snapshot_create.c` and
-  `tests/test_snapshot_create.c` (8/8 PASS).
+- `lime_snapshot_create("foo.y", &err)` reads a grammar file and
+  builds a populated snapshot in-process.  See `src/snapshot_create.c`
+  and `tests/test_snapshot_create.c` (runs with PATH emptied).
 - `lime_compile_grammar_text(text, len, &err)` does the same for a
   grammar held in memory.
-- `lime_compile_grammar_in_process(text, len, &snap, &err)` does it
-  **without** the subprocess pipeline -- pure in-process LALR
-  construction via `liblime_compiler.a`.  Available since v0.5.4
+- `lime_compile_grammar_in_process(text, len, &snap, &err)` is the
+  in-process LALR construction both of them call, in
+  `liblime_compiler.a`.  The old subprocess pipeline (fork + `lime` +
+  `cc` + dlopen) is deleted: at runtime Lime cannot invoke a compiler
+  or load a shared object.  Available since v0.5.4
   (`include/lime_compiler.h`).  Linked via `pkg-config --libs
   lime-compiler` (pkg-config file shipped since v0.10.0).
   Documented in [docs/API.md](API.md#in-process-compiler-api).
@@ -57,31 +58,24 @@ The LTS line is **v1.3.x** through June 2028.  See
   runs, in-process, with no fork / exec / temp file.  Available
   since v0.10.0; used by `lime-lsp`'s diagnostic refresh path.
   ~10% / 200 ms saved per LSP request on PG's 21k-line `gram.lime`.
-- `publish_modified_snapshot(reg, base, ...)` takes the subprocess
-  path automatically when the base snapshot has `grammar_source`
-  available.  It calls `lime_modifications_to_grammar_text()` to
-  serialise the loaded extensions' modifications, concatenates them
-  with the base text, and reruns the pipeline.  The resulting
+- `publish_modified_snapshot(reg, base, ...)` (liblime_compiler)
+  rebuilds from the base snapshot's `grammar_source`.  It calls
+  `lime_modifications_to_grammar_text()` to serialise each loaded
+  extension, concatenates them with the base text, and rebuilds
+  in-process; any extension-introduced LALR conflict the host policy
+  does not resolve fails the compose (`docs/EXTENSIONS.md`).  The resulting
   snapshot has fully recomputed action tables and the new tokens /
   rules are reachable through `parse_token()`.  Verified by
   `tests/test_extension_rebuild.c` (11/11 PASS): a postfix-factorial
   extension adds a token + rule, the merged grammar is rebuilt, and
   parses through the new rule succeed.
-- **dlopen-handle cleanup.**  The subprocess pipeline's dlopen
-  handles are released by `snapshot_dlopen_release` during
-  `destroy_snapshot` (added in v0.6.x; see `src/snapshot.c:22`).
-  Long-running daemons no longer accumulate mappings.
-
-Requirements: for the *subprocess* path, `lime` and a C compiler
-must be reachable (PATH or `LIME_BIN` / `LIME_CC`); the runtime
-probes at `LIME_TEMPLATE` and `LIME_SNAPSHOT_BUILD_C` cover
-source-tree and installed layouts.  The in-process path needs
-neither.
+Requirements: link `liblime_compiler` (`pkg-config lime-compiler`).
+No `lime` binary, C compiler or `LIME_*` environment is consulted.
 
 **Why this was the prerequisite.**  This is the prerequisite for
 composition (`compose_snapshots`,
 [docs/COMPOSITION.md](COMPOSITION.md)) at production speed.
-Without it, composition had to either fork+exec lime+cc to re-derive
+Without it, composition had to either run lime+cc in a subprocess to re-derive
 LALR (~200ms per merge) or settle for snapshot-table merging only
 (which doesn't recompute conflict resolutions across composed
 grammars).  The in-process path collapses both paths to sub-
@@ -98,21 +92,18 @@ Composition is the primary consumer of this work.
 `static LIME_THREAD_LOCAL LimeCompilerContext *lime_active_ctx`
 in `lime.c` (`_Thread_local` under C11), so concurrent
 `lime_compile_grammar_in_process` calls on different threads are
-isolated.  dlopen-handle cleanup for subprocess-built snapshots is
-also done (`snapshot_dlopen_release`, `tests/test_snapshot_dlopen_cleanup.c`).
+isolated.
 
 **Source-tree references.**
 
-- `src/snapshot_create.c::compile_grammar_file_to_snapshot,
-  lime_compile_grammar_text` -- the working subprocess pipeline.
-- `src/snapshot_create.c::lime_compile_grammar_in_process` (weak
-  shim) and `lime.c::lime_compile_grammar_in_process` (strong
-  in-process implementation, gated on `LIME_HAVE_SNAPSHOT_BUILD`).
+- `src/snapshot_create.c::create_base_snapshot,
+  lime_compile_grammar_text` -- file/text front ends.
+- `lime.c::lime_compile_grammar_in_process[_ex2]` (in-process
+  implementation, gated on `LIME_HAVE_SNAPSHOT_BUILD`).
 - `lime.c::lime_lint_grammar_in_process` (v0.10.0; LSP-grade
   in-process linter).
-- `src/extension.c::publish_modified_snapshot` -- chooses subprocess
-  rebuild when the base has `grammar_source`, falls back to the
-  metadata-only path otherwise.
+- `src/compose.c::publish_modified_snapshot` -- rebuilds from the
+  base's `grammar_source`; fails (no fallback) when it cannot.
 - `lime.c::ReportSnapshotInit` -- emits `s_grammar_source[]` and
   the `grammar_source` field on `LimeParserTables`.
 

@@ -36,7 +36,7 @@ if host_machine.system() != 'windows'
   parse_manager_exe = executable('parse-manager',
     'parse-manager.c',
     include_directories : [inc, include_directories('../src')],
-    dependencies : [lime_parser_dep],
+    dependencies : [lime_plugin_loader_dep, lime_compiler_dep],
     link_args : parse_manager_link_args,
     # export_dynamic : true so plugins loaded via parser_manager_load()
     # can resolve back into the host's lime_parser symbols (matches the
