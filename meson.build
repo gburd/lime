@@ -156,6 +156,7 @@ lime_public_headers = [
   'include/lime_compiler.h',
   'include/lime_error.h',
   'include/lime_location.h',
+  'include/lime_lexer.h',
   'include/parse_context.h',
   'include/parser_fork.h',
   'include/multi_grammar.h',
@@ -239,6 +240,7 @@ install_data('limpar.c', install_dir : get_option('datadir') / 'lime')
 # (returning a clear error if -X is somehow reached) is sufficient.
 lime_compiler_lib = static_library('lime_compiler',
   'lime.c',
+  'src/lexicon_build.c',
   include_directories : [inc, include_directories('src'),
                          include_directories('src/lex')],
   c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAVE_SNAPSHOT_BUILD']

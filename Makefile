@@ -65,6 +65,7 @@ LIB_SRC := \
   src/snapshot_create.c    \
   src/snapshot_modify.c    \
   src/token_table.c        \
+  src/kw_table.c           \
   src/tokenize.c           \
   src/tokenize_simd.c      \
   src/parse_context.c      \

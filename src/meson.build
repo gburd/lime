@@ -7,6 +7,7 @@ lib_sources = files(
   'snapshot_create.c',
   'snapshot_diff.c',
   'token_table.c',
+  'kw_table.c',
   'tokenize.c',
   'parse_context.c',
   'parse_engine.c',

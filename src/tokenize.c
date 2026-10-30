@@ -8,6 +8,7 @@
 #include "tokenize.h"
 #include "tokenize_simd.h"
 #include "token_table.h"
+#include "lime_lexer.h"
 #include "utf8.h"
 
 #include <stdlib.h>
@@ -25,6 +26,7 @@ struct Tokenizer {
     uint32_t line;         /* Current line (1-based) */
     uint32_t column;       /* Current column (1-based) */
     TokenTable *table;     /* Keyword table (may be NULL) */
+    const struct LimeLexicon *lexicon; /* Snapshot keyword table (may be NULL) */
     ClassifyFunc classify; /* SIMD or scalar classifier */
     bool has_peeked;       /* True if a peeked token is buffered */
     Token peeked;          /* Buffered peek token */
@@ -684,8 +686,15 @@ static bool extract_token(Tokenizer *tok, Token *out) {
         out->line = token_line;
         out->column = token_col;
 
-        /* Check keyword table */
-        if (tok->table) {
+        /* Check keyword table: the snapshot lexicon (lock-free) when
+        ** the tokenizer was made with one, else the TokenTable. */
+        if (tok->lexicon) {
+            int code = lime_kw_lookup(tok->lexicon, token_start, len);
+            if (code >= 0) {
+                out->type = code;
+                return true;
+            }
+        } else if (tok->table) {
             int code = lookup_token(tok->table, token_start, len);
             if (code >= 0) {
                 out->type = code;
@@ -941,6 +950,13 @@ Tokenizer *tokenizer_create(TokenTable *table, const char *input, size_t length)
     tok->classify = get_classify_func();
     tok->has_peeked = false;
 
+    return tok;
+}
+
+Tokenizer *tokenizer_create_lexicon(const struct LimeLexicon *lexicon, const char *input,
+                                    size_t length) {
+    Tokenizer *tok = tokenizer_create(NULL, input, length);
+    if (tok) tok->lexicon = lexicon;
     return tok;
 }
 

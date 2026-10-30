@@ -2511,6 +2511,38 @@ if host_machine.system() != 'windows'
   )
   test('ext_soft_keyword', test_ext_soft_keyword, workdir : meson.project_source_root())
 
+  # Track B1: the snapshot keyword table (include/lime_lexer.h) --
+  # 1000 keywords, case folding, compose from MOD_ADD_TOKEN.lexeme,
+  # base-code stability, and concurrent readers across snapshot swaps
+  # (run this one under -Db_sanitize=thread too).
+  test_kw_table = executable('test_kw_table',
+    'test_kw_table.c',
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, lime_compiler_dep],
+    export_dynamic : true,
+  )
+  test('kw_table', test_kw_table, timeout : 120)
+
+  # Track B measurements (tests/bench_lexicon.c).  The meson test only
+  # runs the agreement check (BENCH_CHECK_ONLY=1): PostgreSQL's keyword
+  # list from examples/pg/pg_kwlist.h, every identifier in the in-tree
+  # SQL, lexicon vs TokenTable.  The timed runs are by hand; see
+  # docs/LEXER_DESIGN.md "Runtime lexicon".
+  bench_lexicon = executable('bench_lexicon',
+    'bench_lexicon.c',
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, lime_compiler_dep],
+    export_dynamic : true,
+  )
+  test('lexicon_kw_agree', bench_lexicon,
+    args : ['kw', meson.project_source_root() / 'examples/pg/pg_kwlist.h',
+            meson.project_source_root() / 'examples/pg/tests/select_basic.sql',
+            meson.project_source_root() / 'examples/pg/tests/select_columns.sql',
+            meson.project_source_root() / 'examples/pg/tests/select_join.sql',
+            meson.project_source_root() / 'examples/pg/gram.lime'],
+    env : ['BENCH_CHECK_ONLY=1'],
+  )
+
   # Is a composed grammar a function of the extension SET, or of the
   # order load_extension() was called in?  Composes 3 extensions in all
   # 6 orders and compares parse tables and assigned token codes.

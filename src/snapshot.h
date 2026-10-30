@@ -382,6 +382,18 @@ typedef struct ParserSnapshot {
     ** -1).  Deep-copied + owned by the snapshot. */
     char **rule_ids;
     uint32_t rule_ids_count;
+
+    /* ================================================================
+    ** lexer tables (Track B).  Appended; additive.
+    ** ================================================================ */
+
+    /** Keyword table + operator trie for a scanner feeding this snapshot
+    ** (include/lime_lexer.h).  Built at compose time by
+    ** lime_snapshot_set_lexicon / lime_lex_compose and never written
+    ** after the snapshot is shared, so lookups take no lock.  Swaps with
+    ** the parse tables, so a token code and its lexeme cannot disagree.
+    ** NULL when the host set none.  Owned; freed by destroy_snapshot. */
+    struct LimeLexicon *lexicon;
 } ParserSnapshot;
 
 /*

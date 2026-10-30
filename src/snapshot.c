@@ -6,6 +6,7 @@
 ** thread prepares a new one.
 */
 #include "snapshot.h"
+#include "lexicon.h"
 #include "parser.h"
 
 #include <stdlib.h>
@@ -95,6 +96,9 @@ static void destroy_snapshot(ParserSnapshot *snap) {
     /* Extension reduce bindings (array owned; callbacks/user_data are
     ** the extension's and are not freed here). */
     free(snap->ext_reduce);
+
+    /* Lexer tables (keyword table / operator trie). */
+    lime_lexicon_destroy(snap->lexicon);
 
     /* dlopen handle (if any).  When this snapshot was constructed by
     ** lime_snapshot_create()'s subprocess pipeline, it owns a dlopen

@@ -7,7 +7,8 @@
 ** bulk, then falls back to scalar logic for operators and punctuation.
 **
 ** Integration points:
-**   - TokenTable (token_table.h) for keyword lookup
+**   - TokenTable (token_table.h) or a snapshot lexicon (lime_lexer.h)
+**     for keyword lookup
 **   - CharClassVector (tokenize_simd.h) for parallel character classification
 */
 #ifndef TOKENIZE_H
@@ -98,6 +99,16 @@ typedef struct Tokenizer Tokenizer;
 ** Returns NULL on allocation failure.
 */
 Tokenizer *tokenizer_create(TokenTable *table, const char *input, size_t length);
+
+/*
+** Like tokenizer_create, but keywords come from a snapshot lexicon
+** (lime_snapshot_lexicon(snap), include/lime_lexer.h): lock-free, and
+** it includes keywords that extensions composed in.  The caller must
+** hold the snapshot for the tokenizer's lifetime.
+*/
+struct LimeLexicon;
+Tokenizer *tokenizer_create_lexicon(const struct LimeLexicon *lexicon, const char *input,
+                                    size_t length);
 
 /*
 ** Destroy a tokenizer and free its memory.

@@ -615,8 +615,57 @@ Conflict policy on composition:
 - The `.out` audit lists every cross-set conflict and which rule
   wins.
 
-Runtime composition (loading a rule set after lexer creation,
-mirroring the parser's snapshot story) is **deferred to v2**.
+Runtime composition of whole rule sets is still compile-time only.
+What an extension can change at runtime is described next.
+
+## Runtime lexicon (keywords and operators that compose)
+
+A flex scanner hard-codes its keyword list (`ScanKeywordLookup` in
+PostgreSQL's scan.l) and its multi-character operators.  A Lime host
+can keep both in the **snapshot** instead (`include/lime_lexer.h`):
+an immutable keyword table built at compose time, owned by the
+`ParserSnapshot` and swapped with it, so a token code and the lexeme
+that produces it can never disagree.
+
+| Piece | Library | When it runs |
+|---|---|---|
+| `lime_snapshot_set_lexicon(snap, keywords, n, operators, m, flags)` | liblime_compiler | once, on the base snapshot |
+| `lime_lex_compose(composed, base, mods, nmods)` | liblime_compiler | each compose, right after `publish_modified_snapshot` |
+| `lime_snapshot_lexicon(snap)`, `lime_kw_lookup(lx, s, n)` | liblime_parser | per token, lock-free |
+
+Items are `{ "spelling", "TOKEN_NAME" }`; names are resolved against
+the snapshot, because a recompile renumbers extension tokens.
+`LIME_LEX_FOLD_CASE` makes keywords ASCII-case-insensitive (SQL); it
+is off by default.
+
+**Compose.** `lime_lex_compose` rebuilds the table from the base's
+items plus every `MOD_ADD_TOKEN.lexeme` (identifier bytes only ->
+keyword).  It fails, and the caller fails the publish, when:
+- a base item's token code differs in the composed snapshot (base
+  terminal codes must be stable, DESIGN.md invariant 4);
+- one spelling is claimed by two different tokens (base vs
+  extension, or two extensions); the same spelling for the same
+  token is fine;
+- an extension lexeme names a token the composed grammar lacks.
+
+The result is a function of the item set, not of mod order.
+
+**Soft keywords** are ordinary keywords here.  `MOD_ADD_TOKEN.fallback_to`
+makes the *parser* fall back to the identifier token where the keyword
+cannot shift (Lemon's `%fallback`), so the lexer never needs context.
+
+**Concurrency.** The table is never written after the snapshot is
+shared.  A reader holds a snapshot reference (`snapshot_acquire`),
+looks up as many lexemes as it likes with no lock, and releases;
+a writer publishes a new snapshot and releases the old one.
+`tests/test_kw_table.c` runs 4 readers against 200 swaps under TSan.
+
+**Layout.** Open addressing, power-of-two slots at load factor <= 1/2,
+FNV-1a over the case-folded bytes, the full hash stored per slot so a
+probe rejects most misses without a string compare, and a max-length
+cutoff that rejects long identifiers before hashing.  Measured
+against `TokenTable`'s `lookup_token` (which takes an rwlock per call)
+in `tests/bench_lexicon.c kw`; numbers are in the B1 commit message.
 
 ## Testability
 
