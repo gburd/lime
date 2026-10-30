@@ -2584,6 +2584,17 @@ test_compose_failure_keeps_snapshot = executable('test_compose_failure_keeps_sna
 )
 test('compose_failure_keeps_snapshot', test_compose_failure_keeps_snapshot)
 
+# C2: `lime --explain-compose` golden text + exit codes (0 clean, 1
+# unresolved, 2 error), on the tiny fixtures and on PG + the dialect
+# extension (1 and 219 unresolved).
+test('explain_compose', find_program('check_explain_compose.sh'),
+  args : [lime_exe.full_path(),
+          meson.current_source_dir() / 'compose_fixtures',
+          meson.project_source_root() / 'examples' / 'pg'],
+  depends : [lime_exe],
+  timeout : 120,
+  is_parallel : false)
+
 # Per-rule action-body inlining classifier (src/rule_inline.c, used
 # by the Rust emitter).  Exercises rule_can_inline_text against a
 # corpus of representative rule bodies (empty, passthrough, simple

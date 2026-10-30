@@ -1,0 +1,6 @@
+/* tests/compose_fixtures: a 3-rule base for the compose golden tests. */
+%token_type {int}
+%left PLUS.
+prog ::= expr.
+expr ::= expr PLUS expr.
+expr ::= NUM.

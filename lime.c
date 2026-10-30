@@ -2175,6 +2175,8 @@ static int lime_hook_conflict(struct lime *lemp, struct state *stp,
   ci.line_a = ra ? ra->ruleline : 0;
   ci.line_b = rb ? rb->ruleline : 0;
   ci.state = stp->statenum;
+  ci.prec_lookahead = apx->sp->prec;
+  ci.prec_b = (rb && rb->precsym) ? rb->precsym->prec : -1;
   ex = lime_hook_example(stp->statenum, apx->sp);
   ci.example = ex;
   ch = lime_active_hook->on_conflict(lime_active_hook->user, &ci);
@@ -5251,7 +5253,9 @@ static int run_explain_compose(int nfile, char **files){
     size_t ml = 0;
     const char *m = lime_compose_merged_text(s, &ml);
     if( lime_compile_grammar_in_process_ex2(m, ml, lime_compose_hook(s), 0, &st, &err)!=0 ){
-      fprintf(stderr, "lime --explain-compose: composed grammar: %s\n", err ? err : "?");
+      char *where = lime_compose_locate_errors(s, err);
+      fprintf(stderr, "lime --explain-compose: composed grammar: %s\n", where ? where : (err ? err : "?"));
+      free(where);
       lime_compose_session_free(s);
       goto out;
     }

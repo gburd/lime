@@ -1,0 +1,1201 @@
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= MINUS a_expr    gram.lime:15633
+  input : VALUES LPAREN MINUS a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= MINUS a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= MINUS a_expr    gram.lime:15633
+  input : VALUES LPAREN MINUS a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= MINUS a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= NOT a_expr    gram.lime:15709
+  input : VALUES LPAREN NOT a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= NOT a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= NOT a_expr    gram.lime:15709
+  input : VALUES LPAREN NOT a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= NOT a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= NOT_LA a_expr    gram.lime:15713
+  input : VALUES LPAREN NOT_LA a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= NOT_LA a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= NOT_LA a_expr    gram.lime:15713
+  input : VALUES LPAREN NOT_LA a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= NOT_LA a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= PLUS a_expr    gram.lime:15629
+  input : VALUES LPAREN PLUS a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= PLUS a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= PLUS a_expr    gram.lime:15629
+  input : VALUES LPAREN PLUS a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= PLUS a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr AND a_expr    gram.lime:15701
+  input : VALUES LPAREN a_expr AND a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr AND a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr AND a_expr    gram.lime:15701
+  input : VALUES LPAREN a_expr AND a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr AND a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr AT TIME ZONE a_expr    gram.lime:15615
+  input : VALUES LPAREN a_expr AT TIME ZONE a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr AT TIME ZONE a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr AT TIME ZONE a_expr    gram.lime:15615
+  input : VALUES LPAREN a_expr AT TIME ZONE a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr AT TIME ZONE a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr BETWEEN SYMMETRIC b_expr AND a_expr    gram.lime:15940
+  input : VALUES LPAREN a_expr BETWEEN SYMMETRIC b_expr AND a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr BETWEEN SYMMETRIC b_expr AND a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr BETWEEN SYMMETRIC b_expr AND a_expr    gram.lime:15940
+  input : VALUES LPAREN a_expr BETWEEN SYMMETRIC b_expr AND a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr BETWEEN SYMMETRIC b_expr AND a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr BETWEEN opt_asymmetric b_expr AND a_expr    gram.lime:15924
+  input : VALUES LPAREN a_expr BETWEEN opt_asymmetric b_expr AND a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr BETWEEN opt_asymmetric b_expr AND a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr BETWEEN opt_asymmetric b_expr AND a_expr    gram.lime:15924
+  input : VALUES LPAREN a_expr BETWEEN opt_asymmetric b_expr AND a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr BETWEEN opt_asymmetric b_expr AND a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr CARET a_expr    gram.lime:15657
+  input : VALUES LPAREN a_expr CARET a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr CARET a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr CARET a_expr    gram.lime:15657
+  input : VALUES LPAREN a_expr CARET a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr CARET a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr EQ a_expr    gram.lime:15669
+  input : VALUES LPAREN a_expr EQ a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr EQ a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr EQ a_expr    gram.lime:15669
+  input : VALUES LPAREN a_expr EQ a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr EQ a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr GREATER_EQUALS a_expr    gram.lime:15677
+  input : VALUES LPAREN a_expr GREATER_EQUALS a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr GREATER_EQUALS a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr GREATER_EQUALS a_expr    gram.lime:15677
+  input : VALUES LPAREN a_expr GREATER_EQUALS a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr GREATER_EQUALS a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr GT a_expr    gram.lime:15665
+  input : VALUES LPAREN a_expr GT a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr GT a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr GT a_expr    gram.lime:15665
+  input : VALUES LPAREN a_expr GT a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr GT a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr ILIKE a_expr ESCAPE a_expr    gram.lime:15750
+  input : VALUES LPAREN a_expr ILIKE a_expr ESCAPE a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr ILIKE a_expr ESCAPE a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr ILIKE a_expr ESCAPE a_expr    gram.lime:15750
+  input : VALUES LPAREN a_expr ILIKE a_expr ESCAPE a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr ILIKE a_expr ESCAPE a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr ILIKE a_expr    gram.lime:15745
+  input : VALUES LPAREN a_expr ILIKE a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr ILIKE a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr ILIKE a_expr    gram.lime:15745
+  input : VALUES LPAREN a_expr ILIKE a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr ILIKE a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr IS DISTINCT FROM a_expr    gram.lime:15916
+  input : VALUES LPAREN a_expr IS DISTINCT FROM a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr IS DISTINCT FROM a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr IS DISTINCT FROM a_expr    gram.lime:15916
+  input : VALUES LPAREN a_expr IS DISTINCT FROM a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr IS DISTINCT FROM a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr IS NOT DISTINCT FROM a_expr    gram.lime:15920
+  input : VALUES LPAREN a_expr IS NOT DISTINCT FROM a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr IS NOT DISTINCT FROM a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr IS NOT DISTINCT FROM a_expr    gram.lime:15920
+  input : VALUES LPAREN a_expr IS NOT DISTINCT FROM a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr IS NOT DISTINCT FROM a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead AND  (1 state)
+  shift : a_expr ::= a_expr . AND a_expr    gram.lime:15701
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . AND
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on AND prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead AT  (1 state)
+  shift : a_expr ::= a_expr . AT TIME ZONE a_expr    gram.lime:15615
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . AT
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on AT prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead BETWEEN  (1 state)
+  shift : a_expr ::= a_expr . BETWEEN opt_asymmetric b_expr AND a_expr    gram.lime:15924
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . BETWEEN
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on BETWEEN prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead CARET  (1 state)
+  shift : a_expr ::= a_expr . CARET a_expr    gram.lime:15657
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . CARET
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on CARET prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead COLLATE  (1 state)
+  shift : a_expr ::= a_expr . COLLATE any_name    gram.lime:15606
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . COLLATE
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on COLLATE prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead EQ  (1 state)
+  shift : a_expr ::= a_expr . EQ a_expr    gram.lime:15669
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . EQ
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on EQ prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead GREATER_EQUALS  (1 state)
+  shift : a_expr ::= a_expr . GREATER_EQUALS a_expr    gram.lime:15677
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . GREATER_EQUALS
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on GREATER_EQUALS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead GT  (1 state)
+  shift : a_expr ::= a_expr . GT a_expr    gram.lime:15665
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . GT
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on GT prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead ILIKE  (1 state)
+  shift : a_expr ::= a_expr . ILIKE a_expr    gram.lime:15745
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . ILIKE
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on ILIKE prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead IN_P  (1 state)
+  shift : a_expr ::= a_expr . IN_P select_with_parens    gram.lime:15956
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . IN_P
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on IN_P prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead IS  (1 state)
+  shift : a_expr ::= a_expr . IS NULL_P    gram.lime:15809
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . IS
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on IS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead ISNULL  (1 state)
+  shift : a_expr ::= a_expr . ISNULL    gram.lime:15818
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . ISNULL
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on ISNULL prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead LESS_EQUALS  (1 state)
+  shift : a_expr ::= a_expr . LESS_EQUALS a_expr    gram.lime:15673
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . LESS_EQUALS
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on LESS_EQUALS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead LIKE  (1 state)
+  shift : a_expr ::= a_expr . LIKE a_expr    gram.lime:15717
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . LIKE
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on LIKE prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead LT  (1 state)
+  shift : a_expr ::= a_expr . LT a_expr    gram.lime:15661
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . LT
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on LT prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead MINUS  (1 state)
+  shift : a_expr ::= a_expr . MINUS a_expr    gram.lime:15641
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . MINUS
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on MINUS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead NOTNULL  (1 state)
+  shift : a_expr ::= a_expr . NOTNULL    gram.lime:15836
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . NOTNULL
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on NOTNULL prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead NOT_EQUALS  (1 state)
+  shift : a_expr ::= a_expr . NOT_EQUALS a_expr    gram.lime:15681
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . NOT_EQUALS
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on NOT_EQUALS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead NOT_LA  (1 state)
+  shift : a_expr ::= a_expr . NOT_LA LIKE a_expr    gram.lime:15731
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . NOT_LA
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on NOT_LA prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead OP  (1 state)
+  shift : all_Op ::= . OP    gram.lime:17299
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . OP
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on OP prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead OPERATOR  (1 state)
+  shift : qual_Op ::= . OPERATOR LPAREN any_operator RPAREN    gram.lime:17369
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . OPERATOR
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on OPERATOR prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead OR  (1 state)
+  shift : a_expr ::= a_expr . OR a_expr    gram.lime:15705
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . OR
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on OR prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead PERCENT  (1 state)
+  shift : a_expr ::= a_expr . PERCENT a_expr    gram.lime:15653
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . PERCENT
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on PERCENT prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead PIPE  (1 state)
+  shift : a_expr ::= a_expr . PIPE a_expr    gram.lime:15689
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . PIPE
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on PIPE prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead PLUS  (1 state)
+  shift : a_expr ::= a_expr . PLUS a_expr    gram.lime:15637
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . PLUS
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on PLUS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead RIGHT_ARROW  (1 state)
+  shift : a_expr ::= a_expr . RIGHT_ARROW a_expr    gram.lime:15685
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . RIGHT_ARROW
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on RIGHT_ARROW prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead SIMILAR  (1 state)
+  shift : a_expr ::= a_expr . SIMILAR TO a_expr    gram.lime:15773
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . SIMILAR
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on SIMILAR prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead SLASH  (1 state)
+  shift : a_expr ::= a_expr . SLASH a_expr    gram.lime:15649
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . SLASH
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on SLASH prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead STAR  (1 state)
+  shift : a_expr ::= a_expr . STAR a_expr    gram.lime:15645
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . STAR
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on STAR prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead TYPECAST  (1 state)
+  shift : a_expr ::= a_expr . TYPECAST typename    gram.lime:15602
+  reduce: a_expr ::= a_expr JSON_ARROW a_expr    dialect_ext.lime:34
+  input : VALUES LPAREN a_expr JSON_ARROW a_expr . TYPECAST
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW a_expr" on TYPECAST prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead AND  (1 state)
+  shift : a_expr ::= a_expr . AND a_expr    gram.lime:15701
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . AND
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on AND prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead AT  (1 state)
+  shift : a_expr ::= a_expr . AT TIME ZONE a_expr    gram.lime:15615
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . AT
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on AT prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead BETWEEN  (1 state)
+  shift : a_expr ::= a_expr . BETWEEN opt_asymmetric b_expr AND a_expr    gram.lime:15924
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . BETWEEN
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on BETWEEN prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead CARET  (1 state)
+  shift : a_expr ::= a_expr . CARET a_expr    gram.lime:15657
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . CARET
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on CARET prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead COLLATE  (1 state)
+  shift : a_expr ::= a_expr . COLLATE any_name    gram.lime:15606
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . COLLATE
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on COLLATE prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead EQ  (1 state)
+  shift : a_expr ::= a_expr . EQ a_expr    gram.lime:15669
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . EQ
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on EQ prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead GREATER_EQUALS  (1 state)
+  shift : a_expr ::= a_expr . GREATER_EQUALS a_expr    gram.lime:15677
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . GREATER_EQUALS
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on GREATER_EQUALS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead GT  (1 state)
+  shift : a_expr ::= a_expr . GT a_expr    gram.lime:15665
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . GT
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on GT prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead ILIKE  (1 state)
+  shift : a_expr ::= a_expr . ILIKE a_expr    gram.lime:15745
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . ILIKE
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on ILIKE prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead IN_P  (1 state)
+  shift : a_expr ::= a_expr . IN_P select_with_parens    gram.lime:15956
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . IN_P
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on IN_P prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead IS  (1 state)
+  shift : a_expr ::= a_expr . IS NULL_P    gram.lime:15809
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . IS
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on IS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead ISNULL  (1 state)
+  shift : a_expr ::= a_expr . ISNULL    gram.lime:15818
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . ISNULL
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on ISNULL prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead LESS_EQUALS  (1 state)
+  shift : a_expr ::= a_expr . LESS_EQUALS a_expr    gram.lime:15673
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . LESS_EQUALS
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on LESS_EQUALS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead LIKE  (1 state)
+  shift : a_expr ::= a_expr . LIKE a_expr    gram.lime:15717
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . LIKE
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on LIKE prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead LT  (1 state)
+  shift : a_expr ::= a_expr . LT a_expr    gram.lime:15661
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . LT
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on LT prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead MINUS  (1 state)
+  shift : a_expr ::= a_expr . MINUS a_expr    gram.lime:15641
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . MINUS
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on MINUS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead NOTNULL  (1 state)
+  shift : a_expr ::= a_expr . NOTNULL    gram.lime:15836
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . NOTNULL
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on NOTNULL prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead NOT_EQUALS  (1 state)
+  shift : a_expr ::= a_expr . NOT_EQUALS a_expr    gram.lime:15681
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . NOT_EQUALS
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on NOT_EQUALS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead NOT_LA  (1 state)
+  shift : a_expr ::= a_expr . NOT_LA LIKE a_expr    gram.lime:15731
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . NOT_LA
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on NOT_LA prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead OP  (1 state)
+  shift : all_Op ::= . OP    gram.lime:17299
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . OP
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on OP prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead OPERATOR  (1 state)
+  shift : qual_Op ::= . OPERATOR LPAREN any_operator RPAREN    gram.lime:17369
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . OPERATOR
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on OPERATOR prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead OR  (1 state)
+  shift : a_expr ::= a_expr . OR a_expr    gram.lime:15705
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . OR
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on OR prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead PERCENT  (1 state)
+  shift : a_expr ::= a_expr . PERCENT a_expr    gram.lime:15653
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . PERCENT
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on PERCENT prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead PIPE  (1 state)
+  shift : a_expr ::= a_expr . PIPE a_expr    gram.lime:15689
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . PIPE
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on PIPE prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead PLUS  (1 state)
+  shift : a_expr ::= a_expr . PLUS a_expr    gram.lime:15637
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . PLUS
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on PLUS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead RIGHT_ARROW  (1 state)
+  shift : a_expr ::= a_expr . RIGHT_ARROW a_expr    gram.lime:15685
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . RIGHT_ARROW
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on RIGHT_ARROW prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead SIMILAR  (1 state)
+  shift : a_expr ::= a_expr . SIMILAR TO a_expr    gram.lime:15773
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . SIMILAR
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on SIMILAR prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead SLASH  (1 state)
+  shift : a_expr ::= a_expr . SLASH a_expr    gram.lime:15649
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . SLASH
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on SLASH prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead STAR  (1 state)
+  shift : a_expr ::= a_expr . STAR a_expr    gram.lime:15645
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . STAR
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on STAR prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead TYPECAST  (1 state)
+  shift : a_expr ::= a_expr . TYPECAST typename    gram.lime:15602
+  reduce: a_expr ::= a_expr JSON_ARROW2 a_expr    dialect_ext.lime:35
+  input : VALUES LPAREN a_expr JSON_ARROW2 a_expr . TYPECAST
+  fix   : conflict sr "a_expr ::= a_expr JSON_ARROW2 a_expr" on TYPECAST prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr LESS_EQUALS a_expr    gram.lime:15673
+  input : VALUES LPAREN a_expr LESS_EQUALS a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr LESS_EQUALS a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr LESS_EQUALS a_expr    gram.lime:15673
+  input : VALUES LPAREN a_expr LESS_EQUALS a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr LESS_EQUALS a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr LIKE a_expr ESCAPE a_expr    gram.lime:15722
+  input : VALUES LPAREN a_expr LIKE a_expr ESCAPE a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr LIKE a_expr ESCAPE a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr LIKE a_expr ESCAPE a_expr    gram.lime:15722
+  input : VALUES LPAREN a_expr LIKE a_expr ESCAPE a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr LIKE a_expr ESCAPE a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr LIKE a_expr    gram.lime:15717
+  input : VALUES LPAREN a_expr LIKE a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr LIKE a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr LIKE a_expr    gram.lime:15717
+  input : VALUES LPAREN a_expr LIKE a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr LIKE a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr LT a_expr    gram.lime:15661
+  input : VALUES LPAREN a_expr LT a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr LT a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr LT a_expr    gram.lime:15661
+  input : VALUES LPAREN a_expr LT a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr LT a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr MINUS a_expr    gram.lime:15641
+  input : VALUES LPAREN a_expr MINUS a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr MINUS a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr MINUS a_expr    gram.lime:15641
+  input : VALUES LPAREN a_expr MINUS a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr MINUS a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr NOT_EQUALS a_expr    gram.lime:15681
+  input : VALUES LPAREN a_expr NOT_EQUALS a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr NOT_EQUALS a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr NOT_EQUALS a_expr    gram.lime:15681
+  input : VALUES LPAREN a_expr NOT_EQUALS a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr NOT_EQUALS a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr NOT_LA BETWEEN SYMMETRIC b_expr AND a_expr    gram.lime:15948
+  input : VALUES LPAREN a_expr NOT_LA BETWEEN SYMMETRIC b_expr AND a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA BETWEEN SYMMETRIC b_expr AND a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr NOT_LA BETWEEN SYMMETRIC b_expr AND a_expr    gram.lime:15948
+  input : VALUES LPAREN a_expr NOT_LA BETWEEN SYMMETRIC b_expr AND a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA BETWEEN SYMMETRIC b_expr AND a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr NOT_LA BETWEEN opt_asymmetric b_expr AND a_expr    gram.lime:15932
+  input : VALUES LPAREN a_expr NOT_LA BETWEEN opt_asymmetric b_expr AND a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA BETWEEN opt_asymmetric b_expr AND a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr NOT_LA BETWEEN opt_asymmetric b_expr AND a_expr    gram.lime:15932
+  input : VALUES LPAREN a_expr NOT_LA BETWEEN opt_asymmetric b_expr AND a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA BETWEEN opt_asymmetric b_expr AND a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr NOT_LA ILIKE a_expr ESCAPE a_expr    gram.lime:15764
+  input : VALUES LPAREN a_expr NOT_LA ILIKE a_expr ESCAPE a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA ILIKE a_expr ESCAPE a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr NOT_LA ILIKE a_expr ESCAPE a_expr    gram.lime:15764
+  input : VALUES LPAREN a_expr NOT_LA ILIKE a_expr ESCAPE a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA ILIKE a_expr ESCAPE a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr NOT_LA ILIKE a_expr    gram.lime:15759
+  input : VALUES LPAREN a_expr NOT_LA ILIKE a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA ILIKE a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr NOT_LA ILIKE a_expr    gram.lime:15759
+  input : VALUES LPAREN a_expr NOT_LA ILIKE a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA ILIKE a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr NOT_LA LIKE a_expr ESCAPE a_expr    gram.lime:15736
+  input : VALUES LPAREN a_expr NOT_LA LIKE a_expr ESCAPE a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA LIKE a_expr ESCAPE a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr NOT_LA LIKE a_expr ESCAPE a_expr    gram.lime:15736
+  input : VALUES LPAREN a_expr NOT_LA LIKE a_expr ESCAPE a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA LIKE a_expr ESCAPE a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr NOT_LA LIKE a_expr    gram.lime:15731
+  input : VALUES LPAREN a_expr NOT_LA LIKE a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA LIKE a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr NOT_LA LIKE a_expr    gram.lime:15731
+  input : VALUES LPAREN a_expr NOT_LA LIKE a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA LIKE a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr NOT_LA SIMILAR TO a_expr ESCAPE a_expr    gram.lime:15800
+  input : VALUES LPAREN a_expr NOT_LA SIMILAR TO a_expr ESCAPE a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA SIMILAR TO a_expr ESCAPE a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr NOT_LA SIMILAR TO a_expr ESCAPE a_expr    gram.lime:15800
+  input : VALUES LPAREN a_expr NOT_LA SIMILAR TO a_expr ESCAPE a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA SIMILAR TO a_expr ESCAPE a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr NOT_LA SIMILAR TO a_expr    gram.lime:15791
+  input : VALUES LPAREN a_expr NOT_LA SIMILAR TO a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA SIMILAR TO a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr NOT_LA SIMILAR TO a_expr    gram.lime:15791
+  input : VALUES LPAREN a_expr NOT_LA SIMILAR TO a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr NOT_LA SIMILAR TO a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr OR a_expr    gram.lime:15705
+  input : VALUES LPAREN a_expr OR a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr OR a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr OR a_expr    gram.lime:15705
+  input : VALUES LPAREN a_expr OR a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr OR a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr PERCENT a_expr    gram.lime:15653
+  input : VALUES LPAREN a_expr PERCENT a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr PERCENT a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr PERCENT a_expr    gram.lime:15653
+  input : VALUES LPAREN a_expr PERCENT a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr PERCENT a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr PIPE a_expr    gram.lime:15689
+  input : VALUES LPAREN a_expr PIPE a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr PIPE a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr PIPE a_expr    gram.lime:15689
+  input : VALUES LPAREN a_expr PIPE a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr PIPE a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr PLUS a_expr    gram.lime:15637
+  input : VALUES LPAREN a_expr PLUS a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr PLUS a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr PLUS a_expr    gram.lime:15637
+  input : VALUES LPAREN a_expr PLUS a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr PLUS a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr RIGHT_ARROW a_expr    gram.lime:15685
+  input : VALUES LPAREN a_expr RIGHT_ARROW a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr RIGHT_ARROW a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr RIGHT_ARROW a_expr    gram.lime:15685
+  input : VALUES LPAREN a_expr RIGHT_ARROW a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr RIGHT_ARROW a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr SIMILAR TO a_expr ESCAPE a_expr    gram.lime:15782
+  input : VALUES LPAREN a_expr SIMILAR TO a_expr ESCAPE a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr SIMILAR TO a_expr ESCAPE a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr SIMILAR TO a_expr ESCAPE a_expr    gram.lime:15782
+  input : VALUES LPAREN a_expr SIMILAR TO a_expr ESCAPE a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr SIMILAR TO a_expr ESCAPE a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr SIMILAR TO a_expr    gram.lime:15773
+  input : VALUES LPAREN a_expr SIMILAR TO a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr SIMILAR TO a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr SIMILAR TO a_expr    gram.lime:15773
+  input : VALUES LPAREN a_expr SIMILAR TO a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr SIMILAR TO a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr SLASH a_expr    gram.lime:15649
+  input : VALUES LPAREN a_expr SLASH a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr SLASH a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr SLASH a_expr    gram.lime:15649
+  input : VALUES LPAREN a_expr SLASH a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr SLASH a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr STAR a_expr    gram.lime:15645
+  input : VALUES LPAREN a_expr STAR a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr STAR a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr STAR a_expr    gram.lime:15645
+  input : VALUES LPAREN a_expr STAR a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr STAR a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= a_expr qual_Op a_expr    gram.lime:15693
+  input : VALUES LPAREN a_expr qual_Op a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= a_expr qual_Op a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= a_expr qual_Op a_expr    gram.lime:15693
+  input : VALUES LPAREN a_expr qual_Op a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= a_expr qual_Op a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW a_expr    dialect_ext.lime:34
+  reduce: a_expr ::= qual_Op a_expr    gram.lime:15697
+  input : VALUES LPAREN qual_Op a_expr . JSON_ARROW
+  fix   : conflict sr "a_expr ::= qual_Op a_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : a_expr ::= a_expr . JSON_ARROW2 a_expr    dialect_ext.lime:35
+  reduce: a_expr ::= qual_Op a_expr    gram.lime:15697
+  input : VALUES LPAREN qual_Op a_expr . JSON_ARROW2
+  fix   : conflict sr "a_expr ::= qual_Op a_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= MINUS b_expr    gram.lime:16097
+  input : VALUES LPAREN POSITION LPAREN MINUS b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= MINUS b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= MINUS b_expr    gram.lime:16097
+  input : VALUES LPAREN POSITION LPAREN MINUS b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= MINUS b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= PLUS b_expr    gram.lime:16093
+  input : VALUES LPAREN POSITION LPAREN PLUS b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= PLUS b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= PLUS b_expr    gram.lime:16093
+  input : VALUES LPAREN POSITION LPAREN PLUS b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= PLUS b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr CARET b_expr    gram.lime:16121
+  input : VALUES LPAREN POSITION LPAREN b_expr CARET b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr CARET b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr CARET b_expr    gram.lime:16121
+  input : VALUES LPAREN POSITION LPAREN b_expr CARET b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr CARET b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr EQ b_expr    gram.lime:16133
+  input : VALUES LPAREN POSITION LPAREN b_expr EQ b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr EQ b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr EQ b_expr    gram.lime:16133
+  input : VALUES LPAREN POSITION LPAREN b_expr EQ b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr EQ b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr GREATER_EQUALS b_expr    gram.lime:16141
+  input : VALUES LPAREN POSITION LPAREN b_expr GREATER_EQUALS b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr GREATER_EQUALS b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr GREATER_EQUALS b_expr    gram.lime:16141
+  input : VALUES LPAREN POSITION LPAREN b_expr GREATER_EQUALS b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr GREATER_EQUALS b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr GT b_expr    gram.lime:16129
+  input : VALUES LPAREN POSITION LPAREN b_expr GT b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr GT b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr GT b_expr    gram.lime:16129
+  input : VALUES LPAREN POSITION LPAREN b_expr GT b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr GT b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr IS DISTINCT FROM b_expr    gram.lime:16165
+  input : VALUES LPAREN POSITION LPAREN b_expr IS DISTINCT FROM b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr IS DISTINCT FROM b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr IS DISTINCT FROM b_expr    gram.lime:16165
+  input : VALUES LPAREN POSITION LPAREN b_expr IS DISTINCT FROM b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr IS DISTINCT FROM b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr IS NOT DISTINCT FROM b_expr    gram.lime:16169
+  input : VALUES LPAREN POSITION LPAREN b_expr IS NOT DISTINCT FROM b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr IS NOT DISTINCT FROM b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr IS NOT DISTINCT FROM b_expr    gram.lime:16169
+  input : VALUES LPAREN POSITION LPAREN b_expr IS NOT DISTINCT FROM b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr IS NOT DISTINCT FROM b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead CARET  (1 state)
+  shift : b_expr ::= b_expr . CARET b_expr    gram.lime:16121
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . CARET
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on CARET prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead EQ  (1 state)
+  shift : b_expr ::= b_expr . EQ b_expr    gram.lime:16133
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . EQ
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on EQ prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead GREATER_EQUALS  (1 state)
+  shift : b_expr ::= b_expr . GREATER_EQUALS b_expr    gram.lime:16141
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . GREATER_EQUALS
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on GREATER_EQUALS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead GT  (1 state)
+  shift : b_expr ::= b_expr . GT b_expr    gram.lime:16129
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . GT
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on GT prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead IS  (1 state)
+  shift : b_expr ::= b_expr . IS DISTINCT FROM b_expr    gram.lime:16165
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . IS
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on IS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead LESS_EQUALS  (1 state)
+  shift : b_expr ::= b_expr . LESS_EQUALS b_expr    gram.lime:16137
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . LESS_EQUALS
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on LESS_EQUALS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead LT  (1 state)
+  shift : b_expr ::= b_expr . LT b_expr    gram.lime:16125
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . LT
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on LT prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead MINUS  (1 state)
+  shift : b_expr ::= b_expr . MINUS b_expr    gram.lime:16105
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . MINUS
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on MINUS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead NOT_EQUALS  (1 state)
+  shift : b_expr ::= b_expr . NOT_EQUALS b_expr    gram.lime:16145
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . NOT_EQUALS
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on NOT_EQUALS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead OP  (1 state)
+  shift : qual_Op ::= . OP    gram.lime:17365
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . OP
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on OP prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead OPERATOR  (1 state)
+  shift : qual_Op ::= . OPERATOR LPAREN any_operator RPAREN    gram.lime:17369
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . OPERATOR
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on OPERATOR prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead PERCENT  (1 state)
+  shift : b_expr ::= b_expr . PERCENT b_expr    gram.lime:16117
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . PERCENT
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on PERCENT prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead PIPE  (1 state)
+  shift : b_expr ::= b_expr . PIPE b_expr    gram.lime:16153
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . PIPE
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on PIPE prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead PLUS  (1 state)
+  shift : b_expr ::= b_expr . PLUS b_expr    gram.lime:16101
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . PLUS
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on PLUS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead RIGHT_ARROW  (1 state)
+  shift : b_expr ::= b_expr . RIGHT_ARROW b_expr    gram.lime:16149
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . RIGHT_ARROW
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on RIGHT_ARROW prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead SLASH  (1 state)
+  shift : b_expr ::= b_expr . SLASH b_expr    gram.lime:16113
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . SLASH
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on SLASH prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead STAR  (1 state)
+  shift : b_expr ::= b_expr . STAR b_expr    gram.lime:16109
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . STAR
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on STAR prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead TYPECAST  (1 state)
+  shift : b_expr ::= b_expr . TYPECAST typename    gram.lime:16089
+  reduce: b_expr ::= b_expr JSON_ARROW b_expr    dialect_ext.lime:36
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW b_expr . TYPECAST
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW b_expr" on TYPECAST prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead CARET  (1 state)
+  shift : b_expr ::= b_expr . CARET b_expr    gram.lime:16121
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . CARET
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on CARET prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead EQ  (1 state)
+  shift : b_expr ::= b_expr . EQ b_expr    gram.lime:16133
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . EQ
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on EQ prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead GREATER_EQUALS  (1 state)
+  shift : b_expr ::= b_expr . GREATER_EQUALS b_expr    gram.lime:16141
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . GREATER_EQUALS
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on GREATER_EQUALS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead GT  (1 state)
+  shift : b_expr ::= b_expr . GT b_expr    gram.lime:16129
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . GT
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on GT prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead IS  (1 state)
+  shift : b_expr ::= b_expr . IS DISTINCT FROM b_expr    gram.lime:16165
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . IS
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on IS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead LESS_EQUALS  (1 state)
+  shift : b_expr ::= b_expr . LESS_EQUALS b_expr    gram.lime:16137
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . LESS_EQUALS
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on LESS_EQUALS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead LT  (1 state)
+  shift : b_expr ::= b_expr . LT b_expr    gram.lime:16125
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . LT
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on LT prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead MINUS  (1 state)
+  shift : b_expr ::= b_expr . MINUS b_expr    gram.lime:16105
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . MINUS
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on MINUS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead NOT_EQUALS  (1 state)
+  shift : b_expr ::= b_expr . NOT_EQUALS b_expr    gram.lime:16145
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . NOT_EQUALS
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on NOT_EQUALS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead OP  (1 state)
+  shift : qual_Op ::= . OP    gram.lime:17365
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . OP
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on OP prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead OPERATOR  (1 state)
+  shift : qual_Op ::= . OPERATOR LPAREN any_operator RPAREN    gram.lime:17369
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . OPERATOR
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on OPERATOR prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead PERCENT  (1 state)
+  shift : b_expr ::= b_expr . PERCENT b_expr    gram.lime:16117
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . PERCENT
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on PERCENT prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead PIPE  (1 state)
+  shift : b_expr ::= b_expr . PIPE b_expr    gram.lime:16153
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . PIPE
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on PIPE prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead PLUS  (1 state)
+  shift : b_expr ::= b_expr . PLUS b_expr    gram.lime:16101
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . PLUS
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on PLUS prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead RIGHT_ARROW  (1 state)
+  shift : b_expr ::= b_expr . RIGHT_ARROW b_expr    gram.lime:16149
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . RIGHT_ARROW
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on RIGHT_ARROW prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead SLASH  (1 state)
+  shift : b_expr ::= b_expr . SLASH b_expr    gram.lime:16113
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . SLASH
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on SLASH prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead STAR  (1 state)
+  shift : b_expr ::= b_expr . STAR b_expr    gram.lime:16109
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . STAR
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on STAR prefer shift.
+NEW shift/reduce  [base vs dialect_ext]  lookahead TYPECAST  (1 state)
+  shift : b_expr ::= b_expr . TYPECAST typename    gram.lime:16089
+  reduce: b_expr ::= b_expr JSON_ARROW2 b_expr    dialect_ext.lime:37
+  input : VALUES LPAREN POSITION LPAREN b_expr JSON_ARROW2 b_expr . TYPECAST
+  fix   : conflict sr "b_expr ::= b_expr JSON_ARROW2 b_expr" on TYPECAST prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr LESS_EQUALS b_expr    gram.lime:16137
+  input : VALUES LPAREN POSITION LPAREN b_expr LESS_EQUALS b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr LESS_EQUALS b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr LESS_EQUALS b_expr    gram.lime:16137
+  input : VALUES LPAREN POSITION LPAREN b_expr LESS_EQUALS b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr LESS_EQUALS b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr LT b_expr    gram.lime:16125
+  input : VALUES LPAREN POSITION LPAREN b_expr LT b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr LT b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr LT b_expr    gram.lime:16125
+  input : VALUES LPAREN POSITION LPAREN b_expr LT b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr LT b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr MINUS b_expr    gram.lime:16105
+  input : VALUES LPAREN POSITION LPAREN b_expr MINUS b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr MINUS b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr MINUS b_expr    gram.lime:16105
+  input : VALUES LPAREN POSITION LPAREN b_expr MINUS b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr MINUS b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr NOT_EQUALS b_expr    gram.lime:16145
+  input : VALUES LPAREN POSITION LPAREN b_expr NOT_EQUALS b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr NOT_EQUALS b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr NOT_EQUALS b_expr    gram.lime:16145
+  input : VALUES LPAREN POSITION LPAREN b_expr NOT_EQUALS b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr NOT_EQUALS b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr PERCENT b_expr    gram.lime:16117
+  input : VALUES LPAREN POSITION LPAREN b_expr PERCENT b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr PERCENT b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr PERCENT b_expr    gram.lime:16117
+  input : VALUES LPAREN POSITION LPAREN b_expr PERCENT b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr PERCENT b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr PIPE b_expr    gram.lime:16153
+  input : VALUES LPAREN POSITION LPAREN b_expr PIPE b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr PIPE b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr PIPE b_expr    gram.lime:16153
+  input : VALUES LPAREN POSITION LPAREN b_expr PIPE b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr PIPE b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr PLUS b_expr    gram.lime:16101
+  input : VALUES LPAREN POSITION LPAREN b_expr PLUS b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr PLUS b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr PLUS b_expr    gram.lime:16101
+  input : VALUES LPAREN POSITION LPAREN b_expr PLUS b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr PLUS b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr RIGHT_ARROW b_expr    gram.lime:16149
+  input : VALUES LPAREN POSITION LPAREN b_expr RIGHT_ARROW b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr RIGHT_ARROW b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr RIGHT_ARROW b_expr    gram.lime:16149
+  input : VALUES LPAREN POSITION LPAREN b_expr RIGHT_ARROW b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr RIGHT_ARROW b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr SLASH b_expr    gram.lime:16113
+  input : VALUES LPAREN POSITION LPAREN b_expr SLASH b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr SLASH b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr SLASH b_expr    gram.lime:16113
+  input : VALUES LPAREN POSITION LPAREN b_expr SLASH b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr SLASH b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr STAR b_expr    gram.lime:16109
+  input : VALUES LPAREN POSITION LPAREN b_expr STAR b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr STAR b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr STAR b_expr    gram.lime:16109
+  input : VALUES LPAREN POSITION LPAREN b_expr STAR b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr STAR b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= b_expr qual_Op b_expr    gram.lime:16157
+  input : VALUES LPAREN POSITION LPAREN b_expr qual_Op b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= b_expr qual_Op b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= b_expr qual_Op b_expr    gram.lime:16157
+  input : VALUES LPAREN POSITION LPAREN b_expr qual_Op b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= b_expr qual_Op b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW b_expr    dialect_ext.lime:36
+  reduce: b_expr ::= qual_Op b_expr    gram.lime:16161
+  input : VALUES LPAREN POSITION LPAREN qual_Op b_expr . JSON_ARROW
+  fix   : conflict sr "b_expr ::= qual_Op b_expr" on JSON_ARROW prefer shift.
+NEW shift/reduce  [dialect_ext vs base]  lookahead JSON_ARROW2  (1 state)
+  shift : b_expr ::= b_expr . JSON_ARROW2 b_expr    dialect_ext.lime:37
+  reduce: b_expr ::= qual_Op b_expr    gram.lime:16161
+  input : VALUES LPAREN POSITION LPAREN qual_Op b_expr . JSON_ARROW2
+  fix   : conflict sr "b_expr ::= qual_Op b_expr" on JSON_ARROW2 prefer shift.
+NEW shift/reduce  [dialect_ext vs dialect_ext]  lookahead LPAREN  (1 state)
+  shift : upsert_cols ::= . LPAREN columnList RPAREN    dialect_ext.lime:14
+  reduce: upsert_cols ::=    dialect_ext.lime:15
+  input : UPSERT_K INTO qualified_name . LPAREN
+  fix   : conflict sr "upsert_cols ::=" on LPAREN prefer shift.
+ROOT CAUSES: 52 (by side-a rule and lookahead)
+    41  shift a_expr ::= a_expr . JSON_ARROW a_expr on JSON_ARROW  [dialect_ext vs base]
+        a reduce rule here has no precedence, so no precedence line settles this: use conflict lines, or fix the base
+    41  shift a_expr ::= a_expr . JSON_ARROW2 a_expr on JSON_ARROW2  [dialect_ext vs base]
+        a reduce rule here has no precedence, so no precedence line settles this: use conflict lines, or fix the base
+    20  shift b_expr ::= b_expr . JSON_ARROW b_expr on JSON_ARROW  [dialect_ext vs base]
+        a reduce rule here has no precedence, so no precedence line settles this: use conflict lines, or fix the base
+    20  shift b_expr ::= b_expr . JSON_ARROW2 b_expr on JSON_ARROW2  [dialect_ext vs base]
+        a reduce rule here has no precedence, so no precedence line settles this: use conflict lines, or fix the base
+     4  shift qual_Op ::= . OPERATOR LPAREN any_operator RPAREN on OPERATOR  [base vs dialect_ext]
+        the base gives OPERATOR no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . AND a_expr on AND  [base vs dialect_ext]
+        the base gives AND no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . AT TIME ZONE a_expr on AT  [base vs dialect_ext]
+        the base gives AT no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . BETWEEN opt_asymmetric b_expr AND a_expr on BETWEEN  [base vs dialect_ext]
+        the base gives BETWEEN no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . CARET a_expr on CARET  [base vs dialect_ext]
+        the base gives CARET no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . COLLATE any_name on COLLATE  [base vs dialect_ext]
+        the base gives COLLATE no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . EQ a_expr on EQ  [base vs dialect_ext]
+        the base gives EQ no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . GREATER_EQUALS a_expr on GREATER_EQUALS  [base vs dialect_ext]
+        the base gives GREATER_EQUALS no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . GT a_expr on GT  [base vs dialect_ext]
+        the base gives GT no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . ILIKE a_expr on ILIKE  [base vs dialect_ext]
+        the base gives ILIKE no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . IN_P select_with_parens on IN_P  [base vs dialect_ext]
+        the base gives IN_P no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . IS NULL_P on IS  [base vs dialect_ext]
+        the base gives IS no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . ISNULL on ISNULL  [base vs dialect_ext]
+        the base gives ISNULL no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . LESS_EQUALS a_expr on LESS_EQUALS  [base vs dialect_ext]
+        the base gives LESS_EQUALS no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . LIKE a_expr on LIKE  [base vs dialect_ext]
+        the base gives LIKE no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . LT a_expr on LT  [base vs dialect_ext]
+        the base gives LT no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . MINUS a_expr on MINUS  [base vs dialect_ext]
+        the base gives MINUS no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . NOTNULL on NOTNULL  [base vs dialect_ext]
+        the base gives NOTNULL no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . NOT_EQUALS a_expr on NOT_EQUALS  [base vs dialect_ext]
+        the base gives NOT_EQUALS no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . NOT_LA LIKE a_expr on NOT_LA  [base vs dialect_ext]
+        the base gives NOT_LA no precedence: only a base change (or rejecting the extension) settles this
+     2  shift all_Op ::= . OP on OP  [base vs dialect_ext]
+        the base gives OP no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . OR a_expr on OR  [base vs dialect_ext]
+        the base gives OR no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . PERCENT a_expr on PERCENT  [base vs dialect_ext]
+        the base gives PERCENT no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . PIPE a_expr on PIPE  [base vs dialect_ext]
+        the base gives PIPE no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . PLUS a_expr on PLUS  [base vs dialect_ext]
+        the base gives PLUS no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . RIGHT_ARROW a_expr on RIGHT_ARROW  [base vs dialect_ext]
+        the base gives RIGHT_ARROW no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . SIMILAR TO a_expr on SIMILAR  [base vs dialect_ext]
+        the base gives SIMILAR no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . SLASH a_expr on SLASH  [base vs dialect_ext]
+        the base gives SLASH no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . STAR a_expr on STAR  [base vs dialect_ext]
+        the base gives STAR no precedence: only a base change (or rejecting the extension) settles this
+     2  shift a_expr ::= a_expr . TYPECAST typename on TYPECAST  [base vs dialect_ext]
+        the base gives TYPECAST no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . CARET b_expr on CARET  [base vs dialect_ext]
+        the base gives CARET no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . EQ b_expr on EQ  [base vs dialect_ext]
+        the base gives EQ no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . GREATER_EQUALS b_expr on GREATER_EQUALS  [base vs dialect_ext]
+        the base gives GREATER_EQUALS no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . GT b_expr on GT  [base vs dialect_ext]
+        the base gives GT no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . IS DISTINCT FROM b_expr on IS  [base vs dialect_ext]
+        the base gives IS no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . LESS_EQUALS b_expr on LESS_EQUALS  [base vs dialect_ext]
+        the base gives LESS_EQUALS no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . LT b_expr on LT  [base vs dialect_ext]
+        the base gives LT no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . MINUS b_expr on MINUS  [base vs dialect_ext]
+        the base gives MINUS no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . NOT_EQUALS b_expr on NOT_EQUALS  [base vs dialect_ext]
+        the base gives NOT_EQUALS no precedence: only a base change (or rejecting the extension) settles this
+     2  shift qual_Op ::= . OP on OP  [base vs dialect_ext]
+        the base gives OP no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . PERCENT b_expr on PERCENT  [base vs dialect_ext]
+        the base gives PERCENT no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . PIPE b_expr on PIPE  [base vs dialect_ext]
+        the base gives PIPE no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . PLUS b_expr on PLUS  [base vs dialect_ext]
+        the base gives PLUS no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . RIGHT_ARROW b_expr on RIGHT_ARROW  [base vs dialect_ext]
+        the base gives RIGHT_ARROW no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . SLASH b_expr on SLASH  [base vs dialect_ext]
+        the base gives SLASH no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . STAR b_expr on STAR  [base vs dialect_ext]
+        the base gives STAR no precedence: only a base change (or rejecting the extension) settles this
+     2  shift b_expr ::= b_expr . TYPECAST typename on TYPECAST  [base vs dialect_ext]
+        the base gives TYPECAST no precedence: only a base change (or rejecting the extension) settles this
+     1  shift upsert_cols ::= . LPAREN columnList RPAREN on LPAREN  [dialect_ext vs dialect_ext]
+        a reduce rule here has no precedence, so no precedence line settles this: use conflict lines, or fix the base
+UNRESOLVED: 219   resolved by policy: 0   base conflicts (judged by base %expect 1665): 1665

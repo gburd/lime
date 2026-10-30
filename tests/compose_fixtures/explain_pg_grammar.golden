@@ -1,0 +1,6 @@
+NEW shift/reduce  [dialect_ext vs dialect_ext]  lookahead LPAREN  (1 state)
+  shift : upsert_cols ::= . LPAREN columnList RPAREN    dialect_ext.lime:14
+  reduce: upsert_cols ::=    dialect_ext.lime:15
+  input : UPSERT_K INTO qualified_name . LPAREN
+  fix   : conflict sr "upsert_cols ::=" on LPAREN prefer shift.
+UNRESOLVED: 1   resolved by policy: 0   base conflicts (judged by base %expect): 0

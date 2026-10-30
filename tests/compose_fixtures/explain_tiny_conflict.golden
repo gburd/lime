@@ -1,0 +1,11 @@
+NEW shift/reduce  [base vs tiny_conflict_ext]  lookahead PLUS  (1 state)
+  shift : expr ::= expr . PLUS expr    tiny_base.lime:5
+  reduce: expr ::= MINUS expr    tiny_conflict_ext.lime:1
+  input : MINUS expr . PLUS
+  fix   : conflict sr "expr ::= MINUS expr" on PLUS prefer shift.
+NEW shift/reduce  [tiny_conflict_ext vs base]  lookahead RPAREN  (1 state)
+  shift : expr ::= LPAREN NUM . RPAREN    tiny_conflict_ext.lime:3
+  reduce: expr ::= NUM    tiny_base.lime:6
+  input : LPAREN NUM . RPAREN
+  fix   : conflict sr "expr ::= NUM" on RPAREN prefer shift.
+UNRESOLVED: 2   resolved by policy: 0   base conflicts (judged by base %expect): 0

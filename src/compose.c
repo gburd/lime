@@ -273,6 +273,8 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
         LimeCompileStats st;
         if (lime_compile_grammar_in_process_ex2(mtext, mlen, lime_compose_hook(sess), &new_snap,
                                                 &st, &cm_err) != 0) {
+            char *where = lime_compose_locate_errors(sess, cm_err);
+            if (where) { free(cm_err); cm_err = where; }
             goto out;
         }
     }
@@ -361,6 +363,10 @@ int lime_compose_text(const char *base_text, size_t base_len, const LimeComposeU
     LimeCompileStats st;
     ParserSnapshot *snap = NULL;
     if (lime_compile_grammar_in_process_ex2(m, mlen, lime_compose_hook(s), &snap, &st, error) != 0) {
+        if (error && *error) {
+            char *where = lime_compose_locate_errors(s, *error);
+            if (where) { free(*error); *error = where; }
+        }
         lime_compose_session_free(s);
         return -1;
     }

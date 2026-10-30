@@ -343,6 +343,8 @@ static LimeConflictChoice on_conflict(void *user, const LimeConflictInfo *c) {
             }
         }
         e->example = xstrdup(c->example);
+        e->prec_lookahead = c->prec_lookahead;
+        e->prec_b = c->prec_b;
         e->resolution = hit ? policy_line(hit) : NULL;
     } else {
         free(key);
@@ -440,6 +442,46 @@ const char *lime_compose_merged_text(const LimeComposeSession *s, size_t *len) {
 
 const LimeCompileHook *lime_compose_hook(LimeComposeSession *s) { return s ? &s->hook : NULL; }
 
+/* Rewrite "<grammar text>:N:" in a compiler diagnostic as "owner-file:M:",
+** so a grammar error points into the extension that caused it. */
+char *lime_compose_locate_errors(const LimeComposeSession *s, const char *msg) {
+    static const char tag[] = "<grammar text>:";
+    if (s == NULL || msg == NULL) return msg ? xstrdup(msg) : NULL;
+    size_t cap = strlen(msg) * 2 + 64, n = 0;
+    char *out = malloc(cap);
+    if (out == NULL) return NULL;
+    const char *p = msg;
+    while (*p) {
+        const char *hit = strstr(p, tag);
+        if (hit == NULL) hit = p + strlen(p);
+        size_t pre = (size_t)(hit - p);
+        if (n + pre + 1 > cap) break;
+        memcpy(out + n, p, pre);
+        n += pre;
+        p = hit;
+        if (*p == '\0') break;
+        char *end;
+        long line = strtol(p + sizeof(tag) - 1, &end, 10);
+        if (line <= 0) { /* no position: keep the text as is */
+            size_t t = (size_t)(end - p);
+            if (n + t + 1 > cap) break;
+            memcpy(out + n, p, t);
+            n += t;
+            p = end;
+            continue;
+        }
+        const Segment *g = segment_of(s, (int)line);
+        char buf[512];
+        int k = snprintf(buf, sizeof buf, "%s:%ld", g->file, line - g->first_line + 1);
+        if (k < 0 || n + (size_t)k + 1 > cap) break;
+        memcpy(out + n, buf, (size_t)k);
+        n += (size_t)k;
+        p = end;
+    }
+    out[n] = '\0';
+    return out;
+}
+
 static int cmp_entry(const void *a, const void *b) {
     return strcmp(((const LimeComposeEntry *)a)->key, ((const LimeComposeEntry *)b)->key);
 }
@@ -459,6 +501,7 @@ uint32_t lime_compose_finish(LimeComposeSession *s, LimeComposeReport **report) 
             r->nresolved = s->nent - nun;
             r->base_nconflict = s->base->nconflict;
             r->base_nexpect = s->base->nexpect;
+            r->nextensions = s->nseg - 1;
             s->ent = NULL;
             s->nent = s->capent = 0;
             *report = r;
@@ -526,6 +569,23 @@ static void side_line(Buf *b, const char *tag, const LimeComposeSide *d) {
         bput(b, "  %-7s %s    %s\n", tag, d->rule, d->file);
 }
 
+/* Root cause = (kind, owners, side-a rule, lookahead): one new operator
+** meeting N base rules is one cause, not N problems. */
+typedef struct Group { const LimeComposeEntry *first; uint32_t n, nunres; } Group;
+
+static int same_group(const LimeComposeEntry *x, const LimeComposeEntry *y) {
+#define SEQ(p, q) ((p) == (q) || ((p) && (q) && strcmp((p), (q)) == 0))
+    return x->kind == y->kind && SEQ(x->lookahead, y->lookahead) && SEQ(x->a.rule, y->a.rule)
+        && SEQ(x->a.owner, y->a.owner) && SEQ(x->b.owner, y->b.owner);
+#undef SEQ
+}
+
+static int cmp_group(const void *p, const void *q) {
+    const Group *a = p, *b = q;
+    if (a->n != b->n) return a->n > b->n ? -1 : 1;
+    return strcmp(a->first->key, b->first->key);
+}
+
 char *lime_compose_report_format(const LimeComposeReport *r) {
     Buf b = {0};
     if (r == NULL) return xstrdup("");
@@ -553,10 +613,59 @@ char *lime_compose_report_format(const LimeComposeReport *r) {
             bput(&b, "  fix   : conflict rr \"%s\" on %s prefer reduce.\n", e->a.rule, e->lookahead);
         }
     }
+
+    /* Root causes, largest first. */
+    Group *g = calloc(r->n ? r->n : 1, sizeof(*g));
+    uint32_t ng = 0;
+    for (uint32_t i = 0; g && i < r->n; i++) {
+        const LimeComposeEntry *e = &r->entries[i];
+        uint32_t k = 0;
+        while (k < ng && !same_group(g[k].first, e)) k++;
+        if (k == ng) g[ng++].first = e;
+        g[k].n++;
+        g[k].nunres += e->resolution == NULL;
+    }
+    if (g && ng && ng < r->n) {
+        qsort(g, ng, sizeof(*g), cmp_group);
+        bput(&b, "ROOT CAUSES: %u (by side-a rule and lookahead)\n", ng);
+        for (uint32_t k = 0; k < ng; k++) {
+            const LimeComposeEntry *e = g[k].first;
+            /* precedence can settle an SR only if both sides have one */
+            int prec_ok = 1, any_la = 0;
+            for (uint32_t i = 0; i < r->n; i++) {
+                const LimeComposeEntry *x = &r->entries[i];
+                if (!same_group(x, e)) continue;
+                if (x->prec_b < 0) prec_ok = 0;
+                if (x->prec_lookahead >= 0) any_la = 1;
+            }
+            bput(&b, "  %4u  %s %s on %s  [%s vs %s]%s\n", g[k].n,
+                 e->kind == LIME_CK_SR ? "shift" : "reduce", e->a.rule ? e->a.rule : "?",
+                 e->lookahead, e->a.owner ? e->a.owner : "?", e->b.owner ? e->b.owner : "?",
+                 g[k].nunres ? "" : "  (resolved)");
+            if (g[k].nunres && e->kind == LIME_CK_SR) {
+                int base_tok = e->a.owner && strcmp(e->a.owner, "base") == 0;
+                if (!prec_ok)
+                    bput(&b, "        a reduce rule here has no precedence, so no precedence line "
+                             "settles this: use conflict lines, or fix the base\n");
+                else if (!any_la && base_tok)
+                    bput(&b, "        the base gives %s no precedence: only a base change (or "
+                             "rejecting the extension) settles this\n", e->lookahead);
+                else if (!any_la)
+                    bput(&b, "        %s has no precedence: a precedence for it settles this\n",
+                         e->lookahead);
+            }
+        }
+    }
+    free(g);
+
     bput(&b, "UNRESOLVED: %u   resolved by policy: %u   base conflicts (judged by base %%expect",
          r->nunresolved, r->nresolved);
     if (r->base_nexpect >= 0) bput(&b, " %d", r->base_nexpect);
-    bput(&b, "): %d\n", r->base_nconflict);
+    bput(&b, "): %d", r->base_nconflict);
+    if ((r->base_nexpect >= 0 && r->base_nconflict != r->base_nexpect)
+        || (r->base_nexpect < 0 && r->base_nconflict > 0))
+        bput(&b, "  (base does not match its %%expect)");
+    bput(&b, "\n");
     if (b.p == NULL) return xstrdup("");
     return b.p;
 }

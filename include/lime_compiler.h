@@ -115,6 +115,8 @@ typedef struct LimeConflictInfo {
     const char *rule_b;
     int line_a, line_b;     /**< line of the rule in the compiled text */
     int dot_a;              /**< SR: position of the dot in rule_a */
+    int prec_lookahead;     /**< precedence of the lookahead, -1 if none */
+    int prec_b;             /**< precedence of rule_b (its precsym), -1 if none */
     int state;              /**< state number (cosmetic, NOT stable) */
     const char *example;    /**< a symbol path from state 0 to this state,
                                  "A B c . LOOKAHEAD" (may be NULL) */

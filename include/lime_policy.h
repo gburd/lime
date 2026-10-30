@@ -80,6 +80,8 @@ typedef struct LimeComposeEntry {
     LimeComposeSide b;   /**< SR: the reduce rule; RR: the other rule */
     char *example;       /**< shortest symbol path to a conflicting state */
     uint32_t nstates;    /**< states this key occurs in */
+    int prec_lookahead;  /**< -1 = the lookahead has no precedence */
+    int prec_b;          /**< -1 = rule b has no precedence */
     char *resolution;    /**< the policy line that resolved it, or NULL = unresolved */
 } LimeComposeEntry;
 
@@ -90,6 +92,7 @@ typedef struct LimeComposeReport {
     uint32_t nresolved;
     int base_nconflict; /**< conflicts of the base alone (lime's count) */
     int base_nexpect;   /**< the base's %expect, -1 if none */
+    uint32_t nextensions; /**< extensions composed */
 } LimeComposeReport;
 
 void lime_compose_report_free(LimeComposeReport *r);
@@ -140,6 +143,9 @@ LimeComposeSession *lime_compose_begin(const char *base_text, size_t base_len,
 const char *lime_compose_merged_text(const LimeComposeSession *s, size_t *len);
 /** Pass to lime_compile_grammar_in_process_ex2() for the merged text. */
 const struct LimeCompileHook *lime_compose_hook(LimeComposeSession *s);
+/** Map "<grammar text>:N:" positions in a compile error to "file:line" of
+ *  the owning unit (base or extension).  malloc'd. */
+char *lime_compose_locate_errors(const LimeComposeSession *s, const char *msg);
 /** Number of unresolved extension-introduced conflicts; *report optional. */
 uint32_t lime_compose_finish(LimeComposeSession *s, LimeComposeReport **report);
 void lime_compose_session_free(LimeComposeSession *s);
