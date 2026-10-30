@@ -53,6 +53,20 @@ struct LimeLexicon {
     uint32_t kw_maxlen; /* longer input cannot be a keyword */
     LimeKwSlot *kw_slots;
 
+    /* Operator trie, longest match.  Node 0 is the root.  Byte b moves
+    ** node n to op_next[n * op_ncls + op_cmap[b]]; 0 there means "no
+    ** child" (the root is never a child).  Class 0 is every byte that
+    ** occurs in no operator, so its column is all zeros and ends the
+    ** walk.  op_code[n] is the token code when the path to n spells an
+    ** operator, else -1.  Typical tables: PostgreSQL's 21 multi-char
+    ** operators + self chars = ~40 nodes x ~20 classes x 2 B = 1.6 KB. */
+    uint8_t op_cmap[256];
+    uint32_t op_ncls;
+    uint32_t op_nnodes;
+    uint32_t op_count;
+    uint16_t *op_next;
+    int32_t *op_code;
+
     /* Source items, sorted by (kind, text), for recompose. */
     uint32_t nitems;
     LimeLexItemRec *items;
@@ -90,6 +104,8 @@ static inline uint32_t lime_lex_hash(const char *s, size_t n, int fold) {
 static inline void lime_lexicon_destroy(struct LimeLexicon *lx) {
     if (lx == NULL) return;
     free(lx->kw_slots);
+    free(lx->op_next);
+    free(lx->op_code);
     free(lx->items);
     free(lx->pool);
     free(lx);

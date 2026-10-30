@@ -631,16 +631,16 @@ that produces it can never disagree.
 |---|---|---|
 | `lime_snapshot_set_lexicon(snap, keywords, n, operators, m, flags)` | liblime_compiler | once, on the base snapshot |
 | `lime_lex_compose(composed, base, mods, nmods)` | liblime_compiler | each compose, right after `publish_modified_snapshot` |
-| `lime_snapshot_lexicon(snap)`, `lime_kw_lookup(lx, s, n)` | liblime_parser | per token, lock-free |
+| `lime_snapshot_lexicon(snap)`, `lime_kw_lookup(lx, s, n)`, `lime_op_match(lx, s, n, &code)` | liblime_parser | per token, lock-free |
 
 Items are `{ "spelling", "TOKEN_NAME" }`; names are resolved against
 the snapshot, because a recompile renumbers extension tokens.
 `LIME_LEX_FOLD_CASE` makes keywords ASCII-case-insensitive (SQL); it
 is off by default.
 
-**Compose.** `lime_lex_compose` rebuilds the table from the base's
-items plus every `MOD_ADD_TOKEN.lexeme` (identifier bytes only ->
-keyword).  It fails, and the caller fails the publish, when:
+**Compose.** `lime_lex_compose` rebuilds the tables from the base's
+items plus every `MOD_ADD_TOKEN.lexeme`: identifier bytes only ->
+keyword, anything else -> operator.  It fails, and the caller fails the publish, when:
 - a base item's token code differs in the composed snapshot (base
   terminal codes must be stable, DESIGN.md invariant 4);
 - one spelling is claimed by two different tokens (base vs
@@ -659,6 +659,19 @@ shared.  A reader holds a snapshot reference (`snapshot_acquire`),
 looks up as many lexemes as it likes with no lock, and releases;
 a writer publishes a new snapshot and releases the old one.
 `tests/test_kw_table.c` runs 4 readers against 200 swaps under TSan.
+
+**Operators.** `lime_op_match` returns the longest operator that is a
+prefix of the input, so `->>=` splits as `->>` then `=` once an
+extension adds `->>`.  It is the declarative form of scan.l's fixed
+operator rules plus its `{operator}` re-classification: the scanner's
+DFA still matches the whole `{op_chars}+` run (and applies PG's
+comment / trailing-`+-` trimming); the trie decides which terminal the
+run, or its prefix, is.  `tests/test_op_trie.c` checks this against a
+reference of scan.l's rule over every operator in the REL_18
+regression SQL (322,581 tokens) and all 1-4 byte operator strings
+(1,054,463), and checks a hegel longest-prefix property.  The trie is
+a dense `[node][byte class]` uint16 table; classes are the bytes that
+occur in some operator, so PG's set is ~40 nodes x ~25 classes.
 
 **Layout.** Open addressing, power-of-two slots at load factor <= 1/2,
 FNV-1a over the case-folded bytes, the full hash stored per slot so a

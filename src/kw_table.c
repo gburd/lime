@@ -1,6 +1,7 @@
 /*
 ** src/kw_table.c -- per-token readers for the snapshot lexicon
-** (include/lime_lexer.h): keyword lookup, accessors, free.
+** (include/lime_lexer.h): keyword lookup, operator longest match,
+** accessors, free.
 **
 ** liblime_parser.  Nothing here allocates or locks: the lexicon is
 ** immutable once attached to a snapshot, and the caller holds the
@@ -35,6 +36,29 @@ int lime_kw_lookup(const LimeLexicon *lx, const char *s, size_t n) {
         if (sl->hash == h && sl->len == n && kw_eq(lx->pool + sl->off, s, n, fold))
             return sl->code;
     }
+}
+
+size_t lime_op_match(const LimeLexicon *lx, const char *s, size_t n, int *code) {
+    if (lx == NULL || lx->op_nnodes == 0) return 0;
+    const uint16_t *next = lx->op_next;
+    const uint32_t ncls = lx->op_ncls;
+    uint32_t node = 0;
+    size_t best = 0;
+    int best_code = -1;
+    for (size_t i = 0; i < n; i++) {
+        node = next[node * ncls + lx->op_cmap[(unsigned char)s[i]]];
+        if (node == 0) break;
+        if (lx->op_code[node] >= 0) {
+            best = i + 1;
+            best_code = lx->op_code[node];
+        }
+    }
+    if (best) *code = best_code;
+    return best;
+}
+
+uint32_t lime_lexicon_operator_count(const LimeLexicon *lx) {
+    return lx ? lx->op_count : 0;
 }
 
 uint32_t lime_lexicon_keyword_count(const LimeLexicon *lx) {

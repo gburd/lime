@@ -2539,7 +2539,15 @@ if host_machine.system() != 'windows'
             meson.project_source_root() / 'examples/pg/tests/select_basic.sql',
             meson.project_source_root() / 'examples/pg/tests/select_columns.sql',
             meson.project_source_root() / 'examples/pg/tests/select_join.sql',
-            meson.project_source_root() / 'examples/pg/gram.lime'],
+            meson.project_source_root() / 'examples/pg/pg_grammar.lime'],
+    env : ['BENCH_CHECK_ONLY=1'],
+  )
+  test('lexicon_op_agree', bench_lexicon,
+    args : ['op',
+            meson.project_source_root() / 'examples/pg/tests/select_basic.sql',
+            meson.project_source_root() / 'examples/pg/tests/select_columns.sql',
+            meson.project_source_root() / 'examples/pg/tests/select_join.sql',
+            meson.project_source_root() / 'examples/pg/pg_grammar.lime'],
     env : ['BENCH_CHECK_ONLY=1'],
   )
 
@@ -2921,6 +2929,23 @@ if hegel_dep.found()
     )
     test('json_pbt', test_json_pbt, timeout : 120)
   endif
+
+  # Track B2: the snapshot operator trie.  Arguments are SQL files whose
+  # operator runs must split exactly like scan.l's {operator} rule; the
+  # in-tree examples/pg SQL is used here, the REL_18 regression suite
+  # by hand (see the B2 commit).  Also a hegel longest-prefix property.
+  test_op_trie = executable('test_op_trie',
+    'test_op_trie.c',
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, lime_compiler_dep, hegel_dep],
+    export_dynamic : true,
+  )
+  test('op_trie', test_op_trie,
+    args : [meson.project_source_root() / 'examples/pg/tests/select_basic.sql',
+            meson.project_source_root() / 'examples/pg/tests/select_columns.sql',
+            meson.project_source_root() / 'examples/pg/tests/select_join.sql',
+            meson.project_source_root() / 'examples/pg/pg_grammar.lime'],
+    timeout : 120)
 else
   message('Hegel property-based tests: SKIPPED ' +
           '(no libhegel found; `nix develop` provides it, or install ' +

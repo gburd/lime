@@ -79,8 +79,15 @@ const LimeLexicon *lime_snapshot_lexicon(const struct ParserSnapshot *snap);
 ** lexicon was built with LIME_LEX_FOLD_CASE.  No lock, no allocation. */
 int lime_kw_lookup(const LimeLexicon *lx, const char *s, size_t n);
 
-/* Count, for diagnostics and tests. */
+/* Longest operator that is a prefix of `s[0..n)`.  Returns its length
+** and stores its token code in *code; returns 0 (and leaves *code
+** alone) when no operator is a prefix.  A run like `->>=` splits into
+** the longest known operator; the caller lexes the rest next. */
+size_t lime_op_match(const LimeLexicon *lx, const char *s, size_t n, int *code);
+
+/* Counts, for diagnostics and tests. */
 uint32_t lime_lexicon_keyword_count(const LimeLexicon *lx);
+uint32_t lime_lexicon_operator_count(const LimeLexicon *lx);
 
 /* Free a lexicon.  Called by the snapshot that owns it; hosts never
 ** need it unless they detach one by hand. */

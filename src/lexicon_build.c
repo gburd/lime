@@ -106,6 +106,8 @@ static uint32_t pool_put(char *pool, size_t *at, const char *s, size_t n) {
     return off;
 }
 
+static int build_trie(LimeLexicon *lx);
+
 /* Sort, reject one spelling claimed by two tokens, drop exact
 ** duplicates, and build the immutable lexicon. */
 static char *build(PendVec *pv, unsigned flags, LimeLexicon **out) {
@@ -178,8 +180,55 @@ static char *build(PendVec *pv, unsigned flags, LimeLexicon **out) {
     lx->kw_mask = nslots ? nslots - 1 : 0;
     lx->kw_count = (uint32_t)nkw;
     lx->kw_maxlen = (uint32_t)kw_maxlen;
+    if (build_trie(lx) != 0) {
+        lime_lexicon_destroy(lx);
+        return fmt("lexicon: out of memory or too many operator bytes");
+    }
     *out = lx;
     return NULL;
+}
+
+/* Build the operator trie from the (sorted, deduplicated) OP items.
+** Returns 0, or -1 on OOM / too many nodes for uint16_t. */
+static int build_trie(LimeLexicon *lx) {
+    size_t nops = 0, maxnodes = 1;
+    for (uint32_t i = 0; i < lx->nitems; i++)
+        if (lx->items[i].kind == LIME_LEXITEM_OP) {
+            nops++;
+            maxnodes += lx->items[i].text_len;
+        }
+    lx->op_count = (uint32_t)nops;
+    if (nops == 0) return 0;
+    if (maxnodes > UINT16_MAX) return -1;
+    /* byte classes: 0 = in no operator; others numbered by byte value
+    ** so the layout is a function of the operator set */
+    uint32_t ncls = 1;
+    for (uint32_t i = 0; i < lx->nitems; i++) {
+        const LimeLexItemRec *r = &lx->items[i];
+        if (r->kind != LIME_LEXITEM_OP) continue;
+        for (uint32_t k = 0; k < r->text_len; k++) lx->op_cmap[(unsigned char)lx->pool[r->text_off + k]] = 1;
+    }
+    for (int b = 0; b < 256; b++)
+        if (lx->op_cmap[b]) lx->op_cmap[b] = (uint8_t)ncls++;
+    lx->op_ncls = ncls;
+    lx->op_next = calloc(maxnodes * ncls, sizeof(uint16_t));
+    lx->op_code = malloc(maxnodes * sizeof(int32_t));
+    if (lx->op_next == NULL || lx->op_code == NULL) return -1;
+    for (size_t k = 0; k < maxnodes; k++) lx->op_code[k] = -1;
+    uint32_t nn = 1;
+    for (uint32_t i = 0; i < lx->nitems; i++) {
+        const LimeLexItemRec *r = &lx->items[i];
+        if (r->kind != LIME_LEXITEM_OP) continue;
+        uint32_t node = 0;
+        for (uint32_t k = 0; k < r->text_len; k++) {
+            uint16_t *slot = &lx->op_next[node * ncls + lx->op_cmap[(unsigned char)lx->pool[r->text_off + k]]];
+            if (*slot == 0) *slot = (uint16_t)nn++;
+            node = *slot;
+        }
+        lx->op_code[node] = r->code;
+    }
+    lx->op_nnodes = nn;
+    return 0;
 }
 
 static void attach(ParserSnapshot *snap, LimeLexicon *lx) {

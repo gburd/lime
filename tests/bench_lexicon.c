@@ -12,6 +12,12 @@
 **       given files, a realistic keyword/non-keyword mix.  Reports
 **       ns/lookup with 1 thread and with 4 threads.
 **
+**   bench_lexicon op <sql files...>
+**       PG's 10 multi-char operator tokens (+ -> ->>) and 17 self chars
+**       in the snapshot trie vs the same decisions as hand-written byte
+**       compares (what scan.l's fixed rules compile to).  Splits every
+**       operator-character run in the files.
+**
 ** Environment: BENCH_REPS (default 21), BENCH_CHECK_ONLY=1 (check
 ** agreement and exit; that is what the meson test runs).
 */
@@ -293,8 +299,189 @@ done:
     return rc;
 }
 
+/* ------------------------------------------------------------------ */
+/*  op: operator trie vs a hand-coded scan.l-style 2-char check        */
+/* ------------------------------------------------------------------ */
+
+/* The 2-char tokens PG's scan.l returns as their own terminals, the
+** way a hand-written scanner decides them: byte compares in a chain.
+** Codes: 1..9 for the 2-char tokens, 100 + byte for a 1-char self
+** token, 0 = none.  Same answers as the trie built from OPS2/SELF. */
+static size_t hand_op(const char *s, size_t n, int *code) {
+    if (n >= 2) {
+        char a = s[0], b = s[1];
+        int c = 0;
+        if (a == ':' && b == ':') c = 1;
+        else if (a == '.' && b == '.') c = 2;
+        else if (a == ':' && b == '=') c = 3;
+        else if (a == '=' && b == '>') c = 4;
+        else if (a == '<' && b == '=') c = 5;
+        else if (a == '>' && b == '=') c = 6;
+        else if (a == '<' && b == '>') c = 7;
+        else if (a == '!' && b == '=') c = 7;
+        else if (a == '-' && b == '>') c = 8;
+        if (c) {
+            if (c == 8 && n >= 3 && s[2] == '>') return *code = 9, 3;
+            return *code = c, 2;
+        }
+    }
+    if (n >= 1 && strchr(",()[].;:+-*/%^<>=", s[0]) && s[0]) return *code = 100 + (unsigned char)s[0], 1;
+    return 0;
+}
+
+typedef struct {
+    const char **s;
+    size_t *n;
+    size_t count;
+} Spans;
+
+static int op_byte(unsigned char c) {
+    return c && strchr("~!@#^&|`?+-*/%<>=:.,()[];", c) != NULL;
+}
+
+static int mode_op(int argc, char **argv) {
+    static const char *const two[] = { "::", "..", ":=", "=>", "<=", ">=", "<>", "!=", "->", "->>" };
+    static const int two_code[] = { 1, 2, 3, 4, 5, 6, 7, 7, 8, 9 };
+    static const char self[] = ",()[].;:+-*/%^<>=";
+    /* grammar: T1..T9 + S<byte> terminals; codes mapped back below */
+    char g[2048];
+    size_t gn = (size_t)snprintf(g, sizeof g, "%%name OPB\n%%token_type { int }\n%%token T1 T2 T3 T4 T5 T6 T7 T8 T9");
+    for (const char *p = self; *p; p++) gn += (size_t)snprintf(g + gn, sizeof g - gn, " S%d", (unsigned char)*p);
+    snprintf(g + gn, sizeof g - gn, ".\nstmt ::= T1.\n");
+    ParserSnapshot *snap = NULL;
+    if (lime_compile_grammar_in_process(g, strlen(g), &snap, NULL) != 0 || !snap) return 1;
+    LimeLexItem items[32];
+    char names[32][8];
+    size_t ni = 0;
+    for (size_t i = 0; i < 10; i++) {
+        snprintf(names[ni], sizeof names[ni], "T%d", two_code[i]);
+        items[ni] = (LimeLexItem){ two[i], names[ni] };
+        ni++;
+    }
+    char selfs[32][2];
+    for (const char *p = self; *p; p++) {
+        selfs[ni][0] = *p;
+        selfs[ni][1] = 0;
+        snprintf(names[ni], sizeof names[ni], "S%d", (unsigned char)*p);
+        items[ni] = (LimeLexItem){ selfs[ni], names[ni] };
+        ni++;
+    }
+    char *e = lime_snapshot_set_lexicon(snap, NULL, 0, items, ni, 0);
+    if (e) {
+        fprintf(stderr, "set_lexicon: %s\n", e);
+        return 1;
+    }
+    const LimeLexicon *lx = lime_snapshot_lexicon(snap);
+    int map[4096];
+    for (int i = 0; i < 4096; i++) map[i] = -1;
+    for (int i = 1; i <= 9; i++) {
+        char nm[8];
+        snprintf(nm, sizeof nm, "T%d", i);
+        map[lime_snapshot_token_code(snap, nm)] = i;
+    }
+    for (const char *p = self; *p; p++) {
+        char nm[8];
+        snprintf(nm, sizeof nm, "S%d", (unsigned char)*p);
+        map[lime_snapshot_token_code(snap, nm)] = 100 + (unsigned char)*p;
+    }
+
+    Spans sp = { 0 };
+    size_t cap = 0, bytes = 0;
+    char **bufs = calloc((size_t)argc, sizeof *bufs);
+    for (int a = 2; a < argc; a++) {
+        size_t n;
+        char *b = slurp(argv[a], &n);
+        if (!b) continue;
+        bufs[a] = b;
+        bytes += n;
+        for (size_t i = 0; i < n;) {
+            if (!op_byte((unsigned char)b[i])) {
+                i++;
+                continue;
+            }
+            size_t j = i;
+            while (j < n && op_byte((unsigned char)b[j])) j++;
+            if (sp.count == cap) {
+                cap = cap ? cap * 2 : 4096;
+                sp.s = realloc(sp.s, cap * sizeof *sp.s);
+                sp.n = realloc(sp.n, cap * sizeof *sp.n);
+            }
+            sp.s[sp.count] = b + i;
+            sp.n[sp.count++] = j - i;
+            i = j;
+        }
+    }
+    /* agreement: split every span with both, token by token */
+    size_t ntok = 0, bad = 0;
+    for (size_t k = 0; k < sp.count; k++) {
+        const char *s = sp.s[k];
+        size_t n = sp.n[k];
+        while (n) {
+            int c1 = 0, c2 = -1;
+            size_t m1 = hand_op(s, n, &c1);
+            size_t m2 = lime_op_match(lx, s, n, &c2);
+            int c2m = m2 ? map[c2] : 0;
+            if (m1 != m2 || (m1 && c1 != c2m)) {
+                if (bad++ < 5) fprintf(stderr, "  MISMATCH '%.*s'\n", (int)n, s);
+            }
+            size_t adv = m1 ? m1 : 1;
+            s += adv;
+            n -= adv;
+            ntok++;
+        }
+    }
+    printf("op: %zu operators (10 multi-char), %zu spans, %zu splits from %d files, %zu bytes; %zu mismatches\n",
+           ni, sp.count, ntok, argc - 2, bytes, bad);
+    int rc = bad ? 1 : 0;
+    if (!bad && !env_int("BENCH_CHECK_ONLY", 0)) {
+        int reps = env_int("BENCH_REPS", 21), iters = env_int("BENCH_ITERS", 20);
+        double *ta = malloc(sizeof(double) * (size_t)reps), *tb = malloc(sizeof(double) * (size_t)reps);
+        double *ra = malloc(sizeof(double) * (size_t)reps);
+        volatile long sink = 0;
+        for (int r = -2; r < reps; r++) {
+            for (int which = 0; which < 2; which++) {
+                int trie = (r & 1) ? which : !which;
+                long acc = 0;
+                double t0 = thread_cpu_ns();
+                for (int it = 0; it < iters; it++)
+                    for (size_t k = 0; k < sp.count; k++) {
+                        const char *s = sp.s[k];
+                        size_t n = sp.n[k];
+                        while (n) {
+                            int c = 0;
+                            size_t m = trie ? lime_op_match(lx, s, n, &c) : hand_op(s, n, &c);
+                            if (!m) m = 1;
+                            acc += c;
+                            s += m;
+                            n -= m;
+                        }
+                    }
+                double ns = (thread_cpu_ns() - t0) / ((double)iters * (double)ntok);
+                sink += acc;
+                if (r >= 0) (trie ? ta : tb)[r] = ns;
+            }
+            if (r >= 0) ra[r] = ta[r] / tb[r];
+        }
+        (void)sink;
+        printf("ns per operator split (CPU time):\n");
+        report("snapshot op trie", ta, reps);
+        report("hand-coded scan.l compares", tb, reps);
+        report("ratio trie/hand", ra, reps);
+        free(ta);
+        free(tb);
+        free(ra);
+    }
+    for (int a = 0; a < argc; a++) free(bufs[a]);
+    free(bufs);
+    free(sp.s);
+    free(sp.n);
+    snapshot_release(snap);
+    return rc;
+}
+
 int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "kw") == 0) return mode_kw(argc, argv);
-    fprintf(stderr, "usage: bench_lexicon kw <kwlist> <files...>\n");
+    if (argc >= 2 && strcmp(argv[1], "op") == 0) return mode_op(argc, argv);
+    fprintf(stderr, "usage: bench_lexicon kw <kwlist> <files...> | op <files...>\n");
     return 2;
 }
