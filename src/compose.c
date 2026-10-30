@@ -113,6 +113,25 @@ typedef struct ExtSlice {
     uint32_t first, n; /* range in `combined` */
 } ExtSlice;
 
+/* Does a `reject` line drop modification `m` of extension `owner`? */
+static int policy_rejects(const LimeComposePolicy *p, const char *owner,
+                          const GrammarModification *m) {
+    for (uint32_t i = 0; p && owner && i < p->nrejects; i++) {
+        const LimePolicyReject *r = &p->rejects[i];
+        if (!r->owner || strcmp(r->owner, owner) != 0 || !r->what) continue;
+        if (r->is_token && m->type == MOD_ADD_TOKEN && m->u.add_token.name &&
+            strcmp(m->u.add_token.name, r->what) == 0)
+            return 1;
+        if (!r->is_token && m->type == MOD_ADD_RULE) {
+            char *id = mod_rule_identity(m);
+            int hit = id && strcmp(id, r->what) == 0;
+            free(id);
+            if (hit) return 1;
+        }
+    }
+    return 0;
+}
+
 static ExtensionID ext_id_of(const ExtSlice *sl, uint32_t n, const char *owner) {
     for (uint32_t i = 0; owner && i < n; i++)
         if (sl[i].e->name && strcmp(sl[i].e->name, owner) == 0) return sl[i].e->id;
@@ -168,20 +187,27 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
     for (uint32_t i = 0; i < reg->count; i++)
         if (reg->extensions[i].state == EXT_LOADED) slice[ns++].e = &reg->extensions[i];
     if (ns > 1) qsort(slice, ns, sizeof(*slice), cmp_slice);
-    uint32_t k = 0;
+    /* `reject` lines drop an extension's rule or token before generation. */
+    const LimeComposePolicy *policy = reg->policy;
+    uint32_t k = 0, nrejected = 0;
     for (uint32_t i = 0; i < ns; i++) {
         slice[i].first = k;
-        slice[i].n = slice[i].e->nmodifications;
-        for (uint32_t m = 0; m < slice[i].n; m++) {
+        for (uint32_t m = 0; m < slice[i].e->nmodifications; m++) {
+            if (policy_rejects(policy, slice[i].e->name, &slice[i].e->modifications[m])) {
+                nrejected++;
+                continue;
+            }
             combined[k] = slice[i].e->modifications[m];
             ext_id_per_mod[k] = slice[i].e->id;
             k++;
         }
+        slice[i].n = k - slice[i].first;
     }
+    total = k;
     LIME_RWLOCK_RDUNLOCK(&reg->lock);
+    (void)nrejected;
 
     bool ok = false;
-    const LimeComposePolicy *policy = NULL;
     ConflictSet *cs = NULL;
     LimeComposeUnit *units = NULL;
     char **texts = NULL;
@@ -260,10 +286,6 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
                         "source; build it with `lime -n` or lime_compile_grammar_in_process");
         goto out;
     }
-    pthread_rwlock_rdlock(&reg->lock);
-    policy = reg->policy;
-    LIME_RWLOCK_RDUNLOCK(&reg->lock);
-
     sess = lime_compose_begin(base->grammar_source, base->grammar_source_len, "base", units, ns,
                               policy, &cm_err);
     if (sess == NULL) goto out;
@@ -353,6 +375,12 @@ int lime_compose_text(const char *base_text, size_t base_len, const LimeComposeU
     if (error) *error = NULL;
     if (out == NULL) {
         if (error) *error = strdup("lime_compose_text: out is required");
+        return -1;
+    }
+    if (policy && policy->nrejects) {
+        /* reject filters an extension's modifications; text units have none */
+        if (error) *error = strdup("lime_compose_text: `reject` lines need publish_modified_snapshot "
+                                   "(text units carry no modification list)");
         return -1;
     }
     LimeComposeSession *s =

@@ -151,7 +151,10 @@ static const BaseKeys *base_keys(const char *text, size_t len, char **error) {
 
     BaseKeys *b = calloc(1, sizeof(*b));
     if (!b) { if (error) *error = xstrdup("compose: out of memory"); return NULL; }
-    LimeCompileHook hk = {collect_key, &b->keys};
+    LimeCompileHook hk;
+    memset(&hk, 0, sizeof hk);
+    hk.on_conflict = collect_key;
+    hk.user = &b->keys;
     LimeCompileStats st;
     char *e = NULL;
     if (lime_compile_grammar_in_process_ex2(text, len, &hk, NULL, &st, &e) != 0) {
@@ -204,6 +207,11 @@ struct LimeComposeSession {
     uint32_t nent, capent;
     char **owner_names; /* owned copies, so the report outlives the units */
     uint32_t nowner;
+    LimePrecOverride *prec;
+    StrSet in_conflict;      /* rule identities that took part in a new conflict */
+    int in_conflict_sealed;
+    LimeComposeSide *dead;
+    uint32_t ndead, capdead;
 };
 
 static int count_lines(const char *p, size_t n) {
@@ -279,6 +287,61 @@ static LimeConflictChoice policy_choice(const LimeComposeSession *s, const LimeP
     return LIME_CHOOSE_NONE;
 }
 
+int lime_policy_rank(const LimeComposePolicy *p, const char *owner) {
+    if (p == NULL || owner == NULL || strcmp(owner, "base") == 0) return 0;
+    for (uint32_t i = 0; i < p->nranks; i++)
+        if (p->ranks[i].owner && strcmp(p->ranks[i].owner, owner) == 0) return p->ranks[i].rank;
+    return 0;
+}
+
+int lime_policy_trusts(const LimeComposePolicy *p, const char *owner) {
+    for (uint32_t i = 0; p && owner && i < p->ntrusted; i++)
+        if (p->trusted[i] && strcmp(p->trusted[i], owner) == 0) return 1;
+    return 0;
+}
+
+/* `rank` and `default`, for a conflict no `conflict` line settled.  Side a
+** is the shift (SR) or Lemon's default reduce (RR); side b the other reduce.
+** Rank applies only when the two sides have different owners and ranks;
+** equal ranks between two different owners make it an error (*tie). */
+static LimeConflictChoice rank_choice(const LimeComposeSession *s, const LimeConflictInfo *c,
+                                      char **why, const char **tie) {
+    const LimeComposePolicy *p = s->policy;
+    const char *oa = segment_of(s, c->line_a)->owner, *ob = segment_of(s, c->line_b)->owner;
+    int a_base = strcmp(oa, "base") == 0, b_base = strcmp(ob, "base") == 0;
+    LimeConflictChoice keep_a = c->kind == LIME_CK_SR ? LIME_CHOOSE_SHIFT : LIME_CHOOSE_KEEP_A;
+    LimeConflictChoice keep_b = c->kind == LIME_CK_SR ? LIME_CHOOSE_REDUCE : LIME_CHOOSE_KEEP_B;
+    char buf[512];
+    if (strcmp(oa, ob) == 0) return LIME_CHOOSE_NONE; /* one owner: only a conflict line decides */
+    int ra = lime_policy_rank(p, oa), rb = lime_policy_rank(p, ob);
+    int ranked = p->nranks > 0 && ra != rb;
+    if (ranked && (p->default_mode == LIME_DEFAULT_PREFER_RANK || !(a_base || b_base))) {
+        snprintf(buf, sizeof buf, "rank %s %d > %s %d.", ra > rb ? oa : ob, ra > rb ? ra : rb,
+                 ra > rb ? ob : oa, ra > rb ? rb : ra);
+        *why = xstrdup(buf);
+        return ra > rb ? keep_a : keep_b;
+    }
+    if (!a_base && !b_base && ra == rb && (p->nranks > 0 || p->default_mode == LIME_DEFAULT_PREFER_RANK)) {
+        *tie = "equal rank";
+        return LIME_CHOOSE_NONE;
+    }
+    if (p->default_mode == LIME_DEFAULT_PREFER_BASE && (a_base != b_base)) {
+        *why = xstrdup("default prefer-base.");
+        return a_base ? keep_a : keep_b;
+    }
+    if (p->default_mode == LIME_DEFAULT_PREFER_EXTENSION && (a_base != b_base)) {
+        *why = xstrdup("default prefer-extension.");
+        return a_base ? keep_b : keep_a;
+    }
+    if (p->default_mode == LIME_DEFAULT_PREFER_RANK && ranked) {
+        snprintf(buf, sizeof buf, "rank %s %d > %s %d.", ra > rb ? oa : ob, ra > rb ? ra : rb,
+                 ra > rb ? ob : oa, ra > rb ? rb : ra);
+        *why = xstrdup(buf);
+        return ra > rb ? keep_a : keep_b;
+    }
+    return LIME_CHOOSE_NONE;
+}
+
 static LimeComposeEntry *entry_for(LimeComposeSession *s, const char *key) {
     for (uint32_t i = 0; i < s->nent; i++)  /* shortcut: linear; tens of entries in practice */
         if (strcmp(s->ent[i].key, key) == 0) return &s->ent[i];
@@ -293,14 +356,37 @@ static LimeComposeEntry *entry_for(LimeComposeSession *s, const char *key) {
     return e;
 }
 
+static int on_dead_rule(void *user, const char *rule, int line) {
+    LimeComposeSession *s = user;
+    /* sealed lazily: on_conflict calls are over once FindActions checks
+    ** reducibility */
+    if (!s->in_conflict_sealed) { strset_seal(&s->in_conflict); s->in_conflict_sealed = 1; }
+    if (!strset_has(&s->in_conflict, rule)) return 0; /* a real grammar error */
+    if (s->ndead == s->capdead) {
+        uint32_t nc = s->capdead ? s->capdead * 2 : 8;
+        LimeComposeSide *nd = realloc(s->dead, nc * sizeof(*nd));
+        if (!nd) return 0;
+        s->dead = nd;
+        s->capdead = nc;
+    }
+    memset(&s->dead[s->ndead], 0, sizeof(s->dead[0]));
+    fill_side(s, &s->dead[s->ndead], rule, line);
+    s->ndead++;
+    return 1;
+}
+
 static LimeConflictChoice on_conflict(void *user, const LimeConflictInfo *c) {
     LimeComposeSession *s = user;
     char *key = conflict_key(c);
     if (key == NULL) return LIME_CHOOSE_NONE;
     if (strset_has(&s->base->keys, key)) { free(key); return LIME_CHOOSE_NONE; }
+    if (c->rule_a) strset_add(&s->in_conflict, xstrdup(c->rule_a));
+    if (c->rule_b) strset_add(&s->in_conflict, xstrdup(c->rule_b));
 
     const LimePolicyConflict *hit = NULL;
     LimeConflictChoice ch = LIME_CHOOSE_NONE;
+    char *by_rank = NULL; /* resolution text when rank/default decided */
+    const char *tie = NULL; /* set when equal ranks make it an error */
     if (s->policy) {
         for (uint32_t i = 0; i < s->policy->nconflicts && ch == LIME_CHOOSE_NONE; i++) {
             const LimePolicyConflict *p = &s->policy->conflicts[i];
@@ -308,6 +394,8 @@ static LimeConflictChoice on_conflict(void *user, const LimeConflictInfo *c) {
             ch = policy_choice(s, p, c);
             if (ch != LIME_CHOOSE_NONE) hit = p;
         }
+        if (ch == LIME_CHOOSE_NONE && c->kind != LIME_CK_SS && c->rule_a && c->rule_b)
+            ch = rank_choice(s, c, &by_rank, &tie);
     }
 
     LimeComposeEntry *e = entry_for(s, key);
@@ -345,7 +433,9 @@ static LimeConflictChoice on_conflict(void *user, const LimeConflictInfo *c) {
         e->example = xstrdup(c->example);
         e->prec_lookahead = c->prec_lookahead;
         e->prec_b = c->prec_b;
-        e->resolution = hit ? policy_line(hit) : NULL;
+        e->resolution = hit ? policy_line(hit) : by_rank;
+        by_rank = NULL;
+        if (tie) e->tie = xstrdup(tie);
     } else {
         free(key);
         /* Keep the shortest example across states. */
@@ -354,8 +444,10 @@ static LimeConflictChoice on_conflict(void *user, const LimeConflictInfo *c) {
             e->example = xstrdup(c->example);
         }
         /* A key is resolved only if EVERY occurrence was. */
-        if (!hit && e->resolution) { free(e->resolution); e->resolution = NULL; }
+        if (!hit && !by_rank && e->resolution) { free(e->resolution); e->resolution = NULL; }
+        if (tie && !e->tie) e->tie = xstrdup(tie);
     }
+    free(by_rank);
     e->nstates++;
     return ch;
 }
@@ -427,7 +519,22 @@ LimeComposeSession *lime_compose_begin(const char *base_text, size_t base_len,
     s->merged_len = off;
     free(ord);
     s->hook.on_conflict = on_conflict;
+    s->hook.on_dead_rule = on_dead_rule;
     s->hook.user = s;
+    if (policy && policy->ntokens) {
+        /* `token T prec...` lines -> precedence overrides applied before
+        ** FindRulePrecedences: the same effect as a %left/%right line. */
+        s->prec = calloc(policy->ntokens, sizeof(*s->prec));
+        if (!s->prec) goto oom;
+        for (uint32_t i = 0; i < policy->ntokens; i++) {
+            s->prec[i].token = policy->tokens[i].token;
+            s->prec[i].like = policy->tokens[i].like;
+            s->prec[i].level = policy->tokens[i].level;
+            s->prec[i].assoc = policy->tokens[i].assoc;
+        }
+        s->hook.prec = s->prec;
+        s->hook.nprec = policy->ntokens;
+    }
     return s;
 oom:
     if (error && *error == NULL) *error = xstrdup("compose: out of memory");
@@ -502,6 +609,10 @@ uint32_t lime_compose_finish(LimeComposeSession *s, LimeComposeReport **report) 
             r->base_nconflict = s->base->nconflict;
             r->base_nexpect = s->base->nexpect;
             r->nextensions = s->nseg - 1;
+            r->dead = s->dead;
+            r->ndead = s->ndead;
+            s->dead = NULL;
+            s->ndead = s->capdead = 0;
             s->ent = NULL;
             s->nent = s->capent = 0;
             *report = r;
@@ -516,6 +627,7 @@ static void free_side(LimeComposeSide *d) {
 static void free_entries(LimeComposeEntry *e, uint32_t n) {
     for (uint32_t i = 0; i < n; i++) {
         free(e[i].key); free(e[i].lookahead); free(e[i].example); free(e[i].resolution);
+        free(e[i].tie);
         free_side(&e[i].a); free_side(&e[i].b);
     }
     free(e);
@@ -523,6 +635,10 @@ static void free_entries(LimeComposeEntry *e, uint32_t n) {
 
 void lime_compose_session_free(LimeComposeSession *s) {
     if (s == NULL) return;
+    free(s->prec);
+    strset_free(&s->in_conflict);
+    for (uint32_t i = 0; i < s->ndead; i++) free_side(&s->dead[i]);
+    free(s->dead);
     free(s->merged);
     free(s->seg);
     for (uint32_t i = 0; i < s->nowner; i++) free(s->owner_names[i]);
@@ -534,6 +650,8 @@ void lime_compose_session_free(LimeComposeSession *s) {
 void lime_compose_report_free(LimeComposeReport *r) {
     if (r == NULL) return;
     free_entries(r->entries, r->n);
+    for (uint32_t i = 0; i < r->ndead; i++) free_side(&r->dead[i]);
+    free(r->dead);
     free(r);
 }
 
@@ -605,6 +723,9 @@ char *lime_compose_report_format(const LimeComposeReport *r) {
             side_line(&b, "reduce:", &e->b);
         }
         if (e->example) bput(&b, "  input : %s\n", e->example);
+        if (e->tie && !e->resolution)
+            bput(&b, "  error : %s and %s have equal rank; a tie on a real conflict is an "
+                     "error\n", e->a.owner ? e->a.owner : "?", e->b.owner ? e->b.owner : "?");
         if (e->resolution) {
             bput(&b, "  policy: %s\n", e->resolution);
         } else if (e->kind == LIME_CK_SR && e->b.rule) {
@@ -658,6 +779,9 @@ char *lime_compose_report_format(const LimeComposeReport *r) {
     }
     free(g);
 
+    for (uint32_t i = 0; i < r->ndead; i++)
+        bput(&b, "DEAD rule (loses every conflict it is in; never reduced): %s    %s:%d\n",
+             r->dead[i].rule, r->dead[i].file, r->dead[i].line);
     bput(&b, "UNRESOLVED: %u   resolved by policy: %u   base conflicts (judged by base %%expect",
          r->nunresolved, r->nresolved);
     if (r->base_nexpect >= 0) bput(&b, " %d", r->base_nexpect);
@@ -668,4 +792,294 @@ char *lime_compose_report_format(const LimeComposeReport *r) {
     bput(&b, "\n");
     if (b.p == NULL) return xstrdup("");
     return b.p;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Policy text parser                                                 */
+/* ------------------------------------------------------------------ */
+
+typedef struct PTok { char *s; int quoted; int line; } PTok;
+
+/* Split into words / "quoted strings" / '.', skipping C comments.  A word
+** ends at whitespace or '.', except that "::=" and digits are kept whole. */
+static int ptokenize(const char *t, size_t n, PTok **out, uint32_t *nout, char **error) {
+    PTok *v = NULL;
+    uint32_t nv = 0, cap = 0;
+    int line = 1;
+    size_t i = 0;
+    while (i < n) {
+        char c = t[i];
+        if (c == '\n') { line++; i++; continue; }
+        if (c == ' ' || c == '\t' || c == '\r') { i++; continue; }
+        if (c == '/' && i + 1 < n && t[i + 1] == '*') {
+            i += 2;
+            while (i + 1 < n && !(t[i] == '*' && t[i + 1] == '/')) { line += t[i] == '\n'; i++; }
+            i += 2;
+            continue;
+        }
+        if (c == '/' && i + 1 < n && t[i + 1] == '/') { while (i < n && t[i] != '\n') i++; continue; }
+        size_t st = i;
+        int q = 0;
+        if (c == '"') {
+            q = 1;
+            st = ++i;
+            while (i < n && t[i] != '"' && t[i] != '\n') i++;
+            if (i >= n || t[i] != '"') {
+                char buf[64];
+                snprintf(buf, sizeof buf, "policy:%d: unterminated string", line);
+                if (error) *error = xstrdup(buf);
+                for (uint32_t k = 0; k < nv; k++) free(v[k].s);
+                free(v);
+                return -1;
+            }
+        } else if (c == '.' || c == '{' || c == '}') {
+            i++;
+        } else {
+            while (i < n && t[i] != ' ' && t[i] != '\t' && t[i] != '\n' && t[i] != '\r'
+                   && t[i] != '.' && t[i] != '"' && t[i] != '{' && t[i] != '}') i++;
+        }
+        if (nv == cap) {
+            cap = cap ? cap * 2 : 64;
+            PTok *nvv = realloc(v, cap * sizeof(*v));
+            if (!nvv) { if (error) *error = xstrdup("policy: out of memory"); return -1; }
+            v = nvv;
+        }
+        size_t len = (q ? i : i) - st;
+        v[nv].s = malloc(len + 1);
+        memcpy(v[nv].s, t + st, len);
+        v[nv].s[len] = 0;
+        v[nv].quoted = q;
+        v[nv].line = line;
+        nv++;
+        if (q) i++; /* closing quote */
+    }
+    *out = v;
+    *nout = nv;
+    return 0;
+}
+
+#define GROW(arr, n, cap)                                                        \
+    do {                                                                         \
+        if ((n) == (cap)) {                                                      \
+            uint32_t nc_ = (cap) ? (cap) * 2 : 8;                                \
+            void *np_ = realloc((void *)(arr), nc_ * sizeof(*(arr)));            \
+            if (!np_) goto oom;                                                  \
+            (arr) = np_;                                                         \
+            (cap) = nc_;                                                         \
+        }                                                                        \
+    } while (0)
+
+void lime_policy_free(LimeComposePolicy *p) {
+    if (p == NULL) return;
+    for (uint32_t i = 0; i < p->nconflicts; i++) {
+        free((char *)p->conflicts[i].rule);
+        free((char *)p->conflicts[i].lookahead);
+        free((char *)p->conflicts[i].owner);
+    }
+    for (uint32_t i = 0; i < p->nranks; i++) free((char *)p->ranks[i].owner);
+    for (uint32_t i = 0; i < p->ntokens; i++) {
+        free((char *)p->tokens[i].token);
+        free((char *)p->tokens[i].like);
+    }
+    for (uint32_t i = 0; i < p->nrejects; i++) {
+        free((char *)p->rejects[i].what);
+        free((char *)p->rejects[i].owner);
+    }
+    for (uint32_t i = 0; i < p->nkeywords; i++) {
+        free((char *)p->keywords[i].lexeme);
+        free((char *)p->keywords[i].owner);
+    }
+    for (uint32_t i = 0; i < p->ntrusted; i++) free((char *)p->trusted[i]);
+    free((void *)p->conflicts);
+    free((void *)p->ranks);
+    free((void *)p->tokens);
+    free((void *)p->rejects);
+    free((void *)p->keywords);
+    free((void *)p->trusted);
+    free(p);
+}
+
+LimeComposePolicy *lime_policy_parse(const char *text, size_t len, char **error) {
+    if (error) *error = NULL;
+    if (text == NULL) { if (error) *error = xstrdup("policy: NULL text"); return NULL; }
+    /* `%policy { ... }` inside a grammar: read only the block. */
+    const char *blk = NULL;
+    for (size_t i = 0; i + 7 <= len; i++) {
+        if (memcmp(text + i, "%policy", 7) == 0 && (i == 0 || text[i - 1] == '\n')) { blk = text + i; break; }
+    }
+    int base_line = 0;
+    if (blk) {
+        const char *o = memchr(blk, '{', len - (size_t)(blk - text));
+        if (o == NULL) { if (error) *error = xstrdup("policy: %policy without '{'"); return NULL; }
+        for (const char *q = text; q < o; q++) base_line += *q == '\n';
+        int depth = 1;
+        const char *e = o + 1;
+        while (e < text + len && depth) { depth += (*e == '{') - (*e == '}'); e++; }
+        if (depth) { if (error) *error = xstrdup("policy: unterminated %policy block"); return NULL; }
+        text = o + 1;
+        len = (size_t)(e - 1 - text);
+    }
+    PTok *tk = NULL;
+    uint32_t nt = 0;
+    if (ptokenize(text, len, &tk, &nt, error) != 0) return NULL;
+
+    LimeComposePolicy *p = calloc(1, sizeof(*p));
+    LimePolicyConflict *cf = NULL; uint32_t ccf = 0;
+    LimePolicyRank *rk = NULL; uint32_t crk = 0;
+    LimePolicyToken *to = NULL; uint32_t cto = 0;
+    LimePolicyReject *rj = NULL; uint32_t crj = 0;
+    LimePolicyKeyword *kw = NULL; uint32_t ckw = 0;
+    char **tr = NULL; uint32_t ctr = 0;
+    char ebuf[256] = {0};
+    if (!p) goto oom;
+    uint32_t i = 0;
+#define AT(k) ((i + (k)) < nt ? tk[i + (k)].s : "")
+#define IS(k, w) (!tk[i + (k) < nt ? i + (k) : 0].quoted && strcmp(AT(k), (w)) == 0)
+#define LINE (tk[i < nt ? i : nt - 1].line + base_line)
+#define BAD(msg) do { snprintf(ebuf, sizeof ebuf, "policy:%d: %s", LINE, (msg)); goto bad; } while (0)
+    while (i < nt) {
+        uint32_t st = i;
+        /* find the statement end */
+        uint32_t end = i;
+        while (end < nt && !(tk[end].s[0] == '.' && tk[end].s[1] == 0 && !tk[end].quoted)) end++;
+        if (end == nt) BAD("statement without a terminating '.'");
+        uint32_t nw = end - st;
+        if (IS(0, "rank")) {
+            char *ep;
+            long r = nw == 3 ? strtol(AT(2), &ep, 10) : 0;
+            if (nw != 3 || *ep) BAD("expected: rank NAME N.");
+            GROW(rk, p->nranks, crk);
+            rk[p->nranks].owner = xstrdup(AT(1));
+            rk[p->nranks].rank = (int)r;
+            p->nranks++;
+        } else if (IS(0, "default")) {
+            if (nw != 2) BAD("expected: default reject|prefer-base|prefer-extension|prefer-rank.");
+            if (IS(1, "reject")) p->default_mode = LIME_DEFAULT_REJECT;
+            else if (IS(1, "prefer-base")) p->default_mode = LIME_DEFAULT_PREFER_BASE;
+            else if (IS(1, "prefer-extension")) p->default_mode = LIME_DEFAULT_PREFER_EXTENSION;
+            else if (IS(1, "prefer-rank")) p->default_mode = LIME_DEFAULT_PREFER_RANK;
+            else BAD("unknown default mode");
+        } else if (nw == 1 && IS(0, "prefer-base")) {
+            p->default_mode = LIME_DEFAULT_PREFER_BASE;
+        } else if (nw == 1 && IS(0, "prefer-extension")) {
+            p->default_mode = LIME_DEFAULT_PREFER_EXTENSION;
+        } else if (IS(0, "token")) {
+            /* token T prec-like U [assoc A].   token T prec N [assoc A]. */
+            if (nw != 4 && nw != 6) BAD("expected: token T prec-like U|prec N [assoc left|right|nonassoc].");
+            GROW(to, p->ntokens, cto);
+            LimePolicyToken *t = &to[p->ntokens];
+            memset(t, 0, sizeof(*t));
+            t->token = xstrdup(AT(1));
+            p->ntokens++;
+            if (IS(2, "prec-like")) t->like = xstrdup(AT(3));
+            else if (IS(2, "prec")) {
+                char *ep;
+                t->level = (int)strtol(AT(3), &ep, 10);
+                if (*ep || t->level <= 0) BAD("prec N needs a positive integer");
+            } else BAD("expected prec-like or prec");
+            if (nw == 6) {
+                if (!IS(4, "assoc")) BAD("expected assoc");
+                t->assoc = IS(5, "left") ? LIME_ASSOC_LEFT : IS(5, "right") ? LIME_ASSOC_RIGHT
+                         : IS(5, "nonassoc") ? LIME_ASSOC_NONASSOC : -1;
+                if (t->assoc < 0) BAD("assoc must be left, right or nonassoc");
+            } else if (!t->like) {
+                t->assoc = LIME_ASSOC_LEFT;
+            }
+        } else if (IS(0, "conflict")) {
+            /* conflict sr|rr "rule" [on LA] prefer X. */
+            if (nw != 5 && nw != 7) BAD("expected: conflict sr|rr \"rule\" [on LOOKAHEAD] prefer shift|reduce|EXT.");
+            int kind = IS(1, "sr") ? LIME_CK_SR : IS(1, "rr") ? LIME_CK_RR : 0;
+            if (!kind) BAD("conflict kind must be sr or rr");
+            if (!tk[i + 2].quoted) BAD("the rule must be a \"quoted\" rule identity");
+            uint32_t k = 3;
+            const char *la = NULL;
+            if (nw == 7) {
+                if (!IS(3, "on")) BAD("expected 'on LOOKAHEAD'");
+                la = AT(4);
+                k = 5;
+            }
+            if (!IS(k, "prefer")) BAD("expected 'prefer'");
+            GROW(cf, p->nconflicts, ccf);
+            LimePolicyConflict *c = &cf[p->nconflicts];
+            memset(c, 0, sizeof(*c));
+            c->kind = kind;
+            c->rule = xstrdup(AT(2));
+            c->lookahead = la ? xstrdup(la) : NULL;
+            p->nconflicts++;
+            if (IS(k + 1, "shift")) {
+                if (kind != LIME_CK_SR) BAD("prefer shift applies to sr only");
+                c->prefer = LIME_PREFER_SHIFT;
+            } else if (IS(k + 1, "reduce")) {
+                c->prefer = LIME_PREFER_REDUCE;
+            } else {
+                c->prefer = LIME_PREFER_OWNER;
+                c->owner = xstrdup(AT(k + 1));
+            }
+        } else if (IS(0, "reject")) {
+            /* reject "rule" from EXT.   reject token T from EXT. */
+            int is_tok = IS(1, "token");
+            uint32_t w = is_tok ? 2 : 1;
+            if (nw != w + 3 || !IS(w + 1, "from") || (!is_tok && !tk[i + 1].quoted))
+                BAD("expected: reject \"rule\" from EXT.  or  reject token T from EXT.");
+            GROW(rj, p->nrejects, crj);
+            rj[p->nrejects].is_token = is_tok;
+            rj[p->nrejects].what = xstrdup(AT(w));
+            rj[p->nrejects].owner = xstrdup(AT(w + 2));
+            p->nrejects++;
+        } else if (IS(0, "keyword")) {
+            if (nw != 5 || !tk[i + 1].quoted || !IS(2, "owner") || !(IS(4, "soft") || IS(4, "reserved")))
+                BAD("expected: keyword \"lexeme\" owner EXT soft|reserved.");
+            GROW(kw, p->nkeywords, ckw);
+            kw[p->nkeywords].lexeme = xstrdup(AT(1));
+            kw[p->nkeywords].owner = xstrdup(AT(3));
+            kw[p->nkeywords].soft = IS(4, "soft");
+            p->nkeywords++;
+        } else if (IS(0, "trust-extension-proposals")) {
+            if (nw != 2) BAD("expected: trust-extension-proposals EXT.");
+            GROW(tr, p->ntrusted, ctr);
+            tr[p->ntrusted++] = xstrdup(AT(1));
+        } else {
+            BAD("unknown policy statement");
+        }
+        /* publish after each statement so lime_policy_free sees it on error */
+        p->conflicts = cf; p->ranks = rk; p->tokens = to; p->rejects = rj;
+        p->keywords = kw; p->trusted = (const char *const *)tr;
+        i = end + 1;
+    }
+#undef AT
+#undef IS
+#undef LINE
+#undef BAD
+    p->conflicts = cf; p->ranks = rk; p->tokens = to; p->rejects = rj;
+    p->keywords = kw; p->trusted = (const char *const *)tr;
+    for (uint32_t k = 0; k < nt; k++) free(tk[k].s);
+    free(tk);
+    /* Two lines that rank the same owner differently is a policy error. */
+    for (uint32_t a = 0; a < p->nranks; a++)
+        for (uint32_t b2 = a + 1; b2 < p->nranks; b2++)
+            if (strcmp(p->ranks[a].owner, p->ranks[b2].owner) == 0 && p->ranks[a].rank != p->ranks[b2].rank) {
+                char buf[256];
+                snprintf(buf, sizeof buf, "policy: %s ranked twice (%d and %d)", p->ranks[a].owner,
+                         p->ranks[a].rank, p->ranks[b2].rank);
+                if (error) *error = xstrdup(buf);
+                lime_policy_free(p);
+                return NULL;
+            }
+    return p;
+bad:
+    if (p) { p->conflicts = cf; p->ranks = rk; p->tokens = to; p->rejects = rj;
+             p->keywords = kw; p->trusted = (const char *const *)tr; }
+    if (error) *error = xstrdup(ebuf);
+    for (uint32_t k = 0; k < nt; k++) free(tk[k].s);
+    free(tk);
+    lime_policy_free(p);
+    return NULL;
+oom:
+    if (p) { p->conflicts = cf; p->ranks = rk; p->tokens = to; p->rejects = rj;
+             p->keywords = kw; p->trusted = (const char *const *)tr; }
+    if (error) *error = xstrdup("policy: out of memory");
+    for (uint32_t k = 0; k < nt; k++) free(tk[k].s);
+    free(tk);
+    lime_policy_free(p);
+    return NULL;
 }

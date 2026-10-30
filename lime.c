@@ -2273,6 +2273,13 @@ void FindActions(struct lime *lemp)
   }
   for(rp=lemp->rule; rp; rp=rp->next){
     if( rp->canReduce ) continue;
+    if( lime_active_hook && lime_active_hook->on_dead_rule ){
+      /* compose: a rule that lost a conflict is reported, not an error */
+      char *id = ruleIdentityString(rp);
+      int ok = id && lime_active_hook->on_dead_rule(lime_active_hook->user, id, rp->ruleline);
+      free(id);
+      if( ok ) continue;
+    }
     ErrorMsg(lemp->filename,rp->ruleline,"This rule can not be reduced.\n");
     lemp->errorcnt++;
   }
@@ -5187,7 +5194,7 @@ static int run_diff_conflicts(const char *base_path,
 }
 #endif
 
-/* lime --explain-compose base.lime ext.lime... : compose in-process (no
+/* lime --explain-compose base.lime ext.lime... [host.policy] : compose in-process (no
 ** fork), print every extension-introduced conflict with owners, an
 ** example input and a suggested policy line.  Exit 0 = nothing
 ** unresolved; 1 = unresolved conflicts (a CI gate); 2 = I/O or grammar
@@ -5222,6 +5229,7 @@ static const char *ec_basename(const char *p){
 static int run_explain_compose(int nfile, char **files){
   size_t nb = 0;
   char *base, *err = 0, *txt;
+  LimeComposePolicy *pol = 0;
   LimeComposeUnit *u;
   char **names;
   LimeComposeSession *s;
@@ -5233,8 +5241,19 @@ static int run_explain_compose(int nfile, char **files){
     fprintf(stderr, "usage: lime --explain-compose base.lime ext.lime...\n");
     return 2;
   }
+  /* A trailing NAME.policy argument is the host's compose policy. */
+  if( nfile>2 && strlen(files[nfile-1])>7
+      && strcmp(files[nfile-1]+strlen(files[nfile-1])-7, ".policy")==0 ){
+    size_t pl = 0;
+    char *pt = ec_slurp(files[nfile-1], &pl);
+    if( !pt ) return 2;
+    pol = lime_policy_parse(pt, pl, &err);
+    free(pt);
+    if( !pol ){ fprintf(stderr, "lime --explain-compose: %s: %s\n", files[nfile-1], err ? err : "?"); free(err); return 2; }
+    nfile--;
+  }
   base = ec_slurp(files[0], &nb);
-  if( !base ) return 2;
+  if( !base ){ lime_policy_free(pol); return 2; }
   u = (LimeComposeUnit*)calloc((size_t)nfile, sizeof(*u));
   names = (char**)calloc((size_t)nfile, sizeof(*names));
   for(i=1; i<nfile; i++){
@@ -5247,7 +5266,7 @@ static int run_explain_compose(int nfile, char **files){
     u[i-1].text = ec_slurp(files[i], &u[i-1].len);
     if( !u[i-1].text ) goto out;
   }
-  s = lime_compose_begin(base, nb, ec_basename(files[0]), u, (uint32_t)(nfile-1), 0, &err);
+  s = lime_compose_begin(base, nb, ec_basename(files[0]), u, (uint32_t)(nfile-1), pol, &err);
   if( !s ){ fprintf(stderr, "lime --explain-compose: %s\n", err ? err : "?"); goto out; }
   {
     size_t ml = 0;
@@ -5271,6 +5290,7 @@ out:
   free(err);
   for(i=1; i<nfile; i++){ free(names[i]); free((char*)u[i-1].text); }
   free(names); free(u); free(base);
+  lime_policy_free(pol);
   return rc;
 }
 #endif /* LIME_HAS_COMPOSE_POLICY */
@@ -6049,7 +6069,7 @@ int main(int argc, char **argv){
     {OPT_FLAG, "-diff-conflicts", (char*)&diffConflictsFlag,
      "Diff LALR conflicts between two grammars (base.lime ext.lime)."},
     {OPT_FLAG, "-explain-compose", (char*)&explainComposeFlag,
-     "Explain the conflicts ext.lime... introduce over base.lime (exit 1 if unresolved)."},
+     "Explain the conflicts ext.lime... introduce over base.lime [under host.policy] (exit 1 if unresolved)."},
     {OPT_FLAG, "-json", (char*)&jsonFlag,
      "Output diff results as JSON (use with --diff-conflicts)."},
     {OPT_FLAG,0,0,0}
@@ -14799,6 +14819,7 @@ int lime_compile_grammar_in_process_ex2(const char *grammar_text,
 
   int rc = -1;
   const char *fail_reason = NULL;
+  int k;
 
   if( lem.errorcnt > 0 ){
     fail_reason = "grammar parse failed";
@@ -14813,6 +14834,30 @@ int lime_compile_grammar_in_process_ex2(const char *grammar_text,
   /* v1.2.0: hoisted post-Parse plumbing.  See helper docs above. */
   if( lime_post_parse_setup(&lem, &fail_reason) != 0 ){
     goto done;
+  }
+  /* Compose policy: report precedences, then apply overrides -- before
+  ** FindRulePrecedences, so they act exactly like %left/%right lines. */
+  if( hook ){
+    uint32_t pi;
+    if( hook->on_token_prec ){
+      for(k=1; k<lem.nterminal; k++){
+        if( lem.symbols[k]->prec>=0 ) hook->on_token_prec(hook->user, lem.symbols[k]->name, lem.symbols[k]->prec);
+      }
+    }
+    for(pi=0; pi<hook->nprec; pi++){
+      const LimePrecOverride *po = &hook->prec[pi];
+      struct symbol *sp = po->token ? Symbol_find(po->token) : 0;
+      struct symbol *like = po->like ? Symbol_find(po->like) : 0;
+      if( !sp || sp->index>=lem.nterminal || (po->like && (!like || like->index>=lem.nterminal || like->prec<0)) ){
+        ErrorMsg("policy", 0, "precedence for '%s': %s.", po->token ? po->token : "?",
+                 !sp || sp->index>=lem.nterminal ? "no such terminal" : "the reference terminal has no precedence");
+        fail_reason = "compose policy: bad precedence line";
+        goto done;
+      }
+      sp->prec = like ? like->prec : po->level;
+      sp->assoc = po->assoc==LIME_ASSOC_LEFT ? LEFT : po->assoc==LIME_ASSOC_RIGHT ? RIGHT
+                : po->assoc==LIME_ASSOC_NONASSOC ? NONE : (like ? like->assoc : LEFT);
+    }
   }
 
   /* LALR(1) pipeline. */

@@ -15,6 +15,7 @@
 #define LIME_COMPILER_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -133,9 +134,34 @@ typedef enum LimeConflictChoice {
 
 typedef LimeConflictChoice (*LimeConflictHookFn)(void *user, const LimeConflictInfo *c);
 
+/** Associativity for a precedence override. */
+enum { LIME_ASSOC_INHERIT = 0, LIME_ASSOC_LEFT, LIME_ASSOC_RIGHT, LIME_ASSOC_NONASSOC };
+
+/**
+ * Give terminal `token` a precedence before rule precedences are computed,
+ * exactly as a %left/%right/%nonassoc line would: either the level of
+ * terminal `like`, or the raw level `level` (levels count the grammar's
+ * precedence lines in order, 1 = first).  `assoc` INHERIT takes `like`'s.
+ */
+typedef struct LimePrecOverride {
+    const char *token;
+    const char *like;  /**< NULL = use `level` */
+    int level;
+    int assoc;         /**< LIME_ASSOC_* */
+} LimePrecOverride;
+
 typedef struct LimeCompileHook {
     LimeConflictHookFn on_conflict; /**< called once per unresolved conflict */
     void *user;
+    const LimePrecOverride *prec;   /**< applied before FindRulePrecedences */
+    uint32_t nprec;
+    /** Called for every terminal that has a precedence, before `prec` is
+     *  applied (lets a caller learn the base's precedence set). */
+    void (*on_token_prec)(void *user, const char *token, int level);
+    /** A rule no state reduces (Lemon: "This rule can not be reduced").
+     *  Return non-zero to accept it as a dead rule (it lost a conflict the
+     *  hook decided) instead of a hard error.  NULL = always an error. */
+    int (*on_dead_rule)(void *user, const char *rule, int line);
 } LimeCompileHook;
 
 /** Outcome counters of one in-process compile. */

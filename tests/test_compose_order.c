@@ -11,13 +11,24 @@
 **   (b) the token code each extension's keyword is assigned.
 **
 ** A composition is a pure function of (base, SET of extensions) only if
-** both are identical across all orders.  Exit 0 = order-independent,
-** 1 = order-dependent (prints which property differed), 77 = skip.
+** both are identical across all orders.
+**
+** Part 2 (C3): the same with a compose POLICY that has to decide real
+** conflicts.  Three more extensions are loaded: two that make the same
+** BANG token both postfix and prefix (a conflict between extensions,
+** settled by rank; prefix-vs-base-operator settled by a conflict line), and
+** one that adds `expr ::= expr BANG BANG` which the policy rejects.  All 6 orders of these three must give identical tables
+** and token codes; and the result must differ from the no-reject
+** composition (the reject took effect).
+**
+** Exit 0 = order-independent, 1 = order-dependent (prints which property
+** differed), 77 = skip.
 */
 #define _POSIX_C_SOURCE 200809L
 #include "extension.h"
 #include "parser.h"
 #include "snapshot.h"
+#include "lime_policy.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -85,6 +96,83 @@ static uint64_t table_fingerprint(const ParserSnapshot *s) {
 
 static const int perms[6][3] = {{0,1,2},{0,2,1},{1,0,2},{1,2,0},{2,0,1},{2,1,0}};
 
+/* Part 2 extensions: each adds token BANG (same name) and one rule. */
+typedef struct PExt {
+    const char *name;
+    const char *rhs[4];
+    int nrhs;
+    GrammarModification mods[2];
+} PExt;
+static PExt g_pext[3] = {
+    {"p_post",   {"expr", "BANG", NULL, NULL}, 2, {{0}}},
+    {"p_pre",    {"BANG", "expr", NULL, NULL}, 2, {{0}}},
+    {"p_double", {"expr", "BANG", "BANG", NULL}, 3, {{0}}},
+};
+static bool get_pmods(void *ud, const struct ParserSnapshot *base, GrammarModification **out,
+                      uint32_t *nout) {
+    (void)base;
+    PExt *e = ud;
+    memset(e->mods, 0, sizeof(e->mods));
+    e->mods[0].type = MOD_ADD_TOKEN;
+    e->mods[0].u.add_token.name = "BANG";
+    e->mods[0].u.add_token.token_code = -1;
+    e->mods[1].type = MOD_ADD_RULE;
+    e->mods[1].u.add_rule.lhs = "expr";
+    e->mods[1].u.add_rule.rhs = e->rhs;
+    e->mods[1].u.add_rule.nrhs = e->nrhs;
+    e->mods[1].u.add_rule.code = "{ }";
+    e->mods[1].u.add_rule.precedence = -1;
+    *out = e->mods;
+    *nout = 2;
+    return true;
+}
+/* the same token name from three extensions is a declaration-level
+** collision; the extensions intend to share it */
+static ConflictResolution share_token(void *ud, const ConflictInfo *ci) {
+    (void)ud;
+    return ci->existing_mod->type == MOD_ADD_TOKEN ? CONFLICT_KEEP_EXISTING : CONFLICT_UNRESOLVED;
+}
+
+/* compose part-2 set in order `ord` (NULL = all three in index order,
+** n = how many) under `pol`; returns fingerprint, 0 on failure */
+static uint64_t compose_p(ParserSnapshot *base, const int *ord, int n, const LimeComposePolicy *pol,
+                          int *bang_code, char **err_out) {
+    ExtensionRegistry *reg = create_extension_registry();
+    extension_registry_set_policy(reg, pol);
+    for (int k = 0; k < n; k++) {
+        PExt *e = &g_pext[ord[k]];
+        ExtensionInfo info = {0};
+        info.name = e->name;
+        info.version = "1.0.0";
+        info.get_modifications = get_pmods;
+        info.on_conflict = share_token;
+        info.user_data = e;
+        ExtensionID id;
+        char *err = NULL;
+        if (!register_extension(reg, &info, &id) || !load_extension(reg, id, NULL, &err)) {
+            free(err);
+            destroy_extension_registry(reg);
+            return 0;
+        }
+        free(err);
+    }
+    ParserSnapshot *out = NULL;
+    char *err = NULL;
+    uint64_t h = 0;
+    if (publish_modified_snapshot(reg, base, &out, NULL, &err) && out) {
+        h = table_fingerprint(out);
+        if (bang_code) *bang_code = lime_snapshot_token_code(out, "BANG");
+        snapshot_release(out);
+        free(err);
+    } else if (err_out) {
+        *err_out = err;
+    } else {
+        free(err);
+    }
+    destroy_extension_registry(reg);
+    return h;
+}
+
 int main(void) {
     ParserSnapshot *base = ArithBuildSnapshot();
     if (base == NULL || base->grammar_source == NULL) {
@@ -138,10 +226,51 @@ int main(void) {
     }
     printf("\n  parse tables identical across all 6 orders: %s\n", tables_same ? "YES" : "NO");
     printf("  token codes identical across all 6 orders:  %s\n", codes_same ? "YES" : "NO");
-    if (tables_same && codes_same) {
-        printf("  RESULT: composition is a function of the extension SET.\n");
+
+    /* ---- Part 2: with a policy ---- */
+    static const char POL[] =
+        "rank p_post 20.  rank p_pre 10.\n"                      /* post vs pre on BANG */
+        "conflict sr \"expr ::= BANG expr\" prefer reduce.\n"   /* prefix binds tighter than base +/- */
+        "reject \"expr ::= expr BANG BANG\" from p_double.\n";
+    char *perr = NULL;
+    LimeComposePolicy *pol = lime_policy_parse(POL, sizeof POL - 1, &perr);
+    if (pol == NULL) {
+        fprintf(stderr, "  [BROKEN] policy: %s\n", perr ? perr : "?");
+        return 1;
+    }
+    base = ArithBuildSnapshot();
+    printf("\n  part 2: post/pre/double under `%s`\n", "rank p_post 20. rank p_pre 10. reject ...");
+    uint64_t pf[6];
+    int pc[6] = {0};
+    int p_same = 1;
+    for (int p = 0; p < 6; p++) {
+        char *e = NULL;
+        pf[p] = compose_p(base, perms[p], 3, pol, &pc[p], &e);
+        printf("  order %d%d%d  tables=%016llx  BANG=%d%s%s\n", perms[p][0], perms[p][1], perms[p][2],
+               (unsigned long long)pf[p], pc[p], e ? "  error: " : "", e ? e : "");
+        free(e);
+        if (pf[p] == 0 || pf[p] != pf[0] || pc[p] != pc[0]) p_same = 0;
+    }
+    /* the reject took effect: = composing post+pre only */
+    static const int two[2] = {0, 1};
+    uint64_t f_two = compose_p(base, two, 2, pol, NULL, NULL);
+    int rejected = pf[0] != 0 && pf[0] == f_two;
+    /* without the policy the same set must FAIL (the conflict is real) */
+    char *e0 = NULL;
+    uint64_t f_nopol = compose_p(base, perms[0], 3, NULL, NULL, &e0);
+    int needs_policy = f_nopol == 0;
+    printf("  with policy, identical across 6 orders: %s\n", p_same ? "YES" : "NO");
+    printf("  reject applied (tables == post+pre only):  %s\n", rejected ? "YES" : "NO");
+    printf("  no policy -> compose fails:                %s%s%.60s\n", needs_policy ? "YES" : "NO",
+           e0 ? "  (" : "", e0 ? e0 : "");
+    free(e0);
+    lime_policy_free(pol);
+    snapshot_release(base);
+
+    if (tables_same && codes_same && p_same && rejected && needs_policy) {
+        printf("  RESULT: composition is a function of the extension SET (and the policy).\n");
         return 0;
     }
-    printf("  RESULT: composition depends on LOAD ORDER.\n");
+    printf("  RESULT: composition depends on LOAD ORDER (or the policy did not apply).\n");
     return 1;
 }

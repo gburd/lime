@@ -2595,6 +2595,14 @@ test('explain_compose', find_program('check_explain_compose.sh'),
   timeout : 120,
   is_parallel : false)
 
+# C3: the compose policy, one case per verb (lime_policy_parse + compose).
+test_compose_policy = executable('test_compose_policy',
+  'test_compose_policy.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('compose_policy', test_compose_policy)
+
 # Per-rule action-body inlining classifier (src/rule_inline.c, used
 # by the Rust emitter).  Exercises rule_can_inline_text against a
 # corpus of representative rule bodies (empty, passthrough, simple
