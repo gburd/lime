@@ -9,6 +9,14 @@ lime \- LALR(1) parser generator
 .B lime
 .RI [ options ]
 .I grammar-file
+.br
+.B lime-yacc
+.RI [ yacc-options ]
+.I grammar.y
+.br
+.B lime \-\-yacc
+.RI [ yacc-options ]
+.I grammar.y
 .SH DESCRIPTION
 .B lime
 is an LALR(1) parser generator that reads a grammar specification from
@@ -612,6 +620,144 @@ and
 .BR \-\-enable=per-token-dfa ,
 emit leading-byte dispatch + per-rule DFA tables alongside the
 unified DFA.  Default OFF until benched.
+.SH "YACC AND BISON INPUT"
+A grammar file that has a line consisting of
+.B %%
+at column 0 is read as yacc/bison syntax
+.RB ( "lhs : a b | c ;" ,
+.BR $$ / $N ,
+character literals such as
+.BR \(aq+\(aq ),
+whatever its file name; any other file is read as Lime syntax.
+.B \-\-yacc
+and
+.B \-\-lemon
+override the detection.
+yacc input gets yacc semantics: terminals are the names declared with
+.B %token
+and the precedence directives, the start symbol is wrapped in
+.BR "$accept : start" ,
+tokens are numbered as bison numbers them (character literals by their
+code, named tokens from 258), and the generated
+.I .c
+defines
+.BR yyparse() ,
+.BR yylval ,
+.BR yychar ,
+.BR yynerrs
+and calls the user's
+.B yylex()
+and
+.BR yyerror() .
+With no
+.B error
+rule the first syntax error makes
+.B yyparse()
+return 1; with one, recovery follows bison's (three tokens must shift
+before the next message).
+.BR yyerrok ,
+.BR yyclearin ,
+.BR YYACCEPT ,
+.BR YYABORT ,
+.B YYERROR
+and
+.B YYRECOVERING()
+work in actions.
+See
+.I docs/BISON_COMPAT.md
+for the supported bison declarations
+.RB ( %pure\-parser ,
+.BR %parse\-param ,
+.BR %locations ,
+.BR "%define api.push\-pull push" ,
+\&...) and the ones rejected with a diagnostic
+.RB ( %glr\-parser ).
+.SS "yacc command line"
+Run as
+.BR lime\-yacc ,
+.B yacc
+or
+.B bison
+(the basename of argv[0]), or with
+.B \-\-yacc
+as the first argument,
+.B lime
+takes the yacc command line instead of its own:
+.TP
+.BR \-d ", " \-\-defines ", " \-\-header [=\fIfile\fR]
+Also write the header (token codes,
+.BR YYSTYPE ,
+.BR yylval ).
+.TP
+.BI \-o " file"
+Name the parser
+.IR file ;
+the header is
+.I file
+with
+.B .h
+for its extension.
+.TP
+.BI \-b " prefix"
+Name the outputs
+.IB prefix .tab.c
+and
+.IB prefix .tab.h .
+.TP
+.B \-y
+yacc names
+.RB ( y.tab.c ,
+.BR y.tab.h )
+and token
+.B #define
+lines; the default when run as
+.B yacc
+or
+.BR lime\-yacc .
+As
+.BR bison ,
+the default is
+.IB grammar .tab.c
+and the header has only
+.BR "enum yytokentype" .
+.TP
+.BI \-p " prefix"
+Rename
+.BR yyparse ,
+.BR yylex ,
+.BR yyerror ,
+\&... to
+.IR prefix parse,
+\&... (bison's
+.BR %name\-prefix ).
+.TP
+.B \-v
+Write the report
+.RB ( y.output
+or
+.IB grammar .output ).
+.TP
+.B \-t
+Compile with
+.B YYDEBUG
+on by default.
+.TP
+.B \-l
+No
+.B #line
+directives.
+.PP
+.BR \-W ...
+is accepted and ignored.
+In this mode Lime's own
+.BI \-d dir
+(output directory) is not available; it keeps its meaning in Lime mode.
+Lime installs
+.B lime\-yacc
+only, not
+.B yacc
+or
+.BR bison .
 .SH GRAMMAR FILE FORMAT
 A grammar file consists of a sequence of production rules and
 directives.

@@ -1426,6 +1426,17 @@ test_skin_bison = executable('test_skin_bison',
 
 test('skin_bison', test_skin_bison)
 
+# Track D: --target=c:bison passes yylex() char codes (< 258) through to
+# tokens named after the character (CHAR_<code>).
+if host_machine.system() != 'windows'
+  test('skin_bison_charcodes',
+    find_program('test_skin_bison_charcodes.sh'),
+    args : [lime_exe.full_path(), meson.project_source_root() / 'limpar.c'],
+    depends : [lime_exe],
+    timeout : 60,
+  )
+endif
+
 # %union + yydebug coverage for --target=c:bison.  Generates a
 # grammar with %union { int n; char *s; } so the bison skin's
 # YYSTYPE typedef carries both arms; the test compiles a single

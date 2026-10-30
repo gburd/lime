@@ -562,6 +562,32 @@ static void emit_source(FILE *out, const struct lime *lemp,
         "static const int YY_BISON_NTOKEN = %d;\n\n",
         nterminal - 1);
 
+    /* Char codes 1..255 -> Lime code, for tokens Lime names after a
+    ** character: CHAR_<code> (tests/compat/y2lime_min.py's spelling)
+    ** or a yacc-style '<c>' literal name.  0 = not a token. */
+    {
+        int map[256];
+        memset(map, 0, sizeof map);
+        for (int i = 1; i < nterminal; i++) {
+            const char *nm = lime_emit_rust_symbol_name(lime_emit_rust_symbol_at(lemp, i));
+            int code = -1;
+            if (nm && strncmp(nm, "CHAR_", 5) == 0 && isdigit((unsigned char)nm[5])) {
+                char *end;
+                long v = strtol(nm + 5, &end, 10);
+                if (*end == 0) code = (int)v;
+            } else if (nm && nm[0] == '\'' && nm[1] && nm[2] == '\'' && nm[3] == 0) {
+                code = (unsigned char)nm[1];
+            }
+            if (code > 0 && code < 256) map[code] = i + first_token;
+        }
+        fprintf(out, "static const int yy_bison_char_to_lime[256] = {");
+        for (int c = 0; c < 256; c++) {
+            fprintf(out, "%s%d", (c % 16 == 0) ? "\n    " : " ", map[c]);
+            if (c < 255) fputc(',', out);
+        }
+        fprintf(out, "\n};\n\n");
+    }
+
     /* Translate helper. */
     fprintf(out,
         "/* Translate a bison-style yylex() return value into the Lime\n"
@@ -569,7 +595,14 @@ static void emit_source(FILE *out, const struct lime *lemp,
         "** of range; the caller treats that as a syntax error. */\n"
         "static int yy_xlat_token(int yytok) {\n"
         "    if (yytok == 0) return 0;          /* YYEOF */\n"
-        "    if (yytok < 258) return -1;        /* ASCII / YYerror / YYUNDEF */\n"
+        "    if (yytok < 258) {\n"
+        "        /* A char code: a Lime token named for the character (as\n"
+        "        ** declared with %%token_char or the yacc front end) maps\n"
+        "        ** here; anything else is not a token of this grammar. */\n"
+        "        if (yytok > 0 && yytok < 256 && yy_bison_char_to_lime[yytok])\n"
+        "            return yy_bison_char_to_lime[yytok];\n"
+        "        return -1;                     /* YYerror / YYUNDEF / unknown */\n"
+        "    }\n"
         "    int idx = yytok - 258;\n"
         "    if (idx >= YY_BISON_NTOKEN) return -1;\n"
         "    return yy_bison_to_lime[idx];\n"

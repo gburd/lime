@@ -5,22 +5,27 @@ This guide walks through the process of converting a Bison grammar file
 syntax differences, and common pitfalls, with a worked example based on the
 PostgreSQL bootstrap parser in `examples/bootstrap/`.
 
-> **`lime` does not read `.y` files.**  Run on a yacc or bison grammar,
-> it stops at the first `%{` or `%%` with "this looks like a yacc/bison
-> file" and points here.  There is no converter in this repository
-> (`examples/pg/convert_gram.py` is a one-off for PostgreSQL's gram.y and
-> handles none of the other grammars in the compatibility corpus).  The
-> grammar has to be rewritten in Lime syntax, which is what the rest of
-> this guide covers.  See [BISON_COMPAT.md](BISON_COMPAT.md) for the
-> construct-by-construct status.
+> **You may not need to migrate.**  `lime` reads yacc and bison grammar
+> files as they are: a file with a `%%` line is compiled with yacc/bison
+> semantics, and `lime-yacc` (or `lime` run as `yacc`/`bison`) takes the
+> yacc command line, so `make YACC=lime-yacc` works for one-true-awk and
+> bc.  See [BISON_COMPAT.md](BISON_COMPAT.md) for what is supported and
+> what is rejected (`%glr-parser`; `parse.error detailed` message text).
+>
+> ```sh
+> lime-yacc -d gram.y          # y.tab.c + y.tab.h, as yacc
+> lime --yacc -o gram.c gram.y # same front end from the lime CLI
+> ```
+>
+> The rest of this guide is for rewriting a grammar in Lime syntax, which
+> you want for Lime-only features (named aliases, `%extends`, runtime
+> extension, Rust output), not for yacc compatibility.
 
-> **Tip: keep most of your `yyparse()` driver code.**  Generate Lime
-> with `--target=c:bison` to also emit a bison-API skin
-> (`yyparse()` / `yylval` / `enum yytokentype`) alongside the standard
-> Lime parser.  Call sites change little, with two exceptions: the
-> skin rejects token codes below 258, so a `yylex()` that returns
-> characters (`return '+';`) must return named tokens instead, and
-> `yylloc` is not threaded through.  See [SKINS.md](SKINS.md).
+> **Tip: keep most of your `yyparse()` driver code.**  A Lime-syntax
+> grammar generated with `--target=c:bison` also gets a bison-API skin
+> (`yyparse()` / `yylval` / `enum yytokentype`).  `yylex()` may return
+> characters for tokens named `CHAR_<code>`; `yylloc` is not threaded
+> through.  See [SKINS.md](SKINS.md).
 
 ## Directive Mapping
 

@@ -11451,7 +11451,19 @@ static void yacc_parse_buffer(struct pstate *psp, char *buf,
   }
   gp->failure = (char*)"  yy_yacc_status = 1; yy_yacc_done = 1;\n";
   gp->accept = (char*)"  yy_yacc_status = 0; yy_yacc_done = 1;\n";
-  gp->overflow = (char*)"  yy_yacc_status = 2; yy_yacc_done = 1;\n";
+  {
+    /* Stack overflow: bison's yyerror("memory exhausted"), yyparse() 2. */
+    size_t n = 200 + (gp->yacc_parse_names ? strlen(gp->yacc_parse_names) : 0);
+    char *e = (char*)lime_malloc(n);
+    MemoryCheck(e);
+    lemon_strcpy(e, "  yyerror(");
+    if( gp->yacc_pure && gp->has_locations && gp->yacc_parse_names ){
+      lemon_strcat(e, "&yypParser->yyLookaheadLoc, ");
+    }
+    if( gp->yacc_parse_names ){ lemon_strcat(e, gp->yacc_parse_names); lemon_strcat(e, ", "); }
+    lemon_strcat(e, "\"memory exhausted\"); yy_yacc_status = 2; yy_yacc_done = 1;\n");
+    gp->overflow = e;
+  }
   /* shortcut: fixed stack of bison's YYMAXDEPTH (10000), not a growing
   ** one; upgrade if a grammar needs deeper nesting. */
   if( gp->stacksize==0 ) gp->stacksize = (char*)"10000";
