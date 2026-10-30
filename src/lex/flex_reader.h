@@ -50,6 +50,7 @@ typedef struct {
     int is_default;    /* the implicit last rule (ECHO, or jam with nodefault) */
     int can_match_eol; /* the pattern can consume '\n' (yylineno update) */
     char *action;      /* action text (NULL for a `|` rule) */
+    char *pre_code;    /* %{ %} block written just before this rule */
     unsigned char *sc; /* sc[i] = 1 if the rule fires in start condition i */
 } LimeFlexRule;
 
