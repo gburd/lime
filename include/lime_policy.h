@@ -49,10 +49,12 @@ struct ParserSnapshot;
 **   conflict sr "upsert_cols ::=" on LPAREN prefer shift.
 **   conflict rr "a ::= B" prefer reduce.     keep the reduce by that rule
 **   conflict sr "a_expr ::= a_expr DPIPE a_expr" prefer pgvector.
+**   conflict rule "a_expr ::= a_expr DPIPE a_expr" prefer pgvector.
+**                                            same rule, two actions: keep pgvector's
 **   reject "stmt ::= showExtStmt" from pgvector.
 **   reject token SHOW_EXT_K from pgvector.
 **   trust-extension-proposals mysql_compat.  accept its on_conflict answers
-**   keyword "connect" owner oracle_compat soft.   (lexeme ownership; C4)
+**   keyword "connect" owner oracle_compat soft.   who owns a lexeme two tokens claim
 **
 ** Order of authority for one conflict: a `conflict` line > rank > `default`.
 ** Rank decides extension-vs-extension conflicts whose owners have different
@@ -63,6 +65,15 @@ struct ParserSnapshot;
 ** not an error.  Comments are C style.
 */
 
+/** Declaration-level conflict kinds (beside LIME_CK_SR/RR/SS, which are
+ *  LALR conflicts).  Settled before table generation. */
+enum {
+    LIME_DK_TOKEN_NAME = 16, /**< same token name, different lexemes */
+    LIME_DK_TOKEN_LEXEME,    /**< same lexeme (ASCII case-folded), different tokens */
+    LIME_DK_DUP_RULE_ACTION, /**< same rule identity, different actions */
+    LIME_DK_PREC_CLASH       /**< two precedence changes for one terminal */
+};
+
 /** What one `conflict` line chooses. */
 typedef enum LimePolicyPrefer {
     LIME_PREFER_SHIFT = 1, /**< SR: keep the shift */
@@ -70,9 +81,10 @@ typedef enum LimePolicyPrefer {
     LIME_PREFER_OWNER      /**< keep the side contributed by `owner` */
 } LimePolicyPrefer;
 
-/** `conflict sr|rr "<rule>" [on LOOKAHEAD] prefer shift|reduce|<owner>.` */
+/** `conflict sr|rr "<rule>" [on LOOKAHEAD] prefer shift|reduce|<owner>.`
+ *  `conflict rule "<rule>" prefer <owner>.`  (two actions for one rule) */
 typedef struct LimePolicyConflict {
-    int kind;              /**< LIME_CK_SR or LIME_CK_RR (lime_compiler.h) */
+    int kind;              /**< LIME_CK_SR, LIME_CK_RR or LIME_DK_DUP_RULE_ACTION */
     const char *rule;      /**< SR: the reduce rule; RR: one of the two rules */
     const char *lookahead; /**< NULL = any lookahead */
     int prefer;            /**< LimePolicyPrefer */
@@ -100,7 +112,8 @@ typedef struct LimePolicyReject {
     const char *owner;
 } LimePolicyReject;
 
-/** `keyword "lexeme" owner EXT soft|reserved.` (see C4 / lime_lex_compose) */
+/** `keyword "lexeme" owner EXT|base soft|reserved.`  See "Keyword ownership"
+ *  in docs/EXTENSIONS.md for how the decision reaches the keyword table. */
 typedef struct LimePolicyKeyword {
     const char *lexeme;
     const char *owner;

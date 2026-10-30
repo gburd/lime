@@ -2603,6 +2603,15 @@ test_compose_policy = executable('test_compose_policy',
 )
 test('compose_policy', test_compose_policy)
 
+# C4: declaration-level conflicts (lexeme ownership, same rule with two
+# actions, precedence clash) settled by the compose policy.
+test_compose_declarations = executable('test_compose_declarations',
+  'test_compose_declarations.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('compose_declarations', test_compose_declarations)
+
 # Per-rule action-body inlining classifier (src/rule_inline.c, used
 # by the Rust emitter).  Exercises rule_can_inline_text against a
 # corpus of representative rule bodies (empty, passthrough, simple

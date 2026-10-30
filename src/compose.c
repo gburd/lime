@@ -31,6 +31,7 @@
 #include "parser.h"
 #include "snapshot.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,7 +54,9 @@ _Static_assert(__builtin_types_compatible_p(LimeReduceFn,
 ** lime_snapshot_rule_by_id() matches on.  Caller frees.  NULL on OOM or
 ** a malformed modification.
 */
-static char *mod_rule_identity(const GrammarModification *mod) {
+char *compose_rule_identity(const GrammarModification *mod);
+static char *mod_rule_identity(const GrammarModification *mod) { return compose_rule_identity(mod); }
+char *compose_rule_identity(const GrammarModification *mod) {
     const char *lhs = mod->u.add_rule.lhs;
     if (lhs == NULL) return NULL;
     size_t len = strlen(lhs) + 4; /* " ::=" */
@@ -130,6 +133,221 @@ static int policy_rejects(const LimeComposePolicy *p, const char *owner,
         }
     }
     return 0;
+}
+
+
+/* ------------------------------------------------------------------ */
+/*  Declaration-level conflicts (C4)                                   */
+/* ------------------------------------------------------------------ */
+/*
+** Settled before generation; each becomes a plain edit of the
+** modification list, so nothing reaches the tables but ordinary
+** tokens/rules/precedence:
+**
+**   (shared)       one token name+lexeme, or one rule with one action,
+**                  declared by two extensions: merged, not a conflict.
+**   TOKEN_LEXEME   two different tokens claim one lexeme (ASCII case-
+**                  folded): `keyword "x" owner E soft|reserved.` -- E's
+**                  token keeps the lexeme; the others keep their terminal
+**                  but no lexeme reaches it (their rules can only be
+**                  reached by a scanner that emits that token by name).
+**                  `soft` makes E's token fall back to the base's
+**                  identifier token (its own fallback_to, else "ID");
+**                  `reserved` clears the fallback.  Different ranks also
+**                  settle it; equal ranks, or no decision, fail.
+**   DUP_RULE       one rule identity, two different actions (code or
+**                  reduce callback): `conflict rule "<r>" prefer E.` or
+**                  rank keeps one copy; equal ranks fail.
+**   PREC_CLASH     two different MOD_MODIFY_PRECEDENCE for one terminal:
+**                  a host `token T ...` line replaces both; else rank;
+**                  equal ranks fail.
+** Conflicts the policy does not address (no keyword/conflict/token line,
+** no ranks) other than TOKEN_LEXEME fall through to the legacy check and
+** the deprecated on_conflict callbacks (step 2b).
+**
+** SEAM(Track B): keyword ownership.  The policy is the only authority on
+** who owns a lexeme; Track B's keyword table (kw_table, built by
+** lime_lex_compose at the SEAM in publish_modified_snapshot) must not
+** re-decide.  The decision is handed over in the modification list that
+** reaches lime_lex_compose (`combined`, after step 2a): for each lexeme
+** exactly one MOD_ADD_TOKEN carries it (losers have lexeme == NULL), and
+** a soft owner carries fallback_to.  B1's builder already reads base
+** %keyword + MOD_ADD_TOKEN.lexeme, so it needs no extra input.  Two
+** claims on a BASE keyword (an extension token reusing a base lexeme) are
+** for B to report, since only the lexer side knows the base keyword set:
+** it should fail the compose unless `keyword "x" owner E` names E.
+*/
+typedef struct DeclOwner { const char *owner; int rank; } DeclOwner;
+
+static int lex_eq(const char *a, const char *b) {
+    if (!a || !b) return 0;
+    for (; *a && *b; a++, b++) {
+        char x = *a, y = *b;
+        if (x >= 'A' && x <= 'Z') x = (char)(x - 'A' + 'a');
+        if (y >= 'A' && y <= 'Z') y = (char)(y - 'A' + 'a');
+        if (x != y) return 0;
+    }
+    return *a == *b;
+}
+
+static int same_action(const GrammarModification *a, const GrammarModification *b) {
+    if (a->u.add_rule.reduce != b->u.add_rule.reduce) return 0;
+    if (a->u.add_rule.reduce && a->u.add_rule.reduce_user != b->u.add_rule.reduce_user) return 0;
+    const char *x = a->u.add_rule.code, *y = b->u.add_rule.code;
+    return (x == NULL && y == NULL) || (x && y && strcmp(x, y) == 0);
+}
+
+static const char *owner_of(const ExtSlice *sl, uint32_t ns, uint32_t m) {
+    for (uint32_t i = 0; i < ns; i++)
+        if (m >= sl[i].first && m < sl[i].first + sl[i].n) return sl[i].e->name;
+    return "?";
+}
+
+static void appendf(char **buf, const char *fmt, ...) {
+    va_list ap, ap2;
+    va_start(ap, fmt);
+    va_copy(ap2, ap);
+    int add = vsnprintf(NULL, 0, fmt, ap2);
+    va_end(ap2);
+    size_t old = *buf ? strlen(*buf) : 0;
+    char *n = add >= 0 ? realloc(*buf, old + (size_t)add + 1) : NULL;
+    if (n) {
+        vsnprintf(n + old, (size_t)add + 1, fmt, ap);
+        *buf = n;
+    }
+    va_end(ap);
+}
+
+/* Who wins between owners x and y under p: 1 = x, 2 = y, 0 = no ranks,
+** -1 = equal-rank tie. */
+static int rank_winner(const LimeComposePolicy *p, const char *x, const char *y) {
+    if (!p || !p->nranks) return 0;
+    int rx = lime_policy_rank(p, x), ry = lime_policy_rank(p, y);
+    return rx > ry ? 1 : rx < ry ? 2 : -1;
+}
+
+/*
+** Apply the declaration-level policy to mods[0..*total): drops losing
+** modifications (and lexemes) in place.  Conflicts the policy does not
+** address are left for the legacy check + on_conflict (step 2b), except
+** TOKEN_LEXEME, which only the policy can settle, and equal-rank ties,
+** which are errors.  Returns 0, or -1 with *err listing what failed.
+*/
+static int compose_decide_declarations(const LimeComposePolicy *p, GrammarModification *mods,
+                                       ExtensionID *ids, uint32_t *total, ExtSlice *sl,
+                                       uint32_t ns, char **err) {
+    uint32_t n = *total;
+    char *drop = calloc(n ? n : 1, 1);
+    if (!drop) return -1;
+    int bad = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        for (uint32_t j = i + 1; j < n; j++) {
+            GrammarModification *a = &mods[i], *b = &mods[j];
+            const char *oa = owner_of(sl, ns, i), *ob = owner_of(sl, ns, j);
+            if (drop[i] || drop[j] || a->type != b->type) continue;
+            int same_owner = strcmp(oa, ob) == 0;
+
+            if (a->type == MOD_ADD_TOKEN) {
+                const char *na = a->u.add_token.name, *nb = b->u.add_token.name;
+                const char *la = a->u.add_token.lexeme, *lb = b->u.add_token.lexeme;
+                int same_name = na && nb && strcmp(na, nb) == 0;
+                int same_lex = la && lb && lex_eq(la, lb);
+                if (same_name && (same_lex || (!la && !lb))) {
+                    /* one token declared twice: shared, not a conflict */
+                    drop[j] = 1;
+                    continue;
+                }
+                if (!same_lex || same_name || same_owner) continue; /* TOKEN_NAME: legacy check */
+                /* TOKEN_LEXEME: two tokens claim one lexeme */
+                const LimePolicyKeyword *kw = NULL;
+                for (uint32_t k = 0; p && k < p->nkeywords; k++)
+                    if (lex_eq(p->keywords[k].lexeme, la)) kw = &p->keywords[k];
+                int w = kw ? (strcmp(kw->owner, oa) == 0 ? 1 : strcmp(kw->owner, ob) == 0 ? 2 : 0)
+                           : rank_winner(p, oa, ob);
+                if (w > 0) {
+                    GrammarModification *win = w == 1 ? a : b, *lose = w == 1 ? b : a;
+                    lose->u.add_token.lexeme = NULL; /* keeps its terminal; no lexeme reaches it */
+                    if (kw && kw->soft && !win->u.add_token.fallback_to) win->u.add_token.fallback_to = "ID";
+                    if (kw && !kw->soft) win->u.add_token.fallback_to = NULL;
+                    continue;
+                }
+                bad = 1;
+                appendf(err, "TOKEN_LEXEME  \"%s\" claimed by %s (%s) and %s (%s)%s\n"
+                             "  fix   : keyword \"%s\" owner <ext> soft|reserved.\n",
+                        la, na, oa, nb, ob, w < 0 ? "; equal rank is an error" : "", la);
+                continue;
+            }
+            if (a->type == MOD_ADD_RULE) {
+                char *ida = compose_rule_identity(a), *idb = compose_rule_identity(b);
+                int same = ida && idb && strcmp(ida, idb) == 0;
+                if (same && same_action(a, b)) drop[j] = 1; /* one rule, not a conflict */
+                if (!same || same_action(a, b) || same_owner) { free(ida); free(idb); continue; }
+                /* DUP_RULE_ACTION */
+                int w = 0;
+                for (uint32_t k = 0; p && k < p->nconflicts; k++) {
+                    const LimePolicyConflict *c = &p->conflicts[k];
+                    if (c->kind == LIME_DK_DUP_RULE_ACTION && c->rule && c->owner &&
+                        strcmp(c->rule, ida) == 0)
+                        w = strcmp(c->owner, oa) == 0 ? 1 : strcmp(c->owner, ob) == 0 ? 2 : 0;
+                }
+                if (!w) w = rank_winner(p, oa, ob);
+                if (w > 0) {
+                    drop[w == 1 ? j : i] = 1;
+                } else if (w < 0) {
+                    bad = 1;
+                    appendf(err, "DUP_RULE_ACTION  \"%s\" from %s and %s with different actions; "
+                                 "equal rank is an error\n  fix   : conflict rule \"%s\" prefer <ext>.\n",
+                            ida, oa, ob, ida);
+                }
+                free(ida);
+                free(idb);
+                continue;
+            }
+            if (a->type == MOD_MODIFY_PRECEDENCE) {
+                const char *sa = a->u.modify_prec.symbol, *sb = b->u.modify_prec.symbol;
+                if (!sa || !sb || strcmp(sa, sb) != 0) continue;
+                if (a->u.modify_prec.new_precedence == b->u.modify_prec.new_precedence &&
+                    a->u.modify_prec.new_assoc == b->u.modify_prec.new_assoc) {
+                    drop[j] = 1;
+                    continue;
+                }
+                if (same_owner) continue;
+                int overridden = 0;
+                for (uint32_t k = 0; p && k < p->ntokens; k++)
+                    if (strcmp(p->tokens[k].token, sa) == 0) overridden = 1;
+                /* the host's `token T ...` line replaces both proposals */
+                if (overridden) { drop[i] = drop[j] = 1; continue; }
+                int w = rank_winner(p, oa, ob);
+                if (w > 0) {
+                    drop[w == 1 ? j : i] = 1;
+                } else if (w < 0) {
+                    bad = 1;
+                    appendf(err, "PREC_CLASH    %s given different precedences by %s and %s; "
+                                 "equal rank is an error\n  fix   : token %s prec-like <U>.\n",
+                            sa, oa, ob, sa);
+                }
+            }
+        }
+    }
+    if (!bad) {
+        uint32_t w = 0, r = 0, pos = 0;
+        for (uint32_t i = 0; i < ns; i++) {
+            uint32_t kept = 0;
+            for (uint32_t m = 0; m < sl[i].n; m++, r++) {
+                if (drop[r]) continue;
+                mods[w] = mods[r];
+                ids[w] = ids[r];
+                w++;
+                kept++;
+            }
+            sl[i].first = pos;
+            sl[i].n = kept;
+            pos += kept;
+        }
+        *total = w;
+    }
+    free(drop);
+    return bad ? -1 : 0;
 }
 
 static ExtensionID ext_id_of(const ExtSlice *sl, uint32_t n, const char *owner) {
@@ -215,8 +433,25 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
     ParserSnapshot *new_snap = NULL;
     char *cm_err = NULL;
 
-    /* 2. Declaration-level conflicts (same token, identical rule,
-    ** precedence clash), then the deprecated on_conflict callbacks. */
+    /* 2a. Declaration-level conflicts settled by the host policy (C4). */
+    {
+        char *derr = NULL;
+        if (compose_decide_declarations(policy, combined, ext_id_per_mod, &total, slice, ns,
+                                        &derr) != 0) {
+            size_t n = (derr ? strlen(derr) : 0) + 96;
+            cm_err = malloc(n);
+            if (cm_err)
+                snprintf(cm_err, n,
+                         "publish_modified_snapshot: declaration conflicts not resolved by the "
+                         "compose policy:\n%s", derr ? derr : "");
+            free(derr);
+            goto out;
+        }
+    }
+
+    /* 2b. What the policy left: the legacy declaration check (same token
+    ** NAME, identical rule, precedence clash) and the deprecated
+    ** on_conflict callbacks. */
     cs = conflict_set_create();
     if (cs == NULL) {
         cm_err = strdup("publish_modified_snapshot: conflict_set_create failed");

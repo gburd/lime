@@ -988,8 +988,9 @@ LimeComposePolicy *lime_policy_parse(const char *text, size_t len, char **error)
         } else if (IS(0, "conflict")) {
             /* conflict sr|rr "rule" [on LA] prefer X. */
             if (nw != 5 && nw != 7) BAD("expected: conflict sr|rr \"rule\" [on LOOKAHEAD] prefer shift|reduce|EXT.");
-            int kind = IS(1, "sr") ? LIME_CK_SR : IS(1, "rr") ? LIME_CK_RR : 0;
-            if (!kind) BAD("conflict kind must be sr or rr");
+            int kind = IS(1, "sr") ? LIME_CK_SR : IS(1, "rr") ? LIME_CK_RR
+                     : IS(1, "rule") ? LIME_DK_DUP_RULE_ACTION : 0;
+            if (!kind) BAD("conflict kind must be sr, rr or rule");
             if (!tk[i + 2].quoted) BAD("the rule must be a \"quoted\" rule identity");
             uint32_t k = 3;
             const char *la = NULL;
@@ -1006,6 +1007,8 @@ LimeComposePolicy *lime_policy_parse(const char *text, size_t len, char **error)
             c->rule = xstrdup(AT(2));
             c->lookahead = la ? xstrdup(la) : NULL;
             p->nconflicts++;
+            if (kind == LIME_DK_DUP_RULE_ACTION && (nw != 5 || IS(k + 1, "shift") || IS(k + 1, "reduce")))
+                BAD("expected: conflict rule \"rule\" prefer EXT.");
             if (IS(k + 1, "shift")) {
                 if (kind != LIME_CK_SR) BAD("prefer shift applies to sr only");
                 c->prefer = LIME_PREFER_SHIFT;
