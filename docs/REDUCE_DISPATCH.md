@@ -8,7 +8,7 @@ This page states which paths are shipped and gives one worked example.
 
 | Path | Callback ABI | Which rules | Wired by |
 |------|--------------|-------------|----------|
-| **Snapshot-bound extension reduce** | `LimeReduceFn` (via `LimeExtReduceBinding`, `src/snapshot.h`) | each rule a `MOD_ADD_RULE` gave a `reduce` | automatic: `publish_modified_snapshot()` binds by rule identity; runs only when no `host_reduce` is bound |
+| **Snapshot-bound extension reduce** | `LimeReduceFn` (via `LimeExtReduceBinding`, `src/snapshot.h`) | each rule a `MOD_ADD_RULE` gave a `reduce` | automatic: `publish_modified_snapshot()` (liblime_compiler) binds by rule identity; runs only when no `host_reduce` is bound (see "Recognition mode with bound extension callbacks" below) |
 | **Base host-reduce** | `LimeHostReduceFn` (`src/snapshot.h`) | ruleno `< base_nrule` | `lime -n --host-reduce` emits `<Name>HostReduce`; bound as `snap->host_reduce` |
 | **Extension reduce** | `LimeReduceFn` (`src/extension.h`) | ruleno `>= base_nrule` | embedder binds one per rule in `LimeExtRuleBinding.reduce` |
 | **Router** | `LimeHostReduceFn` (it *is* one) | all rules | `lime_host_reduce_router` (`include/multi_grammar.h`) |
@@ -24,6 +24,36 @@ switch.
 The router maps a `LimeReduceFn`'s `void` return to host-reduce success
 (`0`); a `NULL` extension binding passes `$1` through to `$$` unchanged;
 an out-of-range ruleno or a `NULL` router returns non-zero (abort).
+
+## Recognition mode with bound extension callbacks
+
+When a composed snapshot carries extension callbacks and the session has
+no `host_reduce`, `publish_modified_snapshot()` has precomputed one byte
+per rule, `snap->ext_action[ruleno]`:
+
+| value | rules | at reduce |
+|---|---|---|
+| 1 | the rule has a bound `LimeReduceFn` | gather the RHS slots, call it; `$$` is what it writes, `@$` is `@1` |
+| 2 | every other rule with nrhs > 0 | `$$ = $1`, `@$ = @1` (the passthrough) |
+| 0 | epsilon rules | `$$ = NULL` |
+
+So an extension's value climbs through base unit rules (`program ::=
+expr`, `expr ::= term`, ...) to the next callback that consumes it, or to
+`parse_result()`.  The leftmost token's value and location climb the same
+way, so a callback on `a_expr ::= a_expr JSON_ARROW a_expr` sees its left
+operand's token value and position in `$1`.  These are the semantics the
+engine had before the table existed (`tests/test_extension_value_
+passthrough.c`, `tests/test_extension_reduce_e2e.c`); the table only made
+them cheaper.  A snapshot with no bindings (`ext_action == NULL`) does
+none of this: recognition only.  With a `host_reduce` bound, the host owns
+every value and the table is not consulted.
+
+The passthrough costs no memory traffic.  After the pop, `$1`'s stack slot
+is the slot the goto pushes `$$` into, so passthrough leaves that slot's
+value and location in place.  Measured on the PostgreSQL regression
+corpus (COMPOSITION_STRATEGY.md, "Zero runtime cost, measured"),
+recognition mode with 31 bound callbacks runs in the same time as the same
+tables without callbacks (0.996-1.003x).  It used to cost 3.9-4.5%.
 
 ## Worked example
 

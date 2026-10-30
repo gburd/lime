@@ -187,3 +187,15 @@ if flex_prog.found() and bison_prog.found()
   )
 endif
 
+
+# C3/C6 zero-cost check: parse throughput of a snapshot composed WITH a
+# policy and WITH extension reduce callbacks bound, against the base, on a
+# SQL corpus.  Verifies output equality first.  Not a test (needs the
+# corpus):
+#   bench_compose_zerocost examples/pg/pg_grammar.lime \
+#       tests/compose_fixtures/dialect_ext.lime <postgres>/src/test/regress/sql 21 3
+bench_compose_zerocost = executable('bench_compose_zerocost',
+  'bench_compose_zerocost.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)

@@ -79,15 +79,17 @@ char *compose_rule_identity(const GrammarModification *mod) {
 ** Attach each MOD_ADD_RULE's runtime `reduce` callback to the composed
 ** snapshot, keyed by rule identity -- not by (ruleno - base_nrule), which
 ** shifts whenever the extension set or unit-rule elimination renumbers
-** rules.  Rules with no callback, or whose identity the rebuilt grammar
-** doesn't contain (e.g. eliminated as a unit rule), are left unbound:
-** they still parse, they just run no extension action.  Best-effort by
-** design -- a binding failure must not fail an otherwise-good publish.
+** rules -- and compute ext_action[] (see snapshot.h).  Rules with no
+** callback, or whose identity the rebuilt grammar doesn't contain (e.g.
+** eliminated as a unit rule), are left unbound: they still parse, they
+** just run no extension action.  Best-effort by design -- a binding
+** failure must not fail an otherwise-good publish.
 */
 static void bind_ext_reduce_callbacks(ParserSnapshot *snap, const GrammarModification *mods,
                                       uint32_t nmods) {
     if (snap == NULL || snap->rule_ids == NULL || snap->nrule == 0) return;
     LimeExtReduceBinding *tab = NULL;
+    uint8_t *act = NULL;
     for (uint32_t m = 0; m < nmods; m++) {
         if (mods[m].type != MOD_ADD_RULE || mods[m].u.add_rule.reduce == NULL) continue;
         char *id = mod_rule_identity(&mods[m]);
@@ -96,17 +98,25 @@ static void bind_ext_reduce_callbacks(ParserSnapshot *snap, const GrammarModific
         free(id);
         if (ruleno < 0 || (uint32_t)ruleno >= snap->nrule) continue;
         if (tab == NULL) {
-            tab = calloc(snap->nrule, sizeof(*tab));
+            /* one block: the bindings, then the per-rule action bytes */
+            tab = calloc(1, snap->nrule * (sizeof(*tab) + 1));
             if (tab == NULL) return;
+            act = (uint8_t *)(tab + snap->nrule);
         }
         tab[ruleno].reduce = mods[m].u.add_rule.reduce;
         tab[ruleno].user_data = mods[m].u.add_rule.reduce_user;
+        act[ruleno] = 1;
     }
-    if (tab != NULL) {
-        free(snap->ext_reduce);
-        snap->ext_reduce = tab;
-        snap->ext_reduce_count = snap->nrule;
-    }
+    if (tab == NULL) return;
+    /* Every unbound rule with an RHS passes $1 through to $$ (so an
+    ** extension value can climb through base unit rules); epsilon rules
+    ** produce NULL.  Exactly the behaviour reduce() had before the table. */
+    for (uint32_t r = 0; r < snap->nrule; r++)
+        if (act[r] == 0 && snap->yy_rule_info_nrhs[r] != 0) act[r] = 2;
+    free(snap->ext_reduce);
+    snap->ext_reduce = tab;
+    snap->ext_reduce_count = snap->nrule;
+    snap->ext_action = act;
 }
 
 /* ------------------------------------------------------------------ */

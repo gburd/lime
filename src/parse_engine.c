@@ -77,9 +77,16 @@ static void stack_destroy(ParseStack *s) {
     s->capacity = 0;
 }
 
+/* depth >= n, compared in bytes.  Counting entries divides by
+** sizeof(ParseStackEntry) = 24, and stack_pop_n's clamp put that sar+imul
+** in front of the goto's load on every reduce (2-3% of a parse). */
+static inline bool stack_has(const ParseStack *s, uint32_t n) {
+    return (size_t)((char *)s->top - (char *)s->base) >= (size_t)n * sizeof(ParseStackEntry);
+}
+
 static bool stack_push(ParseStack *s, uint16_t state, int symbol) {
-    uint32_t depth = (uint32_t)(s->top - s->base);
-    if (depth >= s->capacity) {
+    if (stack_has(s, s->capacity)) {
+        uint32_t depth = (uint32_t)(s->top - s->base);
         uint32_t new_cap = s->capacity * 2;
         ParseStackEntry *nb = realloc(s->base, new_cap * sizeof(ParseStackEntry));
         if (nb == NULL) return false;
@@ -96,13 +103,8 @@ static bool stack_push(ParseStack *s, uint16_t state, int symbol) {
 }
 
 static void stack_pop_n(ParseStack *s, uint32_t n) {
-    uint32_t depth = (uint32_t)(s->top - s->base);
-    if (n > depth) n = depth;
-    s->top -= n;
-}
-
-static inline uint32_t stack_depth(const ParseStack *s) {
-    return (uint32_t)(s->top - s->base);
+    if (stack_has(s, n)) s->top -= n;
+    else s->top = s->base;
 }
 
 /* Letter 30: the semantic value sitting on top of the value stack --
@@ -195,9 +197,88 @@ static bool reduce_scratch_reserve(ReduceScratch *sc, uint32_t n) {
     return true;
 }
 
-static int reduce(const ParserSnapshot * LIME_RESTRICT snap, ParseStack * LIME_RESTRICT stk,
+/*
+** reduce() for a snapshot that carries extension bindings and a session
+** with no host_reduce.  ext_action[ruleno] (snapshot.h, computed at
+** compose time): 1 = run ext_reduce[ruleno]; 2 = pass $1 through to $$
+** (the slot $1 occupies IS the slot the goto pushes into, so passthrough
+** leaves its value/loc in place: no load, no store); 0 = $$ = NULL.
+** Same return contract as reduce(), which tail-calls it from the
+** no-host_reduce branch of the extension-specialised body only (see
+** step_ext); noinline so even that body doesn't carry this code.
+*/
+#if defined(__GNUC__) || defined(__clang__)
+#define PE_NOINLINE __attribute__((noinline))
+#define PE_ALWAYS_INLINE static inline __attribute__((always_inline))
+#elif defined(_MSC_VER)
+#define PE_NOINLINE __declspec(noinline)
+#define PE_ALWAYS_INLINE static __forceinline
+#else
+#define PE_NOINLINE
+#define PE_ALWAYS_INLINE static inline
+#endif
+
+PE_NOINLINE
+static int ext_reduce(const ParserSnapshot *snap, ParseStack *stk, uint32_t ruleno,
+                      void **out_start_value, ReduceScratch *sc) {
+    if (snap->yy_rule_info_nrhs == NULL || snap->yy_rule_info_lhs == NULL) return -1;
+    if (ruleno >= snap->nrule) return -1;
+    int nrhs = snap->yy_rule_info_nrhs[ruleno];
+    if (nrhs < 0) nrhs = -nrhs;
+    int lhs = snap->yy_rule_info_lhs[ruleno];
+    void *lhs_value = NULL;
+    int lhs_loc = 0;
+    int keep = 0;
+    if (stack_has(stk, (uint32_t)nrhs)) {
+        uint8_t act = snap->ext_action[ruleno];
+        if (act == 2) {
+            keep = nrhs > 0; /* nrhs > 0 by construction */
+        } else if (act == 1) {
+            const LimeExtReduceBinding *ext_b = &snap->ext_reduce[ruleno];
+            ParseStackEntry *first_rhs = stk->top - nrhs;
+            if (!reduce_scratch_reserve(sc, (uint32_t)nrhs)) return -1;
+            for (int i = 0; i < nrhs; i++) {
+                sc->vbuf[i] = first_rhs[i].value;
+                sc->lbuf[i] = first_rhs[i].loc;
+            }
+            ext_b->reduce(ext_b->user_data, NULL, nrhs, nrhs > 0 ? sc->vbuf : NULL,
+                          nrhs > 0 ? sc->lbuf : NULL, &lhs_value);
+            if (nrhs > 0) lhs_loc = first_rhs[0].loc;
+        }
+    }
+    stack_pop_n(stk, (uint32_t)nrhs);
+    if (keep) lhs_value = stk->top->value;
+    if (stk->top == stk->base) {
+        if (out_start_value != NULL) *out_start_value = lhs_value;
+        return 1;
+    }
+    uint16_t next = find_reduce_action(snap, stk->top[-1].state, (uint16_t)lhs);
+    if (next == snap->yy_accept_action) {
+        if (out_start_value != NULL) *out_start_value = lhs_value;
+        return 1;
+    }
+    if (next == snap->yy_error_action || next == snap->yy_no_action) return -1;
+    uint16_t pushed = next;
+    if (pushed > snap->yy_max_shift && pushed <= snap->yy_max_shiftreduce)
+        pushed = (uint16_t)(pushed + (snap->yy_min_reduce - snap->yy_min_shiftreduce));
+    if (keep) {
+        /* we popped nrhs >= 1 entries: no capacity check needed */
+        stk->top->state = pushed;
+        stk->top->symbol = lhs;
+        stk->top++;
+        return 0;
+    }
+    if (!stack_push(stk, pushed, lhs)) return -1;
+    stk->top[-1].value = lhs_value;
+    stk->top[-1].loc = lhs_loc;
+    return 0;
+}
+
+/* `ext` is a compile-time constant (see step_body): false compiles to the
+** recognition / host_reduce reduce with no extension code at all. */
+PE_ALWAYS_INLINE int reduce(const ParserSnapshot * LIME_RESTRICT snap, ParseStack * LIME_RESTRICT stk,
                   uint32_t ruleno, LimeHostReduceFn host_reduce, void *host_user,
-                  void **out_start_value, ReduceScratch * LIME_RESTRICT sc) {
+                  void **out_start_value, ReduceScratch * LIME_RESTRICT sc, const bool ext) {
     if (snap->yy_rule_info_nrhs == NULL || snap->yy_rule_info_lhs == NULL) {
         return -1;
     }
@@ -225,47 +306,7 @@ static int reduce(const ParserSnapshot * LIME_RESTRICT snap, ParseStack * LIME_R
     void *lhs_value = NULL;
     int lhs_loc = 0;
 
-    /* Extension reduce bound on the snapshot itself (populated by
-    ** publish_modified_snapshot from MOD_ADD_RULE's `reduce`).  Fires
-    ** only when NO host_reduce is bound: a host that installs a
-    ** host_reduce (e.g. lime_host_reduce_router) owns dispatch for every
-    ** rule and has bound its extension callbacks itself, so running the
-    ** snapshot binding as well would execute the action twice.  Without
-    ** this, an extension rule's code never ran in the common case where
-    ** the embedder just calls parse_begin/parse_token on a composed
-    ** snapshot -- the syntax was accepted but the action was dead. */
-    const LimeExtReduceBinding *ext_b = NULL;
-    if (LIME_UNLIKELY(snap->ext_reduce != NULL) && host_reduce == NULL
-        && ruleno < snap->ext_reduce_count && snap->ext_reduce[ruleno].reduce != NULL
-        && (uint32_t)nrhs <= stack_depth(stk)) {
-        ext_b = &snap->ext_reduce[ruleno];
-    }
-    if (ext_b != NULL) {
-        if (!reduce_scratch_reserve(sc, (uint32_t)nrhs)) return -1;
-        void **vbuf = sc->vbuf;
-        int   *lbuf = sc->lbuf;
-        ParseStackEntry *first_rhs = stk->top - nrhs;
-        for (int i = 0; i < nrhs; i++) {
-            vbuf[i] = first_rhs[i].value;
-            lbuf[i] = first_rhs[i].loc;
-        }
-        ext_b->reduce(ext_b->user_data, NULL, nrhs, nrhs > 0 ? vbuf : NULL,
-                      nrhs > 0 ? lbuf : NULL, &lhs_value);
-        if (nrhs > 0) lhs_loc = first_rhs[0].loc;
-    } else if (LIME_UNLIKELY(snap->ext_reduce != NULL) && host_reduce == NULL && nrhs > 0
-               && (uint32_t)nrhs <= stack_depth(stk)) {
-        /* A rule with no action on a snapshot that carries extension
-        ** bindings: pass $1 through to $$, so an extension action's value
-        ** propagates up through base unit rules (e.g. program ::= expr) to
-        ** the accept instead of being overwritten by NULL.  Same default
-        ** lime_host_reduce_router applies to an unbound rule.  Gated on
-        ** ext_reduce so recognition-only snapshots are untouched. */
-        ParseStackEntry *first_rhs = stk->top - nrhs;
-        lhs_value = first_rhs[0].value;
-        lhs_loc = first_rhs[0].loc;
-    }
-
-    if (host_reduce != NULL && (uint32_t)nrhs <= stack_depth(stk)) {
+    if (host_reduce != NULL && stack_has(stk, (uint32_t)nrhs)) {
         if (!reduce_scratch_reserve(sc, (uint32_t)nrhs)) return -1;
         void **vbuf = sc->vbuf;
         int   *lbuf = sc->lbuf;
@@ -284,6 +325,12 @@ static int reduce(const ParserSnapshot * LIME_RESTRICT snap, ParseStack * LIME_R
         /* Default the LHS location to the leftmost RHS if the action
         ** didn't set one. */
         if (nrhs > 0 && lhs_loc == 0) lhs_loc = first_rhs[0].loc;
+    } else if (ext && host_reduce == NULL) {
+        /* Snapshot-bound extension reduces (publish_modified_snapshot)
+        ** run only when no host_reduce owns dispatch: a host_reduce such
+        ** as lime_host_reduce_router binds the extension callbacks itself,
+        ** so running both would execute the action twice. */
+        return ext_reduce(snap, stk, ruleno, out_start_value, sc);
     }
 
     stack_pop_n(stk, (uint32_t)nrhs);
@@ -673,6 +720,23 @@ int parse_engine_seed_stack(struct ParseContext *ctx, const uint16_t *states, co
 }
 
 /*
+** The step body, specialised on `ext` (a compile-time constant at both
+** call sites): false = a snapshot without extension bindings, whose
+** reduce has no extension code at all; true = ext_action != NULL and no
+** host_reduce, whose reduces go to ext_reduce().  Two separately optimised
+** bodies instead of a test inside a shared one: every layout of such a
+** test measured 3-5% on one path or the other.
+*/
+PE_ALWAYS_INLINE int step_body(struct ParseContext *ctx, ParserSnapshot *snap, int token_code,
+                               void *token_value, int location, const bool ext);
+
+PE_NOINLINE LIME_HOT
+static int step_ext(struct ParseContext *ctx, ParserSnapshot *snap, int token_code,
+                    void *token_value, int location) {
+    return step_body(ctx, snap, token_code, token_value, location, true);
+}
+
+/*
 ** parse_token implementation.  Returns:
 **   0  -- token consumed, parse continues
 **   1  -- end-of-input token (0) accepted, parse complete
@@ -713,6 +777,18 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
 
     ParserSnapshot *snap = ctx->snapshot;
 
+    /* The only extension test on the per-token path: after any context
+    ** swap above, so the body always matches the snapshot it drives.  A
+    ** session with a host_reduce never reads ext_action (the host owns
+    ** every reduce), so it takes the plain body: Xh costs what Bh does. */
+    if (LIME_UNLIKELY(snap->ext_action != NULL) && ctx->host_reduce == NULL
+        && snap->host_reduce == NULL)
+        return step_ext(ctx, snap, token_code, token_value, location);
+    return step_body(ctx, snap, token_code, token_value, location, false);
+}
+
+PE_ALWAYS_INLINE int step_body(struct ParseContext *ctx, ParserSnapshot *snap, int token_code,
+                               void *token_value, int location, const bool ext) {
     /* Letter 30: resolve the effective host-reduce hook -- a
     ** per-session override (parse_set_host_reduce) wins over the
     ** snapshot's bound hook. */
@@ -847,7 +923,7 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
             /* End-of-input shift means we're done if next reduce
             ** is the accept rule.  Treat as accept. */
             eng->accepted = true;
-            if ((eff_host_reduce || snap->ext_reduce) && ctx->result_value == NULL)
+            if ((eff_host_reduce || ext) && ctx->result_value == NULL)
                 ctx->result_value = stack_top_value(&eng->stack);
             return 1;
         }
@@ -886,17 +962,17 @@ int parse_engine_step(struct ParseContext *ctx, int token_code, void *token_valu
 
     do_accept:
         eng->accepted = true;
-        if ((eff_host_reduce || snap->ext_reduce) && ctx->result_value == NULL)
+        if ((eff_host_reduce || ext) && ctx->result_value == NULL)
             ctx->result_value = stack_top_value(&eng->stack);
         return 1;
 
     do_reduce:
         {
             int r = reduce(snap, &eng->stack, ruleno, eff_host_reduce,
-                           eff_host_user, &ctx->result_value, sc);
+                           eff_host_user, &ctx->result_value, sc, ext);
             if (r == 1) {
                 eng->accepted = true;
-                if ((eff_host_reduce || snap->ext_reduce) && ctx->result_value == NULL)
+                if ((eff_host_reduce || ext) && ctx->result_value == NULL)
                     ctx->result_value = stack_top_value(&eng->stack);
                 return token_code == 0 ? 1 : 0;
             }

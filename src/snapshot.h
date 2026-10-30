@@ -394,6 +394,17 @@ typedef struct ParserSnapshot {
     ** the parse tables, so a token code and its lexeme cannot disagree.
     ** NULL when the host set none.  Owned; freed by destroy_snapshot. */
     struct LimeLexicon *lexicon;
+
+    /* --- Per-rule extension action (compose-time, owned) -------------
+    ** ext_action[ruleno] when ext_reduce is non-NULL: 0 = no extension
+    ** work (exactly the recognition-only reduce), 1 = run
+    ** ext_reduce[ruleno], 2 = pass $1 through to $$ (an unbound rule
+    ** whose $1 can carry an extension-produced value up to the next
+    ** callback or the accept).  Set by publish_modified_snapshot together
+    ** with ext_reduce, never one without the other; points into the
+    ** ext_reduce allocation (freed with it).  Consulted by ext_reduce()
+    ** (parse_engine.c) only when no host_reduce is bound.  Appended. */
+    uint8_t *ext_action;
 } ParserSnapshot;
 
 /*

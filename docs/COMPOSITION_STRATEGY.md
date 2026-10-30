@@ -30,11 +30,11 @@ distinct:
    nothing in the pipeline replays known-good inputs to confirm the
    *resolution* didn't break something that used to work — see
    the two closing sections below.
-2. Composition today is order-dependent by construction: the base
+2. (Historical; fixed, see "Status" below.)  Composition was order-dependent by construction: the base
    snapshot is cloned and each loaded extension's modifications are
    applied one at a time in `load_extension()` call order
    (`create_modified_snapshot()` in `src/snapshot_modify.c`,
-   `publish_modified_snapshot()` in `src/extension.c`). The default
+   `publish_modified_snapshot()`, then in `src/extension.c`). The default
    conflict policy when no `on_conflict` callback is registered is
    `CONFLICT_KEEP_EXISTING` (`src/extension.h`,
    `docs/EXTENSIONS.md`'s "Extension ordering matters" section) —
@@ -76,8 +76,9 @@ in [COMPOSITION.md](COMPOSITION.md)'s "Performance" section:
 `rebuild_automaton()` today does validation and version-bumping,
 not a true LALR(1) recompute from a merged grammar (that is
 [ROADMAP.md](ROADMAP.md) item 1, "in-process LALR(1) automaton
-rebuild"); getting a fully rebuilt automaton in production today
-means forking `lime` + a C compiler subprocess. And `merge_rules()`
+rebuild"); a fully rebuilt automaton comes from
+`publish_modified_snapshot()`, which rebuilds the merged grammar in-process
+(there is no subprocess path any more). And `merge_rules()`
 in `src/parser_composition.c` currently only sums rule counts — it
 does not deep-copy rule content, because `struct rule` is opaque
 outside `lime.c` (a comment in the function says so directly).
@@ -133,9 +134,10 @@ substantially bigger project than this document is scoping.
 
 ### Land-before
 
-Tier 1's gate needs ROADMAP item 1 (in-process LALR rebuild) to be
-meaningful — without it, "prove zero new conflicts" has no ground
-truth to check against besides subprocess-rebuild round-trips.
+Tier 1's gate is now real for `publish_modified_snapshot()`: it builds
+the base alone and the composition in-process and fails on any conflict
+key the base does not have (see "The conflict gate and the policy"
+below).
 
 ## Tier 2 — Context-scoped sublanguage
 
@@ -376,8 +378,8 @@ typedef enum ConflictResolution {
 ```
 
 and the default-when-NULL behavior is implemented in
-`resolve_conflicts()` (`src/conflict.c`) and
-`publish_modified_snapshot()` (`src/extension.c`): both walk each
+`resolve_conflicts()` (`src/conflict.c`) and (formerly)
+`publish_modified_snapshot()`: both walk each
 unresolved `Conflict`, try `ext_a`'s `on_conflict` then `ext_b`'s,
 and — critically — **when neither extension supplies a callback at
 all, no `CONFLICT_KEEP_EXISTING` return value is even produced; the
@@ -500,6 +502,98 @@ actionable from reading the current code; sourcing and maintaining
 the corpus itself is a host-level policy question, not something
 this document is scoping.
 
+## Status: the conflict gate and the policy (implemented)
+
+Gap (a) and the "zero new conflicts" half of Tier 1 are now closed for
+`publish_modified_snapshot()`:
+
+- **Gate.**  The base is compiled alone once (its symbolic conflict keys
+  are cached per base text), then base+extensions with a hook in
+  `FindActions`.  Any key absent from the base must be resolved by the
+  host policy, or the compose fails.  The base's `%expect` never absorbs
+  it.  Measured with `tests/compose_fixtures/dialect_ext.lime`: +1 on
+  `examples/pg/pg_grammar.lime`, +219 on `examples/pg/gram.lime`
+  (`%expect 1665`); both fail by default (`tests/test_compose_conflict_
+  gate.c`, `lime --explain-compose`).
+- **Who wins** is the host's declarative policy (`include/lime_policy.h`,
+  [EXTENSIONS.md](EXTENSIONS.md#conflict-policy-who-wins)).  Extensions'
+  `on_conflict` answers are proposals, applied only under no policy or
+  `trust-extension-proposals`.  Equal ranks on a real conflict are an
+  error.  Composition is a function of (base, extension set, policy),
+  not of load order (`tests/test_compose_order.c`, both parts).
+- **Failure keeps the old snapshot**: there is no metadata-only
+  fallback (`tests/test_compose_failure_keeps_snapshot.c`).
+
+Gap (b), the regression-replay gate, is still open.
+
+### Zero runtime cost, measured
+
+`bench/bench_compose_zerocost` parses the PostgreSQL 18 regression
+corpus (230 files, 49,201 statements, 644,545 tokens; crude keyword
+tokenizer) through the public push parser.  It runs on a base snapshot
+(examples/pg/pg_grammar.lime) and on the same base composed with the
+30-rule dialect extension under the policy `conflict sr "upsert_cols
+::=" on LPAREN prefer shift.`.  Correctness first: identical per-
+statement accept/reject (47,327 accepted) in every configuration, an
+identical hash of the reduced rule-identity sequence (1,910,293 reduces),
+every base terminal keeps its code, and no extension callback fires on
+the base corpus.  CPU time, Xeon 8488C, pinned to one core with its SMT
+sibling idle, 21 rounds x 3 passes, configurations interleaved and
+rotated, median of per-round ratios, three runs on cores 12/13/14:
+
+| configuration | vs | ratio (3 runs) |
+|---|---|---|
+| base compiled twice (A/A noise floor) | base | 0.993, 0.978, 0.991 |
+| composed with the policy (lime_compose_text) | base | 0.991, 0.978, 0.993 |
+| composed with the policy (publish_modified_snapshot), no callbacks | base | 0.992, 0.982, 0.993 |
+| + MOD_ADD_RULE reduce callbacks bound (31 rules), no host_reduce | the same tables unbound | 0.999, 0.996, 1.003 |
+| + bound callbacks, with a pass-through host_reduce | base + the same host_reduce | 0.996, 0.982, 0.992 |
+
+Base: 47.4-49.5 ns per token.  The policy leaves nothing in the snapshot
+(the bound and unbound tables are hash-identical), and composing costs
+nothing: all within the A/A floor.
+
+Binding extension callbacks used to cost 3.9-5.5% in recognition mode.
+Every reduce probed the 16-byte `ext_reduce[]` entry (3.6k rules x 16 B
+does not fit L1), then copied `$1` through to `$$` and stored it on the
+push.  Now `publish_modified_snapshot()` precomputes `ext_action[ruleno]`
+(one byte: callback / passthrough / none, see REDUCE_DISPATCH.md).  The
+engine has two step bodies, compiled from one source with a constant
+`ext` flag: the plain one has no extension code at all, and the other's
+no-host_reduce reduces go to a separate `ext_reduce()`.
+`parse_engine_step()` picks one per token (`ext_action != NULL` and no
+host_reduce), with one predicted branch.  A passthrough leaves `$1`'s slot
+in place, since it is the slot the goto reuses.  The semantics are
+unchanged; every value an extension or the host could observe before is
+still observed (`tests/test_extension_value_passthrough.c`).
+
+Two traps on the way, both measured.  A single body that tests for
+extensions costs 3-5% on one path or another, depending on where the test
+sits, because of codegen and not extra work: deleting the old (dead)
+extension branches alone made recognition-only 1.5% slower.  And the stack
+depth, (top - base) in 24-byte entries, is a divide (sar + imul) on every
+reduce, in the chain the goto's loads wait on.  Comparing in bytes
+(`stack_has`) removed it, and the base got 3% faster.
+
+The same harness, before and after, as separate processes (one
+configuration per process, 21 corpus passes, CPU ms, builds interleaved
+and rotated, 7 iterations x 2 cores; "before" is the old engine, and a
+second build of it is the cross-build A/A floor):
+
+| configuration | before | old engine rebuilt (A/A) | after |
+|---|---:|---:|---:|
+| base, recognition | 1.000 | 0.998, 0.998 | 0.961, 0.959 |
+| base + host_reduce | 1.000 | 1.000, 1.002 | 0.947, 0.948 |
+| bound callbacks, recognition | 1.000 | 0.995, 1.001 | **0.916, 0.918** |
+| bound callbacks + host_reduce | 1.000 | 0.996, 1.000 | 0.938, 0.945 |
+
+`tests/test_pg_grammar` (`LIME_PG_BENCH=7`, 12 PG queries x 20000
+passes, base snapshot, recognition only), 11 rounds interleaved: old
+engine 107.8 ms, rebuilt 107.7 (A/A 0.999), after 105.8 (0.981).
+
+Bound callbacks in recognition mode went from +3.9-4.5% over the base to
+the base's own cost; every path is faster than the old engine.
+
 ## See also
 
 - [RELATED_WORK.md](RELATED_WORK.md) — how this compares to Marpa,
@@ -508,4 +602,4 @@ this document is scoping.
   [GLR.md](GLR.md), [CONTEXT_SWITCH.md](CONTEXT_SWITCH.md) — the
   existing mechanisms this proposal builds on.
 - [ROADMAP.md](ROADMAP.md) item 1 — the in-process LALR(1) rebuild
-  that both Tier 1 and Tier 3 depend on.
+  that both Tier 1 and Tier 3 depend on (done).

@@ -2620,6 +2620,17 @@ test_compose_proposals = executable('test_compose_proposals',
 )
 test('compose_proposals', test_compose_proposals)
 
+# Extension values climb through base unit rules in recognition mode
+# (ext_action[] passthrough): through 3 unit rules to parse_result, and
+# the leftmost token's value/loc reach an extension callback's $1.
+test_extension_value_passthrough = executable('test_extension_value_passthrough',
+  'test_extension_value_passthrough.c',
+  test_runtime_arith_gen,
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('extension_value_passthrough', test_extension_value_passthrough)
+
 # Per-rule action-body inlining classifier (src/rule_inline.c, used
 # by the Rust emitter).  Exercises rule_can_inline_text against a
 # corpus of representative rule bodies (empty, passthrough, simple
