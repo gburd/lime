@@ -1048,6 +1048,9 @@ struct lime {
   char *yacc_code_top;     /* Track D: %code top */
   char *yacc_code_requires;/* Track D: %code requires */
   char *yacc_code_provides;/* Track D: %code provides */
+  char *yacc_initial_action;/* Track D: %initial-action body */
+  int yacc_initial_line;
+  char *yacc_token_prefix; /* Track D: %define api.token.prefix */
   char *yystype_header;    /* %yystype_header "name.h": basename for the
                            ** standalone token-defines + YYSTYPE header
                            ** that a separately-generated lexer can
@@ -10383,7 +10386,14 @@ static void yacc_define(struct yacc_rd *r){
     *e = save; r->cp = e;
     { size_t n = strlen(val); while( n && ISSPACE(val[n-1]) ) val[--n] = 0; }
   }
-  if( strcmp(var,"api.pure")==0 ){
+  if( strcmp(var,"api.token.prefix")==0 ){
+    gp->yacc_token_prefix = val[0] ? (char*)Strsafe(val) : 0;
+  }else if( strcmp(var,"api.token.raw")==0 ){
+    /* Only renumbers tokens for a yylex() that returns the enum names,
+    ** which work either way. */
+  }else if( strcmp(var,"locations")==0 ){
+    gp->has_locations = 1;
+  }else if( strcmp(var,"api.pure")==0 ){
     gp->yacc_pure = strcmp(val,"false")!=0;
   }else if( strcmp(var,"api.prefix")==0 ){
     gp->yacc_prefix = (char*)Strsafe(val);
@@ -10393,13 +10403,12 @@ static void yacc_define(struct yacc_rd *r){
     gp->yacc_stype = (char*)Strsafe(val);
   }else if( strcmp(var,"parse.error")==0 || strcmp(var,"parse.trace")==0
             || strcmp(var,"api.header.include")==0 || strcmp(var,"parse.lac")==0
-            || (strcmp(var,"api.token.prefix")==0 && val[0]==0) ){
+            || strcmp(var,"parse.assert")==0 ){
     /* Accepted and ignored: Lime's messages are "syntax error". */
     if( strcmp(var,"parse.trace")==0 ) gp->yacc_debug = 1;
   }else{
-    char msg[400];
-    msg[0] = 0;
-    strncat(msg, var, 120); strcat(msg, " "); strncat(msg, val, 120);
+    char msg[sizeof(var) + sizeof(val) + 2];
+    lemon_strcpy(msg, var); lemon_strcat(msg, " "); lemon_strcat(msg, val);
     yacc_error(r, "%%define %s is not supported by Lime's yacc front end", msg);
   }
 }
@@ -10445,12 +10454,284 @@ static void yacc_add_code(struct yacc_rd *r, const char *q, const char *body,
   else if( strcmp(q,"top")==0 ) slot = &gp->yacc_code_top;
   else if( strcmp(q,"requires")==0 ) slot = &gp->yacc_code_requires;
   else if( strcmp(q,"provides")==0 ) slot = &gp->yacc_code_provides;
+  else if( strcmp(q,"pre-printer")==0 || strcmp(q,"post-printer")==0 ) return;
   else{
     yacc_error(r, "%%code %s is not supported by Lime's yacc front end", q);
     return;
   }
   if( !gp->nolinenosflag ) yacc_append_linedir(slot, line, r->filename);
   yacc_append(slot, body, strlen(body));
+}
+
+/* One %keyword declaration at r->cp (which points at the '%').  Used in
+** the declarations section and, as bison allows, between rules. */
+static void yacc_one_declaration(struct yacc_rd *r){
+  struct pstate *psp = r->psp;
+  struct lime *gp = psp->gp;
+  {
+    const char *kw, *tag;
+    int is_prec = 0;
+    enum e_assoc assoc = UNK;
+    r->cp++;
+    kw = yacc_directive(r);
+    if( strcmp(kw,"token")==0 ){
+      is_prec = 0;
+    }else if( strcmp(kw,"union")==0 ){
+      char *body;
+      yacc_skip_ws(r);
+      if( ISALPHA(*r->cp) || *r->cp=='_' ) (void)yacc_ident(r); /* tag name */
+      yacc_skip_ws(r);
+      if( *r->cp!='{' ){
+        yacc_error(r, "%s", "%union must be followed by { ... }");
+        return;
+      }
+      if( gp->union_body ){
+        yacc_error(r, "%s", "only one %union is supported");
+      }
+      body = yacc_scan_action(r);
+      if( body ){
+        gp->union_body = (char*)Strsafe(body);
+        lime_free(body);
+      }
+      return;
+    }else if( strcmp(kw,"type")==0 || strcmp(kw,"nterm")==0 ){
+      const char *tag;
+      yacc_skip_ws(r);
+      tag = yacc_tag(r);
+      for(;;){
+        struct symbol *sp;
+        yacc_skip_ws(r);
+        if( *r->cp=='\'' ){
+          sp = yacc_charlit(r);
+        }else if( *r->cp=='"' ){
+          const char *al = yacc_string(r);
+          sp = al ? yacc_alias_sym(r, al) : 0;
+        }else if( ISALPHA(*r->cp) || *r->cp=='_' ){
+          sp = yacc_symbol(yacc_ident(r), 0);
+        }else if( *r->cp=='<' ){
+          tag = yacc_tag(r);
+          continue;
+        }else break;
+        if( sp && tag ) yacc_set_tag(r, sp, tag);
+      }
+      return;
+    }else if( strcmp(kw,"code")==0 ){
+      /* %code [top|requires|provides|imports] { ... } */
+      const char *q = 0;
+      char *body;
+      yacc_skip_ws(r);
+      if( ISALPHA(*r->cp) ){ q = yacc_directive(r); yacc_skip_ws(r); }
+      if( *r->cp!='{' ){
+        yacc_error(r, "%s", "%code must be followed by { ... }");
+        return;
+      }
+      {
+        int line = r->lineno;
+        body = yacc_scan_action(r);
+        if( body==0 ) return;
+        yacc_add_code(r, q, body, line);
+        lime_free(body);
+      }
+      return;
+    }else if( strcmp(kw,"printer")==0 || strcmp(kw,"destructor")==0 ){
+      /* shortcut: %printer/%destructor are accepted and ignored (traces
+      ** print no values; values are not freed on error recovery). */
+      char *body;
+      yacc_skip_ws(r);
+      if( *r->cp=='{' ){ body = yacc_scan_action(r); lime_free(body); }
+      while( *r->cp && *r->cp!='\n' && *r->cp!=';' && *r->cp!='%' ) r->cp++;
+      if( *r->cp==';' ) r->cp++;
+      return;
+    }else if( strcmp(kw,"precedence")==0 ){
+      /* bison's %precedence: a level with no associativity.  Lime's
+      ** NONE turns a same-level shift/reduce into an error, which only
+      ** differs from bison where bison would report a conflict. */
+      is_prec = 1; assoc = NONE;
+    }else if( strcmp(kw,"require")==0 || strcmp(kw,"language")==0
+              || strcmp(kw,"skeleton")==0 || strcmp(kw,"file-prefix")==0
+              || strcmp(kw,"output")==0 || strcmp(kw,"error-verbose")==0 ){
+      /* %require "3.7" (we are bison-3.8-compatible); %language "c";
+      ** the rest are output options.  %skeleton other than yacc.c
+      ** cannot be honoured. */
+      const char *v = 0;
+      yacc_skip_ws(r);
+      if( *r->cp=='=' ){ r->cp++; yacc_skip_ws(r); }
+      if( *r->cp=='"' ) v = yacc_string(r);
+      if( strcmp(kw,"language")==0 && v && strcmp(v,"\"c\"")!=0 && strcmp(v,"\"C\"")!=0 ){
+        yacc_error(r, "%%language %s is not supported: Lime's yacc front end "
+                   "generates C", v);
+      }
+      if( strcmp(kw,"skeleton")==0 && v && strcmp(v,"\"yacc.c\"")!=0 ){
+        yacc_error(r, "%%skeleton %s is not supported by Lime's yacc front end", v);
+      }
+      return;
+    }else if( strcmp(kw,"initial-action")==0 ){
+      char *body;
+      int line;
+      yacc_skip_ws(r);
+      line = r->lineno;
+      if( *r->cp!='{' ){ yacc_error(r, "%s", "%initial-action needs { ... }"); return; }
+      body = yacc_scan_action(r);
+      if( body ){
+        gp->yacc_initial_action = (char*)Strsafe(body);
+        gp->yacc_initial_line = line;
+        lime_free(body);
+      }
+      return;
+    }else if( strcmp(kw,"default-prec")==0 || strcmp(kw,"no-default-prec")==0 ){
+      if( kw[0]=='n' ){
+        yacc_error(r, "%s", "%no-default-prec is not supported by Lime's "
+                   "yacc front end");
+      }
+      return;
+    }else if( strcmp(kw,"yacc")==0 ){
+      g_yacc_defines_mode = 1;
+      return;
+    }else if( strcmp(kw,"verbose")==0 || strcmp(kw,"token-table")==0
+              || strcmp(kw,"no-lines")==0
+              || strcmp(kw,"defines")==0 || strcmp(kw,"header")==0 ){
+      /* Accepted: output options that the yacc CLI also takes. */
+      if( strcmp(kw,"no-lines")==0 ) gp->nolinenosflag = 1;
+      if( (strcmp(kw,"defines")==0 || strcmp(kw,"header")==0) ) g_yacc_defines = 1;
+      return;
+    }else if( strcmp(kw,"left")==0 ){
+      is_prec = 1; assoc = LEFT;
+    }else if( strcmp(kw,"right")==0 ){
+      is_prec = 1; assoc = RIGHT;
+    }else if( strcmp(kw,"nonassoc")==0 ){
+      is_prec = 1; assoc = NONE;
+    }else if( strcmp(kw,"start")==0 ){
+      yacc_skip_ws(r);
+      gp->start = (char*)yacc_ident(r);
+      return;
+    }else if( strcmp(kw,"expect")==0 || strcmp(kw,"expect-rr")==0 ){
+      int n;
+      yacc_skip_ws(r);
+      if( !ISDIGIT(*r->cp) ){
+        yacc_error(r, "%%%s needs a number", kw);
+        return;
+      }
+      n = (int)strtol(r->cp, &r->cp, 10);
+      if( kw[6]=='-' ) gp->yacc_expect_rr = n; else gp->nexpect = n;
+      return;
+    }else if( strcmp(kw,"pure-parser")==0 ){
+      gp->yacc_pure = 1;
+      return;
+    }else if( strcmp(kw,"name-prefix")==0 ){
+      /* %name-prefix "p", %name-prefix="p" or %name-prefix p */
+      yacc_skip_ws(r);
+      if( *r->cp=='=' ){ r->cp++; yacc_skip_ws(r); }
+      if( *r->cp=='"' ){
+        const char *q = yacc_string(r);
+        if( q ){
+          char *z = (char*)Strsafe(q + 1);
+          gp->yacc_prefix = (char*)lime_malloc(strlen(z));
+          MemoryCheck(gp->yacc_prefix);
+          memcpy(gp->yacc_prefix, z, strlen(z) - 1);
+          gp->yacc_prefix[strlen(z) - 1] = 0;
+        }
+      }else{
+        gp->yacc_prefix = (char*)yacc_ident(r);
+      }
+      return;
+    }else if( strcmp(kw,"parse-param")==0 || strcmp(kw,"lex-param")==0
+              || strcmp(kw,"param")==0 ){
+      /* One or more { decl } groups. */
+      for(;;){
+        char *body;
+        yacc_skip_ws(r);
+        if( *r->cp!='{' ) break;
+        body = yacc_scan_action(r);
+        if( body==0 ) break;
+        if( kw[0]=='p' && kw[1]=='a' && kw[2]=='r' && kw[5]=='-' ){
+          yacc_add_param(r, &gp->yacc_parse_params, &gp->yacc_parse_names, body);
+        }else if( kw[0]=='l' ){
+          yacc_add_param(r, &gp->yacc_lex_params, &gp->yacc_lex_names, body);
+        }else{
+          yacc_add_param(r, &gp->yacc_parse_params, &gp->yacc_parse_names, body);
+          yacc_add_param(r, &gp->yacc_lex_params, &gp->yacc_lex_names, body);
+        }
+        lime_free(body);
+      }
+      return;
+    }else if( strcmp(kw,"locations")==0 ){
+      gp->has_locations = 1;
+      return;
+    }else if( strcmp(kw,"define")==0 ){
+      yacc_define(r);
+      return;
+    }else if( strcmp(kw,"debug")==0 ){
+      gp->yacc_debug = 1;
+      return;
+    }else if( strcmp(kw,"glr-parser")==0 ){
+      yacc_error(r, "%s", "%glr-parser is not supported: Lime generates "
+                 "LALR(1) parsers (a separate glr_parse() API exists, see "
+                 "docs/GLR.md)");
+      while( *r->cp && *r->cp!='\n' ) r->cp++;
+      return;
+    }else{
+      yacc_error(r, "yacc declaration \"%%%s\" is not supported by "
+                 "Lime's yacc front end yet", kw);
+      /* Skip to end of line so one bad directive is one error. */
+      while( *r->cp && *r->cp!='\n' ) r->cp++;
+      return;
+    }
+    if( is_prec ) psp->preccounter++;
+    yacc_skip_ws(r);
+    tag = yacc_tag(r);
+    /* Symbol list: stops at the next '%' or end of line run. */
+    for(;;){
+      yacc_skip_ws(r);
+      if( *r->cp=='<' ){ tag = yacc_tag(r); continue; }
+      if( ISALPHA(*r->cp) || *r->cp=='_' || *r->cp=='\'' || *r->cp=='"' ){
+        struct symbol *sp;
+        if( *r->cp=='\'' ){
+          sp = yacc_charlit(r);
+          if( sp==0 ) continue;
+        }else if( *r->cp=='"' ){
+          const char *al = yacc_string(r);
+          sp = al ? yacc_alias_sym(r, al) : 0;
+          if( sp==0 ) continue;
+        }else{
+          sp = yacc_token(r, yacc_symbol(yacc_ident(r), 1));
+        }
+        yacc_skip_ws(r);
+        if( ISDIGIT(*r->cp) ){
+          /* %token NAME 300: an explicit external code. */
+          sp->yacc_code = (int)strtol(r->cp, &r->cp, 10);
+        }
+        if( tag ) yacc_set_tag(r, sp, tag);
+        yacc_skip_ws(r);
+        if( !is_prec && r->cp[0]=='_' && r->cp[1]=='(' ){
+          /* _("str"): an alias marked for translation (bison). */
+          char *save = r->cp;
+          r->cp += 2;
+          yacc_skip_ws(r);
+          if( *r->cp=='"' ){
+            const char *al = yacc_string(r);
+            yacc_skip_ws(r);
+            if( al && *r->cp==')' ){ r->cp++; yacc_add_alias(r, al, sp); }
+            else r->cp = save;
+          }else r->cp = save;
+        }else if( *r->cp=='"' && !is_prec ){
+          const char *al = yacc_string(r);
+          if( al ) yacc_add_alias(r, al, sp);
+        }
+        if( is_prec ){
+          if( sp->prec>=0 ){
+            yacc_error(r, "Symbol \"%s\" has already been given a "
+                       "precedence.", sp->name);
+          }else{
+            sp->prec = psp->preccounter;
+            sp->assoc = assoc;
+          }
+        }
+        continue;
+      }
+      break;
+    }
+    return;
+  }
 }
 
 static void yacc_declarations(struct yacc_rd *r, char *buf){
@@ -10485,221 +10766,10 @@ static void yacc_declarations(struct yacc_rd *r, char *buf){
       continue;
     }
     if( r->cp[0]=='%' && ISALPHA(r->cp[1]) ){
-      const char *kw, *tag;
-      int is_prec = 0;
-      enum e_assoc assoc = UNK;
-      r->cp++;
-      kw = yacc_directive(r);
-      if( strcmp(kw,"token")==0 ){
-        is_prec = 0;
-      }else if( strcmp(kw,"union")==0 ){
-        char *body;
-        yacc_skip_ws(r);
-        if( ISALPHA(*r->cp) || *r->cp=='_' ) (void)yacc_ident(r); /* tag name */
-        yacc_skip_ws(r);
-        if( *r->cp!='{' ){
-          yacc_error(r, "%s", "%union must be followed by { ... }");
-          continue;
-        }
-        if( gp->union_body ){
-          yacc_error(r, "%s", "only one %union is supported");
-        }
-        body = yacc_scan_action(r);
-        if( body ){
-          gp->union_body = (char*)Strsafe(body);
-          lime_free(body);
-        }
-        continue;
-      }else if( strcmp(kw,"type")==0 || strcmp(kw,"nterm")==0 ){
-        const char *tag;
-        yacc_skip_ws(r);
-        tag = yacc_tag(r);
-        for(;;){
-          struct symbol *sp;
-          yacc_skip_ws(r);
-          if( *r->cp=='\'' ){
-            sp = yacc_charlit(r);
-          }else if( *r->cp=='"' ){
-            const char *al = yacc_string(r);
-            sp = al ? yacc_alias_sym(r, al) : 0;
-          }else if( ISALPHA(*r->cp) || *r->cp=='_' ){
-            sp = yacc_symbol(yacc_ident(r), 0);
-          }else if( *r->cp=='<' ){
-            tag = yacc_tag(r);
-            continue;
-          }else break;
-          if( sp && tag ) yacc_set_tag(r, sp, tag);
-        }
-        continue;
-      }else if( strcmp(kw,"code")==0 ){
-        /* %code [top|requires|provides|imports] { ... } */
-        const char *q = 0;
-        char *body;
-        yacc_skip_ws(r);
-        if( ISALPHA(*r->cp) ){ q = yacc_ident(r); yacc_skip_ws(r); }
-        if( *r->cp!='{' ){
-          yacc_error(r, "%s", "%code must be followed by { ... }");
-          continue;
-        }
-        {
-          int line = r->lineno;
-          body = yacc_scan_action(r);
-          if( body==0 ) continue;
-          yacc_add_code(r, q, body, line);
-          lime_free(body);
-        }
-        continue;
-      }else if( strcmp(kw,"printer")==0 || strcmp(kw,"destructor")==0 ){
-        /* shortcut: %printer/%destructor are accepted and ignored (traces
-        ** print no values; values are not freed on error recovery). */
-        char *body;
-        yacc_skip_ws(r);
-        if( *r->cp=='{' ){ body = yacc_scan_action(r); lime_free(body); }
-        while( *r->cp && *r->cp!='\n' && *r->cp!=';' && *r->cp!='%' ) r->cp++;
-        if( *r->cp==';' ) r->cp++;
-        continue;
-      }else if( strcmp(kw,"precedence")==0 ){
-        /* bison's %precedence: a level with no associativity.  Lime's
-        ** NONE turns a same-level shift/reduce into an error, which only
-        ** differs from bison where bison would report a conflict. */
-        is_prec = 1; assoc = NONE;
-      }else if( strcmp(kw,"yacc")==0 ){
-        g_yacc_defines_mode = 1;
-        continue;
-      }else if( strcmp(kw,"verbose")==0 || strcmp(kw,"token-table")==0
-                || strcmp(kw,"no-lines")==0
-                || strcmp(kw,"defines")==0 || strcmp(kw,"header")==0 ){
-        /* Accepted: output options that the yacc CLI also takes. */
-        if( strcmp(kw,"no-lines")==0 ) gp->nolinenosflag = 1;
-        if( (strcmp(kw,"defines")==0 || strcmp(kw,"header")==0) ) g_yacc_defines = 1;
-        continue;
-      }else if( strcmp(kw,"left")==0 ){
-        is_prec = 1; assoc = LEFT;
-      }else if( strcmp(kw,"right")==0 ){
-        is_prec = 1; assoc = RIGHT;
-      }else if( strcmp(kw,"nonassoc")==0 ){
-        is_prec = 1; assoc = NONE;
-      }else if( strcmp(kw,"start")==0 ){
-        yacc_skip_ws(r);
-        gp->start = (char*)yacc_ident(r);
-        continue;
-      }else if( strcmp(kw,"expect")==0 || strcmp(kw,"expect-rr")==0 ){
-        int n;
-        yacc_skip_ws(r);
-        if( !ISDIGIT(*r->cp) ){
-          yacc_error(r, "%%%s needs a number", kw);
-          continue;
-        }
-        n = (int)strtol(r->cp, &r->cp, 10);
-        if( kw[6]=='-' ) gp->yacc_expect_rr = n; else gp->nexpect = n;
-        continue;
-      }else if( strcmp(kw,"pure-parser")==0 ){
-        gp->yacc_pure = 1;
-        continue;
-      }else if( strcmp(kw,"name-prefix")==0 ){
-        /* %name-prefix "p", %name-prefix="p" or %name-prefix p */
-        yacc_skip_ws(r);
-        if( *r->cp=='=' ){ r->cp++; yacc_skip_ws(r); }
-        if( *r->cp=='"' ){
-          const char *q = yacc_string(r);
-          if( q ){
-            char *z = (char*)Strsafe(q + 1);
-            gp->yacc_prefix = (char*)lime_malloc(strlen(z));
-            MemoryCheck(gp->yacc_prefix);
-            memcpy(gp->yacc_prefix, z, strlen(z) - 1);
-            gp->yacc_prefix[strlen(z) - 1] = 0;
-          }
-        }else{
-          gp->yacc_prefix = (char*)yacc_ident(r);
-        }
-        continue;
-      }else if( strcmp(kw,"parse-param")==0 || strcmp(kw,"lex-param")==0
-                || strcmp(kw,"param")==0 ){
-        /* One or more { decl } groups. */
-        for(;;){
-          char *body;
-          yacc_skip_ws(r);
-          if( *r->cp!='{' ) break;
-          body = yacc_scan_action(r);
-          if( body==0 ) break;
-          if( kw[0]=='p' && kw[1]=='a' && kw[2]=='r' && kw[5]=='-' ){
-            yacc_add_param(r, &gp->yacc_parse_params, &gp->yacc_parse_names, body);
-          }else if( kw[0]=='l' ){
-            yacc_add_param(r, &gp->yacc_lex_params, &gp->yacc_lex_names, body);
-          }else{
-            yacc_add_param(r, &gp->yacc_parse_params, &gp->yacc_parse_names, body);
-            yacc_add_param(r, &gp->yacc_lex_params, &gp->yacc_lex_names, body);
-          }
-          lime_free(body);
-        }
-        continue;
-      }else if( strcmp(kw,"locations")==0 ){
-        gp->has_locations = 1;
-        continue;
-      }else if( strcmp(kw,"define")==0 ){
-        yacc_define(r);
-        continue;
-      }else if( strcmp(kw,"debug")==0 ){
-        gp->yacc_debug = 1;
-        continue;
-      }else if( strcmp(kw,"glr-parser")==0 ){
-        yacc_error(r, "%s", "%glr-parser is not supported: Lime generates "
-                   "LALR(1) parsers (a separate glr_parse() API exists, see "
-                   "docs/GLR.md)");
-        while( *r->cp && *r->cp!='\n' ) r->cp++;
-        continue;
-      }else{
-        yacc_error(r, "yacc declaration \"%%%s\" is not supported by "
-                   "Lime's yacc front end yet", kw);
-        /* Skip to end of line so one bad directive is one error. */
-        while( *r->cp && *r->cp!='\n' ) r->cp++;
-        continue;
-      }
-      if( is_prec ) psp->preccounter++;
-      yacc_skip_ws(r);
-      tag = yacc_tag(r);
-      /* Symbol list: stops at the next '%' or end of line run. */
-      for(;;){
-        yacc_skip_ws(r);
-        if( *r->cp=='<' ){ tag = yacc_tag(r); continue; }
-        if( ISALPHA(*r->cp) || *r->cp=='_' || *r->cp=='\'' || *r->cp=='"' ){
-          struct symbol *sp;
-          if( *r->cp=='\'' ){
-            sp = yacc_charlit(r);
-            if( sp==0 ) continue;
-          }else if( *r->cp=='"' ){
-            const char *al = yacc_string(r);
-            sp = al ? yacc_alias_sym(r, al) : 0;
-            if( sp==0 ) continue;
-          }else{
-            sp = yacc_token(r, yacc_symbol(yacc_ident(r), 1));
-          }
-          yacc_skip_ws(r);
-          if( ISDIGIT(*r->cp) ){
-            /* %token NAME 300: an explicit external code. */
-            sp->yacc_code = (int)strtol(r->cp, &r->cp, 10);
-          }
-          if( tag ) yacc_set_tag(r, sp, tag);
-          yacc_skip_ws(r);
-          if( *r->cp=='"' && !is_prec ){
-            const char *al = yacc_string(r);
-            if( al ) yacc_add_alias(r, al, sp);
-          }
-          if( is_prec ){
-            if( sp->prec>=0 ){
-              yacc_error(r, "Symbol \"%s\" has already been given a "
-                         "precedence.", sp->name);
-            }else{
-              sp->prec = psp->preccounter;
-              sp->assoc = assoc;
-            }
-          }
-          continue;
-        }
-        break;
-      }
+      yacc_one_declaration(r);
       continue;
     }
+    if( *r->cp==';' ){ r->cp++; continue; }  /* bison allows `%token X;` */
     {
       char bad[2] = { *r->cp, 0 };
       yacc_error(r, "unexpected \"%s\" in the yacc declarations section",
@@ -10869,8 +10939,9 @@ static char *yacc_translate(struct yacc_rd *r, const char *body, int line,
         continue;
       }
       if( c=='$' && (ISALPHA(*q) || *q=='_' || *q=='[') ){
-        ErrorMsg(r->filename, line, "named reference \"$%c...\" is not "
-                 "supported by Lime's yacc front end yet; use $N", *q);
+        /* yacc_named_refs() rewrote every resolvable one already. */
+        ErrorMsg(r->filename, line, "named reference \"$%c...\" names no "
+                 "symbol (or more than one) in a rule for \"%s\"", *q, lhs->name);
         r->psp->errorcnt++;
       }
     }
@@ -10919,11 +10990,88 @@ static void yacc_commit_rule(struct yacc_rd *r, struct symbol *lhs,
   psp->prevrule = rp;
 }
 
+/* bison named references: rewrite $name / $[name] / @name / @[name]
+** (outside strings and comments) to $$ / $N.  A name is the LHS (or its
+** [alias]), an explicit sym[alias], or a symbol that occurs once among
+** the first m.  Unresolved names are left for yacc_translate to report. */
+static char *yacc_named_refs(const char *body, struct symbol *lhs,
+                             const char *lhsalias, struct symbol **rhs,
+                             const char **alias, int m){
+  const char *p = body;
+  char *out = 0;
+  size_t n = 0, cap = strlen(body) + 64;
+  out = (char*)lime_malloc(cap); MemoryCheck(out);
+#define YNR_PUT(z,len) do{ size_t l_=(len); if( n+l_+1>cap ){ cap = (n+l_+1)*2; \
+    out = (char*)lime_realloc(out, cap); MemoryCheck(out); } memcpy(out+n,(z),l_); n += l_; }while(0)
+  while( *p ){
+    char c = *p;
+    if( c=='"' || c=='\'' ){
+      const char *q = p + 1;
+      while( *q && *q!=c ){ if( *q=='\\' && q[1] ) q++; q++; }
+      if( *q ) q++;
+      YNR_PUT(p, (size_t)(q - p)); p = q; continue;
+    }
+    if( c=='/' && (p[1]=='*' || p[1]=='/') ){
+      const char *q = p[1]=='*' ? strstr(p + 2, "*/") : strchr(p, '\n');
+      q = q ? (p[1]=='*' ? q + 2 : q) : p + strlen(p);
+      YNR_PUT(p, (size_t)(q - p)); p = q; continue;
+    }
+    if( (c=='$' || c=='@') && p[1] ){
+      const char *q = p + 1, *tag = 0, *nb, *ne, *after;
+      int taglen = 0;
+      if( c=='$' && *q=='<' ){
+        const char *e = strchr(q, '>');
+        if( e ){ tag = q; taglen = (int)(e - q) + 1; q = e + 1; }
+      }
+      if( ISALPHA(*q) || *q=='_' || *q=='[' ){
+        char nm[128];
+        int k = -1, i, hits = 0;
+        if( *q=='[' ){
+          nb = q + 1; ne = strchr(nb, ']');
+          if( ne==0 ){ YNR_PUT(p, 1); p++; continue; }
+          after = ne + 1;
+        }else{
+          nb = q; ne = q;
+          while( ISALNUM(*ne) || *ne=='_' ) ne++;
+          after = ne;
+        }
+        if( ne - nb < (int)sizeof(nm) ){
+          memcpy(nm, nb, (size_t)(ne - nb)); nm[ne - nb] = 0;
+          if( lhsalias ? strcmp(nm, lhsalias)==0 : strcmp(nm, lhs->name)==0 ){
+            k = 0; hits = 1;
+          }
+          for(i=0; i<m; i++){
+            if( alias[i] ? strcmp(alias[i], nm)==0 : strcmp(rhs[i]->name, nm)==0 ){
+              if( k!=0 ) k = i + 1;
+              hits++;
+            }
+          }
+          if( hits==1 ){
+            char buf[24];
+            YNR_PUT(&c, 1);
+            if( tag ) YNR_PUT(tag, (size_t)taglen);
+            if( k==0 ) lemon_strcpy(buf, "$"); else lemon_sprintf(buf, "%d", k);
+            YNR_PUT(buf, strlen(buf));
+            p = after;
+            continue;
+          }
+        }
+      }
+    }
+    YNR_PUT(p, 1); p++;
+  }
+#undef YNR_PUT
+  out[n] = 0;
+  return out;
+}
+
 /* One alternative being read.  An action is held in `act` until the
 ** next item shows whether it is the final action or a mid-rule one. */
 struct yacc_alt {
   struct symbol *lhs;
+  const char *lhsalias;          /* lhs[alias], or NULL */
   struct symbol *rhs[MAXRHS];
+  const char *alias[MAXRHS];     /* sym[alias], or NULL */
   int nrhs;
   char *act;            /* Pending action body, or NULL */
   int actline;
@@ -10936,9 +11084,12 @@ struct yacc_alt {
 ** without $$ the slot already holds $1. */
 static void yacc_set_action(struct yacc_rd *r, struct rule *rp,
                             const char *body, int line,
-                            struct symbol **ctx, int m){
+                            struct symbol **ctx, const char **ctxalias,
+                            const char *lhsalias, int m){
   int uses_lhs = 0;
-  char *code = yacc_translate(r, body, line, rp->lhs, ctx, m, &uses_lhs);
+  char *nr = yacc_named_refs(body, rp->lhs, lhsalias, ctx, ctxalias, m);
+  char *code = yacc_translate(r, nr, line, rp->lhs, ctx, m, &uses_lhs);
+  lime_free(nr);
   if( uses_lhs ){
     char pre[80], post[80];
     int n = rp->nrhs;
@@ -10956,6 +11107,50 @@ static void yacc_set_action(struct yacc_rd *r, struct rule *rp,
   rp->noCode = 0;
 }
 
+/* Actions are translated after the whole grammar is read: a %type
+** may come after the rules that use the symbol (bison allows %type in
+** the rules section).  Each deferred action keeps its context. */
+struct yacc_pending {
+  struct rule *rp;
+  char *body;
+  int line, m;
+  struct symbol **ctx;
+  const char **ctxalias;
+  const char *lhsalias;
+  struct yacc_pending *next;
+};
+static struct yacc_pending *yacc_pend_head = 0, **yacc_pend_tail = &yacc_pend_head;
+static void yacc_defer_action(struct rule *rp, const char *body, int line,
+                              struct symbol **ctx, const char **ctxalias,
+                              const char *lhsalias, int m){
+  struct yacc_pending *y = (struct yacc_pending*)lime_calloc(1, sizeof(*y));
+  MemoryCheck(y);
+  y->rp = rp; y->line = line; y->m = m; y->lhsalias = lhsalias;
+  y->body = (char*)lime_malloc(strlen(body) + 1); MemoryCheck(y->body);
+  lemon_strcpy(y->body, body);
+  if( m>0 ){
+    y->ctx = (struct symbol**)lime_malloc(sizeof(y->ctx[0])*m);
+    y->ctxalias = (const char**)lime_malloc(sizeof(y->ctxalias[0])*m);
+    MemoryCheck(y->ctx); MemoryCheck(y->ctxalias);
+    memcpy(y->ctx, ctx, sizeof(y->ctx[0])*m);
+    memcpy(y->ctxalias, ctxalias, sizeof(y->ctxalias[0])*m);
+  }
+  *yacc_pend_tail = y;
+  yacc_pend_tail = &y->next;
+  rp->noCode = 0;
+}
+static void yacc_translate_pending(struct yacc_rd *r){
+  struct yacc_pending *y, *nx;
+  for(y=yacc_pend_head; y; y=nx){
+    nx = y->next;
+    yacc_set_action(r, y->rp, y->body, y->line, y->ctx, y->ctxalias,
+                    y->lhsalias, y->m);
+    lime_free(y->body); lime_free(y->ctx); lime_free(y->ctxalias); lime_free(y);
+  }
+  yacc_pend_head = 0;
+  yacc_pend_tail = &yacc_pend_head;
+}
+
 /* A pending action followed by more symbols is a mid-rule action:
 ** bison turns it into `$@N : %empty { action }` and puts $@N here. */
 static void yacc_flush_midrule(struct yacc_rd *r, struct yacc_alt *a){
@@ -10967,7 +11162,8 @@ static void yacc_flush_midrule(struct yacc_rd *r, struct yacc_alt *a){
   mid = yacc_symbol(name, 0);
   mid->union_field = 0;
   yacc_commit_rule(r, mid, 0, 0, a->actline);
-  yacc_set_action(r, r->psp->prevrule, a->act, a->actline, a->rhs, a->nrhs);
+  yacc_defer_action(r->psp->prevrule, a->act, a->actline, a->rhs, a->alias,
+                    "$", a->nrhs);
   lime_free(a->act);
   a->act = 0;
   if( a->nrhs>=MAXRHS ){
@@ -10975,6 +11171,7 @@ static void yacc_flush_midrule(struct yacc_rd *r, struct yacc_alt *a){
                "\"%s\"", a->lhs->name);
     return;
   }
+  a->alias[a->nrhs] = 0;
   a->rhs[a->nrhs++] = mid;
 }
 
@@ -10984,10 +11181,25 @@ static void yacc_finish_alt(struct yacc_rd *r, struct yacc_alt *a){
   rp = r->psp->prevrule;
   rp->precsym = a->prec;
   if( a->act ){
-    yacc_set_action(r, rp, a->act, a->actline, a->rhs, a->nrhs);
+    yacc_defer_action(rp, a->act, a->actline, a->rhs, a->alias, a->lhsalias,
+                      a->nrhs);
     lime_free(a->act);
     a->act = 0;
   }
+}
+
+/* bison's `sym[alias]` (no space before '['). */
+static const char *yacc_bracket_alias(struct yacc_rd *r){
+  char *e, save;
+  const char *res;
+  if( *r->cp!='[' ) return 0;
+  e = strchr(r->cp + 1, ']');
+  if( e==0 || memchr(r->cp, '\n', (size_t)(e - r->cp)) ) return 0;
+  save = *e; *e = 0;
+  res = Strsafe(r->cp + 1);
+  *e = save;
+  r->cp = e + 1;
+  return res;
 }
 
 static void yacc_rules(struct yacc_rd *r){
@@ -10995,9 +11207,16 @@ static void yacc_rules(struct yacc_rd *r){
   struct yacc_alt alt;
   for(;;){
     struct symbol *lhs;
+    const char *lhsalias;
     yacc_skip_ws(r);
     if( *r->cp==0 ) return;
     if( r->cp[0]=='%' && r->cp[1]=='%' ){ r->cp += 2; return; }
+    if( r->cp[0]=='%' && ISALPHA(r->cp[1]) ){
+      /* bison: declarations may appear between rules too. */
+      yacc_one_declaration(r);
+      continue;
+    }
+    if( *r->cp==';' ){ r->cp++; continue; }
     if( !(ISALPHA(*r->cp) || *r->cp=='_') ){
       char bad[2] = { *r->cp, 0 };
       yacc_error(r, "expected a rule name, saw \"%s\"", bad);
@@ -11011,6 +11230,8 @@ static void yacc_rules(struct yacc_rd *r){
     }
     if( psp->gp->start==0 ) psp->gp->start = (char*)lhs->name;
     yacc_skip_ws(r);
+    lhsalias = yacc_bracket_alias(r);
+    yacc_skip_ws(r);
     if( *r->cp!=':' ){
       yacc_error(r, "expected \":\" after the rule name \"%s\"", lhs->name);
       continue;
@@ -11021,13 +11242,15 @@ static void yacc_rules(struct yacc_rd *r){
     for(;;){
       memset(&alt, 0, sizeof(alt));
       alt.lhs = lhs;
+      alt.lhsalias = lhsalias;
       alt.line = r->lineno;
       for(;;){
         yacc_skip_ws(r);
         if( ISALPHA(*r->cp) || *r->cp=='_' ){
           char *save = r->cp;
           int saveline = r->lineno;
-          const char *name = yacc_ident(r);
+          const char *name = yacc_ident(r), *al;
+          al = yacc_bracket_alias(r);
           yacc_skip_ws(r);
           if( *r->cp==':' ){
             /* `name :` starts the next rule: this alternative ended
@@ -11041,6 +11264,7 @@ static void yacc_rules(struct yacc_rd *r){
             yacc_error(r, "too many symbols on the right-hand side of a "
                        "rule for \"%s\"", lhs->name);
           }else{
+            alt.alias[alt.nrhs] = al;
             alt.rhs[alt.nrhs++] = yacc_symbol(name, 0);
           }
           continue;
@@ -11059,6 +11283,7 @@ static void yacc_rules(struct yacc_rd *r){
             yacc_error(r, "too many symbols on the right-hand side of a "
                        "rule for \"%s\"", lhs->name);
           }else{
+            alt.alias[alt.nrhs] = yacc_bracket_alias(r);
             alt.rhs[alt.nrhs++] = sp;
           }
           continue;
@@ -11149,6 +11374,7 @@ static void yacc_parse_buffer(struct pstate *psp, char *buf,
   ** otherwise; every symbol's value lives in that one type (yy0). */
   if( gp->union_body==0 && gp->tokentype==0 ) gp->tokentype = "int";
   yacc_rules(&rd);
+  yacc_translate_pending(&rd);
   /* Anything after the second %% is the epilogue. */
   if( *rd.cp ){
     if( !gp->nolinenosflag ) yacc_append_linedir(&gp->extracode, rd.lineno, filename);
@@ -13808,7 +14034,8 @@ static void yacc_emit_shared_decls(FILE *out, struct lime *lemp, int *plineno){
   for(i=1; i<lemp->nterminal; i++){
     struct symbol *sp = lemp->symbols[i];
     if( !yacc_tok_is_named(sp) ) continue;
-    fprintf(out, ",\n    %s = %d", sp->name, sp->yacc_code); lineno++;
+    fprintf(out, ",\n    %s%s = %d", lemp->yacc_token_prefix ? lemp->yacc_token_prefix : "",
+            sp->name, sp->yacc_code); lineno++;
   }
   fprintf(out,"\n  };\n  typedef enum yytokentype yytoken_kind_t;\n#endif\n");
   lineno += 4;
@@ -13821,7 +14048,8 @@ static void yacc_emit_shared_decls(FILE *out, struct lime *lemp, int *plineno){
     for(i=1; i<lemp->nterminal; i++){
       struct symbol *sp = lemp->symbols[i];
       if( !yacc_tok_is_named(sp) ) continue;
-      fprintf(out,"#define %s %d\n", sp->name, sp->yacc_code); lineno++;
+      fprintf(out,"#define %s%s %d\n", lemp->yacc_token_prefix ? lemp->yacc_token_prefix : "",
+              sp->name, sp->yacc_code); lineno++;
     }
   }
   (void)first;
@@ -13973,6 +14201,23 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
         int nl = ne ? (int)(ne - nm) : (int)strlen(nm);
         fprintf(out, "  yyparser_storage.%.*s = %.*s;\n", nl, nm, nl, nm); lineno++;
         nm += nl; if( *nm ) nm += 2;
+      }
+    }
+    if( lemp->yacc_initial_action ){
+      /* %initial-action: $$ is yylval, @$ is yylloc, as bison. */
+      const char *c;
+      fprintf(out, "  {\n"); lineno++;
+      if( !lemp->nolinenosflag ){
+        tplt_linedir(out, lemp->yacc_initial_line, lemp->filename); lineno++;
+      }
+      for(c=lemp->yacc_initial_action; *c; c++){
+        if( c[0]=='$' && c[1]=='$' ){ fputs("yylval", out); c++; }
+        else if( c[0]=='@' && c[1]=='$' ){ fputs("yylloc", out); c++; }
+        else{ fputc(*c, out); if( *c=='\n' ) lineno++; }
+      }
+      fprintf(out, "\n  }\n"); lineno += 2;
+      if( !lemp->nolinenosflag ){
+        lineno++; tplt_linedir(out, lineno, lemp->outname);
       }
     }
     fprintf(out,

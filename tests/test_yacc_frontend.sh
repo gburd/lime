@@ -247,7 +247,8 @@ expect_diag() {  # name grammar needle
   case "$out" in *"$3"*) echo "ok   diag $1" ;; *) fail "$1: diagnostic lacks '$3': $out" ;; esac
 }
 expect_diag "%glr-parser" '%glr-parser\n%token A\n%%\ns : A ;\n' 'glr-parser'
-expect_diag "\$name"      '%token A\n%%\ns : A { $$ = $A; } ;\n'   'named reference'
+expect_diag "\$nosuch"    '%token A\n%%\ns : A { $$ = $nosuch; } ;\n'   'named reference'
+expect_diag "\$ambiguous" '%token A\n%%\ns : A A { $$ = $A; } ;\n'   'named reference'
 expect_diag "\$3 > m"     '%token A\n%%\ns : A { $$ = $3; } ;\n'   'exceeds'
 
 
