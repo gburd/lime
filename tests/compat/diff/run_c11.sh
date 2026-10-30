@@ -4,6 +4,7 @@
 # through tests/compat/y2lime_min.py (actions dropped).  Compare
 # accept/reject on every input file.
 # usage: run_c11.sh LIME LIMPAR_C C11_Y C11_L INPUT...
+# LIME_DIRECT=1: lime reads the unmodified c11.y with its yacc front end.
 set -u
 LIME=$1; TPL=$2; CY=$3; CL=$4; shift 4
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -19,6 +20,16 @@ bison -Wnone -d -o y.tab.c c11.y && flex -o lex.yy.c c11.l || exit 1
 printf 'int c11_real_yylex(void);\nextern int c11_ntok, c11_last;\nint yylex(void){ c11_last = c11_real_yylex(); if (c11_last > 0) c11_ntok++; return c11_last; }\n' > wrap.c
 $CC -w -Wno-implicit-function-declaration -Dyylex=c11_real_yylex -c -o lex_b.o lex.yy.c || exit 1
 $CC -w -Wno-implicit-function-declaration -o c11_bison y.tab.c lex_b.o wrap.c c11_bison_main.c || exit 1
+if [ "${LIME_DIRECT:-0}" = 1 ]; then
+    # Track D: lime's yacc front end on the UNMODIFIED c11.y, with the
+    # same scanner, wrapper and main as the bison side.
+    mkdir -p L && cp c11.y L/ && cd L || exit 1
+    [ -n "${C11_MUTATE:-}" ] && sed -i "$C11_MUTATE" c11.y
+    "$LIME" --yacc -T"$TPL" -d c11.y || { echo "lime failed on c11.y"; exit 1; }
+    $CC -w -Wno-implicit-function-declaration -Dyylex=c11_real_yylex -c -o lex_l.o ../lex.yy.c || exit 1
+    $CC -w -Wno-implicit-function-declaration -o ../c11_lime y.tab.c lex_l.o ../wrap.c ../c11_bison_main.c || exit 1
+    cd .. || exit 1
+else
 python3 "$HERE/../y2lime_min.py" c11.y > c11g.lime 2> map.txt || exit 1
 [ -n "${C11_MUTATE:-}" ] && sed -i "$C11_MUTATE" c11g.lime   # negative control hook
 "$LIME" -q -T"$TPL" c11g.lime; echo "lime: c11 conflicts rc=$? (bison also reports 2 s/r)"
@@ -26,11 +37,13 @@ python3 "$HERE/../y2lime_min.py" c11.y > c11g.lime 2> map.txt || exit 1
   awk '$1=="CHARMAP"{printf "case %s: return TK_%s;\n",$2,$3} $1=="TOKMAP"{printf "case %s: return TK_%s;\n",$2,$3}' map.txt
   echo 'default: return -1; } }'; } > c11_map.h
 $CC -w -o c11_lime c11g.c c11_lime.c lex.yy.c || exit 1
+fi
+TO=""; command -v timeout >/dev/null 2>&1 && TO="timeout 10"
 fails=0; n=0
 for f in "$@"; do
     n=$((n + 1))
     [ -f "$f" ] || { echo "FAIL missing input $f"; fails=$((fails + 1)); continue; }
-    b=$(./c11_bison < "$f" 2>/dev/null | tail -1); l=$(./c11_lime < "$f" 2>/dev/null | tail -1)
+    b=$($TO ./c11_bison < "$f" 2>/dev/null | tail -1); l=$($TO ./c11_lime < "$f" 2>/dev/null | tail -1)
     if [ "$b" = "$l" ]; then echo "ok   $b $f"; else echo "FAIL bison=$b lime=$l $f"; fails=$((fails + 1)); fi
 done
 echo "$n files, $fails mismatch(es)"

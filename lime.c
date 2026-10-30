@@ -5892,6 +5892,7 @@ static int yacc_personality(int argc, char **argv){
   const char *outfile = 0, *prefix = 0, *bprefix = 0, *grammar = 0;
   const char *hdr = 0;
   int yflag = 0, vflag = 0, lflag = 0, i, n;
+  const char *tflag = 0;
   static char *nargv[16];
   base = base ? base + 1 : argv[0];
   if( !(strcmp(base,"yacc")==0 || strcmp(base,"bison")==0
@@ -5924,6 +5925,9 @@ static int yacc_personality(int argc, char **argv){
     if( strncmp(a,"-p",2)==0 && a[2] ){ prefix = a+2; continue; }
     if( strncmp(a,"--name-prefix=",14)==0 ){ prefix = a+14; continue; }
     if( strncmp(a,"-W",2)==0 || strncmp(a,"--warnings",10)==0 ) continue;
+    /* Lime options that mean nothing to yacc: -T<template>, -q. */
+    if( strncmp(a,"-T",2)==0 && a[2] ){ tflag = a; continue; }
+    if( strcmp(a,"-q")==0 ) continue;
     if( strcmp(a,"--version")==0 || strcmp(a,"-V")==0 ){
       printf("%s (Lime) %s\n", base, LIME_VERSION_STRING);
       exit(0);
@@ -5985,6 +5989,7 @@ static int yacc_personality(int argc, char **argv){
   nargv[n++] = (char*)"--yacc";
   if( !vflag ) nargv[n++] = (char*)"-q";
   if( lflag ) nargv[n++] = (char*)"-l";
+  if( tflag ) nargv[n++] = (char*)tflag;
   nargv[n++] = (char*)grammar;
   nargv[n] = 0;
   g_yacc_mode = 1;
