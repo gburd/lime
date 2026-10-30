@@ -18,6 +18,7 @@
 #include "test_compat.h"
 
 #include "multi_grammar.h"
+#include "lime_policy.h"
 #include "parse_context.h"
 #include "snapshot.h"
 #include "lime_compiler.h"
@@ -223,6 +224,19 @@ int main(void) {
         /* With no Bayesian store and equal priority, lowest ext_id wins
         ** deterministically. */
         CHECK(w == 0, "Tier1 tie: deterministic fallback picks lowest ext_id");
+
+        /* ---- the compose policy's ranks decide the same tie --------- */
+        {
+            char *perr = NULL;
+            LimeComposePolicy *pol = lime_policy_parse("rank oracle 30. rank mysql 10.", 30, &perr);
+            LimeForkCandidate pc[2] = { { my, 0, 1, "mysql" }, { ora, 0, 2, "oracle" } };
+            lime_mg_candidates_rank_from_policy(pc, 2, pol);
+            int wp = lime_mg_resolve(pc, 2, toks, 4, NULL, 0, 0, NULL);
+            CHECK(pol && pc[1].priority < pc[0].priority, "policy: oracle (30) gets the better priority");
+            CHECK(wp == 1, "Tier1 tie: policy rank (oracle 30 > mysql 10) picks Oracle");
+            lime_policy_free(pol);
+            free(perr);
+        }
 
         /* ---- Tier 2: the Bayesian store breaks the same tie ---------- */
         LimeBayesStore *bs = lime_bayes_create();

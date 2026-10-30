@@ -9,8 +9,9 @@
 ** Steps:
 **   1. collect each loaded extension's modifications (registry read lock),
 **      ordered by extension NAME so the result is a function of the set;
-**   2. declaration-level checks (detect_conflicts) + the deprecated
-**      on_conflict callbacks;
+**   2. declaration-level conflicts: the host policy first (C4), then the
+**      legacy check, where extensions' deprecated on_conflict answers are
+**      proposals applied only without a host policy or when trusted (C5);
 **   3. serialise each extension to its own text unit and compose with
 **      lime_compose_* (src/compose_policy.c): any LALR conflict the base
 **      compiled alone does not have must be resolved by the host policy
@@ -28,6 +29,7 @@
 #include "lime_compiler.h"
 #include "lime_policy.h"
 #include "mod_serialize.h"
+#include "multi_grammar.h"
 #include "parser.h"
 #include "snapshot.h"
 
@@ -450,14 +452,26 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
     }
 
     /* 2b. What the policy left: the legacy declaration check (same token
-    ** NAME, identical rule, precedence clash) and the deprecated
-    ** on_conflict callbacks. */
+    ** NAME, identical rule, precedence clash).  Extensions' on_conflict
+    ** answers are PROPOSALS (deprecated, C5): KEEP_EXISTING = keep the
+    ** earlier modification (prefer-base, in the old naming), USE_NEW =
+    ** keep the later one (prefer-extension), MERGE = unsupported.  A
+    ** proposal applies when the host set no policy at all (legacy mode,
+    ** one release) or trusts that extension (`trust-extension-proposals
+    ** E.`); otherwise it is ignored, listed in the error, and the conflict
+    ** stays unresolved. */
     cs = conflict_set_create();
     if (cs == NULL) {
         cm_err = strdup("publish_modified_snapshot: conflict_set_create failed");
         goto out;
     }
     detect_conflicts(combined, total, cs);
+    char *drop = calloc(total ? total : 1, 1);
+    char *ignored = NULL;
+    if (drop == NULL) {
+        cm_err = strdup("publish_modified_snapshot: out of memory");
+        goto out;
+    }
     for (uint32_t i = 0; i < cs->count; i++) {
         Conflict *c = &cs->conflicts[i];
         if (c->resolved) continue;
@@ -471,26 +485,60 @@ bool publish_modified_snapshot(ExtensionRegistry *reg, const struct ParserSnapsh
             .existing_mod = &combined[c->mod_index_a],
             .new_mod = &combined[c->mod_index_b],
         };
-        const Extension *ea = find_extension(reg, id_a);
-        if (ea && ea->on_conflict && ea->on_conflict(ea->user_data, &info) != CONFLICT_UNRESOLVED) {
+        const Extension *who[2] = {find_extension(reg, id_a), find_extension(reg, id_b)};
+        for (int w = 0; w < 2 && !c->resolved; w++) {
+            const Extension *e = who[w];
+            if (!e || !e->on_conflict) continue;
+            ConflictResolution ans = e->on_conflict(e->user_data, &info);
+            if (ans == CONFLICT_UNRESOLVED) continue;
+            const char *line = ans == CONFLICT_KEEP_EXISTING ? "prefer-base"
+                             : ans == CONFLICT_USE_NEW ? "prefer-extension" : "merge (unsupported)";
+            if (policy && !lime_policy_trusts(policy, e->name)) {
+                appendf(&ignored, "  proposal from %s for %s: %s -- ignored (add "
+                                  "`trust-extension-proposals %s.` or a policy line)\n",
+                        e->name, c->description ? c->description : "?", line, e->name);
+                continue;
+            }
+            if (ans == CONFLICT_KEEP_EXISTING) drop[c->mod_index_b] = 1;
+            else if (ans == CONFLICT_USE_NEW) drop[c->mod_index_a] = 1;
+            else if (policy) continue; /* MERGE: no meaning under a host policy */
             c->resolved = true;
-            continue;
         }
-        const Extension *eb = find_extension(reg, id_b);
-        if (eb && eb->on_conflict && eb->on_conflict(eb->user_data, &info) != CONFLICT_UNRESOLVED)
-            c->resolved = true;
     }
     uint32_t unresolved = conflict_set_unresolved_count(cs);
     if (unresolved > 0) {
-        char buf[128];
-        snprintf(buf, sizeof(buf), "%u unresolved conflict(s) detected", unresolved);
-        cm_err = strdup(buf);
+        size_t n = (ignored ? strlen(ignored) : 0) + 128;
+        cm_err = malloc(n);
+        if (cm_err)
+            snprintf(cm_err, n, "%u unresolved conflict(s) detected%s%s", unresolved,
+                     ignored ? "\n" : "", ignored ? ignored : "");
+        free(ignored);
+        free(drop);
         if (out_conflicts) {
             *out_conflicts = cs;
             cs = NULL;
         }
         goto out;
     }
+    free(ignored);
+    {   /* apply the accepted proposals: drop the losing modifications */
+        uint32_t w = 0, r = 0, pos = 0;
+        for (uint32_t i = 0; i < ns; i++) {
+            uint32_t kept = 0;
+            for (uint32_t m = 0; m < slice[i].n; m++, r++) {
+                if (drop[r]) continue;
+                combined[w] = combined[r];
+                ext_id_per_mod[w] = ext_id_per_mod[r];
+                w++;
+                kept++;
+            }
+            slice[i].first = pos;
+            slice[i].n = kept;
+            pos += kept;
+        }
+        total = w;
+    }
+    free(drop);
 
     /* 3. One text unit per extension, so the report can name owners. */
     units = calloc(ns ? ns : 1, sizeof(*units));
@@ -648,4 +696,12 @@ int lime_compose_text(const char *base_text, size_t base_len, const LimeComposeU
     }
     *out = snap;
     return 0;
+}
+
+/* lime_mg_resolve's priority from the compose policy's ranks: one
+** authority for composition and runtime multi-grammar ties. */
+void lime_mg_candidates_rank_from_policy(LimeForkCandidate *cands, uint32_t ncands,
+                                         const LimeComposePolicy *policy) {
+    for (uint32_t i = 0; cands && policy && i < ncands; i++)
+        if (cands[i].owner) cands[i].priority = -lime_policy_rank(policy, cands[i].owner);
 }

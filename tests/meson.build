@@ -2612,6 +2612,14 @@ test_compose_declarations = executable('test_compose_declarations',
 )
 test('compose_declarations', test_compose_declarations)
 
+# C5: on_conflict answers are proposals; only the host policy resolves.
+test_compose_proposals = executable('test_compose_proposals',
+  'test_compose_proposals.c',
+  include_directories : include_directories('../src'),
+  dependencies : [lime_parser_dep, lime_compiler_dep],
+)
+test('compose_proposals', test_compose_proposals)
+
 # Per-rule action-body inlining classifier (src/rule_inline.c, used
 # by the Rust emitter).  Exercises rule_can_inline_text against a
 # corpus of representative rule bodies (empty, passthrough, simple

@@ -33,7 +33,7 @@ ExtensionInfo info = {
     .name               = "my_extension",
     .version            = "1.0.0",
     .get_modifications  = my_get_mods,    /* required */
-    .on_conflict        = my_on_conflict, /* optional (NULL ok) */
+    .on_conflict        = NULL,           /* deprecated: proposals only */
     .on_unload          = my_on_unload,   /* optional (NULL ok) */
     .user_data          = NULL,           /* passed to callbacks */
 };
@@ -322,36 +322,25 @@ or adapt your rules based on the number of existing states.
 The modifications array must remain valid until `on_unload` is called.
 If you allocated it dynamically, free it in `on_unload`.
 
-### on_conflict (optional)
+### on_conflict (deprecated: a proposal only)
 
-Called when a modification conflicts with one from another extension.
+An extension can no longer decide a conflict by itself.  The *host* owns
+the compose policy (see [Conflict policy](#conflict-policy-who-wins)).
+`on_conflict` still gets called for declaration-level conflicts, but its
+answer is only a proposal:
 
-```c
-static ConflictResolution my_on_conflict(
-    void *user_data,
-    const ConflictInfo *info
-) {
-    /* Inspect the conflict */
-    if (info->existing_mod->type == MOD_ADD_TOKEN &&
-        info->new_mod->type == MOD_ADD_TOKEN) {
-        /* Another extension already added the same token.
-        ** Keep the existing one. */
-        return CONFLICT_KEEP_EXISTING;
-    }
+| answer | meaning as a proposal |
+|---|---|
+| `CONFLICT_KEEP_EXISTING` | keep the earlier modification (`prefer-base`) |
+| `CONFLICT_USE_NEW` | keep the later one (`prefer-extension`) |
+| `CONFLICT_MERGE` | unsupported |
+| `CONFLICT_UNRESOLVED` | no proposal |
 
-    /* Replace with our version */
-    return CONFLICT_USE_NEW;
-}
-```
-
-**Resolution options:**
-- `CONFLICT_KEEP_EXISTING` -- Discard our modification, keep what's there.
-- `CONFLICT_USE_NEW` -- Replace the existing modification with ours.
-- `CONFLICT_MERGE` -- Provide a merged result (advanced use case).
-- `CONFLICT_UNRESOLVED` -- Signal that the conflict cannot be resolved
-  (may cause load failure depending on policy).
-
-If `on_conflict` is NULL, the system defaults to `CONFLICT_KEEP_EXISTING`.
+A proposal applies only if the host installed **no** policy (the legacy
+behaviour, kept for one release), or if the host trusts that extension
+with `trust-extension-proposals NAME.`  Otherwise it is ignored, and the
+compose error lists it.  `on_conflict` will be removed in the next
+release, so write policy lines instead.
 
 ### on_unload (optional)
 
@@ -476,8 +465,9 @@ static bool jsonb_get_modifications(
 }
 ```
 
-**on_conflict** -- Takes the conservative approach of keeping the
-existing modification when conflicts arise:
+**on_conflict** (deprecated; a proposal the host may ignore, see
+[on_conflict](#on_conflict-deprecated-a-proposal-only)) -- proposes
+keeping the existing modification:
 
 ```c
 static ConflictResolution jsonb_on_conflict(
@@ -490,8 +480,8 @@ static ConflictResolution jsonb_on_conflict(
 }
 ```
 
-A more sophisticated implementation might inspect `info->existing_mod`
-and `info->new_mod` to make per-conflict decisions.
+New extensions should leave `on_conflict` NULL and document the policy
+lines they need.
 
 **on_unload** -- A no-op since the modifications are statically
 allocated. A dynamic extension would free its modifications array here:
@@ -562,79 +552,100 @@ cc -std=c11 -I src -I include -c examples/jsonb_extension.c
 
 ## How Extensions Are Applied
 
-When an extension is loaded, its modifications go through a pipeline
-managed by the snapshot modification system:
+`publish_modified_snapshot(reg, base, &out, &conflicts, &err)` (in
+liblime_compiler) composes every loaded extension onto `base`:
 
 ```
-load_extension()
-  |
+modifications of each loaded extension, in extension-NAME order
+  |  `reject` lines drop items                       (host policy)
   v
-get_modifications() callback
-  |
+declaration conflicts: keyword / conflict rule / token / rank (host policy)
+  |  then the legacy check + on_conflict proposals   (deprecated)
   v
-detect_conflicts()          -- scan for token collisions, duplicate rules
-  |
+base grammar text + each extension's serialised text
+  |  in-process LALR(1) rebuild; FindActions offers every conflict the
+  |  base alone does not have to the policy          (host policy)
   v
-resolve_conflicts()         -- call on_conflict callbacks
-  |
+any unresolved -> FAIL: *out = NULL, *err = the report, old snapshot stays
   v
-clone_snapshot()            -- deep copy of the base snapshot
-  |
-  v
-apply_modification() x N   -- apply each mod to the cloned snapshot
-  |
-  v
-rebuild_automaton()         -- recompute LALR(1) states and tables
-  |
-  v
-New ParserSnapshot (refcount == 1)
+bind MOD_ADD_RULE reduce callbacks by rule identity -> new ParserSnapshot
 ```
 
-The base snapshot is never mutated. All modifications produce a new
-snapshot that can be atomically swapped in. This copy-on-write design
-means readers using the old snapshot are not affected until they
-acquire the new one.
+The base snapshot is never mutated, and readers holding the old
+snapshot are unaffected.  There is no fallback: when the compose cannot
+be built correctly it fails, and nothing is published.
 
-**Result codes** from `create_modified_snapshot()`:
+## Conflict policy: who wins
 
-| Code                    | Meaning                                    |
-|------------------------|--------------------------------------------|
-| `MODIFY_OK`            | Snapshot created successfully              |
-| `MODIFY_ERR_ALLOC`     | Memory allocation failure                  |
-| `MODIFY_ERR_INVALID_MOD` | Invalid modification (bad type or fields)  |
-| `MODIFY_ERR_CONFLICT`  | Unresolved conflicts remain                |
-| `MODIFY_ERR_BUILD`     | LALR(1) automaton rebuild failed           |
+Composing extensions creates conflicts.  The **host** decides who wins,
+in a declarative policy.  The default is to fail: every LALR conflict an
+extension introduces (a symbolic key present in base+extensions and
+absent from the base compiled alone) must be resolved explicitly, or the
+compose fails.  The base's `%expect` never absorbs it.  For example, the
+30-rule `tests/compose_fixtures/dialect_ext.lime` adds 1 conflict to the
+precedence-complete PostgreSQL grammar and 219 to the precedence-less
+`examples/pg/gram.lime` (whose own 1665 are covered by its `%expect
+1665`).  Both composes fail until the policy says what to do.
 
-## Conflict Detection Types
+```c
+#include "lime_policy.h"
+LimeComposePolicy *pol = lime_policy_parse(text, len, &err);  /* or build the struct */
+extension_registry_set_policy(reg, pol);   /* host only; NULL = default */
+```
 
-The conflict detection system checks for several categories of conflicts
-when multiple extensions contribute modifications:
+Policy text, either a file or a `%policy { ... }` block in the host
+grammar:
 
-| Conflict Type             | Trigger                                       |
-|--------------------------|-----------------------------------------------|
-| `CONFLICT_TOKEN_COLLISION` | Two extensions add a token with the same name |
-| `CONFLICT_DUPLICATE_RULE`  | Two extensions add an identical production    |
-| `CONFLICT_PRECEDENCE_CLASH`| Conflicting precedence for the same symbol    |
-| `CONFLICT_SHIFT_REDUCE`    | Shift/reduce conflict in rebuilt automaton    |
-| `CONFLICT_REDUCE_REDUCE`   | Reduce/reduce conflict in rebuilt automaton   |
+```
+rank timescale 50.   rank pgvector 40.          /* base = rank 0 */
+default reject.                                 /* | prefer-base | prefer-extension | prefer-rank */
+token JSON_ARROW prec-like OP assoc left.       /* like a %left line, relative to OP */
+conflict sr "upsert_cols ::=" on LPAREN prefer shift.
+conflict rr "atom ::= NUM" prefer reduce.       /* keep this reduce */
+conflict sr "a_expr ::= MINUS a_expr" prefer pgvector.  /* keep pgvector's side */
+conflict rule "a_expr ::= a_expr DPIPE a_expr" prefer pgvector.  /* two actions: keep pgvector's */
+keyword "connect" owner oracle_compat soft.     /* lexeme owner; soft = %fallback to ID */
+reject "stmt ::= showExtStmt" from pgvector.
+reject token SHOW_EXT_K from pgvector.
+trust-extension-proposals mysql_compat.         /* accept its on_conflict answers */
+```
 
-The first three types are detected during the pre-application scan
-(`detect_conflicts()`). The last two are detected during
-`rebuild_automaton()` after modifications have been applied to the
-cloned snapshot.
+For one conflict, a `conflict` line beats rank, and rank beats
+`default`.  Rank decides extension-vs-extension conflicts.  It decides
+base-vs-extension conflicts (base = 0) only under `default prefer-rank`.
+**Equal ranks on a real conflict are an error**, even under
+`prefer-rank`; a `conflict` line can still settle it.  A rule that loses
+every conflict it takes part in is reported as DEAD (never reduced)
+rather than failing the compose.
 
-When a conflict is detected, the system calls the `on_conflict`
-callback of the extension that proposed the newer modification. The
-callback receives a `ConflictInfo` struct with:
+Every resolution compiles to something Lemon already has: a
+precedence, a chosen shift or reduce, a dropped rule, a dropped token or
+lexeme.  The snapshot carries no trace of the policy, and parsing pays
+nothing for it (measured: [COMPOSITION_STRATEGY.md](COMPOSITION_STRATEGY.md#zero-runtime-cost-measured)).
 
-- `existing_ext` -- ExtensionID that owns the existing modification
-- `new_ext` -- ExtensionID proposing the conflicting modification
-- `existing_mod` -- Pointer to the existing `GrammarModification`
-- `new_mod` -- Pointer to the conflicting `GrammarModification`
+Declaration-level conflicts are settled before generation:
 
-If no `on_conflict` callback is provided (NULL), the system defaults
-to `CONFLICT_KEEP_EXISTING`. Any `CONFLICT_UNRESOLVED` results cause
-the load to fail with `MODIFY_ERR_CONFLICT`.
+| kind | example | settled by |
+|---|---|---|
+| shared | two extensions add the same token (name and lexeme), or the same rule with the same action | merged; not a conflict |
+| TOKEN_LEXEME | CONNECT and CONNECT_G both claim `connect` | `keyword "connect" owner E soft\|reserved.`, or rank; the loser keeps its terminal but no lexeme |
+| DUP_RULE_ACTION | two `a_expr ::= a_expr DPIPE a_expr` with different callbacks | `conflict rule "..." prefer E.`, or rank |
+| PREC_CLASH | two different precedences for DPIPE | the host's `token DPIPE ...` line replaces both, or rank |
+
+To see what a set of extensions does to a base before shipping it:
+
+```
+lime --explain-compose base.lime ext1.lime ext2.lime [host.policy]
+```
+
+This prints every new conflict, with the owners of both sides, file and
+line, a shortest example input, and a suggested policy line.  It then
+groups them by root cause.  Exit status: 0 nothing unresolved, 1
+unresolved, 2 error.  It is designed as a CI gate.
+
+`lime_mg_resolve` (runtime multi-grammar fork-resolve, a different
+feature) can take its tie-break from the same ranks:
+`lime_mg_candidates_rank_from_policy(cands, n, pol)`.
 
 ## Best Practices
 
@@ -662,11 +673,11 @@ if (snapshot_has_token(base_snapshot, "ARROW")) {
 }
 ```
 
-### Handle conflicts gracefully
+### Expect the host to decide conflicts
 
-Always implement `on_conflict` if your extension might overlap with
-others. The default behavior (keep existing) may silently drop your
-modifications.
+Your extension cannot win a conflict by itself.  Ship a suggested policy
+snippet with it (the `fix` lines `lime --explain-compose` prints), and
+test it against the base you target, so hosts can adopt it.
 
 ### Free dynamically allocated modifications
 
@@ -717,13 +728,13 @@ resolution -- the loading order is your responsibility.
 - Ensure the modifications array remains valid (not stack-allocated
   in a function that has returned).
 
-### Token conflicts
+### Compose fails with "extension-introduced LALR conflict(s)"
 
-If two extensions add the same token name, the second one to load will
-trigger a conflict. Solutions:
-- Implement `on_conflict` to handle it explicitly.
-- Use unique token names (e.g. prefix with extension name:
-  `JSONB_ARROW` instead of `ARROW`).
+That is the default policy doing its job.  Run `lime --explain-compose
+base.lime your_ext.lime`, then either change the extension's rules or
+give the host the policy lines it prints.  Two extensions declaring the
+same token name *and* lexeme share it; the same name with different
+lexemes is a conflict the host must settle (`rank`).
 
 ### Grammar rule not taking effect
 

@@ -64,7 +64,22 @@ typedef struct LimeForkCandidate {
     const ParserSnapshot *snapshot; /**< Grammar to simulate. */
     int32_t priority;               /**< Lower = preferred (final tie-break). */
     uint32_t ext_id;                /**< Extension id (Tier-2 Bayesian key). */
+    /** Owner name for the compose policy's ranks (NULL = use `priority`).
+     *  With lime_mg_candidates_rank_from_policy() the policy rank replaces
+     *  `priority`, so one policy decides both composition and runtime
+     *  multi-grammar ties. */
+    const char *owner;
 } LimeForkCandidate;
+
+struct LimeComposePolicy;
+/**
+ * @brief Set each candidate's `priority` from the compose policy's ranks
+ *        (higher rank = preferred; priority = -rank).  Candidates whose
+ *        `owner` is NULL keep their priority.  In liblime_compiler (where
+ *        the policy lives); lime_mg_resolve itself stays in the parser lib.
+ */
+void lime_mg_candidates_rank_from_policy(LimeForkCandidate *cands, uint32_t ncands,
+                                         const struct LimeComposePolicy *policy);
 
 /**
  * @brief Per-candidate ranking detail (optional output of lime_mg_resolve).
@@ -84,7 +99,8 @@ typedef struct LimeForkRank {
  *   1. reached_accept (true preferred),
  *   2. fewest errors,
  *   3. most tokens consumed (got furthest),
- *   4. lowest priority value,
+ *   4. lowest priority value (set it from the compose policy's ranks with
+ *      lime_mg_candidates_rank_from_policy, so the host has one authority),
  *   5. Tier-2 Bayesian posterior (if @p bayes != NULL),
  *   6. lowest ext_id (deterministic final tie-break).
  *

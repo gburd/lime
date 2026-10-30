@@ -254,8 +254,14 @@ typedef bool (*ExtGetModificationsFn)(void *user_data, const struct ParserSnapsh
                                       GrammarModification **mods_out, uint32_t *nmods_out);
 
 /*
-** on_conflict: Called when a modification conflicts with another
-** extension.  Returns a ConflictResolution value.
+** on_conflict: DEPRECATED.  Called when a modification conflicts with
+** another extension's.  The answer is only a PROPOSAL: KEEP_EXISTING =
+** keep the earlier modification (prefer-base in policy terms), USE_NEW =
+** keep the later one (prefer-extension), MERGE = unsupported.  It applies
+** when the host installed no compose policy (legacy behaviour, kept for
+** one release) or trusts this extension (`trust-extension-proposals E.`).
+** Otherwise it is ignored and listed in the compose error.  Hosts should
+** say who wins in their policy (include/lime_policy.h) instead.
 */
 typedef ConflictResolution (*ExtOnConflictFn)(void *user_data, const ConflictInfo *info);
 
@@ -286,7 +292,7 @@ typedef struct Extension {
 
     /* Callbacks */
     ExtGetModificationsFn get_modifications;
-    ExtOnConflictFn on_conflict; /* May be NULL (default: KEEP_EXISTING) */
+    ExtOnConflictFn on_conflict; /* DEPRECATED, may be NULL; a proposal only */
     ExtOnUnloadFn on_unload;     /* May be NULL                   */
     void *user_data;             /* Opaque pointer passed to callbacks   */
 
@@ -304,7 +310,7 @@ typedef struct ExtensionInfo {
     const char *version; /* Copied internally         */
 
     ExtGetModificationsFn get_modifications; /* Required           */
-    ExtOnConflictFn on_conflict;             /* Optional (NULL ok) */
+    ExtOnConflictFn on_conflict;             /* DEPRECATED: proposals only */
     ExtOnUnloadFn on_unload;                 /* Optional (NULL ok) */
     void *user_data;
 } ExtensionInfo;
