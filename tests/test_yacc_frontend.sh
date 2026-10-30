@@ -212,6 +212,33 @@ printf '%%expect 1\n%%token A\n%%%%\ns : A ;\n' > "$W/ex.y"
 out=$(cd "$W" && ./lime-yacc ex.y 2>&1); rc=$?
 [ $rc -ne 0 ] && echo "ok   %expect mismatch fails" || fail "%expect mismatch accepted: $out"
 
+# --- 3c. YYERROR in an action: recover with no message, as bison
+cat > "$W/yyerr.y" <<'EOF'
+%{
+#include <stdio.h>
+int yylex(void);
+void yyerror(const char *s) { printf("yyerror: %s\n", s); }
+%}
+%token NUM
+%%
+list : /* empty */ | list line ;
+line : e '\n' { printf("= %d\n", $1); }
+     | error '\n' { yyerrok; printf("recovered\n"); }
+     ;
+e : NUM { if ($1 == 0) { printf("zero rejected\n"); YYERROR; } $$ = $1; }
+  | e '+' NUM { $$ = $1 + $3; }
+  ;
+%%
+int yylex(void){ int c = getchar(); while (c==' ') c = getchar();
+  if (c==EOF) return 0; if (c>='0'&&c<='9'){ yylval = c-'0'; return NUM; } return c; }
+int main(void){ int r = yyparse(); printf("rc=%d\n", r); return 0; }
+EOF
+(cd "$W" && ./lime-yacc -o yyerr.c yyerr.y && $CC -w -o yyerr yyerr.c) || fail "yyerr: build"
+if [ -x "$W/yyerr" ]; then
+  run_case "YYERROR recover"  "$W/yyerr" '1+2\n0+1\n3\n' '= 3\nzero rejected\nrecovered\n= 3\nrc=0'
+  run_case "YYERROR at eof"   "$W/yyerr" '0' 'zero rejected\nrc=1'
+fi
+
 # --- 4. named diagnostics for unsupported constructs
 expect_diag() {  # name grammar needle
   printf '%b' "$2" > "$W/d.y"
@@ -220,7 +247,6 @@ expect_diag() {  # name grammar needle
   case "$out" in *"$3"*) echo "ok   diag $1" ;; *) fail "$1: diagnostic lacks '$3': $out" ;; esac
 }
 expect_diag "%glr-parser" '%glr-parser\n%token A\n%%\ns : A ;\n' 'glr-parser'
-expect_diag "YYERROR"     '%token A\n%%\ns : A { YYERROR; } ;\n'   'YYERROR'
 expect_diag "\$name"      '%token A\n%%\ns : A { $$ = $A; } ;\n'   'named reference'
 expect_diag "\$3 > m"     '%token A\n%%\ns : A { $$ = $3; } ;\n'   'exceeds'
 

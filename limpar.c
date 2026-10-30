@@ -1345,6 +1345,32 @@ void Parse_drain(void *yyp ParseCTX_PDECL){
 #endif
 }
 
+%Y /* YYERROR from an action (Lime yacc front end), as bison's yyerrorlab:
+%Y ** drop the rule just reduced (its LHS is on top), then recover like a
+%Y ** syntax error but with no message and the lookahead kept.  Returns 1
+%Y ** when `error` was shifted, 0 when the parse failed. */
+%Y static int yy_yacc_error_recover(yyParser *yypParser, ParseTOKENTYPE yyminor){
+%Y   YYACTIONTYPE yyact = YY_ERROR_ACTION;
+%Y   yy_yacc_errflag = 0;
+%Y   yy_pop_parser_stack(yypParser);
+%Y #ifdef YYERRORSYMBOL
+%Y   for(;;){
+%Y     yyact = yy_find_reduce_action(yypParser->yytos->stateno, YYERRORSYMBOL);
+%Y     if( yyact<=YY_MAX_SHIFTREDUCE ) break;
+%Y     if( yypParser->yytos<=yypParser->yystack ) break;
+%Y     yy_pop_parser_stack(yypParser);
+%Y   }
+%Y   if( yyact<=YY_MAX_SHIFTREDUCE ){
+%Y     yy_shift(yypParser,yyact,YYERRORSYMBOL,yyminor);
+%Y     yypParser->yyerrcnt = 3;
+%Y     return 1;
+%Y   }
+%Y #else
+%Y   (void)yyminor; (void)yyact;
+%Y #endif
+%Y   yy_parse_failed(yypParser);
+%Y   return 0;
+%Y }
 void Parse(void*,int,ParseTOKENTYPE ParseARG_PDECL);
 void Parse(
   void *yyp,                   /* The parser */
@@ -1471,6 +1497,11 @@ void Parse(
         }
       }
       yyact = yy_reduce(yypParser,yyruleno,yymajor,yyminor ParseCTX_PARAM);
+%Y       if( yy_yacc_errflag ){
+%Y         if( !yy_yacc_error_recover(yypParser, yyminor) ) break;
+%Y         yyact = yypParser->yytos->stateno;
+%Y         continue;
+%Y       }
       /* If the reduce action called Parse_clear_lookahead() the user
       ** action consumed the token via Parse_get_lookahead() and read
       ** further tokens from the lexer themselves.  Skip the rest of
