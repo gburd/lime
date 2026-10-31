@@ -293,6 +293,32 @@ printf '%%{\nint two_lex(void); void two_error(const char *);\n%%}\n%%name-prefi
 (cd "$W" && ./lime-yacc -o one.c one.y && ./lime-yacc -o two.c two.y && $CC -w -o onetwo one.c two.c) \
   && echo "ok   two prefixed parsers link" || fail "two prefixed parsers: link"
 
+# --- 3f. yychar + yyclearin in an empty rule's action (plpgsql's
+# read_datatype): the action sees the lookahead and consumes it.
+cat > "$W/clr.y" <<'EOF'
+%{
+#include <stdio.h>
+static const char *in; static int k;
+int yylex(void){ while (in[k]==' ') k++; return in[k] ? in[k++] : 0; }
+void yyerror(const char *s){ printf("yyerror: %s\n", s); }
+static int read_type(int tok){ int n = 1; printf("read_type got %d\n", tok); while (in[k] && in[k] != ';') { k++; n++; } return n; }
+%}
+%%
+decls : | decls decl ;
+decl : 'v' decl_const decl_type ';' { printf("decl const=%d type=%d\n", $2, $3); } ;
+decl_const : { $$ = 0; } | 'c' { $$ = 1; } ;
+decl_type : { $$ = read_type(yychar); yyclearin; } ;
+%%
+int main(int argc, char **argv){ in = argc>1 ? argv[1] : ""; int r = yyparse(); printf("rc=%d\n", r); return 0; }
+EOF
+(cd "$W" && ./lime-yacc -o clr.c clr.y && $CC -w -o clr clr.c) || fail "clr: build"
+if [ -x "$W/clr" ]; then
+  out=$($TO "$W/clr" 'v int; v c x y;')
+  # bison: after 'c' is shifted no lookahead is read, so yychar is YYEMPTY (-2)
+  want=$(printf "read_type got 105\ndecl const=0 type=3\nread_type got -2\ndecl const=1 type=5\nrc=0")
+  [ "$out" = "$want" ] && echo "ok   yychar + yyclearin in an action" || fail "yyclearin: $out"
+fi
+
 # --- 4. named diagnostics for unsupported constructs
 expect_diag() {  # name grammar needle
   printf '%b' "$2" > "$W/d.y"

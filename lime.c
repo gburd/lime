@@ -14376,6 +14376,9 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
     lineno++;
     fprintf(out,
       "    if( yyt==0 && !yy_yacc_done && yychar!=YYEMPTY ){ yy_yacc_status = 1; break; }\n"
+      "    /* The token is consumed; bison's yychar is YYEMPTY until the next\n"
+      "    ** yylex() (actions run by the next drain must not see it). */\n"
+      "    yychar = YYEMPTY;\n"
       "  }\n"
       "  yychar = YYEMPTY;\n"
       "  %sFinalize(yyp);\n"
@@ -14385,7 +14388,7 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
       pure ? "#undef yylval\n#undef yychar\n#undef yynerrs\n" : "",
       (pure && loc) ? "#undef yylloc\n" : "",
       lemp->yacc_push==1 ? "#endif\n" : "");
-    lineno += 7 + (lemp->yacc_push==1) + (pure ? 3 : 0) + ((pure && loc) ? 1 : 0);
+    lineno += 10 + (lemp->yacc_push==1) + (pure ? 3 : 0) + ((pure && loc) ? 1 : 0);
     if( lemp->yacc_push ){
       /* bison's push API over Lime's push parser: each yypush_parse()
       ** drains reduce-only states, then feeds one token. */
@@ -14436,6 +14439,7 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
         "  else if( yypushed_char>YY_YACC_MAXCODE ) yyt = YY_YACC_UNDEF;\n"
         "  else yyt = yy_yacc_xlat[yypushed_char];\n"
         "  %s%s(&ps->p, yyt, *yypushed_val%s);\n"
+        "  ps->chr = YYEMPTY;\n"
         "  if( !yy_yacc_done ) yy_yacc_drain(&ps->p);\n"
         "  if( yyt==0 && !yy_yacc_done ){ yy_yacc_status = 1; yy_yacc_done = 1; }\n"
         "  ps->status = yy_yacc_status; ps->done = yy_yacc_done;\n"
@@ -14447,7 +14451,7 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
         (pure && loc) ? "  yy_yacc_lloc = yypushed_loc;\n" : "",
         name, loc ? "Loc" : "",
         (pure && loc) ? ", *yypushed_loc" : (loc ? ", yylloc" : ""));
-      lineno += 20 + (pure ? 1 : 0) + ((pure && loc) ? 1 : 0);
+      lineno += 21 + (pure ? 1 : 0) + ((pure && loc) ? 1 : 0);
     }
   }
   *plineno = lineno;
