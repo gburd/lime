@@ -18,15 +18,26 @@ for t in "$@"; do
   n=$((n + 1))
   in="$DIR/$t.in"; [ -f "$in" ] || in=/dev/null
   flags=$(sed -n 's/^.*flexdiff-flags: *\([^*]*\).*$/\1/p' "$DIR/$t.l" | head -1)
-  rm -f "$W/$t".*
+  rm -f "$W/$t".* "$W/$t.flex.d/$t.h" "$W/$t.lime.d/$t.h"
   if ! (cd "$W" && timeout 30 flex $flags -o "$t.flex.c" "$DIR/$t.l") >"$W/$t.err" 2>&1; then
     echo "FAIL $t: stock flex rejected the fixture"; head -c 2000 "$W/$t.err"; fail=$((fail + 1)); continue
   fi
+  [ -f "$W/$t.h" ] && mkdir -p "$W/$t.flex.d" && mv "$W/$t.h" "$W/$t.flex.d/$t.h"
   if ! (cd "$W" && timeout 30 "$LIME" --lex $flags -o "$t.lime.c" "$DIR/$t.l") >"$W/$t.err" 2>&1; then
     echo "FAIL $t: lime --lex rejected it"; head -c 2000 "$W/$t.err"; fail=$((fail + 1)); continue
   fi
+  [ -f "$W/$t.h" ] && mkdir -p "$W/$t.lime.d" && mv "$W/$t.h" "$W/$t.lime.d/$t.h"
+  if [ -f "$DIR/$t.main.c" ] && [ ! -f "$W/$t.lime.d/$t.h" ]; then
+    echo "FAIL $t: lime wrote no header $t.h"; fail=$((fail + 1)); continue
+  fi
   for k in flex lime; do
-    if ! timeout 120 "$CC" -w -o "$W/$t.$k" "$W/$t.$k.c" >"$W/$t.err" 2>&1; then
+    # NAME.main.c, if present, is a separate driver that includes the
+    # scanner's header (%option header-file="NAME.h"), built per tool.
+    main=
+    if [ -f "$DIR/$t.main.c" ]; then
+      main="$DIR/$t.main.c -I$W/$t.$k.d"
+    fi
+    if ! timeout 120 "$CC" -w -o "$W/$t.$k" "$W/$t.$k.c" $main >"$W/$t.err" 2>&1; then
       echo "FAIL $t: $k output does not compile"; head -c 2000 "$W/$t.err"; fail=$((fail + 1)); continue 2
     fi
   done

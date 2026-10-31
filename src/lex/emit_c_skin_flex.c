@@ -1190,11 +1190,55 @@ static void fe_interactive_init(FlexEmit *e) {
         fe_puts(e, "\tb->yy_is_interactive = 0;\n");
 }
 
-static int fe_skeleton(FlexEmit *e) {
+/* Header: the prefix renames, flex style, so a scanner that includes its
+** own header (already renamed) is left alone, and the header's renames are
+** undone at its end. */
+static void fe_header_prefix(FlexEmit *e, int close) {
+    const char *P = e->fs->opt.prefix;
+    if (!P || !strcmp(P, "yy")) return;
+    size_t n = sizeof flex_prefixed / sizeof *flex_prefixed;
+    if (e->fs->opt.reentrant == 1) n -= 6;
+    for (size_t k = 0; k < n; k++) {
+        const char *f = flex_prefixed[k];
+        if (close)
+            fe_printf(e, "#ifndef %s%s_ALREADY_DEFINED\n#undef yy%s\n#endif\n", P, f, f);
+        else
+            fe_printf(e, "#ifdef yy%s\n#define %s%s_ALREADY_DEFINED\n#else\n#define yy%s %s%s\n#endif\n",
+                      f, P, f, f, P, f);
+    }
+    fe_puts(e, "\n");
+}
+
+static void fe_header_open(FlexEmit *e) {
+    const char *P = e->fs->opt.prefix;
+    int r = e->fs->opt.reentrant == 1;
+    fe_printf(e, "#ifndef %sHEADER_H\n#define %sHEADER_H 1\n#define %sIN_HEADER 1\n\n", P, P, P);
+    fe_printf(e, "#ifndef YY_PARAM_ONLY\n#define LIME_LEX_HEADER_PARAMS 1\n"
+                 "#define YY_PARAM_ONLY %s\n#define YY_PARAM_LAST %s\n#endif\n",
+              r ? "yyscan_t yyscanner" : "void", r ? ", yyscan_t yyscanner" : "");
+}
+
+static void fe_header_close(FlexEmit *e) {
+    const char *P = e->fs->opt.prefix;
+    fe_puts(e, "#ifdef LIME_LEX_HEADER_PARAMS\n#undef LIME_LEX_HEADER_PARAMS\n"
+               "#undef YY_PARAM_ONLY\n#undef YY_PARAM_LAST\n#endif\n\n");
+    fe_header_prefix(e, 1);
+    fe_printf(e, "#undef %sIN_HEADER\n#endif /* %sHEADER_H */\n", P, P);
+}
+
+/* Walk the skeleton: section 0 = the scanner (up to %%header), 1 = the
+** header (after it). */
+static int fe_skeleton(FlexEmit *e, int section) {
     const LimeFlexSpec *fs = e->fs;
-    int depth = 0, off = 0;
+    int depth = 0, off = 0, in = section == 0;
     for (size_t k = 0; k < sizeof flex_skel / sizeof *flex_skel; k++) {
         const char *ln = flex_skel[k];
+        if (!strcmp(ln, "%%header")) {
+            if (section == 0) break;
+            in = 1;
+            continue;
+        }
+        if (!in) continue;
         if (ln[0] == '%' && ln[1] == '%') {
             const char *d = ln + 2;
             if (!strncmp(d, "if ", 3)) {
@@ -1226,6 +1270,18 @@ static int fe_skeleton(FlexEmit *e) {
                 fe_code(e, fs->prolog_code, fs->n_prolog_code);
             } else if (!strcmp(d, "actions")) {
                 fe_actions(e);
+            } else if (!strcmp(d, "header-open")) {
+                fe_header_open(e);
+            } else if (!strcmp(d, "header-prefix-defines")) {
+                fe_header_prefix(e, 0);
+            } else if (!strcmp(d, "header-close")) {
+                fe_header_close(e);
+            } else if (!strcmp(d, "extra-type")) {
+                /* flex: %option extra-type defines it outright; else a default. */
+                if (fs->opt.extra_type)
+                    fe_printf(e, "#define YY_EXTRA_TYPE %s\n", fs->opt.extra_type);
+                else
+                    fe_puts(e, "#ifndef YY_EXTRA_TYPE\n#define YY_EXTRA_TYPE void *\n#endif\n");
             } else if (!strcmp(d, "interactive-init")) {
                 fe_interactive_init(e);
             } else if (!strcmp(d, "user-code")) {
@@ -1253,7 +1309,6 @@ static int fe_skeleton(FlexEmit *e) {
 ** error) or 2 (I/O). */
 int lime_flex_compile_and_emit(LimeFlexSpec *fs, const char *out_c, const char *out_h,
                                int to_stdout) {
-    (void)out_h;
     LimeLexCompiled *lc = lime_lex_compile(fs->spec);
     if (!lc) {
         fprintf(stderr, "lime: out of memory\n");
@@ -1301,10 +1356,24 @@ int lime_flex_compile_and_emit(LimeFlexSpec *fs, const char *out_c, const char *
             } else e.dfas[s] = e.prod[s].dfa;
         }
     }
-    if (rc == 0) rc = fe_skeleton(&e);
+    if (rc == 0) rc = fe_skeleton(&e, 0);
     int werr = ferror(e.out);
     if (!to_stdout) werr |= fclose(e.out);
     else werr |= fflush(stdout);
+    if (!out_h) out_h = fs->opt.header_file;
+    if (rc == 0 && !werr && out_h) {
+        e.out = fopen(out_h, "wb");
+        if (!e.out) {
+            fprintf(stderr, "lime: cannot write %s\n", out_h);
+            rc = 1;
+        } else {
+            e.out_name = out_h;
+            e.line = 0;
+            rc = fe_skeleton(&e, 1);
+            werr |= ferror(e.out);
+            werr |= fclose(e.out);
+        }
+    }
     if (e.prod) {
         for (int s = 0; s < lc->n_states; s++) {
             lime_lex_dfa_free(e.prod[s].dfa);
