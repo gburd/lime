@@ -336,5 +336,16 @@ expect_diag "\$3 > m"     '%token A\n%%\ns : A { $$ = $3; } ;\n'   'exceeds'
 printf '%%token_type {int}\n%%token A.\ns ::= A.\n' > "$W/lemon.y"
 (cd "$W" && "$LIME" -q -T"$TPL" lemon.y) && grep -q '#define A ' "$W/lemon.h" && echo "ok   lemon .y still Lemon" || fail "lemon .y"
 
+# --- 6. invoked by bare name through $PATH, as `./configure YACC=lime-yacc`
+# does.  The rewritten argument vector is longer than the original; writing
+# it over argv[] used to clobber environ[0] ($PATH) and lose limpar.c.
+mkdir -p "$W/pathbin" "$W/pathrun"
+ln -s "$LIME" "$W/pathbin/lime-yacc"
+cp "$TPL" "$W/pathbin/limpar.c"
+printf '%%token N\n%%%%\ne: N ;\n%%%%\n' > "$W/pathrun/p.y"
+(cd "$W/pathrun" && PATH="$W/pathbin:$PATH" lime-yacc -d p.y >/dev/null 2>&1) \
+  && test -s "$W/pathrun/y.tab.c" && echo "ok   bare lime-yacc via PATH" \
+  || fail "bare lime-yacc via PATH did not write y.tab.c"
+
 echo "fails=$fails"
 [ $fails -eq 0 ]

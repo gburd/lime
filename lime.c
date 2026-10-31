@@ -5887,7 +5887,12 @@ static char *yacc_strcat3(const char *a, const char *b, const char *c){
   strcpy(z, a); strcat(z, b); strcat(z, c);
   return z;
 }
-static int yacc_personality(int argc, char **argv){
+/* Returns the rewritten argument count and sets *pargv to a static vector
+** (the caller's argv is not written: the rewrite can be LONGER than the
+** original, and writing past argv[argc] overwrites environ[0], so a bare
+** `lime-yacc -d g.y` lost $PATH and could not find limpar.c). */
+static int yacc_personality(int argc, char ***pargv){
+  char **argv = *pargv;
   const char *base = strrchr(argv[0], '/');
   const char *outfile = 0, *prefix = 0, *bprefix = 0, *grammar = 0;
   const char *hdr = 0;
@@ -5995,7 +6000,7 @@ static int yacc_personality(int argc, char **argv){
   nargv[n++] = (char*)grammar;
   nargv[n] = 0;
   g_yacc_mode = 1;
-  for(i=0; i<=n; i++) argv[i] = nargv[i];
+  *pargv = nargv;
   return n;
 }
 
@@ -6262,7 +6267,7 @@ int main(int argc, char **argv){
   ** `-t rust` and `-e simd,memchr` syntax in addition to lime's
   ** traditional `-trust` / `-esimd,memchr` glued form. */
   /* Track D: yacc/bison personality (argv[0] or --yacc first). */
-  argc = yacc_personality(argc, argv);
+  argc = yacc_personality(argc, &argv);
   splice_short_value_args(argc, argv);
 
   OptInit(argv,options,stderr);
