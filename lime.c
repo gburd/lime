@@ -11131,15 +11131,21 @@ static void yacc_set_action(struct yacc_rd *r, struct rule *rp,
   char *nr = yacc_named_refs(body, rp->lhs, lhsalias, ctx, ctxalias, m);
   char *code = yacc_translate(r, nr, line, rp->lhs, ctx, m, &uses_lhs);
   lime_free(nr);
-  if( uses_lhs ){
+  {
+    /* bison runs actions inside a switch, so `break;` ends one; do the
+    ** same.  $$ starts as $1 and is stored after the action. */
     char pre[80], post[80];
     int n = rp->nrhs;
-    pre[0] = 0;
-    if( n>0 ) lemon_sprintf(pre, "yylhsminor.yy0 = yymsp[%d].minor.yy0;", 1-n);
-    lemon_sprintf(post, "\n  yymsp[%d].minor.yy0 = yylhsminor.yy0;", 1-n);
+    pre[0] = 0; post[0] = 0;
+    if( uses_lhs ){
+      if( n>0 ) lemon_sprintf(pre, "yylhsminor.yy0 = yymsp[%d].minor.yy0;", 1-n);
+      lemon_sprintf(post, "\n  yymsp[%d].minor.yy0 = yylhsminor.yy0;", 1-n);
+    }
     append_str(0,0,0,0);
     append_str(pre,0,0,0);
+    append_str("switch(0){ default:", 0, 0, 0);
     yacc_raw(code, (int)strlen(code));
+    append_str("\n}", 0, 0, 0);
     append_str(post,0,0,0);
     code = (char*)Strsafe(append_str(0,0,0,0));
   }
@@ -11403,7 +11409,20 @@ static void yacc_parse_buffer(struct pstate *psp, char *buf,
       char *z = (char*)lime_malloc(strlen(gp->yacc_member_type[i])
                                    + strlen(gp->yacc_member_sym[i]->name) + 8);
       MemoryCheck(z);
-      lemon_sprintf(z, "  %s %s;", gp->yacc_member_type[i], gp->yacc_member_sym[i]->name);
+      /* bison names token members with api.token.prefix (TOK_NUM). */
+      const char *mp = (gp->yacc_token_prefix && gp->yacc_member_sym[i]->type==TERMINAL)
+                       ? gp->yacc_token_prefix : "";
+      z = (char*)lime_realloc(z, strlen(gp->yacc_member_type[i]) + strlen(mp)
+                              + strlen(gp->yacc_member_sym[i]->name) + 8);
+      MemoryCheck(z);
+      lemon_sprintf(z, "  %s %s%s;", gp->yacc_member_type[i], mp, gp->yacc_member_sym[i]->name);
+      if( mp[0] ){
+        char *f = (char*)lime_malloc(strlen(mp) + strlen(gp->yacc_member_sym[i]->name) + 1);
+        MemoryCheck(f);
+        lemon_strcpy(f, mp); lemon_strcat(f, gp->yacc_member_sym[i]->name);
+        gp->yacc_member_sym[i]->union_field = Strsafe(f);
+        lime_free(f);
+      }
       yacc_append(&u, z, strlen(z));
       lime_free(z);
     }
@@ -14081,7 +14100,8 @@ static void yacc_emit_shared_decls(FILE *out, struct lime *lemp, int *plineno){
   int i, lineno = *plineno, first = 1, undef = 257;
   yacc_emit_code(out, lemp->yacc_code_requires, &lineno);
   fprintf(out,"/* Debug traces.  */\n#ifndef YYDEBUG\n# define YYDEBUG %d\n#endif\n"
-              "#if YYDEBUG\nextern int yydebug;\n#endif\n", lemp->yacc_debug);
+              "#if YYDEBUG\nextern int %sdebug;\n#endif\n", lemp->yacc_debug,
+              lemp->yacc_prefix ? lemp->yacc_prefix : "yy");
   lineno += 7;
   fprintf(out,"/* Token kinds (bison numbering; yylex returns these). */\n");
   fprintf(out,"#ifndef YYTOKENTYPE\n# define YYTOKENTYPE\n");
@@ -14091,8 +14111,11 @@ static void yacc_emit_shared_decls(FILE *out, struct lime *lemp, int *plineno){
   }
   /* shortcut: error is always 256; bison moves it when a %token claims
   ** 256 explicitly.  Upgrade if a grammar does that. */
-  fprintf(out,"    YYEMPTY = -2,\n    YYEOF = 0,\n    YYerror = 256,\n"
-              "    YYUNDEF = %d", undef);
+  {
+    const char *tp = lemp->yacc_token_prefix ? lemp->yacc_token_prefix : "";
+    fprintf(out,"    %sYYEMPTY = -2,\n    %sYYEOF = 0,\n    %sYYerror = 256,\n"
+                "    %sYYUNDEF = %d", tp, tp, tp, tp, undef);
+  }
   lineno += 10;
   for(i=1; i<lemp->nterminal; i++){
     struct symbol *sp = lemp->symbols[i];
@@ -14140,10 +14163,15 @@ static void yacc_emit_shared_decls(FILE *out, struct lime *lemp, int *plineno){
       "# define YYLTYPE_IS_DECLARED 1\n# define YYLTYPE_IS_TRIVIAL 1\n#endif\n\n");
     lineno += 14;
   }
-  if( !lemp->yacc_pure ){
-    fprintf(out,"extern YYSTYPE yylval;\n");
-    lineno++;
-    if( lemp->has_locations ){ fprintf(out,"extern YYLTYPE yylloc;\n"); lineno++; }
+  {
+    /* The header is used without the .c's renames: spell the prefixed
+    ** names, as bison does (extern YYSTYPE base_yylval;). */
+    const char *pre = lemp->yacc_prefix ? lemp->yacc_prefix : "yy";
+    if( !lemp->yacc_pure ){
+      fprintf(out,"extern YYSTYPE %slval;\n", pre);
+      lineno++;
+      if( lemp->has_locations ){ fprintf(out,"extern YYLTYPE %slloc;\n", pre); lineno++; }
+    }
   }
   fprintf(out,"\n");
   /* bison declares yyerror()/yylex() only under POSIXLY_CORRECT; a
@@ -14157,21 +14185,24 @@ static void yacc_emit_shared_decls(FILE *out, struct lime *lemp, int *plineno){
     lineno += 7;
   }
   if( lemp->yacc_push!=1 ){
-    fprintf(out,"int yyparse (%s);\n",
+    fprintf(out,"int %sparse (%s);\n", lemp->yacc_prefix ? lemp->yacc_prefix : "yy",
             lemp->yacc_parse_params ? lemp->yacc_parse_params : "void");
     lineno++;
   }
   if( lemp->yacc_push ){
+    const char *pre = lemp->yacc_prefix ? lemp->yacc_prefix : "yy";
     fprintf(out,"#ifndef YYPUSH_MORE_DEFINED\n# define YYPUSH_MORE_DEFINED\n"
                 "enum { YYPUSH_MORE = 4 };\n#endif\n"
-                "typedef struct yypstate yypstate;\n"
-                "int yypush_parse (yypstate *ps%s%s%s%s);\n"
-                "yypstate *yypstate_new (void);\n"
-                "void yypstate_delete (yypstate *ps);\n",
+                "typedef struct %spstate %spstate;\n"
+                "int %spush_parse (%spstate *ps%s%s%s%s);\n"
+                "%spstate *%spstate_new (void);\n"
+                "void %spstate_delete (%spstate *ps);\n",
+            pre, pre, pre, pre,
             lemp->yacc_pure ? ", int pushed_char, YYSTYPE const *pushed_val" : "",
             (lemp->yacc_pure && lemp->has_locations) ? ", YYLTYPE *pushed_loc" : "",
             lemp->yacc_parse_params ? ", " : "",
-            lemp->yacc_parse_params ? lemp->yacc_parse_params : "");
+            lemp->yacc_parse_params ? lemp->yacc_parse_params : "",
+            pre, pre, pre, pre);
     lineno += 8;
   }
   lineno += 4;
@@ -14221,7 +14252,11 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
     if( !pure ){
       fprintf(out, "YYSTYPE yylval;\nint yychar = YYEMPTY;\nint yynerrs;\n");
       lineno += 3;
-      if( loc ){ fprintf(out, "YYLTYPE yylloc;\n"); lineno++; }
+      if( loc ){
+        /* bison's yyloc_default: line 1, column 1. */
+        fprintf(out, "YYLTYPE yylloc\n#if defined YYLTYPE_IS_TRIVIAL && YYLTYPE_IS_TRIVIAL\n"
+                     "  = { 1, 1, 1, 1 }\n#endif\n;\n"); lineno += 5;
+      }
     }
     fprintf(out,
       "#if YYDEBUG\n"
@@ -14258,12 +14293,21 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
       lemp->yacc_push==1 ? "#if 0 /* push-only parser: no yyparse(), as bison */\n" : "", pp);
     lineno += 31 + (lemp->yacc_push==1);
     if( pure ){
-      fprintf(out, "  YYSTYPE yylval;\n  int yy_yacc_char_l = YYEMPTY;\n"
+      fprintf(out, "  YYSTYPE yy_yacc_lval_l;\n  int yy_yacc_char_l = YYEMPTY;\n"
                    "  int yy_yacc_nerrs_l = 0;\n");
       lineno += 3;
-      if( loc ){ fprintf(out, "  YYLTYPE yylloc;\n"); lineno++; }
-      fprintf(out, "  memset(&yylval, 0, sizeof(yylval));\n"); lineno++;
-      if( loc ){ fprintf(out, "  memset(&yylloc, 0, sizeof(yylloc));\n"); lineno++; }
+      if( loc ){ fprintf(out, "  YYLTYPE yy_yacc_lloc_l;\n"); lineno++; }
+      fprintf(out, "  memset(&yy_yacc_lval_l, 0, sizeof(yy_yacc_lval_l));\n"
+                   "  yy_yacc_lval = &yy_yacc_lval_l;\n"
+                   "#define yylval yy_yacc_lval_l\n#define yychar yy_yacc_char_l\n"
+                   "#define yynerrs yy_yacc_nerrs_l\n"); lineno += 5;
+      if( loc ){ fprintf(out, "  memset(&yy_yacc_lloc_l, 0, sizeof(yy_yacc_lloc_l));\n"
+                              "#if defined YYLTYPE_IS_TRIVIAL && YYLTYPE_IS_TRIVIAL\n"
+                              "  yy_yacc_lloc_l.first_line = yy_yacc_lloc_l.last_line = 1;\n"
+                              "  yy_yacc_lloc_l.first_column = yy_yacc_lloc_l.last_column = 1;\n"
+                              "#endif\n"
+                              "  yy_yacc_lloc = &yy_yacc_lloc_l;\n"
+                              "#define yylloc yy_yacc_lloc_l\n"); lineno += 7; }
     }
     fprintf(out,
       "  yyParser yyparser_storage;\n"
@@ -14337,8 +14381,11 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
       "  %sFinalize(yyp);\n"
       "  yy_yacc_pp = 0;\n"
       "  return yy_yacc_status;\n"
-      "}\n%s", name, lemp->yacc_push==1 ? "#endif\n" : "");
-    lineno += 7 + (lemp->yacc_push==1);
+      "}\n%s%s%s", name,
+      pure ? "#undef yylval\n#undef yychar\n#undef yynerrs\n" : "",
+      (pure && loc) ? "#undef yylloc\n" : "",
+      lemp->yacc_push==1 ? "#endif\n" : "");
+    lineno += 7 + (lemp->yacc_push==1) + (pure ? 3 : 0) + ((pure && loc) ? 1 : 0);
     if( lemp->yacc_push ){
       /* bison's push API over Lime's push parser: each yypush_parse()
       ** drains reduce-only states, then feeds one token. */
@@ -14383,6 +14430,7 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
         "  yy_yacc_status = ps->status; yy_yacc_done = 0;\n"
         "  yy_yacc_nerrs = &ps->nerrs; yy_yacc_char = &ps->chr;\n"
         "  yy_yacc_pp = &ps->p;\n"
+        "%s%s"
         "  ps->chr = yypushed_char;\n"
         "  if( yypushed_char<=0 ) yyt = 0;\n"
         "  else if( yypushed_char>YY_YACC_MAXCODE ) yyt = YY_YACC_UNDEF;\n"
@@ -14394,9 +14442,12 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
         "  yy_yacc_pp = 0;\n"
         "  return ps->done ? ps->status : YYPUSH_MORE;\n"
         "}\n",
-        name, name, name, name, loc ? "Loc" : "",
+        name, name, name,
+        pure ? "  yy_yacc_lval = (YYSTYPE*)yypushed_val;\n" : "",
+        (pure && loc) ? "  yy_yacc_lloc = yypushed_loc;\n" : "",
+        name, loc ? "Loc" : "",
         (pure && loc) ? ", *yypushed_loc" : (loc ? ", yylloc" : ""));
-      lineno += 20;
+      lineno += 20 + (pure ? 1 : 0) + ((pure && loc) ? 1 : 0);
     }
   }
   *plineno = lineno;
@@ -14599,8 +14650,15 @@ void ReportTable(
     }else{
       /* Pure: bison's actions see yyparse()'s locals; ours run in their
       ** own functions, so the names reach the running parse's copies. */
-      fprintf(out,"#define yynerrs (*yy_yacc_nerrs)\n#define yychar (*yy_yacc_char)\n");
-      lineno += 2;
+      /* yynerrs/yychar/yylval/yylloc are #defined to the running parse's
+      ** copies only around the action functions (YY_YACC_ACTION_NAMES),
+      ** so user code may use the names for its own variables. */
+      fprintf(out,"static YYSTYPE *yy_yacc_lval;  /* yyparse()'s yylval */\n");
+      lineno++;
+      if( lemp->has_locations ){
+        fprintf(out,"static YYLTYPE *yy_yacc_lloc;  /* yyparse()'s yylloc */\n");
+        lineno++;
+      }
     }
     fprintf(out,"/* yacc action macros, over the Lime parser state. */\n"
                 "#define yyerrok (yypParser->yyerrcnt = -1)\n"
@@ -14638,6 +14696,29 @@ void ReportTable(
         "  } } while (0)\n"
         "#endif\n");
       lineno += 11;
+      /* bison's YYLOCATION_PRINT for its own YYLTYPE (yy_location_print_). */
+      fprintf(out,
+        "#if !defined YYLOCATION_PRINT && defined YYLTYPE_IS_TRIVIAL && YYLTYPE_IS_TRIVIAL\n"
+        "static int yy_location_print_(FILE *yyo, YYLTYPE const *const yylocp){\n"
+        "  int res = 0;\n"
+        "  int end_col = 0 != yylocp->last_column ? yylocp->last_column - 1 : 0;\n"
+        "  if (0 <= yylocp->first_line){\n"
+        "    res += fprintf(yyo, \"%%d\", yylocp->first_line);\n"
+        "    if (0 <= yylocp->first_column) res += fprintf(yyo, \".%%d\", yylocp->first_column);\n"
+        "  }\n"
+        "  if (0 <= yylocp->last_line){\n"
+        "    if (yylocp->first_line < yylocp->last_line){\n"
+        "      res += fprintf(yyo, \"-%%d\", yylocp->last_line);\n"
+        "      if (0 <= end_col) res += fprintf(yyo, \".%%d\", end_col);\n"
+        "    }else if (0 <= end_col && yylocp->first_column < end_col)\n"
+        "      res += fprintf(yyo, \"-%%d\", end_col);\n"
+        "  }\n"
+        "  return res;\n"
+        "}\n"
+        "# define YYLOCATION_PRINT yy_location_print_\n"
+        "# define YY_LOCATION_PRINT(File, Loc) YYLOCATION_PRINT(File, &(Loc))\n"
+        "#endif\n");
+      lineno += 20;
     }
   }else{
   if( mhflag ){
@@ -15313,6 +15394,11 @@ void ReportTable(
   ** dispatch table would have saved a few KB on huge
   ** grammars but at the cost of obscuring per-rule debug
   ** symbols and PGO instrumentation -- not worth it. */
+  if( lemp->is_yacc && lemp->yacc_pure ){
+    fprintf(out, "#define yynerrs (*yy_yacc_nerrs)\n#define yychar (*yy_yacc_char)\n"
+                 "#define yylval (*yy_yacc_lval)\n"); lineno += 3;
+    if( lemp->has_locations ){ fprintf(out, "#define yylloc (*yy_yacc_lloc)\n"); lineno++; }
+  }
   for(rp=lemp->rule; rp; rp=rp->next){
     fprintf(out,"/* (%d) ", rp->iRule);
     writeRuleText(out, rp);
@@ -15397,6 +15483,10 @@ void ReportTable(
     rp->codeEmitted = 1;
   }
 
+  if( lemp->is_yacc && lemp->yacc_pure ){
+    fprintf(out, "#undef yynerrs\n#undef yychar\n#undef yylval\n"); lineno += 3;
+    if( lemp->has_locations ){ fprintf(out, "#undef yylloc\n"); lineno++; }
+  }
   /* Dispatch table.  yy_rule_reduce_fn[ruleno] -> per-rule
   ** function pointer.  yy_reduce indexes into this with the
   ** runtime ruleno.  An out-of-range index is undefined and
