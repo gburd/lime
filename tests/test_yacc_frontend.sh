@@ -283,6 +283,16 @@ if [ -x "$W/push" ]; then
   out=$($TO "$W/push" '1++');   [ "$out" = "$(printf 'syntax error\nrc=1')" ] && echo "ok   push error" || fail "push error: $out"
 fi
 
+# --- 3e. `return v;` in an action ends yyparse() with v (bison)
+printf '%%{\n#include <stdio.h>\nint yylex(void){ static const char *s = "aab"; return *s ? *s++ : 0; }\nvoid yyerror(const char *m){ printf("%%s\\n", m); }\n%%}\n%%%%\ns : s %sa%s { printf("a\\n"); } | s %sb%s { printf("b\\n"); return 7; } | ;\n%%%%\nint main(void){ printf("rc=%%d\\n", yyparse()); return 0; }\n' "'" "'" "'" "'" > "$W/ret.y"
+(cd "$W" && ./lime-yacc -o ret.c ret.y && $CC -w -o ret ret.c) || fail "ret: build"
+[ -x "$W/ret" ] && run_case "action return" "$W/ret" '' 'a\na\nb\nrc=7'
+# two yacc parsers with different prefixes link into one program
+printf '%%{\nint one_lex(void); void one_error(const char *);\n%%}\n%%name-prefix "one_"\n%%token A\n%%%%\ns : A ;\n%%%%\nint one_lex(void){ return 0; }\nvoid one_error(const char *m){ (void)m; }\n' > "$W/one.y"
+printf '%%{\nint two_lex(void); void two_error(const char *);\n%%}\n%%name-prefix "two_"\n%%token B\n%%%%\ns : B ;\n%%%%\nint two_lex(void){ return 0; }\nvoid two_error(const char *m){ (void)m; }\nint main(void){ return 0; }\n' > "$W/two.y"
+(cd "$W" && ./lime-yacc -o one.c one.y && ./lime-yacc -o two.c two.y && $CC -w -o onetwo one.c two.c) \
+  && echo "ok   two prefixed parsers link" || fail "two prefixed parsers: link"
+
 # --- 4. named diagnostics for unsupported constructs
 expect_diag() {  # name grammar needle
   printf '%b' "$2" > "$W/d.y"

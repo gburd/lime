@@ -1033,7 +1033,17 @@ static YYACTIONTYPE yy_reduce(
 #ifdef YYLOCATIONTYPE
     yy_ctx.yyloc_lhs_ptr = &yyloc_lhs;
 #endif
+%Y     if( 0 ){
     yy_rule_reduce_fn[yyruleno](&yy_ctx);
+%Y     }else{
+%Y       /* yacc input: an action's `return v;` ends the parse with v,
+%Y       ** as it returns from bison's yyparse(). */
+%Y       int yyrv = yy_rule_reduce_fn[yyruleno](&yy_ctx);
+%Y       if( yyrv!=YY_RULE_NORMAL ){
+%Y         yy_yacc_status = yyrv; yy_yacc_done = 1;
+%Y         yypParser->yyLookaheadCleared = 1;
+%Y       }
+%Y     }
   }
 
   yygoto = yyRuleInfoLhs[yyruleno];

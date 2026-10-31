@@ -5929,7 +5929,9 @@ static int yacc_personality(int argc, char **argv){
     if( strncmp(a,"-T",2)==0 && a[2] ){ tflag = a; continue; }
     if( strcmp(a,"-q")==0 ) continue;
     if( strcmp(a,"--version")==0 || strcmp(a,"-V")==0 ){
-      printf("%s (Lime) %s\n", base, LIME_VERSION_STRING);
+      /* Field 4 is the version scripts compare (PostgreSQL's configure
+      ** checks $4 >= 3, the bison 3.x surface Lime implements). */
+      printf("%s (Lime yacc) 3.8.2\nLime %s, a bison-compatible front end\n", base, LIME_VERSION_STRING);
       exit(0);
     }
     if( a[0]=='-' && a[1] ){
@@ -11430,7 +11432,17 @@ static void yacc_parse_buffer(struct pstate *psp, char *buf,
   if( g_yacc_defines_mode<0 ) g_yacc_defines_mode = !gp->yacc_type_union;
   if( gp->has_locations && gp->location_type==0 ) gp->location_type = (char*)"YYLTYPE";
   if( gp->union_body==0 && gp->yacc_stype==0 ) gp->yacc_stype = (char*)"int";
-  gp->name = (char*)"yyParse";
+  /* Lime's own entry points (<name>Alloc, <name>TokenName, ...) are
+  ** external; name them after the yacc prefix so several yacc parsers
+  ** (PostgreSQL links nine) do not collide, as bison's statics do not. */
+  {
+    const char *pre = gp->yacc_prefix ? gp->yacc_prefix : "yy";
+    char *nm = (char*)lime_malloc(strlen(pre) + 8);
+    MemoryCheck(nm);
+    lemon_strcpy(nm, pre);
+    lemon_strcat(nm, "Parse");
+    gp->name = nm;
+  }
   {
     /* yyerror's arguments, as bison's b4_yyerror_args: &yylloc first when
     ** the parser is pure with locations and parse-params, then the
@@ -14246,7 +14258,8 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
       lemp->yacc_push==1 ? "#if 0 /* push-only parser: no yyparse(), as bison */\n" : "", pp);
     lineno += 31 + (lemp->yacc_push==1);
     if( pure ){
-      fprintf(out, "  YYSTYPE yylval;\n  int yychar = YYEMPTY;\n  int yynerrs = 0;\n");
+      fprintf(out, "  YYSTYPE yylval;\n  int yy_yacc_char_l = YYEMPTY;\n"
+                   "  int yy_yacc_nerrs_l = 0;\n");
       lineno += 3;
       if( loc ){ fprintf(out, "  YYLTYPE yylloc;\n"); lineno++; }
       fprintf(out, "  memset(&yylval, 0, sizeof(yylval));\n"); lineno++;
@@ -14290,15 +14303,17 @@ static void yacc_emit_driver(FILE *out, struct lime *lemp, int *plineno){
       }
     }
     fprintf(out,
-      "  yynerrs = 0;\n"
       "  yy_yacc_status = 0;\n"
       "  yy_yacc_done = 0;\n"
-      "  yy_yacc_nerrs = &yynerrs;\n"
-      "  yy_yacc_char = &yychar;\n"
+      "  yy_yacc_nerrs = %s;\n"
+      "  yy_yacc_char = %s;\n"
+      "  yynerrs = 0;\n"
       "  while( !yy_yacc_done ){\n"
       "    int yyt;\n"
       "    yy_yacc_drain((yyParser*)yyp);\n"
-      "    if( yy_yacc_done ) break;\n");
+      "    if( yy_yacc_done ) break;\n",
+      pure ? "&yy_yacc_nerrs_l" : "&yynerrs",
+      pure ? "&yy_yacc_char_l" : "&yychar");
     lineno += 9;
     fprintf(out, "    yychar = yylex(%s%s%s%s%s);\n",
             pure ? "&yylval" : "", (pure && loc) ? ", &yylloc" : "",
@@ -14581,17 +14596,29 @@ void ReportTable(
     lineno += 6;
     if( !lemp->yacc_pure ){
       fprintf(out,"extern int yychar, yynerrs;\n"); lineno++;
+    }else{
+      /* Pure: bison's actions see yyparse()'s locals; ours run in their
+      ** own functions, so the names reach the running parse's copies. */
+      fprintf(out,"#define yynerrs (*yy_yacc_nerrs)\n#define yychar (*yy_yacc_char)\n");
+      lineno += 2;
     }
     fprintf(out,"/* yacc action macros, over the Lime parser state. */\n"
                 "#define yyerrok (yypParser->yyerrcnt = -1)\n"
                 "#define yyclearin (yypParser->yyLookaheadCleared = 1, *yy_yacc_char = YYEMPTY)\n"
                 "#define YYRECOVERING() (yypParser->yyerrcnt > 0)\n"
                 "#define YYACCEPT do{ yy_yacc_status = 0; yy_yacc_done = 1; "
-                "yypParser->yyLookaheadCleared = 1; return; }while(0)\n"
+                "yypParser->yyLookaheadCleared = 1; return YY_RULE_NORMAL; }while(0)\n"
                 "#define YYABORT do{ yy_yacc_status = 1; yy_yacc_done = 1; "
-                "yypParser->yyLookaheadCleared = 1; return; }while(0)\n"
-                "#define YYERROR do{ yy_yacc_errflag = 1; return; }while(0)\n");
-    lineno++;
+                "yypParser->yyLookaheadCleared = 1; return YY_RULE_NORMAL; }while(0)\n"
+                "#define YYERROR do{ yy_yacc_errflag = 1; return YY_RULE_NORMAL; }while(0)\n"
+                "/* Actions run in their own functions, returning int.  An\n"
+                "** action's own `return v;` returns from yyparse() with v in\n"
+                "** bison; here it lands in yy_yacc_action_return() below,\n"
+                "** which ends the parse with status v.  The generated\n"
+                "** `return 0` paths (YYACCEPT...) are the ordinary end. */\n"
+                "#define YY_RULE_RET int\n"
+                "#define YY_RULE_NORMAL (-0x7fffffff)\n");
+    lineno += 8;
     lineno += 7;
     if( lemp->yacc_post_prologue ){
       tplt_print(out, lemp, lemp->yacc_post_prologue, &lineno);
@@ -15291,8 +15318,8 @@ void ReportTable(
     writeRuleText(out, rp);
     fprintf(out, " */\n"); lineno++;
     fprintf(out,
-            "static void yy_rule_%d(yy_reduce_ctx *yy_ctx){\n",
-            rp->iRule); lineno++;
+            "static %s yy_rule_%d(yy_reduce_ctx *yy_ctx){\n",
+            lemp->is_yacc ? "YY_RULE_RET" : "void", rp->iRule); lineno++;
     if( rp->noCode ){
       /* Empty action.  Three sub-cases match the old
       ** default-case bookkeeping: */
@@ -15365,6 +15392,7 @@ void ReportTable(
         "#endif\n");
       lineno += 5;
     }
+    if( lemp->is_yacc ){ fprintf(out, "  return YY_RULE_NORMAL;\n"); lineno++; }
     fprintf(out, "}\n\n"); lineno += 2;
     rp->codeEmitted = 1;
   }
@@ -15379,7 +15407,8 @@ void ReportTable(
     "** grammars by concatenating these arrays. */\n");
   lineno += 3;
   fprintf(out,
-    "static void (*const yy_rule_reduce_fn[])(yy_reduce_ctx *) = {\n");
+    "static %s (*const yy_rule_reduce_fn[])(yy_reduce_ctx *) = {\n",
+    lemp->is_yacc ? "YY_RULE_RET" : "void");
   lineno++;
   for(rp=lemp->rule; rp; rp=rp->next){
     fprintf(out, "  yy_rule_%d,  /* (%d) ", rp->iRule, rp->iRule);
