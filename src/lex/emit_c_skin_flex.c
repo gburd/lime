@@ -1090,13 +1090,20 @@ static int fe_tables(FlexEmit *e) {
     return 0;
 }
 
+static void fe_eof_case(FlexEmit *e, int k);
+
 /* The switch body: one case per rule, <<EOF>> cases, the default rule. */
 static void fe_actions(FlexEmit *e) {
     const LimeFlexSpec *fs = e->fs;
     int nodefault = fs->opt.nodefault == 1;
     for (int k = 0; k < fs->n_rules; k++) {
         const LimeFlexRule *fr = &fs->rules[k];
-        if (fr->is_eof) continue;
+        if (fr->is_eof) {
+            /* The owner of a `|` group (flex: `<SC>x |` then `<SC><<EOF>> {...}`):
+            ** its EOF labels go here, after the group's rule cases. */
+            if (k > 0 && fs->rules[k - 1].action_rule == k) fe_eof_case(e, k);
+            continue;
+        }
         if (fr->pre_code) {
             fe_puts(e, fr->pre_code);
             if (fr->pre_code[0] && fr->pre_code[strlen(fr->pre_code) - 1] != '\n') fe_puts(e, "\n");
@@ -1126,16 +1133,25 @@ static void fe_actions(FlexEmit *e) {
     /* <<EOF>>: the conditions sharing a rule share its case. */
     for (int k = -1; k < fs->n_rules; k++) {
         if (k >= 0 && !fs->rules[k].is_eof) continue;
+        if (k > 0 && fs->rules[k - 1].action_rule == k) continue; /* done above */
+        fe_eof_case(e, k);
+    }
+}
+
+/* The case labels and action of <<EOF>> rule k (-1 = the default). */
+static void fe_eof_case(FlexEmit *e, int k) {
+    const LimeFlexSpec *fs = e->fs;
+    {
         int any = 0;
         for (int c = 0; c < fs->n_sc; c++) {
             if ((fs->sc_eof_rule ? fs->sc_eof_rule[c] : -1) != k) continue;
             fe_printf(e, "case YY_STATE_EOF(%s):\n", fs->sc_names[c]);
             any = 1;
         }
-        if (!any) continue;
+        if (!any) return;
         if (k < 0) {
             fe_puts(e, "\tyyterminate();\n");
-            continue;
+            return;
         }
         const LimeFlexRule *fr = &fs->rules[k];
         fe_line_src(e, fr->action_line);

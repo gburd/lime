@@ -1,21 +1,22 @@
 #!/bin/bash
 # Compare lime-built and bison-built bc on bc's own Test/*.b and Examples,
 # plus syntax-error inputs.  Each run: timeout 10; quit appended so
-# interactive programs end.
-L=/tmp/tD-bc2/l/bc/bc; B=/tmp/tD-bc2/b/bc/bc
+# interactive programs end.  BC_LIME / BC_REF = the two built bc trees
+# (default: Track D's /tmp/tD-bc2/{l,b}).
+L=${BC_LIME:-/tmp/tD-bc2/l}/bc/bc; B=${BC_REF:-/tmp/tD-bc2/b}/bc/bc; LD=${BC_LIME:-/tmp/tD-bc2/l}; BD=${BC_REF:-/tmp/tD-bc2/b}
 same=0; differ=0; hang=0
 cmp1() {  # name, then stdin text via file $2, args...
   local n=$1 in=$2; shift 2
   # checklib.b computes ~10k library values: give it 120 s, the rest 10 s.
   local to=10; case "$n" in checklib*) to=120 ;; esac
-  lo=$(cd /tmp/tD-bc2/l/Test && timeout $to $L "$@" < $in 2>&1; echo "rc=$?")
-  bo=$(cd /tmp/tD-bc2/b/Test && timeout $to $B "$@" < $in 2>&1; echo "rc=$?")
-  lo=${lo//\/tmp\/tD-bc2\/l/X}; bo=${bo//\/tmp\/tD-bc2\/b/X}
+  lo=$(cd $LD/Test && timeout $to $L "$@" < $in 2>&1; echo "rc=$?")
+  bo=$(cd $BD/Test && timeout $to $B "$@" < $in 2>&1; echo "rc=$?")
+  lo=${lo//$LD/X}; bo=${bo//$BD/X}
   case "$lo$bo" in *rc=124*) hang=$((hang+1)); echo "HANG $n";; esac
   if [ "$lo" = "$bo" ]; then same=$((same+1)); else differ=$((differ+1)); echo "DIFF $n"; diff <(echo "$bo") <(echo "$lo") | head -5; fi
 }
 Q=$(mktemp); echo quit > $Q
-for f in /tmp/tD-bc2/l/Test/*.b /tmp/tD-bc2/l/Test/BUG.bc; do
+for f in $LD/Test/*.b $LD/Test/BUG.bc; do
   b=$(basename $f); [ $b = timetest ] && continue
   # ckbook.b reads transactions until a 0: with only `quit` it waits; both hang the same.
   cmp1 "$b -l" $Q -l $f
