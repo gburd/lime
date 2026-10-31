@@ -630,6 +630,15 @@ static const char *const flex_prefixed[] = {
     "_flex_debug", "lineno",
 };
 
+/* REJECT: one DFA per Lime state whose accepting states keep EVERY rule
+** that matches there, not just the first.  accept_rule is a set id. */
+typedef struct {
+    LimeDfa *dfa;
+    int *set_off;   /* set id -> first entry in set_rules; n_sets + 1 entries */
+    int *set_rules; /* spec rule indices, ascending within each set */
+    int n_sets;
+} FeProduct;
+
 typedef struct {
     LimeFlexSpec *fs;
     FILE *out;
@@ -637,6 +646,8 @@ typedef struct {
     int line;             /* current output line (1-based) */
     int noline;
     LimeLexCompiled *lc;
+    const LimeDfa **dfas; /* per Lime state: lc's DFA, or the REJECT product's */
+    FeProduct *prod;      /* per Lime state, REJECT scanners only; else NULL */
 } FlexEmit;
 
 static void fe_puts(FlexEmit *e, const char *s) {
@@ -722,8 +733,175 @@ static void fe_prefix_defines(FlexEmit *e) {
     fe_puts(e, "\n");
 }
 
+/* Interning of int vectors (DFA state tuples, accept sets) to dense ids. */
+typedef struct {
+    int *pool;
+    size_t pool_n, pool_cap;
+    size_t *off;
+    int *len;
+    int n, cap;
+    int *tab; /* open addressing: id + 1, 0 = empty */
+    int tab_cap;
+} FeIntern;
+
+static unsigned fe_hash(const int *v, int n) {
+    unsigned h = 2166136261u;
+    for (int k = 0; k < n; k++) h = (h ^ (unsigned)v[k]) * 16777619u;
+    return h ^ (unsigned)n;
+}
+
+static int fe_intern_grow(FeIntern *in) {
+    int cap = in->tab_cap ? in->tab_cap * 2 : 1024;
+    int *tab = calloc((size_t)cap, sizeof(int));
+    if (!tab) return -1;
+    for (int id = 0; id < in->n; id++) {
+        unsigned h = fe_hash(in->pool + in->off[id], in->len[id]) & (unsigned)(cap - 1);
+        while (tab[h]) h = (h + 1) & (unsigned)(cap - 1);
+        tab[h] = id + 1;
+    }
+    free(in->tab);
+    in->tab = tab;
+    in->tab_cap = cap;
+    return 0;
+}
+
+/* The id of v[0..n), adding it if new.  -1 = out of memory. */
+static int fe_intern(FeIntern *in, const int *v, int n) {
+    if (2 * (in->n + 1) > in->tab_cap && fe_intern_grow(in) < 0) return -1;
+    unsigned h = fe_hash(v, n) & (unsigned)(in->tab_cap - 1);
+    for (; in->tab[h]; h = (h + 1) & (unsigned)(in->tab_cap - 1)) {
+        int id = in->tab[h] - 1;
+        if (in->len[id] == n && !memcmp(in->pool + in->off[id], v, (size_t)n * sizeof(int))) return id;
+    }
+    if (in->n == in->cap) {
+        int cap = in->cap ? in->cap * 2 : 256;
+        size_t *off = realloc(in->off, (size_t)cap * sizeof(size_t));
+        if (!off) return -1;
+        in->off = off;
+        int *len = realloc(in->len, (size_t)cap * sizeof(int));
+        if (!len) return -1;
+        in->len = len;
+        in->cap = cap;
+    }
+    if (in->pool_n + (size_t)n > in->pool_cap) {
+        size_t cap = in->pool_cap ? in->pool_cap * 2 : 4096;
+        while (cap < in->pool_n + (size_t)n) cap *= 2;
+        int *pool = realloc(in->pool, cap * sizeof(int));
+        if (!pool) return -1;
+        in->pool = pool;
+        in->pool_cap = cap;
+    }
+    if (n > 0) memcpy(in->pool + in->pool_n, v, (size_t)n * sizeof(int));
+    in->off[in->n] = in->pool_n;
+    in->len[in->n] = n;
+    in->pool_n += (size_t)n;
+    in->tab[h] = in->n + 1;
+    return in->n++;
+}
+
+static void fe_intern_free(FeIntern *in) {
+    free(in->pool);
+    free(in->off);
+    free(in->len);
+    free(in->tab);
+}
+
+/* shortcut: the product is built over all 256 bytes per state; fine for
+** REJECT scanners (rare, small), revisit if one needs >100k states. */
+#define FE_PRODUCT_MAX 100000
+
+/* The product of a Lime state's per-rule DFAs: a state is the tuple of
+** per-rule states, and accepts the set of rules whose component accepts.
+** Minimised with the set id as accept_rule.  0 ok, -1 OOM, 1 too big. */
+static int fe_product(const LimeLexCompiledState *cs, FeProduct *out) {
+    memset(out, 0, sizeof *out);
+    int m = cs->n_per_rule_dfas, nc = 0, rc = -1;
+    if (!cs->per_rule_dfas || m <= 0) return 0;
+    int *comp = malloc((size_t)m * sizeof(int));
+    int *cur = malloc((size_t)m * sizeof(int));
+    int *nxt = malloc((size_t)m * sizeof(int));
+    FeIntern T, S;
+    memset(&T, 0, sizeof T);
+    memset(&S, 0, sizeof S);
+    LimeDfa raw;
+    memset(&raw, 0, sizeof raw);
+    if (!comp || !cur || !nxt) goto done;
+    for (int i = 0; i < m; i++)
+        if (cs->per_rule_dfas[i]) comp[nc++] = i;
+    if (nc == 0) {
+        rc = 0;
+        goto done;
+    }
+    for (int j = 0; j < nc; j++) cur[j] = cs->per_rule_dfas[comp[j]]->start;
+    if (fe_intern(&T, cur, nc) < 0) goto done;
+    for (int q = 0; q < T.n; q++) {
+        if (T.n > FE_PRODUCT_MAX) {
+            rc = 1;
+            goto done;
+        }
+        if (raw.n_states == raw.cap) {
+            int cap = raw.cap ? raw.cap * 2 : 64;
+            LimeDfaState *st = realloc(raw.states, (size_t)cap * sizeof *st);
+            if (!st) goto done;
+            raw.states = st;
+            raw.cap = cap;
+        }
+        LimeDfaState *st = &raw.states[raw.n_states++];
+        memset(st, 0, sizeof *st);
+        st->id = q;
+        memcpy(cur, T.pool + T.off[q], (size_t)nc * sizeof(int));
+        int na = 0;
+        for (int j = 0; j < nc; j++)
+            if (cur[j] >= 0 && cs->per_rule_dfas[comp[j]]->states[cur[j]].is_accept)
+                nxt[na++] = cs->rule_indices[comp[j]];
+        if (na > 0) {
+            int sid = fe_intern(&S, nxt, na);
+            if (sid < 0) goto done;
+            st = &raw.states[q];
+            st->is_accept = 1;
+            st->accept_rule = sid;
+        }
+        for (int b = 0; b < 256; b++) {
+            int any = 0;
+            for (int j = 0; j < nc; j++) {
+                nxt[j] = cur[j] < 0 ? -1 : cs->per_rule_dfas[comp[j]]->states[cur[j]].trans[b];
+                any |= nxt[j] >= 0;
+            }
+            int t = any ? fe_intern(&T, nxt, nc) : -1;
+            if (any && t < 0) goto done;
+            raw.states[q].trans[b] = t;
+        }
+    }
+    raw.start = 0;
+    out->dfa = lime_lex_dfa_minimize(&raw);
+    if (!out->dfa) goto done;
+    out->n_sets = S.n;
+    out->set_off = malloc((size_t)(S.n + 1) * sizeof(int));
+    out->set_rules = malloc((S.pool_n ? S.pool_n : 1) * sizeof(int));
+    if (!out->set_off || !out->set_rules) goto done;
+    for (int s = 0; s < S.n; s++) out->set_off[s] = (int)S.off[s];
+    out->set_off[S.n] = (int)S.pool_n;
+    if (S.pool_n) memcpy(out->set_rules, S.pool, S.pool_n * sizeof(int));
+    rc = 0;
+done:
+    if (rc != 0) {
+        lime_lex_dfa_free(out->dfa);
+        free(out->set_off);
+        free(out->set_rules);
+        memset(out, 0, sizeof *out);
+    }
+    free(raw.states);
+    fe_intern_free(&T);
+    fe_intern_free(&S);
+    free(comp);
+    free(cur);
+    free(nxt);
+    return rc;
+}
+
 /* Equivalence classes over the 256 bytes, merged across every DFA. */
-static int fe_classes(const LimeLexCompiled *lc, int ec[256]) {
+static int fe_classes(const FlexEmit *e, int ec[256]) {
+    const LimeLexCompiled *lc = e->lc;
     /* Two bytes share a class iff every state of every DFA sends them to
     ** the same place.  Refine by hashing column signatures. */
     int n_ec = 0, rep[256];
@@ -733,7 +911,7 @@ static int fe_classes(const LimeLexCompiled *lc, int ec[256]) {
             int c = rep[k];
             int same = (b == 0) == (c == 0); /* NUL stays alone: it doubles as end-of-buffer */
             for (int s = 0; same && s < lc->n_states; s++) {
-                const LimeDfa *d = lc->states[s].dfa;
+                const LimeDfa *d = e->dfas[s];
                 if (!d) continue;
                 for (int q = 0; q < d->n_states && same; q++)
                     if (d->states[q].trans[b] != d->states[q].trans[c]) same = 0;
@@ -762,13 +940,13 @@ static int fe_tables(FlexEmit *e) {
     const LimeFlexSpec *fs = e->fs;
     const LimeLexCompiled *lc = e->lc;
     int ec[256];
-    int n_ec = fe_classes(lc, ec);
+    int n_ec = fe_classes(e, ec);
     int *base = calloc((size_t)lc->n_states + 1, sizeof(int));
     if (!base) return -1;
     int total = 1; /* state 0 = jam (no transitions, not accepting) */
     for (int s = 0; s < lc->n_states; s++) {
         base[s] = total;
-        if (lc->states[s].dfa) total += lc->states[s].dfa->n_states;
+        if (e->dfas[s]) total += e->dfas[s]->n_states;
     }
 
     fe_printf(e, "#define YY_NUM_RULES %d\n", fs->n_rules);
@@ -790,7 +968,7 @@ static int fe_tables(FlexEmit *e) {
     for (int c = 0; c < n_ec; c++)
         fe_printf(e, "%s-1,", col++ % 16 ? " " : "\n\t");
     for (int s = 0; s < lc->n_states; s++) {
-        const LimeDfa *d = lc->states[s].dfa;
+        const LimeDfa *d = e->dfas[s];
         if (!d) continue;
         for (int q = 0; q < d->n_states; q++) {
             for (int c = 0; c < n_ec; c++) {
@@ -808,7 +986,7 @@ static int fe_tables(FlexEmit *e) {
     fe_printf(e, "static const %s yy_nul_trans[%d] = {\n\t-1,", ty, total);
     col = 1;
     for (int s = 0; s < lc->n_states; s++) {
-        const LimeDfa *d = lc->states[s].dfa;
+        const LimeDfa *d = e->dfas[s];
         if (!d) continue;
         for (int q = 0; q < d->n_states; q++) {
             int t = d->states[q].trans[0];
@@ -820,18 +998,55 @@ static int fe_tables(FlexEmit *e) {
     col = 1;
     for (int s = 0; s < lc->n_states; s++) {
         const LimeLexCompiledState *cs = &lc->states[s];
-        const LimeDfa *d = cs->dfa;
+        const LimeDfa *d = e->dfas[s];
         if (!d) continue;
         for (int q = 0; q < d->n_states; q++) {
             int v = 0;
             if (d->states[q].is_accept) {
-                v = cs->rule_indices[d->states[q].accept_rule] + 1;
+                /* REJECT scanners: 1 = accepting, the rules are in yy_acclist. */
+                v = e->prod ? 1 : cs->rule_indices[d->states[q].accept_rule] + 1;
                 if (!fe_has_out(&d->states[q])) v = -v;
             }
             fe_printf(e, "%s%d,", col++ % 16 ? " " : "\n\t", v);
         }
     }
     fe_puts(e, "\n};\n");
+    if (e->prod) {
+        /* State g accepts the rules yy_acclist[yy_acc_off[g] .. yy_acc_off[g + 1]),
+        ** lowest rule first: REJECT moves to the next one. */
+        const char *rty = fs->n_rules < 32767 ? "flex_int16_t" : "flex_int32_t";
+        int n_acc = 0;
+        fe_printf(e, "static const flex_int32_t yy_acc_off[%d] = {\n\t0, 0,", total + 1);
+        col = 2;
+        for (int s = 0; s < lc->n_states; s++) {
+            const LimeDfa *d = e->dfas[s];
+            if (!d) continue;
+            const FeProduct *p = &e->prod[s];
+            for (int q = 0; q < d->n_states; q++) {
+                if (d->states[q].is_accept) {
+                    int sid = d->states[q].accept_rule;
+                    n_acc += p->set_off[sid + 1] - p->set_off[sid];
+                }
+                fe_printf(e, "%s%d,", col++ % 16 ? " " : "\n\t", n_acc);
+            }
+        }
+        fe_puts(e, "\n};\n");
+        fe_printf(e, "static const %s yy_acclist[%d] = {", rty, n_acc ? n_acc : 1);
+        col = 0;
+        for (int s = 0; s < lc->n_states; s++) {
+            const LimeDfa *d = e->dfas[s];
+            if (!d) continue;
+            const FeProduct *p = &e->prod[s];
+            for (int q = 0; q < d->n_states; q++) {
+                if (!d->states[q].is_accept) continue;
+                int sid = d->states[q].accept_rule;
+                for (int k = p->set_off[sid]; k < p->set_off[sid + 1]; k++)
+                    fe_printf(e, "%s%d,", col++ % 16 ? " " : "\n\t", p->set_rules[k] + 1);
+            }
+        }
+        if (!n_acc) fe_puts(e, "0,");
+        fe_puts(e, "\n};\n");
+    }
 
     /* yy_start_tab[2 * sc + bol]: flex's yy_start is 1 + 2 * sc, and the
     ** scanner adds YY_START_BOL (0 or 1). */
@@ -839,7 +1054,7 @@ static int fe_tables(FlexEmit *e) {
     for (int c = 0; c < fs->n_sc; c++) {
         for (int bol = 0; bol < 2; bol++) {
             int st = lime_flex_state_index(fs, c, bol);
-            const LimeDfa *d = st < lc->n_states ? lc->states[st].dfa : NULL;
+            const LimeDfa *d = st < lc->n_states ? e->dfas[st] : NULL;
             fe_printf(e, "%s%d,", (2 * c + bol) % 16 ? " " : "\n\t", d ? base[st] + d->start : 0);
         }
     }
@@ -1067,18 +1282,43 @@ int lime_flex_compile_and_emit(LimeFlexSpec *fs, const char *out_c, const char *
         lime_lex_compiled_free(lc);
         return 2;
     }
-    if (fs->uses_reject > 0) {
-        fprintf(stderr, "%s: REJECT is not implemented yet in lime's flex mode\n",
-                fs->filename ? fs->filename : "<stdin>");
-        lime_lex_compiled_free(lc);
-        if (!to_stdout) fclose(e.out);
-        return 1;
+    int rc = -1;
+    e.dfas = calloc((size_t)lc->n_states + 1, sizeof *e.dfas);
+    if (e.dfas) {
+        rc = 0;
+        for (int s = 0; s < lc->n_states; s++) e.dfas[s] = lc->states[s].dfa;
     }
-    int rc = fe_skeleton(&e);
+    if (rc == 0 && fs->uses_reject > 0) {
+        e.prod = calloc((size_t)lc->n_states + 1, sizeof *e.prod);
+        if (!e.prod) rc = -1;
+        for (int s = 0; rc == 0 && s < lc->n_states; s++) {
+            int pr = fe_product(&lc->states[s], &e.prod[s]);
+            if (pr < 0) rc = -1;
+            else if (pr > 0) {
+                fprintf(stderr, "%s: REJECT: the scanner needs more than %d DFA states per start condition\n",
+                        fs->filename ? fs->filename : "<stdin>", FE_PRODUCT_MAX);
+                rc = 1;
+            } else e.dfas[s] = e.prod[s].dfa;
+        }
+    }
+    if (rc == 0) rc = fe_skeleton(&e);
     int werr = ferror(e.out);
     if (!to_stdout) werr |= fclose(e.out);
     else werr |= fflush(stdout);
+    if (e.prod) {
+        for (int s = 0; s < lc->n_states; s++) {
+            lime_lex_dfa_free(e.prod[s].dfa);
+            free(e.prod[s].set_off);
+            free(e.prod[s].set_rules);
+        }
+        free(e.prod);
+    }
+    free(e.dfas);
     lime_lex_compiled_free(lc);
+    if (rc > 0) {
+        if (!to_stdout) remove(out_c);
+        return 1;
+    }
     if (rc < 0) {
         fprintf(stderr, "lime: out of memory\n");
         return 2;

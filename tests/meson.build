@@ -3060,6 +3060,15 @@ if host_machine.system() != 'windows'
     depends : [lime_exe],
     timeout : 300,
   )
+  # autoconf's AC_PROG_LEX probe (2.69 and 2.73, read from the corpus in
+  # $LIME_COMPAT_CORPUS, default /tmp/compat-dl) passes through lime-lex as
+  # through flex.  SKIPs without the corpus.
+  test('ac_prog_lex',
+    find_program('test_ac_prog_lex.sh'),
+    args : [lime_exe.full_path(), meson.current_build_dir() / 'acprobe'],
+    depends : [lime_exe],
+    timeout : 300,
+  )
 endif
 
 # v1.0.0: smoke test for scripts/lime-gdb.py.  Verifies the

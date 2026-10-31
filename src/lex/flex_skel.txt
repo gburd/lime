@@ -246,7 +246,19 @@ static int yy_more_len = 0;
 #define YY_MORE_ADJ 0
 %%endif
 #define YY_RESTORE_YY_MORE_OFFSET
-%%if !reject
+%%if reject
+/* Take the next rule that matches here (or a shorter match): flex's REJECT. */
+#define REJECT \
+	{ \
+		*yy_cp = YY_G(yy_hold_char); /* undo the NUL that ended yytext */ \
+		++yy_lp; \
+		goto find_rule; \
+	}
+%%if !reentrant
+static flex_int32_t *yy_state_buf = NULL;
+static int yy_state_buf_size = 0;
+%%endif
+%%else
 #define REJECT reject_used_but_not_detected
 %%endif
 %%defs-code
@@ -283,6 +295,10 @@ struct yyguts_t {
 	char *yytext_r;
 	int yy_more_flag;
 	int yy_more_len;
+%%if reject
+	flex_int32_t *yy_state_buf;
+	int yy_state_buf_size;
+%%endif
 %%if bridge
 	YYSTYPE *yylval_r;
 %%endif
@@ -342,6 +358,9 @@ static void yyunput(int c, char *buf_ptr YY_PARAM_LAST) YY_UNUSED_FN;
 static int input(YY_PARAM_ONLY) YY_UNUSED_FN;
 #endif
 static int yy_get_more(YY_PARAM_ONLY);
+%%if reject
+static void yy_state_buf_grow(int need YY_PARAM_LAST);
+%%endif
 
 %%if stack
 %%if !reentrant
@@ -432,6 +451,10 @@ YY_DECL
 {
 	char *yy_cp, *yy_bp;
 	int yy_act;
+%%if reject
+	char *yy_full_match = NULL;
+	int yy_lp = 0;
+%%endif
 	YY_GUTS
 %%if bridge
 %%if !reentrant
@@ -489,6 +512,12 @@ YY_DECL
 			int yy_s = yy_start_tab[YY_G(yy_start) - 1 + YY_START_BOL];
 			int yy_last = 0, yy_eof = 0;
 			char *yy_last_cp = yy_cp;
+%%if reject
+			/* yy_state_buf[i] = the state after i bytes of this match. */
+			if (YY_G(yy_state_buf_size) < 2)
+				yy_state_buf_grow(2 YY_ARG_LAST);
+			YY_G(yy_state_buf)[0] = yy_s;
+%%endif
 			for (;;) {
 				int yy_n = yy_nxt[yy_s * YY_NEC + yy_ec[YY_SC_TO_UI(*yy_cp)]];
 				if (yy_n < 0) {
@@ -516,6 +545,11 @@ YY_DECL
 				}
 				yy_s = yy_n;
 				++yy_cp;
+%%if reject
+				if (yy_cp - yy_bp >= YY_G(yy_state_buf_size))
+					yy_state_buf_grow((int) (yy_cp - yy_bp) + 1 YY_ARG_LAST);
+				YY_G(yy_state_buf)[yy_cp - yy_bp] = yy_s;
+%%endif
 				if (yy_accept[yy_s]) {
 					yy_last_cp = yy_cp;
 					if (yy_accept[yy_s] < 0) {
@@ -549,6 +583,22 @@ YY_DECL
 			yy_cp = yy_last_cp;
 			yy_act = yy_last;
 		}
+%%if reject
+		/* Every rule that matches at a position, longest position first. */
+		yy_full_match = yy_cp;
+		yy_lp = yy_acc_off[YY_G(yy_state_buf)[yy_full_match - yy_bp]];
+find_rule:
+		for (;;) {
+			if (yy_lp < yy_acc_off[YY_G(yy_state_buf)[yy_full_match - yy_bp] + 1]) {
+				yy_act = yy_acclist[yy_lp];
+				break;
+			}
+			if (--yy_full_match == yy_bp)
+				YY_FATAL_ERROR("flex scanner jammed");
+			yy_lp = yy_acc_off[YY_G(yy_state_buf)[yy_full_match - yy_bp]];
+		}
+		yy_cp = yy_full_match;
+%%endif
 		YY_DO_BEFORE_ACTION;
 %%if trail
 		/* Trailing context: yytext excludes it, and it is scanned again. */
@@ -634,6 +684,21 @@ static int yy_get_more(YY_PARAM_ONLY)
 	b->yy_ch_buf[b->yy_n_chars + 1] = YY_END_OF_BUFFER_CHAR;
 	return yy_res > 0;
 }
+%%if reject
+
+/* Room for yy_state_buf[0 .. need). */
+static void yy_state_buf_grow(int need YY_PARAM_LAST)
+{
+	YY_GUTS
+	int n = YY_G(yy_state_buf_size) ? YY_G(yy_state_buf_size) : YY_BUF_SIZE + 2;
+	while (n < need)
+		n *= 2;
+	YY_G(yy_state_buf) = (flex_int32_t *) yyrealloc((void *) YY_G(yy_state_buf), (yy_size_t) n * sizeof(flex_int32_t) YY_ARG_LAST);
+	if (!YY_G(yy_state_buf))
+		YY_FATAL_ERROR("out of dynamic memory in yy_state_buf_grow()");
+	YY_G(yy_state_buf_size) = n;
+}
+%%endif
 
 #ifndef YY_NO_UNPUT
 static void yyunput(int c, char *yy_bp YY_PARAM_LAST)
@@ -1119,6 +1184,10 @@ static int yy_init_globals(YY_PARAM_ONLY)
 	YY_G(yy_start_stack_depth) = 0;
 	YY_G(yy_start_stack) = NULL;
 %%endif
+%%if reject
+	YY_G(yy_state_buf) = NULL;
+	YY_G(yy_state_buf_size) = 0;
+%%endif
 	yyin = NULL;
 	yyout = NULL;
 	return 0;
@@ -1138,6 +1207,9 @@ int yylex_destroy(YY_PARAM_ONLY)
 %%if stack
 	yyfree(YY_G(yy_start_stack) YY_ARG_LAST);
 	YY_G(yy_start_stack) = NULL;
+%%endif
+%%if reject
+	yyfree(YY_G(yy_state_buf) YY_ARG_LAST);
 %%endif
 	yy_init_globals(YY_ARG_ONLY);
 %%if reentrant

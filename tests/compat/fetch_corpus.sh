@@ -59,4 +59,11 @@ fetch c11.y https://www.quut.com/c/ANSI-C-grammar-y-2011.html.y \
   04d95ad5296a7569daf68440aadef9e1e062f6be41ca76e21590304dae9b3584
 fetch c11.l https://www.quut.com/c/ANSI-C-grammar-l-2011.html.l \
   22a80c75ce5d09c5b84d5890383a8882b37d67087916fcfa47e9eb3443df836b
+# autoconf: the AC_PROG_LEX probe program (tests/test_ac_prog_lex.sh).
+fetch autoconf-2.69.tar.xz https://ftp.gnu.org/gnu/autoconf/autoconf-2.69.tar.xz \
+  64ebcec9f8ac5b2487125a86a7760d2591ac9e1d3dbd59489633f9de62a57684
+unpack autoconf-2.69.tar.xz autoconf-2.69
+fetch autoconf-2.73.tar.xz https://ftp.gnu.org/gnu/autoconf/autoconf-2.73.tar.xz \
+  9fd672b1c8425fac2fa67fa0477b990987268b90ff36d5f016dae57be0d6b52e
+unpack autoconf-2.73.tar.xz autoconf-2.73
 echo "corpus ready in $D"

@@ -214,6 +214,9 @@ install_data('limpar.c', install_dir : get_option('datadir') / 'lime')
 # (install_symlink needs meson 0.61; this project's floor is 0.60.)
 meson.add_install_script('sh', '-c',
   'ln -sf lime "$MESON_INSTALL_DESTDIR_PREFIX/' + get_option('bindir') + '/lime-yacc"')
+# Track E: `lime-lex` runs lime with the lex/flex command line.
+meson.add_install_script('sh', '-c',
+  'ln -sf lime "$MESON_INSTALL_DESTDIR_PREFIX/' + get_option('bindir') + '/lime-lex"')
 
 # The two libraries, by when their code runs:
 #
