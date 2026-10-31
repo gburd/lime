@@ -55,5 +55,18 @@ for t in "$@"; do
     fail=$((fail + 1))
   fi
 done
+# lime-lex by bare name through PATH, as `./configure LEX=lime-lex` runs it,
+# with options a CLI rewrite would expand: PATH must survive (the scanner
+# action's getenv sees it) and lex.yy.c must appear.
+n=$((n + 1))
+mkdir -p "$W/pathbin" "$W/pathrun" && ln -sf "$LIME" "$W/pathbin/lime-lex"
+printf '%%%%\n.|\\n { }\n%%%%\nint yywrap(void){return 1;}\nint main(void){return 0;}\n' > "$W/pathrun/p.l"
+rm -f "$W/pathrun/lex.yy.c"
+if (cd "$W/pathrun" && PATH="$W/pathbin:$PATH" lime-lex -B -L --noline -Cf p.l && PATH="$W/pathbin:$PATH" lime-lex -t p.l | grep -q 'yylex') >"$W/path.err" 2>&1 \
+   && test -s "$W/pathrun/lex.yy.c"; then
+  echo "ok   bare lime-lex via PATH"
+else
+  echo "FAIL bare lime-lex via PATH"; head -c 2000 "$W/path.err"; fail=$((fail + 1))
+fi
 echo "$((n - fail))/$n identical to flex"
 [ $fail -eq 0 ]

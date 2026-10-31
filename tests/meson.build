@@ -2472,6 +2472,16 @@ test_skin_flex_classify = executable('test_skin_flex_classify',
 )
 test('skin_flex_classify', test_skin_flex_classify)
 
+# Track E: the lex CLI personality must not write into the caller's argv[]
+# (a longer in-place rewrite clobbers environ[0], i.e. PATH: Track D's bug).
+test_lex_cli_argv = executable('test_lex_cli_argv',
+  'test_lex_cli_argv.c',
+  link_with : [lime_lex_compiler_lib],
+)
+test('lex_cli_argv', test_lex_cli_argv,
+  args : [meson.current_source_dir() / 'test_lex_cli_argv.l'],
+  workdir : meson.current_build_dir())
+
 # Track B5: a new literal syntax added at runtime (MOD_ADD_LEX_RULE +
 # %runtime_rules), together with a keyword, a soft keyword and an
 # operator, on one build-time-generated scanner.
