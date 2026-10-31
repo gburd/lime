@@ -25,6 +25,8 @@ Real programs built with `YACC=lime-yacc` (tests/compat/README.md):
 - bc 1.07.1 (`LEX=flex`): `libmath.h` byte-identical; bc's `Test/*.b`,
   `Examples/*.b` and 15 stdin cases give identical output and status
   (`tests/compat/bc_e2e_compare.sh`).
+- PostgreSQL REL_18_0 (`configure BISON=...`, all ten grammars):
+  `make check` passes 228/228, as the bison build does.
 
 Corpus (`tests/compat/run_corpus.py --tiers`): T1 (POSIX yacc) 10/10,
 T2 (+ PostgreSQL, byacc) 19/20, T3 (+ bison examples) 28/30. The misses:
