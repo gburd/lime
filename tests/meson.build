@@ -3050,6 +3050,18 @@ if host_machine.system() != 'windows'
   )
 endif
 
+# Track E: flex mode (lime --lex) against stock flex, fixture by fixture
+# (tests/flexdiff/*.l + .in): same output and exit status.  SKIPs without flex.
+if host_machine.system() != 'windows'
+  test('flex_diff',
+    find_program('test_flex_diff.sh'),
+    args : [lime_exe.full_path(), meson.current_source_dir() / 'flexdiff',
+            meson.current_build_dir() / 'flexdiff'],
+    depends : [lime_exe],
+    timeout : 300,
+  )
+endif
+
 # v1.0.0: smoke test for scripts/lime-gdb.py.  Verifies the
 # pretty-printer + lime-* commands load and produce expected
 # output against a debug-built bench_parse_fanout.  Skipped when
