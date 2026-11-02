@@ -2,9 +2,10 @@
 
 `lime-lsp` is a Language Server Protocol server for `.lime` grammar
 files.  It speaks LSP 3.17 (subset) over stdio and is a separate
-binary from the `lime` parser generator: `lime-lsp` shells out to
-`lime` for diagnostics and runs an in-process tokenizer for
-navigation features.
+binary from the `lime` parser generator.  It links
+`liblime_compiler` and lints the open buffer in process for
+diagnostics, runs an in-process tokenizer for navigation features,
+and runs the `lime -F` binary for formatting.
 
 This document describes the implementation that ships in v0.5.0.
 `docs/LSP_DESIGN.md` is the original design sketch from v0.2.x;
@@ -47,20 +48,22 @@ time is the authoritative list:
 ## Process model
 
 ```
-editor  <--JSON-RPC over stdio-->  lime-lsp  <--fork+exec-->  lime -L /tmp/<doc>.lime
+editor  <--JSON-RPC over stdio-->  lime-lsp  --->  liblime_compiler lint (in process)
                                        |
-                                       \--->  in-process .lime tokenizer
-                                              (definition, hover, outline)
+                                       +--->  in-process .lime tokenizer
+                                       |      (definition, hover, outline)
+                                       \--->  fork+exec  lime -F /tmp/<doc>.lime
+                                              (formatting only)
 ```
 
-**Why shell out for diagnostics?**  The `lime -L` linter already
-produces every warning and error a developer would see on the
-command line.  Re-implementing that pass inside `lime-lsp` would
-duplicate the parser and lint code, and force the LSP to chase
-every grammar-feature change in lockstep.  Forking is fine at LSP
-timing scales: the lint pass is sub-millisecond on grammars up to
-several thousand rules, and the user-visible debounce on
-`didChange` (250 ms in the wire-up recipes) dwarfs the fork cost.
+**Diagnostics run in process.**  `lime-lsp` calls the same lint code
+`lime -L` runs, `lime_lint_grammar_fast_in_process()` (parse + lint),
+linked from `liblime_compiler`, so the LSP never runs a second copy of
+`lime` for diagnostics.  On PostgreSQL's `gram.lime` that is about
+150 ms per request; the old run-`lime -L`-in-a-child-process path took
+6-20 s and has been removed.  `LIME_LSP_FULL_LINT=1` selects the full
+lint (`lime_lint_grammar_in_process()`, which also builds the LALR
+tables and reports conflict warnings, about 2 s on the same grammar).
 
 **Why an in-process tokenizer for navigation?**  `definition`,
 `hover`, and `documentSymbol` all need the same simple symbol
@@ -94,22 +97,19 @@ generates in practice.
 ## Diagnostics flow
 
 1. On `didOpen` / `didChange` / `didSave`, the server invokes
-   `lsp_diagnostics_run`.
-2. The current document text is written to a temp file under
-   `$TMPDIR` via `mkstemps`.
-3. The server forks; the child execvp's `lime -L <tmp>` with
-   stdout redirected to `/dev/null` and stderr piped back to the
-   parent.
-4. The parent reads the captured stderr, parses each line as
-   either:
+   `lsp_diagnostics_run`, on the background worker when one is
+   running.
+2. `lsp_diagnostics_run` lints the document text in process and gets
+   back the human-format text `lime -L` would print.
+3. Each line of that text is parsed as either:
      * `<path>:<line>:<col>: <severity>: <message>` (lint output)
      * `<path>:<line>: <message>` (parser-stage `ErrorMsg`)
-5. Each parsed line becomes an LSP `Diagnostic` with `severity`
+4. Each parsed line becomes an LSP `Diagnostic` with `severity`
    mapped from the textual severity word (error -> 1, warning ->
    2, info/note -> 3, hint -> 4).
-6. The server emits `textDocument/publishDiagnostics`.
+5. The server emits `textDocument/publishDiagnostics`.
 
-The `lime` binary is found in this order:
+For formatting, the `lime` binary is found in this order:
   1. `--lime PATH` argument
   2. `$LIME_BIN` environment variable
   3. literal `lime` resolved on `PATH`
@@ -160,20 +160,12 @@ src/lsp/
   lsp_main.c          # entry point, argument parsing, env wiring
   lsp_protocol.[ch]   # JSON-RPC 2.0 framing + LSP method dispatch
   lsp_documents.[ch]  # in-memory open-document table
-  lsp_diagnostics.[ch]# fork+exec lime, parse stderr to Diagnostic[]
+  lsp_diagnostics.[ch]# in-process lint, parse its output to Diagnostic[]
   lsp_navigation.[ch] # in-process tokenizer + symbol table +
                       # definition / hover / documentSymbol handlers
   lsp_json.[ch]       # minimal JSON parser/serializer
-  meson.build         # standalone executable, no library deps
+  meson.build         # links liblime_compiler (always)
 ```
-
-The LSP target is intentionally **decoupled** from
-`lime_parser_lib`: it does not link any runtime hot-path code and
-does not include any header that would force the LSP to
-recompile when the parser internals change.  That is what keeps
-the runtime perf gate (`parse_engine.c`, `parse_glr.c`,
-`snapshot.c`, ...) honest: every byte the LSP ships is in
-`src/lsp/`.
 
 ## Editor wire-up
 
@@ -200,9 +192,8 @@ extension stub.
 * **No code actions.**  These pair with the linter's auto-fix
   surface; they will land alongside the linter expansion in a
   later release.
-* **POSIX-only.**  `fork` / `execvp` / `pipe` are required for
-  the diagnostics path.  On Windows, run the server inside WSL.
-  A native Win32 implementation is a future-work item.
+* **Formatting runs `lime -F` as a child process** (POSIX fork+exec,
+  Win32 CreateProcessA).  Diagnostics do not.
 
 ## Versioning
 

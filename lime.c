@@ -306,8 +306,8 @@ struct LimeCompilerContext {
 #else
 #  define LIME_THREAD_LOCAL  /* no TLS available; fall back to file-static.
                               ** Concurrent in-process compilation across
-                              ** threads will race; subprocess fallback
-                              ** in src/snapshot_create.c handles it. */
+                              ** threads then races: callers on such a
+                              ** compiler must serialise compiles. */
 #endif
 
 static LIME_THREAD_LOCAL LimeCompilerContext *lime_active_ctx = 0;
@@ -17282,10 +17282,8 @@ int lime_compile_grammar_in_process(const char *grammar_text,
 ** LSP's parse_output() in lsp_diagnostics.c handles it directly.
 **
 ** Linked into liblime_compiler.a (gated on LIME_HAVE_SNAPSHOT_BUILD
-** like lime_compile_grammar_in_process).  Lime-lsp links the same
-** lib as a weak dependency; when not linked, this symbol is the
-** weak no-op stub that returns -1 and the LSP falls back to the
-** subprocess pipeline.
+** like lime_compile_grammar_in_process); declared in lime_compiler.h.
+** lime-lsp links it for every diagnostics request.
 */
 int lime_lint_grammar_in_process(const char *grammar_text,
                                  size_t len,

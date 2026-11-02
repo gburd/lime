@@ -280,17 +280,9 @@ lime_compiler_dep = declare_dependency(
   dependencies : [lime_parser_dep],
 )
 
-# v0.5.0: standalone Lime Language Server (lime-lsp).  Lives under
-# src/lsp/ and links nothing from lime_parser_lib so the runtime
-# hot-path stays untouched -- it shells out to the lime binary
-# above for diagnostics.  See docs/LSP.md.
-#
-# Cross-platform: lsp_diagnostics.c and lsp_format.c contain
-# parallel POSIX (fork+execlp+pipe+waitpid) and Win32
-# (CreateProcessA + anonymous pipe + WaitForSingleObject)
-# implementations gated on _WIN32.  Both share the same
-# observable behaviour: spawn 'lime -L file' or 'lime -F file',
-# capture stderr, parse the diagnostic / formatted output.
+# Lime Language Server (lime-lsp), src/lsp/.  It links liblime_compiler and
+# lints in process for diagnostics; formatting runs the `lime -F` binary
+# (POSIX fork+exec, Win32 CreateProcessA).  See docs/LSP.md.
 subdir('src/lsp')
 
 # pkg-config file so downstream meson/cmake/autotools builds can

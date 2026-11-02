@@ -186,7 +186,7 @@ static void publish_diagnostics(lsp_server *s, const char *uri,
         return;
     }
     /* Synchronous fallback. */
-    json_value *diags = lsp_diagnostics_run(s->lime_bin, text, text_len);
+    json_value *diags = lsp_diagnostics_run(text, text_len);
     if (!diags) diags = json_make_array();
     json_value *params = json_make_object();
     json_object_set(params, "uri",         json_make_string(uri));
@@ -578,9 +578,7 @@ void lsp_server_init(lsp_server *s) {
     s->in  = stdin;
     s->out = stdout;
     s->log = NULL;
-    s->async_diags = NULL;  /* lazily created in lsp_server_run after
-                            ** lime_bin is set, so the worker has the
-                            ** subprocess fallback wired in. */
+    s->async_diags = NULL;  /* created lazily in lsp_server_run */
 }
 
 void lsp_server_free(lsp_server *s) {
@@ -594,13 +592,11 @@ void lsp_server_free(lsp_server *s) {
 }
 
 int lsp_server_run(lsp_server *s) {
-    /* Lazily create the async-diagnostics pool now that lime_bin is set.
-    ** create() returns NULL on POSIX systems where pthread_create
-    ** failed (very rare) or on Windows where the implementation is
-    ** stubbed; in both cases publish_diagnostics falls through to
-    ** the synchronous path. */
+    /* Lazily create the async-diagnostics pool.  create() returns
+    ** NULL if the worker thread cannot be started (very rare); then
+    ** publish_diagnostics lints synchronously. */
     if (!s->async_diags) {
-        s->async_diags = lsp_diagnostics_async_create(s->out, s->lime_bin);
+        s->async_diags = lsp_diagnostics_async_create(s->out);
     }
 
     int got_exit = 0;

@@ -1,15 +1,8 @@
 # Lime LSP server -- standalone executable.
 #
-# `lime-lsp` is intentionally decoupled from the lime parser
-# library: it does NOT link `lime_parser_lib` and it does NOT
-# include any runtime hot-path source.  Diagnostics are produced
-# by exec'ing the `lime` binary; in-process analysis (definition,
-# hover, documentSymbol) is backed by a small private tokenizer
-# in lsp_navigation.c.
-#
-# Keeping the LSP a thin shim means it follows `lime` upgrades at
-# runtime without a recompile and keeps the perf-gated runtime
-# files (parse_engine.c, parse_glr.c, snapshot.c, ...) untouched.
+# Diagnostics come from liblime_compiler's in-process lint (below);
+# navigation (definition, hover, documentSymbol) from a small private
+# tokenizer in lsp_navigation.c.  Formatting still runs `lime -F`.
 
 lime_lsp_sources = files(
   'lsp_main.c',
@@ -26,23 +19,11 @@ lime_lsp_sources = files(
   'lsp_format.c',
 )
 
-# lime-lsp links liblime_compiler.a so it can call
-# lime_compile_grammar_in_process() directly for diagnostics
-# (Lime-Letter-27 fix).  This avoids the per-request fork+exec+
-# tempfile+cc cycle that made the LSP unusable on PG's gram.lime
-# (~21 KLoC, 6-20 s/request -> ~150 ms with the in-process path).
-#
-# The link uses the weak-symbol fallback declared in
-# src/lsp/lsp_diagnostics.c, so a static -Dlime_lsp_in_process=disabled
-# build still works (it just falls through to the subprocess path
-# the same way the v0.5.0 LSP did).  Default is to link the
-# compiler lib because the perf win is huge and the binary-size
-# cost (~1.2 MB) is acceptable for a developer tool.
-lime_lsp_in_process = get_option('lime_lsp_in_process')
-lime_lsp_deps = []
-if lime_lsp_in_process.allowed()
-  lime_lsp_deps += [lime_compiler_dep, lime_parser_dep]
-endif
+# lime-lsp links liblime_compiler for diagnostics: it lints the open
+# buffer in process (lime_lint_grammar_fast_in_process, ~150 ms on PG's
+# gram.lime) instead of running `lime -L` in a child process (6-20 s).
+# Always linked; there is no build without it.
+lime_lsp_deps = [lime_compiler_dep, lime_parser_dep]
 # v0.13.0: background-diagnostics worker uses pthread_create.
 # thread_dep adds -lpthread on POSIX; on Windows it's a no-op
 # and lsp_diagnostics_async.c falls back to synchronous diagnostics.

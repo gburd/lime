@@ -435,6 +435,32 @@ static void test_diagnostics(const char *bin, const char *lime_bin,
     fprintf(stderr, "  diagnostics     OK\n");
 }
 
+/* Diagnostics are linted in process (liblime_compiler), so they must
+ * arrive even when no `lime` binary can be run: point LIME_BIN at a
+ * path that does not exist.  The removed fallback ran `lime -L` and
+ * would report nothing here. */
+static void test_diagnostics_without_lime_binary(const char *bin,
+                                                 const char *fixtures_dir) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/dirty.lime", fixtures_dir);
+    size_t tlen;
+    char *text = slurp(path, &tlen);
+
+    server_t s = spawn_server(bin, "/nonexistent/lime-binary-for-test");
+    initialize_server(&s);
+    open_document(&s, "file:///dirty.lime", text, tlen);
+
+    char buf[16384];
+    int n = read_message(&s, buf, sizeof(buf));
+    assert(n > 0);
+    assert(strstr(buf, "publishDiagnostics"));
+    assert(strstr(buf, "unused"));
+
+    shutdown_server(&s);
+    free(text);
+    fprintf(stderr, "  diagnostics w/o lime binary OK\n");
+}
+
 static void test_definition(const char *bin, const char *lime_bin,
                             const char *fixtures_dir) {
     char path[1024];
@@ -1137,6 +1163,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "test_lsp:\n");
     test_lifecycle(bin, lime_bin);
     test_diagnostics(bin, lime_bin, fixtures_dir);
+    test_diagnostics_without_lime_binary(bin, fixtures_dir);
     test_definition(bin, lime_bin, fixtures_dir);
     test_hover(bin, lime_bin, fixtures_dir);
     test_document_symbol(bin, lime_bin, fixtures_dir);

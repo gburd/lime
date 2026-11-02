@@ -194,6 +194,25 @@ int lime_compile_grammar_in_process_ex2(const char *grammar_text,
                                         LimeCompileStats *stats,
                                         char **error);
 
+/* ------------------------------------------------------------------ */
+/*  Lint (the in-process equivalent of `lime -L`)                      */
+/* ------------------------------------------------------------------ */
+/*
+** Lint grammar text without building a snapshot.  *out_diags receives a
+** malloc'd buffer with the human-format diagnostics `lime -L` prints
+** (caller frees).  Returns 0 clean, >0 when errors or warnings were
+** emitted, -1 when no compiler context could be set up.
+**
+** lime_lint_grammar_in_process runs FindActions too, so conflict
+** warnings appear (~2 s on PostgreSQL's grammar);
+** lime_lint_grammar_fast_in_process stops after parsing (~150 ms) and
+** misses the conflict-dependent warnings.  lime-lsp uses both.
+*/
+int lime_lint_grammar_in_process(const char *grammar_text, size_t len,
+                                 char **out_diags);
+int lime_lint_grammar_fast_in_process(const char *grammar_text, size_t len,
+                                      char **out_diags);
+
 #ifdef __cplusplus
 }
 #endif

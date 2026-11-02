@@ -27,18 +27,11 @@
 
 #include <stddef.h>
 
-/* Run `lime -L` against a text buffer.  The buffer is written to
- * a temp file under TMPDIR; the temp path is replaced in
- * diagnostic locations with the original document URI's path so
- * the editor reports against the right file.
- *
- * `lime_bin` is the path to the lime executable (resolved from
- * $LIME_BIN or the literal "lime" if unset).  Returns a freshly
- * allocated JSON array of LSP Diagnostic objects (possibly
- * empty); caller frees with json_free.  Returns NULL on hard
- * failure (couldn't fork, couldn't write temp file, etc.).
+/* Lint a grammar buffer in process (liblime_compiler) and return a
+ * freshly allocated JSON array of LSP Diagnostic objects, possibly empty;
+ * caller frees with json_free.  Returns NULL only if the array itself
+ * cannot be allocated.
  */
-json_value *lsp_diagnostics_run(const char *lime_bin,
-                                const char *text, size_t text_len);
+json_value *lsp_diagnostics_run(const char *text, size_t text_len);
 
 #endif /* LIME_LSP_DIAGNOSTICS_H */

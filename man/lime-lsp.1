@@ -19,12 +19,14 @@ HTTP-style
 headers.
 The server is a separate binary from the
 .BR lime (1)
-parser generator: for live diagnostics it
-.BR fork (2)/ exec (3)s
+parser generator.
+For live diagnostics it lints the open document in process, with the
+same lint code
 .B lime -L
-on a temporary copy of the open document; for navigation features
+runs (linked from liblime_compiler); for navigation features
 (go-to-definition, hover, document outline) it runs an
-in-process tokenizer.
+in-process tokenizer; for formatting it runs
+.BR "lime -F" .
 .PP
 .B lime-lsp
 takes no positional arguments and reads / writes JSON-RPC 2.0
@@ -48,7 +50,7 @@ VS Code).
 .BI \-\-lime " path"
 Path to the
 .BR lime (1)
-binary used for diagnostics.
+binary used for formatting.
 Overrides
 .B $LIME_BIN
 and the
@@ -319,7 +321,7 @@ been wired.
 .B LIME_BIN
 Path to the
 .B lime
-binary used for diagnostics.
+binary used for formatting.
 Searched in this order:
 .B \-\-lime
 argument,
@@ -331,8 +333,8 @@ on
 .TP
 .B TMPDIR
 Used for the temporary file that holds the open document while
-.B lime -L
-runs against it.
+.B lime -F
+formats it.
 Falls back to
 .B /tmp
 when unset.
@@ -356,27 +358,19 @@ Argument-parsing failure.
 .EX
 editor  <-- JSON-RPC 2.0 over stdio -->  lime-lsp
                                             |
-                                            +--> fork+exec  lime -L /tmp/<doc>.lime
+                                            +--> in-process lint (liblime_compiler)
                                             |    (per didOpen / didChange /
-                                            |     didSave; output piped back
-                                            |     and parsed line-by-line)
+                                            |     didSave; output parsed
+                                            |     line-by-line)
+                                            |
+                                            +--> fork+exec  lime -F /tmp/<doc>.lime
+                                            |    (formatting only)
                                             |
                                             +--> in-process tokenizer
                                                  (definition, hover,
                                                   documentSymbol; ~250 LOC)
 .EE
 .RE
-.PP
-The LSP target is intentionally decoupled from the Lime parser
-runtime: it does
-.I not
-link
-.B lime_parser_lib
-and does
-.I not
-include any header that would force a recompile when the
-parser internals change.  Every byte the LSP ships lives in
-.BR src/lsp/ .
 .SH "WIRE FORMAT"
 JSON-RPC 2.0 framed with HTTP-style headers:
 .PP
@@ -407,13 +401,9 @@ Full-text sync only (no incremental).
 .IP \(bu 2
 No code actions or workspace symbol search.
 .IP \(bu 2
-POSIX-only.  The diagnostics path requires
-.BR fork (2),
-.BR execvp (3),
-and
-.BR pipe (2).
-On Windows, run the server inside WSL.  A native Win32
-implementation is future work.
+Formatting runs
+.B lime -F
+as a child process.
 .SH "SEE ALSO"
 .BR lime (1),
 .BR lime_grammar (5),

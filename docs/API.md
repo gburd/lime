@@ -727,10 +727,8 @@ directly. Caller `free()`s `*out_diags`.
 | non-zero    | Errors or warnings emitted. Parse `*out_diags` to know what. |
 | `-1`        | In-process compiler context could not be set up (NULL grammar text, OOM). |
 
-Measured ~10% / 200 ms saved per LSP request on PostgreSQL's 21 k-line
-`gram.lime` versus the `fork`+`exec` pipeline. `lime-lsp` enables this
-path by default; the meson option `-Dlime_lsp_in_process=enabled`
-controls it explicitly.
+`lime-lsp` always links `liblime_compiler` and uses these for every
+diagnostics request; it has no subprocess alternative.
 
 #### lime_compile_grammar_in_process_ex2
 

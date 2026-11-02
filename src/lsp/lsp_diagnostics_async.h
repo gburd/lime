@@ -26,10 +26,8 @@
  *     their result if they're stale.  This delivers diagnostics
  *     for the LATEST edit only, after a brief debounce.
  *
- *   - Worker uses lime_lint_grammar_in_process() (the in-process
- *     fast path added in v0.10.0) when available, falling back
- *     to the subprocess path the same way lsp_diagnostics_run()
- *     does.
+ *   - The worker lints in process through lsp_diagnostics_run()
+ *     (liblime_compiler; no child process).
  *
  * Thread safety:
  *
@@ -39,10 +37,9 @@
  *     thread (didOpen/didChange/didSave handlers).  Internally
  *     thread-safe.
  *
- * POSIX-only.  Windows can fall through to the synchronous path
- * the same way lime_lsp_in_process is gated on POSIX in the
- * meson build (lime_threads.h doesn't shim pthread_create today;
- * the LSP server is a developer tool that runs fine under WSL).
+ * Threads come from lime_threads.h (pthreads on POSIX, a Win32 shim on
+ * Windows).  If the worker cannot be started, create() returns NULL and
+ * the server lints synchronously.
  */
 #ifndef LIME_LSP_DIAGNOSTICS_ASYNC_H
 #define LIME_LSP_DIAGNOSTICS_ASYNC_H
@@ -56,17 +53,12 @@ typedef struct lsp_diagnostics_async lsp_diagnostics_async;
 /*
 ** Initialise the async pool.  `out` is the LSP server's stdout
 ** stream; the implementation takes a borrowed reference and
-** synchronises writes with an internal mutex.  `lime_bin` is the
-** path to the lime binary used for the subprocess fallback;
-** borrowed (caller must outlive the pool).
+** synchronises writes with an internal mutex.
 **
-** Returns NULL on POSIX systems where pthread_create fails (very
-** rare), or on Windows where the implementation is a no-op stub.
-** Callers MUST check for NULL and fall back to the synchronous
-** path when this returns NULL.
+** Returns NULL if the worker thread cannot be started (very rare).
+** Callers MUST check for NULL and lint synchronously instead.
 */
-lsp_diagnostics_async *lsp_diagnostics_async_create(FILE *out,
-                                                    const char *lime_bin);
+lsp_diagnostics_async *lsp_diagnostics_async_create(FILE *out);
 
 /*
 ** Request a diagnostic refresh for `uri`.  `text` is copied into

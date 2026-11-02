@@ -24,8 +24,7 @@
  *     The server's main thread also holds this lock when it
  *     replies to requests.
  *
- * POSIX-only for now.  Windows stub via the meson build option
- * `lime_lsp_async`.
+ * Portable through lime_threads.h (see below).
  */
 #include "lsp_diagnostics_async.h"
 #include "lsp_diagnostics.h"
@@ -75,7 +74,6 @@ struct lsp_diagnostics_async {
     pthread_mutex_t  out_mu;
     FILE            *out;          /* borrowed */
 
-    char            *lime_bin;     /* heap; copied in _create */
 };
 
 /* ------------------------------------------------------------------ */
@@ -188,7 +186,7 @@ static void *worker_main(void *arg) {
             /* didClose-style: publish empty diagnostics. */
             diags = json_make_array();
         } else {
-            diags = lsp_diagnostics_run(p->lime_bin, w->text, w->text_len);
+            diags = lsp_diagnostics_run(w->text, w->text_len);
             if (!diags) diags = json_make_array();
         }
 
@@ -217,12 +215,11 @@ static void *worker_main(void *arg) {
 /*  Public API                                                          */
 /* ------------------------------------------------------------------ */
 
-lsp_diagnostics_async *lsp_diagnostics_async_create(FILE *out, const char *lime_bin) {
+lsp_diagnostics_async *lsp_diagnostics_async_create(FILE *out) {
     lsp_diagnostics_async *p = calloc(1, sizeof(*p));
     if (!p) return NULL;
 
     p->out = out;
-    p->lime_bin = lime_bin ? strdup(lime_bin) : NULL;
 
     if (pthread_mutex_init(&p->queue_mu, NULL) != 0) goto fail;
     if (pthread_cond_init(&p->queue_cv, NULL) != 0)  goto fail_qmu;
@@ -238,7 +235,6 @@ fail_umu: pthread_mutex_destroy(&p->uris_mu);
 fail_qcv: pthread_cond_destroy(&p->queue_cv);
 fail_qmu: pthread_mutex_destroy(&p->queue_mu);
 fail:
-    free(p->lime_bin);
     free(p);
     return NULL;
 }
@@ -303,6 +299,5 @@ void lsp_diagnostics_async_destroy(lsp_diagnostics_async *p) {
     pthread_cond_destroy(&p->queue_cv);
     pthread_mutex_destroy(&p->uris_mu);
     pthread_mutex_destroy(&p->out_mu);
-    free(p->lime_bin);
     free(p);
 }
