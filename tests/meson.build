@@ -2592,6 +2592,12 @@ test('lexicon_op_agree', bench_lexicon,
   env : ['BENCH_CHECK_ONLY=1'],
 )
 
+# Every installed public header compiles on its own as <lime/NAME.h>.
+test('installed_headers', find_program('check_installed_headers.sh'),
+  args : [meson.get_compiler('c').cmd_array()[0], meson.project_source_root()]
+         + lime_public_headers,
+)
+
 # C6: no library a consumer links can spawn a process or load a shared
 # object (fork/exec*/dlopen/dlsym/LoadLibrary/posix_spawn/system/popen),
 # and liblime_parser has no reference to the in-process compiler (weak or
