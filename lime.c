@@ -316,7 +316,7 @@ static void lime_compiler_context_init(LimeCompilerContext *cc);
 static void lime_compiler_context_destroy(LimeCompilerContext *cc);
 
 /* Post-parse setup helpers (defined later, near the in-process
-** compile/lint entry points).  main() and dc_child_compile_and_dump
+** compile/lint entry points).  main() and dc_compile_and_dump
 ** appear before the definitions, so forward-declare here.  The split
 ** (index_symbols / number_rules / post_parse_setup composition) lets
 ** main() interleave its -F / lint passes between symbol indexing and
@@ -4120,27 +4120,13 @@ static void format_grammar_emit_category(
   }
 }
 
-static int format_grammar(struct lime *lem){
-  FILE *out;
+/* Write the formatted grammar to `out` and free the per-kind group lists
+** the reader built.  Shared by `lime -F` (format_grammar) and
+** lime_format_grammar_in_process (lime-lsp). */
+static void format_grammar_to(struct lime *lem, FILE *out){
   struct rule *rp;
   struct symbol *sp;
   int i;
-  char *outfile;
-  int sz;
-
-  printf("Formatting %s...\n", lem->filename);
-
-  /* Create output filename (input.lime -> input.lime.formatted) */
-  sz = lemonStrlen(lem->filename) + 20;
-  outfile = (char*)lime_malloc(sz);
-  lemon_sprintf(outfile, "%s.formatted", lem->filename);
-
-  out = fopen(outfile, "wb");
-  if( !out ){
-    fprintf(stderr, "Cannot open %s for writing\n", outfile);
-    lime_free(outfile);
-    return 1;
-  }
 
   /* Header comment (Lime-Letter-18 -- preserve copyright /
   ** IDENTIFICATION / module-doc verbatim).  If captured, emit it
@@ -4467,11 +4453,6 @@ static int format_grammar(struct lime *lem){
   format_grammar_emit_category(out, lem, LIME_DIR_BODY);
   format_grammar_emit_category(out, lem, LIME_DIR_LEXER);
 
-  fclose(out);
-  printf("OK: Formatted output written to: %s\n", outfile);
-  printf("  Review the formatted file and rename it if correct:\n");
-  printf("    mv %s %s\n", outfile, lem->filename);
-
   /* Lime-Letter-21: free the per-kind group lists.  Symbol pointers
   ** inside groups are aliases to the global symbol table (owned
   ** elsewhere); we only own the group records, the leading_comment
@@ -4508,7 +4489,31 @@ static int format_grammar(struct lime *lem){
     }
     lem->first_embed = lem->last_embed = 0;
   }
+}
 
+static int format_grammar(struct lime *lem){
+  FILE *out;
+  char *outfile;
+  int sz;
+
+  printf("Formatting %s...\n", lem->filename);
+
+  /* Create output filename (input.lime -> input.lime.formatted) */
+  sz = lemonStrlen(lem->filename) + 20;
+  outfile = (char*)lime_malloc(sz);
+  lemon_sprintf(outfile, "%s.formatted", lem->filename);
+
+  out = fopen(outfile, "wb");
+  if( !out ){
+    fprintf(stderr, "Cannot open %s for writing\n", outfile);
+    lime_free(outfile);
+    return 1;
+  }
+  format_grammar_to(lem, out);
+  fclose(out);
+  printf("OK: Formatted output written to: %s\n", outfile);
+  printf("  Review the formatted file and rename it if correct:\n");
+  printf("    mv %s %s\n", outfile, lem->filename);
   lime_free(outfile);
   return 0;
 }
@@ -4525,20 +4530,17 @@ static int format_grammar(struct lime *lem){
 **
 **     lime --diff-conflicts gram.lime gram_oracle.lime || abort
 **
-** Implementation strategy: fork() twice.  Each child runs a clean
-** Parse() + FindActions() pipeline against one grammar (base, then
-** base++ext concatenated to a temp file), walks lemp->conflict_list,
-** and writes a serialized record per conflict to a pipe.  The parent
-** parses both streams, hash-keys both sets, and prints the diff.
-** Forking gives each child pristine global state (Strsafe/Symbol/
-** State tables) without the surgery that resetting them in-process
-** would require.
+** Implementation: two in-process compiles, each in its own
+** LimeCompilerContext (fresh Strsafe/Symbol/State tables): the base,
+** then base++ext concatenated to a temp file.  Each walks
+** lemp->conflict_list and writes a serialized record per conflict to a
+** tmpfile; both streams are parsed, hash-keyed and diffed.  No child
+** process.
 **
 ** See docs/DIFF_CONFLICTS.md for the user-facing contract.
 */
 
-#ifndef _WIN32
-#include <sys/wait.h>
+#ifndef _WIN32  /* mkstemps() for the merged temp grammar */
 /* sys/types.h, unistd.h, sys/stat.h already pulled in via lime.c top */
 
 /* Wire format for child->parent conflict records: one conflict per
@@ -4672,20 +4674,23 @@ static char *dc_build_key(const DCRec *r){
 }
 
 /* Run the lime compile pipeline up through FindActions on the file at
-** `path`, write each conflict to `out_fd` in the wire format above,
-** then exit.  Called only inside a forked child. */
-static void dc_child_compile_and_dump(const char *path, int out_fd)
+** `path` and write each conflict to `f` in the wire format above.  Runs
+** in its own LimeCompilerContext, so two calls (base, then base+ext) see
+** fresh symbol/state tables without a child process.  Returns 0, or 2
+** when the grammar does not compile (an "ERROR" line is written). */
+static int dc_compile_and_dump(const char *path, FILE *f)
 {
   struct lime lem;
-  FILE *f;
+  LimeCompilerContext  cc;
+  LimeCompilerContext *prev_active = lime_active_ctx;
+  int rc = 0;
 
+  lime_compiler_context_init(&cc);
   memset(&lem, 0, sizeof(lem));
   lem.errorcnt = 0;
   lem.nexpect = -1;
   lem.first_token = 0;
 
-  /* The Strsafe/Symbol/State globals are pristine in the child since
-  ** the parent never called the *_init functions before forking. */
   Strsafe_init();
   Symbol_init();
   State_init();
@@ -4695,25 +4700,19 @@ static void dc_child_compile_and_dump(const char *path, int out_fd)
   Symbol_new("$");
 
   Parse(&lem);
-  if( lem.errorcnt ){
-    f = fdopen(out_fd, "w");
-    if( f ){ fprintf(f, "ERROR\n"); fclose(f); }
-    _exit(2);
-  }
-  if( lem.nrule==0 ){
-    f = fdopen(out_fd, "w");
-    if( f ){ fprintf(f, "ERROR\n"); fclose(f); }
-    _exit(2);
+  if( lem.errorcnt || lem.nrule==0 ){
+    fprintf(f, "ERROR\n");
+    rc = 2;
+    goto done;
   }
   lem.errsym = Symbol_find("error");
 
   {
     const char *setup_err = NULL;
     if( lime_post_parse_setup(&lem, &setup_err) != 0 ){
-      /* Symbol-table corruption in the child: nothing useful to
-      ** report over the pipe, the parent will see EOF + nonzero
-      ** exit.  Match the pre-consolidation _exit(2) behaviour. */
-      _exit(2);
+      fprintf(f, "ERROR\n");
+      rc = 2;
+      goto done;
     }
   }
 
@@ -4727,8 +4726,6 @@ static void dc_child_compile_and_dump(const char *path, int out_fd)
   FindFollowSets(&lem);
   FindActions(&lem);
 
-  f = fdopen(out_fd, "w");
-  if( !f ) _exit(2);
   ConflictRecord *cr;
   int n = 0;
   for(cr=lem.conflict_list; cr; cr=cr->next){
@@ -4765,8 +4762,11 @@ static void dc_child_compile_and_dump(const char *path, int out_fd)
     n++;
   }
   fprintf(f, "END%c%d\n", DC_US, n);
-  fclose(f);
-  _exit(0);
+
+done:
+  lime_compiler_context_destroy(&cc);
+  lime_active_ctx = prev_active;
+  return rc;
 }
 
 /* Tokenize one line into NUL-terminated fields by replacing 0x1F
@@ -4887,50 +4887,31 @@ static int dc_parse_buffer(char *buf, DCRec **out, int *out_n){
   return 0;
 }
 
-/* Fork+pipe wrapper around dc_child_compile_and_dump. */
-static int dc_run_child(const char *path, DCRec **recs, int *nrec){
-  int pfd[2];
-  if( pipe(pfd) != 0 ){
-    fprintf(stderr, "lime --diff-conflicts: pipe(): %s\n", strerror(errno));
+/* Compile `path` in process and parse its conflict records. */
+static int dc_run(const char *path, DCRec **recs, int *nrec){
+  FILE *tf = tmpfile();
+  if( !tf ){
+    fprintf(stderr, "lime --diff-conflicts: tmpfile(): %s\n", strerror(errno));
     return -1;
   }
-  pid_t pid = fork();
-  if( pid < 0 ){
-    fprintf(stderr, "lime --diff-conflicts: fork(): %s\n", strerror(errno));
-    close(pfd[0]); close(pfd[1]);
-    return -1;
-  }
-  if( pid == 0 ){
-    close(pfd[0]);
-    dc_child_compile_and_dump(path, pfd[1]);
-    /* unreachable: dc_child_compile_and_dump exits */
-    _exit(2);
-  }
-  close(pfd[1]);
+  int crc = dc_compile_and_dump(path, tf);
+  fflush(tf);
   char *buf = NULL; size_t blen = 0;
-  int srr = dc_slurp_fd(pfd[0], &buf, &blen);
-  close(pfd[0]);
-  int status = 0;
-  waitpid(pid, &status, 0);
+  int srr = (fseek(tf, 0, SEEK_SET)==0) ? dc_slurp_fd(fileno(tf), &buf, &blen) : -1;
+  fclose(tf);
   if( srr != 0 ){
-    fprintf(stderr, "lime --diff-conflicts: failed to read child output for %s\n", path);
+    fprintf(stderr, "lime --diff-conflicts: failed to read conflict records for %s\n", path);
     free(buf);
     return -1;
   }
-  /* If child exited non-zero AND we don't have a valid END line, fail. */
   int rc = dc_parse_buffer(buf, recs, nrec);
   free(buf);
-  if( rc == -1 ){
-    fprintf(stderr, "lime --diff-conflicts: child reported parse error for %s\n", path);
+  if( rc == -1 || crc != 0 ){
+    fprintf(stderr, "lime --diff-conflicts: %s does not compile\n", path);
     return -1;
   }
   if( rc == -2 ){
-    fprintf(stderr, "lime --diff-conflicts: truncated output from child for %s\n", path);
-    return -1;
-  }
-  if( !WIFEXITED(status) || WEXITSTATUS(status) != 0 ){
-    fprintf(stderr, "lime --diff-conflicts: child exited %d for %s\n",
-            WIFEXITED(status) ? WEXITSTATUS(status) : -1, path);
+    fprintf(stderr, "lime --diff-conflicts: truncated conflict records for %s\n", path);
     return -1;
   }
   return 0;
@@ -5116,11 +5097,11 @@ static int run_diff_conflicts(const char *base_path,
 
   DCRec *recs_a = NULL, *recs_b = NULL;
   int n_a = 0, n_b = 0;
-  if( dc_run_child(base_path, &recs_a, &n_a) != 0 ){
+  if( dc_run(base_path, &recs_a, &n_a) != 0 ){
     unlink(merged); free(merged);
     return 2;
   }
-  if( dc_run_child(merged, &recs_b, &n_b) != 0 ){
+  if( dc_run(merged, &recs_b, &n_b) != 0 ){
     unlink(merged); free(merged);
     free(recs_a);
     return 2;
@@ -5216,9 +5197,8 @@ static int run_diff_conflicts(const char *base_path,
 {
   (void)base_path; (void)ext_path; (void)json_flag;
   fprintf(stderr,
-          "lime --diff-conflicts is not supported on Windows builds.\n"
-          "It uses fork()+pipe() to compile each grammar in a clean\n"
-          "child process; the Windows port is tracked in v0.5.\n");
+          "lime --diff-conflicts is not supported on Windows builds\n"
+          "yet (it writes the merged grammar with mkstemps()).\n");
   return 2;
 }
 #endif
@@ -6368,8 +6348,8 @@ int main(int argc, char **argv){
      exit(0);
   }
   /* v0.4.3: --diff-conflicts dispatches BEFORE the normal one-file
-  ** pipeline.  It runs two compile-passes via fork() (each child
-  ** gets pristine global state) and prints a symbolic diff.  See
+  ** pipeline.  It runs two in-process compiles, each in its own
+  ** compiler context, and prints a symbolic diff.  See
   ** docs/DIFF_CONFLICTS.md.  Exit 0 = no NEW; 1 = NEW present;
   ** 2 = arg / file / pipeline error. */
   if( explainComposeFlag ){
@@ -16583,7 +16563,7 @@ void ResortStates(struct lime *lemp)
 ** duplicating the prelude.
 **
 ** Defined OUTSIDE the LIME_HAVE_SNAPSHOT_BUILD guard: main() and
-** dc_child_compile_and_dump call these unconditionally, so the
+** dc_compile_and_dump call these unconditionally, so the
 ** definitions must be present in the plain `lime` build (which does
 ** not define LIME_HAVE_SNAPSHOT_BUILD) as well as the in-process
 ** compiler library.
@@ -16624,7 +16604,7 @@ static int lime_index_symbols(struct lime *lem, const char **fail_reason) {
 ** rules (action-bearing first so the reduce switch() has a smaller
 ** jump table), records startRule, and sorts.  Split out of
 ** lime_post_parse_setup (v1.4.0); the iRule predicate lived inline
-** in THREE places (main, dc_child_compile_and_dump, and here) and
+** in THREE places (main, dc_compile_and_dump, and here) and
 ** had to be patched in lockstep twice in the v1.3.x line (the
 ** %rust_action alias fix and the alt-group propagation fix).  This
 ** is the single source of truth now.
@@ -16657,7 +16637,7 @@ static void lime_number_rules(struct lime *lem) {
 ** the LALR(1) pipeline (FindStates, FindFollowSets, FindActions) can
 ** run safely.  Thin composition of lime_index_symbols +
 ** lime_number_rules (v1.4.0); previously these steps were duplicated
-** inline in main, dc_child_compile_and_dump, and the in-process
+** inline in main, dc_compile_and_dump, and the in-process
 ** compile/lint entry points -- a maintenance hazard since a missing
 ** field at one site (e.g. nterminal) silently broke others' analysis
 ** with cryptic 'Internal error - no start rule' exits.
@@ -17529,6 +17509,120 @@ done:
     fclose(err_stream);
   }
   return lint_rc;
+}
+
+/*
+** lime_format_grammar_in_process -- the in-process equivalent of
+** `lime -F`: parse grammar text and return its formatted form.
+**
+** *out_text receives a malloc'd, NUL-terminated buffer with exactly the
+** bytes `lime -F` writes to <file>.formatted (caller frees).  On a parse
+** error *out_text is NULL and *out_diags (if non-NULL) receives the
+** human-format errors `lime -F` prints.  Returns 0 on success, 1 when
+** the text does not parse (or has no rules), -1 when no context could be
+** set up.  Used by lime-lsp for textDocument/formatting.
+*/
+int lime_format_grammar_in_process(const char *grammar_text,
+                                   size_t len,
+                                   char **out_text,
+                                   char **out_diags) {
+  if( out_text ) *out_text = NULL;
+  if( out_diags ) *out_diags = NULL;
+  if( !grammar_text || len==0 || !out_text ) return -1;
+
+  FILE *err_stream = tmpfile();
+  FILE *fmt_stream = tmpfile();
+  int saved_stderr = -1;
+  if( !fmt_stream ){
+    if( err_stream ) fclose(err_stream);
+    return -1;
+  }
+  if( err_stream ){
+    fflush(stderr);
+    saved_stderr = dup(fileno(stderr));
+    if( saved_stderr>=0 ) dup2(fileno(err_stream), fileno(stderr));
+  }
+
+  LimeCompilerContext  cc;
+  LimeCompilerContext *prev_active = lime_active_ctx;
+  lime_compiler_context_init(&cc);
+
+  struct lime lem;
+  memset(&lem, 0, sizeof(lem));
+  lem.errorcnt = 0;
+  lem.nexpect = -1;
+  lem.first_token = 0;
+  lem.filename = (char*)"<grammar text>";
+  lem.argv = NULL;
+  lem.argc = 0;
+
+  Strsafe_init();
+  Symbol_init();
+  State_init();
+  Symbol_new("$");
+
+  ParseText(&lem, grammar_text, len);
+
+  int rc = 1;
+  if( lem.errorcnt > 0 ) goto done;          /* ParseText wrote the errors */
+  if( lem.nrule == 0 ){
+    fprintf(stderr, "<grammar text>:1:1: error: no rules to format\n");
+    goto done;
+  }
+  lem.errsym = Symbol_find("error");
+  {
+    /* Same preparation main() does before `-F`: index the symbols. */
+    const char *setup_err = NULL;
+    if( lime_index_symbols(&lem, &setup_err) != 0 ){
+      fprintf(stderr, "<grammar text>:1:1: error: %s\n",
+              setup_err ? setup_err : "symbol indexing failed");
+      goto done;
+    }
+  }
+  format_grammar_to(&lem, fmt_stream);
+  fflush(fmt_stream);
+  if( fseek(fmt_stream, 0, SEEK_END)==0 ){
+    long sz = ftell(fmt_stream);
+    char *buf = (char*)malloc((size_t)(sz > 0 ? sz : 0) + 1);
+    if( buf ){
+      rewind(fmt_stream);
+      size_t got = sz > 0 ? fread(buf, 1, (size_t)sz, fmt_stream) : 0;
+      buf[got] = '\0';
+      *out_text = buf;
+      rc = 0;
+    }else{
+      rc = -1;
+    }
+  }else{
+    rc = -1;
+  }
+
+done:
+  lime_compiler_context_destroy(&cc);
+  lime_active_ctx = prev_active;
+  fclose(fmt_stream);
+
+  if( err_stream ){
+    fflush(stderr);
+    if( saved_stderr>=0 ){
+      dup2(saved_stderr, fileno(stderr));
+      close(saved_stderr);
+    }
+    if( out_diags && fseek(err_stream, 0, SEEK_END)==0 ){
+      long sz = ftell(err_stream);
+      if( sz>0 ){
+        char *buf = (char*)malloc((size_t)sz + 1);
+        if( buf ){
+          rewind(err_stream);
+          size_t got = fread(buf, 1, (size_t)sz, err_stream);
+          buf[got] = '\0';
+          *out_diags = buf;
+        }
+      }
+    }
+    fclose(err_stream);
+  }
+  return rc;
 }
 #endif /* LIME_HAVE_SNAPSHOT_BUILD */
 

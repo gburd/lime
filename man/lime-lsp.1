@@ -23,10 +23,13 @@ parser generator.
 For live diagnostics it lints the open document in process, with the
 same lint code
 .B lime -L
-runs (linked from liblime_compiler); for navigation features
-(go-to-definition, hover, document outline) it runs an
-in-process tokenizer; for formatting it runs
-.BR "lime -F" .
+runs (linked from liblime_compiler), and formats it in process with
+the code
+.B lime -F
+runs; for navigation features (go-to-definition, hover, document
+outline) it runs an in-process tokenizer.  It never runs the
+.B lime
+binary.
 .PP
 .B lime-lsp
 takes no positional arguments and reads / writes JSON-RPC 2.0
@@ -48,14 +51,10 @@ VS Code).
 .SH OPTIONS
 .TP
 .BI \-\-lime " path"
-Path to the
-.BR lime (1)
-binary used for formatting.
-Overrides
-.B $LIME_BIN
-and the
-.B PATH
-search.
+Accepted for compatibility with old editor configurations and ignored:
+the server runs no
+.B lime
+binary.
 .TP
 .B \-\-version
 Print the LSP server version (matches
@@ -318,26 +317,10 @@ pairs with the linter's auto-fix surface, which has not yet
 been wired.
 .SH "ENVIRONMENT"
 .TP
-.B LIME_BIN
-Path to the
-.B lime
-binary used for formatting.
-Searched in this order:
-.B \-\-lime
-argument,
-.BR LIME_BIN ,
-literal
-.B lime
-on
-.BR PATH .
-.TP
-.B TMPDIR
-Used for the temporary file that holds the open document while
-.B lime -F
-formats it.
-Falls back to
-.B /tmp
-when unset.
+.B LIME_LSP_FULL_LINT
+When set to a value other than 0, diagnostics use the full lint
+(builds the LALR tables, reports conflict warnings; slower) instead of
+the fast parse-only lint.
 .SH "EXIT STATUS"
 .TP
 .B 0
@@ -363,8 +346,7 @@ editor  <-- JSON-RPC 2.0 over stdio -->  lime-lsp
                                             |     didSave; output parsed
                                             |     line-by-line)
                                             |
-                                            +--> fork+exec  lime -F /tmp/<doc>.lime
-                                            |    (formatting only)
+                                            +--> in-process formatter
                                             |
                                             +--> in-process tokenizer
                                                  (definition, hover,
@@ -400,10 +382,6 @@ model.
 Full-text sync only (no incremental).
 .IP \(bu 2
 No code actions or workspace symbol search.
-.IP \(bu 2
-Formatting runs
-.B lime -F
-as a child process.
 .SH "SEE ALSO"
 .BR lime (1),
 .BR lime_grammar (5),

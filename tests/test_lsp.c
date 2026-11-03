@@ -402,6 +402,8 @@ static void open_document(server_t *s, const char *uri, const char *text,
 
 /* ---- sub-tests ----------------------------------------------------- */
 
+static const char *g_real_lime = "lime";
+
 static void test_lifecycle(const char *bin, const char *lime_bin) {
     server_t s = spawn_server(bin, lime_bin);
     initialize_server(&s);
@@ -1130,15 +1132,66 @@ static void test_formatting(const char *bin, const char *lime_bin,
     send_message(&s, req);
     int n = wait_for_response_id(&s, 34, buf, sizeof(buf));
     assert(n > 0);
-    /* Response is a TextEdit array.  Empty array means lime -F was
-     * unable to run (lime CLI not on PATH); a populated array
-     * means we got a single whole-document replace.  Either is
-     * a valid LSP response -- the contract is "no errors". */
+    /* One whole-document TextEdit, formatted in process.  Its text must
+     * be exactly what `lime -F` writes (the in-process API and the CLI
+     * share format_grammar_to).  The server runs no lime binary:
+     * LIME_BIN points nowhere (see main), so this also checks that. */
     assert(strstr(buf, "\"result\""));
+    assert(strstr(buf, "\"newText\""));
+
+    /* Reference: lime -F on the same file, in a scratch copy. */
+    char ref_dir[512], cmd[2048], ref_path[700];
+    snprintf(ref_dir, sizeof(ref_dir), "%s/lsp-fmt-ref-XXXXXX",
+             getenv("TMPDIR") && *getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
+    assert(mkdtemp(ref_dir) != NULL);
+    snprintf(ref_path, sizeof(ref_path), "%s/rich.lime", ref_dir);
+    FILE *rf = fopen(ref_path, "wb");
+    assert(rf && fwrite(text, 1, tlen, rf) == tlen);
+    fclose(rf);
+    snprintf(cmd, sizeof(cmd), "\"%s\" -F \"%s\" >/dev/null 2>&1",
+             g_real_lime, ref_path);
+    assert(system(cmd) == 0);
+    snprintf(ref_path, sizeof(ref_path), "%s/rich.lime.formatted", ref_dir);
+    size_t ref_len;
+    char *ref = slurp(ref_path, &ref_len);
+    unlink(ref_path);
+    snprintf(ref_path, sizeof(ref_path), "%s/rich.lime", ref_dir);
+    unlink(ref_path);
+    rmdir(ref_dir);
+
+    /* JSON-escape the reference the way lsp_json does and look for it. */
+    char *esc = malloc(ref_len * 6 + 1), *o = esc;
+    assert(esc);
+    for (size_t i = 0; i < ref_len; i++) {
+        unsigned char c = (unsigned char)ref[i];
+        if (c == '"' || c == '\\') { *o++ = '\\'; *o++ = (char)c; }
+        else if (c == '\n') { *o++ = '\\'; *o++ = 'n'; }
+        else if (c == '\t') { *o++ = '\\'; *o++ = 't'; }
+        else if (c == '\r') { *o++ = '\\'; *o++ = 'r'; }
+        else if (c == '\b') { *o++ = '\\'; *o++ = 'b'; }
+        else if (c == '\f') { *o++ = '\\'; *o++ = 'f'; }
+        else if (c < 0x20) { o += sprintf(o, "\\u%04x", c); }
+        else *o++ = (char)c;
+    }
+    *o = 0;
+    /* Exact equality, not containment: newText is the JSON string after
+     * "newText":" up to its closing quote. */
+    const char *nt = strstr(buf, "\"newText\":\"");
+    assert(nt);
+    nt += strlen("\"newText\":\"");
+    const char *q = nt;
+    while (*q && !(*q == '"' && q[-1] != '\\')) q++;
+    if ((size_t)(q - nt) != strlen(esc) || strncmp(nt, esc, (size_t)(q - nt)) != 0) {
+        fprintf(stderr, "formatting: newText differs from `lime -F` output "
+                "(%zu vs %zu escaped bytes)\n", (size_t)(q - nt), strlen(esc));
+        assert(0);
+    }
+    free(esc);
+    free(ref);
 
     shutdown_server(&s);
     free(text);
-    fprintf(stderr, "  formatting      OK\n");
+    fprintf(stderr, "  formatting      OK (== lime -F)\n");
 }
 
 int main(int argc, char **argv) {
@@ -1149,8 +1202,12 @@ int main(int argc, char **argv) {
         return 2;
     }
     const char *bin           = argv[1];
-    const char *lime_bin      = argv[2];
+    /* The server runs no lime binary; give it one that does not exist so
+     * any attempt shows up as missing output.  argv[2] (the real lime) is
+     * used only by test_formatting, to produce the `lime -F` reference. */
+    const char *lime_bin      = "/nonexistent/lime-binary-for-test";
     const char *fixtures_dir  = argv[3];
+    g_real_lime = argv[2];
 
     /* Don't let a stuck server stall CI -- die after 60s. */
 #if !defined(_WIN32)

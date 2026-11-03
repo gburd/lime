@@ -2,14 +2,12 @@
  * lsp_main.c -- entry point for `lime-lsp`, the Lime grammar
  * Language Server.
  *
- * The binary is dependency-free aside from libc.  It does NOT
- * link the lime parser library; diagnostics are produced by
- * shelling out to the `lime` binary, which keeps the LSP a thin
- * shim and lets it follow lime upgrades without recompilation.
+ * Diagnostics and formatting run in process through liblime_compiler
+ * (lime_lint_grammar_*_in_process, lime_format_grammar_in_process); the
+ * server never runs the `lime` binary.
  *
  * Configuration:
  *
- *   --lime PATH           path to the lime binary (default: $LIME_BIN, then "lime")
  *   --log  PATH           append protocol-level trace to PATH
  *   --version             print version + exit
  *   --help                print usage + exit
@@ -35,8 +33,6 @@ static void print_usage(FILE *out, const char *progname) {
         "Lime grammar Language Server (speaks LSP over stdio).\n"
         "\n"
         "Options:\n"
-        "  --lime PATH    Path to the lime binary used for diagnostics\n"
-        "                 (default: $LIME_BIN, then `lime` on PATH).\n"
         "  --log  PATH    Append a protocol-level trace to PATH.\n"
         "  --version      Print version and exit.\n"
         "  --help         Print this message and exit.\n"
@@ -48,7 +44,6 @@ static void print_usage(FILE *out, const char *progname) {
 }
 
 int main(int argc, char **argv) {
-    const char *lime_bin = NULL;
     const char *log_path = NULL;
 
     for (int i = 1; i < argc; i++) {
@@ -61,16 +56,19 @@ int main(int argc, char **argv) {
             printf("lime-lsp %s\n", LIME_VERSION_STRING);
             return 0;
         }
-        if (strcmp(a, "--lime") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "%s: --lime requires an argument\n", argv[0]);
-                return 2;
+        /* --lime PATH named the `lime` binary the server used to run.
+        ** It runs none now; accept the option so existing editor configs
+        ** keep working, and say it is ignored. */
+        if (strcmp(a, "--lime") == 0 || strncmp(a, "--lime=", 7) == 0) {
+            if (strcmp(a, "--lime") == 0) {
+                if (i + 1 >= argc) {
+                    fprintf(stderr, "%s: --lime requires an argument\n", argv[0]);
+                    return 2;
+                }
+                i++;
             }
-            lime_bin = argv[++i];
-            continue;
-        }
-        if (strncmp(a, "--lime=", 7) == 0) {
-            lime_bin = a + 7;
+            fprintf(stderr, "%s: note: --lime is ignored; lime-lsp runs no "
+                    "lime binary\n", argv[0]);
             continue;
         }
         if (strcmp(a, "--log") == 0) {
@@ -90,17 +88,8 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    if (!lime_bin) lime_bin = getenv("LIME_BIN");
-
     lsp_server s;
     lsp_server_init(&s);
-    if (lime_bin && *lime_bin) {
-        s.lime_bin = strdup(lime_bin);
-        if (!s.lime_bin) {
-            fprintf(stderr, "%s: out of memory\n", argv[0]);
-            return 1;
-        }
-    }
     if (log_path) {
         s.log = fopen(log_path, "a");
         if (!s.log) {

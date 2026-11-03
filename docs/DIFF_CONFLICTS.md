@@ -135,7 +135,7 @@ Tailored for CI integration:
 |------|---------|
 | `0`  | No NEW conflicts. The extension is safe to merge. |
 | `1`  | NEW conflicts present. Review or reject. |
-| `2`  | Argument or file error (missing file, child crashed, etc.). |
+| `2`  | Argument or file error (missing file, grammar that does not compile, etc.). |
 
 Use the `||` shell idiom in CI:
 
@@ -147,10 +147,9 @@ lime --diff-conflicts base.lime ext.lime --json > diff.json \
 ## Implementation notes
 
 - `--diff-conflicts` runs the full Lime compile pipeline through
-  `FindActions()` for both grammars, twice, **in forked child
-  processes**. Each child gets pristine global state for the
-  Strsafe/Symbol/State tables, so cross-grammar contamination is
-  impossible.
+  `FindActions()` for both grammars, in process, each in its own
+  `LimeCompilerContext`: fresh Strsafe/Symbol/State tables per grammar,
+  so there is no cross-grammar contamination, and no child process.
 - The base side is parsed straight from `base.lime`. The merged side
   is parsed from a temp file built by `cat base.lime '\n' ext.lime`.
   This is the same shape `lime_compile_grammar_text` uses for

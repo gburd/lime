@@ -18,12 +18,8 @@
  * TextEdit objects (always 0 or 1 entries: one whole-document
  * replacement on success, empty array on failure or empty input).
  * Caller takes ownership of the returned json_value and frees it
- * with json_free().
- *
- * `lime_bin` is the path to the lime CLI binary; pass NULL to use
- * "lime" from $PATH.  Same convention as lsp_diagnostics_run.
+ * with json_free().  Formats in process (liblime_compiler).
  */
-json_value *lsp_format_run(const char *lime_bin,
-                           const char *text, size_t text_len);
+json_value *lsp_format_run(const char *text, size_t text_len);
 
 #endif

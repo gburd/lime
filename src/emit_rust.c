@@ -39,6 +39,33 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <errno.h>
+#include <sys/stat.h>
+#if defined(_WIN32)
+#  include <direct.h>
+#  define LIME_MKDIR(p) _mkdir(p)
+#else
+#  define LIME_MKDIR(p) mkdir((p), 0777)
+#endif
+
+/* mkdir -p: create `path` and any missing parents.  0 on success or if
+** it already exists as a directory. */
+static int mkdir_p(const char *path) {
+    char buf[1100];
+    size_t n = strlen(path);
+    if (n == 0 || n >= sizeof(buf)) return -1;
+    memcpy(buf, path, n + 1);
+    for (size_t i = 1; i <= n; i++) {
+        if (buf[i] == '/' || buf[i] == '\\' || buf[i] == 0) {
+            char c = buf[i];
+            buf[i] = 0;
+            if (LIME_MKDIR(buf) != 0 && errno != EEXIST) return -1;
+            buf[i] = c;
+        }
+    }
+    struct stat st;
+    return (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) ? 0 : -1;
+}
 
 struct lime;
 struct symbol;
@@ -1256,10 +1283,8 @@ int emit_rust_crate(struct lime *lemp, const char *rs_path, char **error) {
     char src_dir[1100];
     snprintf(src_dir, sizeof(src_dir), "%s/src", dir);
 
-    /* mkdir -p the crate's src/ */
-    char mkdir_cmd[2200];
-    snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p %s", src_dir);
-    if (system(mkdir_cmd) != 0) {
+    /* mkdir -p the crate's src/, with mkdir(2), not a shell */
+    if (mkdir_p(src_dir) != 0) {
         if (error) {
             char buf[256];
             snprintf(buf, sizeof(buf),

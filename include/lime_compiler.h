@@ -213,6 +213,15 @@ int lime_lint_grammar_in_process(const char *grammar_text, size_t len,
 int lime_lint_grammar_fast_in_process(const char *grammar_text, size_t len,
                                       char **out_diags);
 
+/*
+** Format grammar text in process: the bytes `lime -F` would write to
+** <file>.formatted, in a malloc'd *out_text (caller frees).  Returns 0 on
+** success, 1 when the text does not parse (*out_text NULL; *out_diags,
+** if non-NULL, gets the errors), -1 when no context could be set up.
+*/
+int lime_format_grammar_in_process(const char *grammar_text, size_t len,
+                                   char **out_text, char **out_diags);
+
 #ifdef __cplusplus
 }
 #endif

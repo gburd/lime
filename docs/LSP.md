@@ -3,9 +3,10 @@
 `lime-lsp` is a Language Server Protocol server for `.lime` grammar
 files.  It speaks LSP 3.17 (subset) over stdio and is a separate
 binary from the `lime` parser generator.  It links
-`liblime_compiler` and lints the open buffer in process for
-diagnostics, runs an in-process tokenizer for navigation features,
-and runs the `lime -F` binary for formatting.
+`liblime_compiler` and runs everything in process: diagnostics through
+the lint API, formatting through `lime_format_grammar_in_process()`,
+navigation through a small tokenizer.  It never runs the `lime`
+binary.
 
 This document describes the implementation that ships in v0.5.0.
 `docs/LSP_DESIGN.md` is the original design sketch from v0.2.x;
@@ -50,10 +51,10 @@ time is the authoritative list:
 ```
 editor  <--JSON-RPC over stdio-->  lime-lsp  --->  liblime_compiler lint (in process)
                                        |
-                                       +--->  in-process .lime tokenizer
-                                       |      (definition, hover, outline)
-                                       \--->  fork+exec  lime -F /tmp/<doc>.lime
-                                              (formatting only)
+                                       +--->  liblime_compiler formatter (in process)
+                                       |
+                                       \--->  in-process .lime tokenizer
+                                              (definition, hover, outline)
 ```
 
 **Diagnostics run in process.**  `lime-lsp` calls the same lint code
@@ -109,10 +110,8 @@ generates in practice.
    2, info/note -> 3, hint -> 4).
 5. The server emits `textDocument/publishDiagnostics`.
 
-For formatting, the `lime` binary is found in this order:
-  1. `--lime PATH` argument
-  2. `$LIME_BIN` environment variable
-  3. literal `lime` resolved on `PATH`
+`--lime PATH` is still accepted, for old editor configs, and ignored;
+`$LIME_BIN` is ignored.
 
 ## Definition / hover / documentSymbol
 
@@ -192,8 +191,6 @@ extension stub.
 * **No code actions.**  These pair with the linter's auto-fix
   surface; they will land alongside the linter expansion in a
   later release.
-* **Formatting runs `lime -F` as a child process** (POSIX fork+exec,
-  Win32 CreateProcessA).  Diagnostics do not.
 
 ## Versioning
 

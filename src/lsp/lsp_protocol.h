@@ -29,7 +29,6 @@
 
 typedef struct {
     lsp_documents docs;
-    char         *lime_bin;     /* heap, NULL if not configured     */
     int           shutdown_requested;
     int           initialized;
     FILE         *in;           /* defaults to stdin                */

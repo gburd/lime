@@ -566,7 +566,7 @@ static void handle_formatting(lsp_server *s, const json_value *id,
         send_response(s->out, id, json_make_array());
         return;
     }
-    json_value *r = lsp_format_run(s->lime_bin, d->text, d->text_len);
+    json_value *r = lsp_format_run(d->text, d->text_len);
     send_response(s->out, id, r);
 }
 
@@ -587,8 +587,6 @@ void lsp_server_free(lsp_server *s) {
         s->async_diags = NULL;
     }
     lsp_documents_free(&s->docs);
-    free(s->lime_bin);
-    s->lime_bin = NULL;
 }
 
 int lsp_server_run(lsp_server *s) {
