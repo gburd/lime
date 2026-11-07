@@ -2594,9 +2594,14 @@ test('lexicon_op_agree', bench_lexicon,
   env : ['BENCH_CHECK_ONLY=1'],
 )
 
-# Every installed public header compiles on its own as <lime/NAME.h>.
+# Every installed public header compiles on its own as <lime/NAME.h>,
+# with the C mode a consumer needs: C11, and on MSVC also
+# /experimental:c11atomics (the headers use <stdatomic.h>).
+_hdr_cc = meson.get_compiler('c')
+_hdr_std = _hdr_cc.get_argument_syntax() == 'msvc' ? ['/std:c11', '/experimental:c11atomics'] : ['-std=gnu11']
 test('installed_headers', find_program('check_installed_headers.sh'),
-  args : [meson.get_compiler('c').cmd_array()[0], meson.project_source_root()]
+  args : [_hdr_cc.cmd_array()[0], meson.project_source_root(),
+          _hdr_cc.get_argument_syntax(), ' '.join(_hdr_std)]
          + lime_public_headers,
 )
 
