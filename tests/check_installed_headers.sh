@@ -1,6 +1,5 @@
 #!/bin/sh
-# check_installed_headers.sh CC SRCDIR SYNTAX CFLAGS HEADER...
-#   SYNTAX: meson's get_argument_syntax() -- 'msvc' (cl, clang-cl) or 'gcc'
+# check_installed_headers.sh CC SRCDIR CC_ID HEADER...   (CC_ID: meson's get_id())
 #
 # Every header meson installs under <prefix>/include/lime/ must compile on
 # its own, the way a consumer includes it: #include <lime/NAME.h>, with
@@ -13,7 +12,7 @@
 # The headers are copied into a scratch include/lime/ exactly as the
 # install list names them, so the test needs no `meson install`.
 # Exit 0 clean, 1 failure, 77 skip (no compiler).
-cc=$1; src=$2; syntax=$3; cflags=$4; shift 4
+cc=$1; src=$2; ccid=$3; shift 3
 if [ -z "$cc" ] || ! command -v "$cc" >/dev/null 2>&1; then
   echo "SKIP: no C compiler"; exit 77
 fi
@@ -25,13 +24,13 @@ bad=0
 for h in "$W"/include/lime/*.h; do
   b=$(basename "$h")
   printf '#include <lime/%s>\nint main(void) { return 0; }\n' "$b" > "$W/t.c"
-  if [ "$syntax" = msvc ]; then
-    cmd="\"$cc\" /nologo /Zs $cflags /I\"$W/include\" \"$W/t.c\""
+  # cl takes -X as /X; the dash form keeps an msys shell from rewriting it as a path.
+  if [ "$ccid" = msvc ]; then
+    set -- -nologo -Zs -std:c11 -experimental:c11atomics
   else
-    cmd="\"$cc\" -fsyntax-only -pthread $cflags -I\"$W/include\" \"$W/t.c\""
+    set -- -fsyntax-only -pthread
   fi
-  # shellcheck disable=SC2086
-  if eval "$cmd" > "$W/err" 2>&1; then
+  if "$cc" "$@" -I"$W/include" "$W/t.c" > "$W/err" 2>&1; then
     echo "ok   <lime/$b>"
   else
     echo "FAIL <lime/$b>: $(grep -m1 'error' "$W/err")"; bad=1
