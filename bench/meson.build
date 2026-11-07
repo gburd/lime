@@ -67,14 +67,18 @@ bench_json_gen = custom_target('bench_json_parser',
 # rebuilds the tables.  Not a test.  It #includes lime.c (for the
 # phase timer), so it links the parser runtime but not lime_compiler.
 #   ./bench/bench_pg_rebuild ../examples/pg/pg_grammar.lime 7 [--compose ext.lime]
-bench_pg_rebuild = executable('bench_pg_rebuild',
-  'bench_pg_rebuild.c',
-  include_directories : [inc, include_directories('../src'),
-                         include_directories('../src/lex')],
-  dependencies : [lime_parser_dep],
-  c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAVE_SNAPSHOT_BUILD']
-           + lime_warning_suppress,
-)
+# POSIX-only (clock_gettime, getrusage, and Linux perf counters when
+# present); local measurement tooling, like bench_parse_fanout.
+if host_machine.system() != 'windows'
+  bench_pg_rebuild = executable('bench_pg_rebuild',
+    'bench_pg_rebuild.c',
+    include_directories : [inc, include_directories('../src'),
+                           include_directories('../src/lex')],
+    dependencies : [lime_parser_dep],
+    c_args : ['-DLIME_TEST_HARNESS', '-DLIME_HAVE_SNAPSHOT_BUILD']
+             + lime_warning_suppress,
+  )
+endif
 
 # v0.9.x: multi-thread parse-server fan-out benchmark.  Measures
 # parse throughput as the parser-thread count scales from 1..N
@@ -194,8 +198,11 @@ endif
 # corpus):
 #   bench_compose_zerocost examples/pg/pg_grammar.lime \
 #       tests/compose_fixtures/dialect_ext.lime <postgres>/src/test/regress/sql 21 3
-bench_compose_zerocost = executable('bench_compose_zerocost',
-  'bench_compose_zerocost.c',
-  include_directories : include_directories('../src'),
-  dependencies : [lime_parser_dep, lime_compiler_dep],
-)
+# POSIX-only too (dirent.h, CLOCK_THREAD_CPUTIME_ID).
+if host_machine.system() != 'windows'
+  bench_compose_zerocost = executable('bench_compose_zerocost',
+    'bench_compose_zerocost.c',
+    include_directories : include_directories('../src'),
+    dependencies : [lime_parser_dep, lime_compiler_dep],
+  )
+endif

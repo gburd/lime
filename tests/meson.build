@@ -2520,8 +2520,10 @@ test_lex_program = executable('test_lex_program',
 pg_scan_gate_src = custom_target('pg_scan_gate_src',
   input : ['pg_scan_core.lex'],
   output : 'pg_scan_gate.lex',
-  command : ['sed', '-e', 's/^%name_prefix Core[.]/%name_prefix Gate./',
-             '-e', '/^%name_prefix Gate[.]/a %runtime_rules.', '@INPUT@'],
+  # One portable s/// (BSD sed's `a` needs a backslash-newline): two
+  # directives on one line is valid .lex.
+  command : ['sed', '-e', 's/^%name_prefix Core[.]/%name_prefix Gate. %runtime_rules./',
+             '@INPUT@'],
   capture : true,
 )
 pg_scan_gate_gen = custom_target('pg_scan_gate_lex',

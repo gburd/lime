@@ -30,7 +30,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 /* Sanitizer / instrumented-environment detection.  Same idiom (and
 ** same rationale) as tests/test_random_composition.c: -fsanitize=*
