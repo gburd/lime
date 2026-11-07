@@ -35,6 +35,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "lime_time.h"
 
 extern int lime_compile_grammar_in_process(const char *, size_t, ParserSnapshot **, char **);
 
@@ -103,9 +104,13 @@ static void run(int v, const LimeLexicon *cold, const LimeLexicon *hot, char **b
 }
 
 static double cpu_ns(void) {
+#if defined(CLOCK_PROCESS_CPUTIME_ID) && !defined(_WIN32)
     struct timespec t;
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t);
     return (double)t.tv_sec * 1e9 + (double)t.tv_nsec;
+#else
+    return (double)lime_now_ns();  /* Windows: wall clock; the meson test only checks agreement */
+#endif
 }
 static int dcmp(const void *a, const void *b) {
     double x = *(const double *)a, y = *(const double *)b;
