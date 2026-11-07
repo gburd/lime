@@ -166,8 +166,8 @@ lime --diff-conflicts base.lime ext.lime --json > diff.json \
 ## Limitations
 
 - Windows builds: `--diff-conflicts` returns exit 2 with a
-  diagnostic. The implementation uses `fork()`+`pipe()`; a
-  CreateProcess-based Windows path is tracked for v0.5.
+  diagnostic. Both compiles run in process; what is missing on
+  Windows is `mkstemps()` for the merged temp grammar.
 - Same-file diff (`lime --diff-conflicts a.lime a.lime`) fails
   during the merged-file compile because concatenating a grammar
   with itself produces duplicate-symbol errors. This is by design;

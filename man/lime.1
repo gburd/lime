@@ -17,6 +17,14 @@ lime \- LALR(1) parser generator
 .B lime \-\-yacc
 .RI [ yacc-options ]
 .I grammar.y
+.br
+.B lime-lex
+.RI [ flex-options ]
+.I scanner.l
+.br
+.B lime \-\-lex
+.RI [ flex-options ]
+.I scanner.l
 .SH DESCRIPTION
 .B lime
 is an LALR(1) parser generator that reads a grammar specification from
@@ -365,9 +373,9 @@ Alias for
 Print the version number and exit.
 .TP
 .BI \-\-diff-conflicts " base.lime ext.lime"
-Diff the LALR(1) conflict surface of two grammars.  Each grammar
-is compiled in a forked child process (each child gets pristine
-global state), conflicts are matched by symbolic identity
+Diff the LALR(1) conflict surface of two grammars.  Both grammars
+are compiled in process, each in its own compiler context (fresh
+symbol and state tables, no child process); conflicts are matched by symbolic identity
 (\fI(reduce_lhs, reduce_rhs, lookahead, kind)\fP for SR;
 sorted rule-shape pair for RR), and the diff is written to
 stdout.  Designed for the dialect-overlay workflow: prove that
@@ -387,13 +395,33 @@ Exit codes are CI-friendly:
 -- NEW conflicts present; review or reject.
 .IP \(bu 2
 .B 2
--- argument or pipeline error (missing file, fork failure, etc.).
+-- argument or pipeline error (missing file, grammar error, etc.).
 .RE
 .IP
 Not supported on Windows builds (returns exit 2 with a
-diagnostic).  v0.4.3.  See
+diagnostic): the merged temp grammar uses
+.BR mkstemps (3).
+v0.4.3.  See
 .B docs/DIFF_CONFLICTS.md
 for the symbolic-identity rules and limitations.
+.TP
+.BI \-\-explain-compose " base.lime ext.lime" " ..." " \fR[\fPhost.policy\fR]\fP"
+Compose
+.I ext.lime
+(one or more) over
+.I base.lime
+in process, the way
+.B publish_modified_snapshot()
+does at runtime, and list every LALR(1) conflict the extensions
+introduce with its root cause, the rules involved and a
+.B fix
+line for the host policy.  A last argument ending in
+.B .policy
+is read as the host's compose policy and applied first.
+Exit 0 if nothing is unresolved, 1 if any conflict is unresolved,
+2 on an I/O or grammar error.  See
+.B docs/COMPOSITION_STRATEGY.md
+for the policy syntax.
 .TP
 .B \-\-json
 With
@@ -432,6 +460,27 @@ and
 for the
 .B .lex
 syntax.
+.IP
+Given a lex/flex
+.B .l
+file (one with a
+.B %%
+line) instead,
+.B \-X
+reads it with the flex reader.
+Invoked as
+.BR lime-lex ,
+.BR lex " or " flex ,
+or with
+.B \-\-lex
+as the first argument, lime takes the flex command line and writes
+.B lex.yy.c
+(or the
+.B \-o
+file) with flex's API.  See
+.B docs/FLEX_COMPAT.md
+and
+.BR docs/MIGRATION_FROM_FLEX.md .
 .TP
 .BI \-t " " target " | " \-\-target= target
 Output target language: either

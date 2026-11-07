@@ -17,7 +17,125 @@ git show v0.10.0
 
 ## [Unreleased]
 
-_Nothing yet._
+This release breaks the C API, the snapshot ABI and the build options
+(see **Removed** and **Changed**), so it should ship as a major version,
+not 1.11.4.  Per-commit detail and measurements are in
+`git log v1.11.3..`.
+
+### Removed
+
+- **The LLVM JIT** (`-Dllvm`, `-Dllvm-static`, `include/jit_*.h`,
+  `lime_jit_available` / `lime_jit_compile`, `LIME_CAP_JIT`,
+  `ParserManagerConfig.auto_jit`, `parse-manager -j`).  On the full
+  PostgreSQL grammar, JIT-armed parsing was 4-6% slower than the table
+  interpreter on x86_64 and 7-9% slower on aarch64, after a 16-34 ms
+  compile, so it never broke even.  `docs/JIT_ANALYSIS.md` keeps the
+  measurements.  AOT `-j` output is unchanged.
+- **The subprocess and `dlopen` composition path.**  At runtime the
+  libraries no longer fork, exec, run a compiler or load a shared object;
+  `tests/check_no_runtime_loader.sh` checks it with `nm`.  Composition
+  runs in process through `liblime_compiler`, on Windows too.  The plugin
+  loader (`parser_manager_load()`) is opt-in: `-Dplugin_loader=enabled`.
+- **The metadata-only compose fallback.**  A compose that fails now
+  publishes nothing and returns an error; the active snapshot stays in
+  service.  It used to publish a copy of the base whose tables did not
+  contain the extension.
+- **`lime-lsp`'s `lime -L` subprocess fallback**, `-Dlime_lsp_in_process`
+  and `LIME_LSP_FORCE_SUBPROCESS`.  `lime-lsp` lints and formats in
+  process; `--lime` is accepted and ignored, and `LIME_BIN` is gone.
+
+### Changed
+
+- **`LIME_SNAPSHOT_ABI_VERSION` is 3** (the JIT fields are gone).
+- **Composition fails on every LALR(1) conflict an extension
+  introduces** unless the host's compose policy resolves it; `%expect`
+  in the base no longer absorbs them.  Conflicts are keyed symbolically
+  (rules and lookahead, not state numbers).  The composed grammar is a
+  function of the extension set, not the load order.
+- **`%nonassoc` rejects chaining** (`a < b < c`), as bison and POSIX
+  yacc do.  Inherited from Lemon: when the only other actions in a state
+  were the `%nonassoc` ERROR entries, `CompressTables` turned it into an
+  auto-reduce state and the error was never checked.  Only grammars that
+  rely on the old, wrong behaviour change.
+- **`lime` exits 1 on grammar errors**, not with the error count (256
+  errors used to exit 0).  A start symbol on its own right-hand side is
+  an error at the rule's line, not a `resolve_conflict` assertion.
+- **`--diff-conflicts` compiles both grammars in process**, each in its
+  own `LimeCompilerContext`; `emit_rust` creates directories with
+  `mkdir(2)` instead of `system("mkdir -p")`.
+- **Generator speed and memory on the PostgreSQL grammar**: an in-process
+  rebuild went from about 5.0 s and 855 MB to about 0.73 s and 325 MB
+  (Xeon 8488C, CPU time), with byte-identical tables
+  (`tests/lalr_identity`).
+- `lime_threads.h`, `lime_policy.h`, `lime_lexer.h` and `glr.h` are
+  installed; every installed header compiles on its own
+  (`tests/installed_headers`).
+- CI: the macOS jobs run on macos-15 (GitHub retired macos-14).
+
+### Added
+
+- **yacc/bison front end.**  A grammar with a `%%` line at column 0 is
+  read as yacc/bison syntax (`--yacc` / `--lemon` override the guess);
+  `lime-yacc` (or `lime --yacc`) takes the yacc command line and writes
+  `y.tab.c` / `y.tab.h` with `yyparse()`.  It covers char literals,
+  string aliases, bison token numbering, `%union`/`%type`, mid-rule
+  actions, `error` recovery, `%define api.pure`, `%parse-param`,
+  `%locations`, named references and the push-parser API.  PostgreSQL
+  REL_18_0 builds with `BISON=lime-yacc` (all 520 token codes match
+  bison's), and one-true-awk builds byte-identically.  Not yet:
+  `%destructor`/`%printer` (ignored), `parse.error detailed`, and
+  `yyparse()` keeps its state in file statics.  See
+  `docs/BISON_COMPAT.md`.
+- **lex/flex front end.**  `lime-lex` (or `lime --lex`) reads a `.l`
+  file and writes `lex.yy.c` with flex's API, including `REJECT`,
+  `yymore`, `yyless`, `input`, `unput`, start conditions, `%option
+  reentrant`/`prefix`/`header-file`, and fixed-length trailing context
+  (variable length on both sides is rejected by name).  autoconf's
+  `AC_PROG_LEX` probe accepts it; GNU bc configures, builds and passes
+  `make check` with only `lime-yacc` and `lime-lex`; PostgreSQL's
+  `scan.l` gives the same token streams as flex.  See
+  `docs/FLEX_COMPAT.md`.
+- **Runtime lexer extension.**  A composed snapshot carries a keyword
+  table (lock-free reads) and an operator trie built at compose time;
+  `%keyword_class` / `%operator_class` hand runtime classification to
+  them.  Extensions can add lexical rules, matched by a runtime DFA
+  interpreter behind a leading-byte gate (0.995-1.001x base throughput
+  when unused).  A lexer conflict fails the compose like a grammar
+  conflict does.
+- **Host compose policy** (`lime_policy.h`, `LimeComposePolicy`,
+  `lime_policy_parse()`): per-conflict `rank`, `default`, `token`,
+  `reject` and precedence lines.  Equal ranks on a real conflict are an
+  error.  **`lime --explain-compose base ext... [host.policy]`** lists
+  each conflict an extension introduces with its rules, sample input and
+  the policy line that would resolve it.
+- **Extension reduce callbacks run at parse time** (`MOD_ADD_RULE`
+  with a `reduce` callback), through a per-rule `ext_action` table: a
+  composed parse with bound callbacks costs nothing extra in recognition
+  mode.
+- **Soft keywords**: `MOD_ADD_TOKEN.fallback_to` lets an extension's
+  keyword parse as an identifier where the keyword can't be shifted, as
+  SQLite's `%fallback` does.
+- `lime_format_grammar_in_process()` and the `lime_lint_*` prototypes in
+  `lime_compiler.h`.
+- Unsupported bison constructs in `.lime` input (mid-rule actions,
+  `%precedence`, `$$`, ...) get an error that names the construct and the
+  Lime rewrite.
+- `-Dcontrib` builds the `contrib/` SQL-dialect extension demos.
+
+### Fixed
+
+- A single-file `cc -o lime lime.c` binary finds its template
+  (`limpar.c` first, `lempar.c` second), and `meson install` installs
+  `limpar.c`.
+- `parse_engine_seed_stack()` accepts pooled contexts, so fork-resolve
+  forks resume mid-parse instead of restarting at state 0.
+- The yacc personality no longer writes its rewritten `argv` over the
+  caller's (it erased `environ[0]`, i.e. `$PATH`).
+- `extension_reduce_e2e` and two other subprocess tests had been
+  skipping silently in build directories not named `builddir/`.
+- The coverage gate enforces the documented 78% lines / 60% branches
+  again (the script had drifted to 72/55).
+- Windows: the MSVC, clang-cl and mingw builds and tests pass again.
 
 ## [1.11.3] -- 2026-06-11
 
