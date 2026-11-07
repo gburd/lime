@@ -17,6 +17,7 @@ W=$(mktemp -d "$W/run.XXXXXX") || exit 1
 mkdir -p "$W/bin" || exit 1
 ln -sf "$LIME" "$W/bin/lime-lex"
 have_flex=0; command -v flex >/dev/null 2>&1 && have_flex=1
+TO() { if command -v timeout >/dev/null 2>&1; then timeout "$@"; else shift; "$@"; fi; }
 
 # The probe: from "cat >conftest.l <<_ACEOF[" to "]_ACEOF" in the macro.
 extract() { awk '/_AC_PROG_LEX_YYTEXT_DECL\]/{f=1} f&&/^\]_ACEOF/{exit} f&&p{print} f&&/cat >conftest.l <<_ACEOF\[/{p=1}' "$1"; }
@@ -24,19 +25,19 @@ extract() { awk '/_AC_PROG_LEX_YYTEXT_DECL\]/{f=1} f&&/^\]_ACEOF/{exit} f&&p{pri
 # probe LEX DIR: prints "lib=<LEXLIB> ptr=<yes|no> rc=<exit> out=<bytes>"
 probe() {
   ( cd "$2" || exit 1
-    timeout 30 $1 conftest.l > lex.log 2>&1 || { echo "lex-failed: $(head -c 300 lex.log)"; exit 0; }
+    TO 30 $1 conftest.l > lex.log 2>&1 || { echo "lex-failed: $(head -c 300 lex.log)"; exit 0; }
     [ -f lex.yy.c ] || { echo "no-lex.yy.c"; exit 0; }
     lib=none
     for l in '' -lfl -ll; do
-      if timeout 60 "$CC" -o conftest lex.yy.c $l > link.log 2>&1; then lib="'$l'"; break; fi
+      if TO 60 "$CC" -o conftest lex.yy.c $l > link.log 2>&1; then lib="'$l'"; break; fi
     done
     { echo '#define YYTEXT_POINTER 1'; cat lex.yy.c; } > ptr.c
     ptr=no
     l=$(echo "$lib" | tr -d "'"); [ "$l" = none ] && l=
-    timeout 60 "$CC" -o conftest_p ptr.c $l > ptr.log 2>&1 && ptr=yes
+    TO 60 "$CC" -o conftest_p ptr.c $l > ptr.log 2>&1 && ptr=yes
     rc=-; out=-
     if [ -x conftest ]; then
-      printf 'abcdef\n' | timeout 10 ./conftest > run.out 2>&1; rc=$?
+      printf 'abcdef\n' | TO 10 ./conftest > run.out 2>&1; rc=$?
       out=$(head -c 200 run.out | od -An -c | tr -s ' \n' ' ')
     fi
     echo "lib=$lib ptr=$ptr rc=$rc out=$out" )

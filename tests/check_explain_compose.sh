@@ -11,8 +11,12 @@ run() {  # name expected_rc golden base ext...
   ( cd "$(dirname "$1")" && "$lime" --explain-compose "$@" ) > "$tmp/$name.out" 2> "$tmp/$name.err"
   rc=$?
   if [ "$rc" != "$want" ]; then echo "FAIL $name: exit $rc, want $want"; cat "$tmp/$name.err"; bad=1; return; fi
-  if [ -n "$golden" ] && ! cmp -s "$tmp/$name.out" "$golden"; then
-    echo "FAIL $name: output differs from $(basename "$golden")"; diff "$golden" "$tmp/$name.out" | head -20; bad=1; return
+  # Compare without cmp/diff (absent from some CI images, e.g. mingw);
+  # tr strips CR so a CRLF golden checkout still matches.
+  if [ -n "$golden" ] && [ "$(tr -d '\r' < "$tmp/$name.out")" != "$(tr -d '\r' < "$golden")" ]; then
+    echo "FAIL $name: output differs from $(basename "$golden")"
+    if command -v diff >/dev/null 2>&1; then diff "$golden" "$tmp/$name.out" | head -20; else head -20 "$tmp/$name.out"; fi
+    bad=1; return
   fi
   echo "ok   $name (exit $rc)"
 }

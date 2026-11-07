@@ -20,7 +20,11 @@ CC=${CC:-cc}
 ln -s "$LIME" "$W/lime-yacc"
 cp "$TPL" "$W/limpar.c"   # found next to the binary, as when installed
 HAVE_BISON=0
-command -v bison >/dev/null 2>&1 && HAVE_BISON=1
+# Compare against bison 3.x only: Lime implements bison 3.8's interface
+# (macOS ships bison 2.3, whose header has no YYEMPTY/YYEOF/YYerror/YYUNDEF).
+case "$(bison --version 2>/dev/null | head -1)" in
+  *" 3."*) HAVE_BISON=1 ;;
+esac
 
 fail() { echo "FAIL $*"; fails=$((fails + 1)); }
 # Every generated program runs under a timeout: broken error recovery
