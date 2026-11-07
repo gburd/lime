@@ -21,6 +21,8 @@
 #include "extension.h"
 #include "snapshot_modify.h"
 #include "lime_compiler.h"
+#include "test_compat.h"
+#include "lime_time.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -71,11 +73,7 @@ static int n_fail = 0;
         }                                                                       \
     } while (0)
 
-static double now_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
-}
+static double now_ms(void) { return (double)lime_now_ns() / 1e6; }
 
 /* ------------------------------------------------------------------ */
 /*  Test grammars                                                       */
@@ -180,12 +178,12 @@ static void test_no_subprocess_knob(void) {
     ** empty PATH (no lime, no cc) must not matter. */
     const char *old_path = getenv("PATH");
     char *saved = old_path ? strdup(old_path) : NULL;
-    setenv("LIME_FORCE_SUBPROCESS", "1", 1);
-    setenv("PATH", "", 1);
+    test_compat_setenv("LIME_FORCE_SUBPROCESS", "1", 1);
+    test_compat_setenv("PATH", "", 1);
     char *err = NULL;
     ParserSnapshot *snap = lime_compile_grammar_text(k_calc_grammar, strlen(k_calc_grammar), &err);
-    unsetenv("LIME_FORCE_SUBPROCESS");
-    if (saved) { setenv("PATH", saved, 1); free(saved); }
+    test_compat_unsetenv("LIME_FORCE_SUBPROCESS");
+    if (saved) { test_compat_setenv("PATH", saved, 1); free(saved); }
     CHECK(snap != NULL, "no_subprocess_knob: compiles with LIME_FORCE_SUBPROCESS=1 and PATH=''");
     if (err) printf("  error: %s\n", err);
     free(err);

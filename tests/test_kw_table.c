@@ -33,7 +33,7 @@
 #include "snapshot.h"
 #include "tokenize.h"
 
-#include <pthread.h>
+#include "lime_threads.h"  /* pthreads, or the Win32 shim */
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -427,8 +427,12 @@ static void test_concurrent(ParserSnapshot *base) {
         snapshot_release(old); /* readers still holding it keep it alive */
         swaps++;
         /* let readers see each snapshot, not only the slow-to-build one */
+#if defined(_WIN32)
+        Sleep(1);
+#else
         struct timespec ts = { 0, 200000 };
         nanosleep(&ts, NULL);
+#endif
     }
     atomic_store(&g_stop, 1);
     long lookups = 0, wrong = 0, se = 0, sb = 0;

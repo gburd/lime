@@ -27,7 +27,8 @@
 #include "snapshot.h"
 #include "token_table.h"
 
-#include <pthread.h>
+#include "lime_threads.h"  /* pthreads, or the Win32 shim */
+#include "lime_time.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,10 +37,17 @@
 extern int lime_compile_grammar_in_process(const char *, size_t, ParserSnapshot **, char **);
 extern int lime_snapshot_token_code(const ParserSnapshot *snap, const char *name);
 
+/* Per-thread CPU time; the timed runs are by hand, on Linux.  Elsewhere
+** (Windows) fall back to the monotonic clock: the meson test only runs
+** the agreement check (BENCH_CHECK_ONLY=1), which does not time. */
 static double thread_cpu_ns(void) {
+#if defined(CLOCK_THREAD_CPUTIME_ID) && !defined(_WIN32)
     struct timespec t;
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
     return (double)t.tv_sec * 1e9 + (double)t.tv_nsec;
+#else
+    return (double)lime_now_ns();
+#endif
 }
 
 static int dcmp(const void *a, const void *b) {

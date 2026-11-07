@@ -128,7 +128,7 @@ jobs:
         run: meson test -C builddir --print-errorlogs
 
   # =====================================================================
-  # macOS: Intel (macos-13) and Apple Silicon (macos-14).
+  # macOS: Apple Silicon (macos-15).
   #
   # Both runners ship Apple Clang (Xcode-bundled).  GCC via Homebrew
   # is available but adds a ~3-min `brew install gcc` step and
@@ -141,11 +141,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macos-13 (Intel) was deprecated by GitHub in 2026; runners
-        # are queued indefinitely.  Only macos-14 (Apple Silicon) is
-        # available now.  Re-add macos-13 if Intel coverage is needed,
-        # but be aware GitHub's runner pool may not have one.
-        os: [macos-14]
+        # GitHub retired the macos-14 images on 2026-11-02 (jobs fail at
+        # once with "configuration ... is not supported"); macos-15 is
+        # Apple Silicon.  Intel: macos-15-intel.
+        os: [macos-15]
     steps:
       - uses: actions/checkout@v4
 
@@ -318,7 +317,7 @@ jobs:
   # =====================================================================
   sanitizers-macos:
     name: sanitizers-macos (address)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 

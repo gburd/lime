@@ -23,6 +23,7 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include "test_compat.h"
 #if defined(_WIN32)
 #include <io.h>
 #define dup2 _dup2
@@ -90,11 +91,11 @@ int main(void) {
     printf("============================================\n");
 
     /* Nothing on PATH: the old pipeline exec'd `lime` and `cc` from it. */
-    setenv("PATH", "", 1);
+    test_compat_setenv("PATH", "", 1);
 
     /* Step 1: write the grammar to a temp file. */
-    char path[256] = "/tmp/lime_snap_test_XXXXXX";
-    int fd = mkstemp(path);
+    char path[256];
+    int fd = test_compat_mkstemp("lime_snap_test", path, sizeof(path));
     if (fd < 0) {
         fprintf(stderr, "  [SKIP] mkstemp failed: %s\n", strerror(errno));
         return 77;

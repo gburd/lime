@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "test_compat.h"
 
 #if defined(_WIN32)
 #  define WIN32_LEAN_AND_MEAN
@@ -1140,24 +1141,19 @@ static void test_formatting(const char *bin, const char *lime_bin,
     assert(strstr(buf, "\"newText\""));
 
     /* Reference: lime -F on the same file, in a scratch copy. */
-    char ref_dir[512], cmd[2048], ref_path[700];
-    snprintf(ref_dir, sizeof(ref_dir), "%s/lsp-fmt-ref-XXXXXX",
-             getenv("TMPDIR") && *getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
-    assert(mkdtemp(ref_dir) != NULL);
+    char ref_dir[512], ref_path[700];
+    assert(test_compat_tmpdir("lsp-fmt-ref", ref_dir, sizeof(ref_dir)) == 0);
     snprintf(ref_path, sizeof(ref_path), "%s/rich.lime", ref_dir);
     FILE *rf = fopen(ref_path, "wb");
     assert(rf && fwrite(text, 1, tlen, rf) == tlen);
     fclose(rf);
-    snprintf(cmd, sizeof(cmd), "\"%s\" -F \"%s\" >/dev/null 2>&1",
-             g_real_lime, ref_path);
-    assert(system(cmd) == 0);
+    char *fmt_argv[] = { (char *)g_real_lime, (char *)"-F", ref_path, NULL };
+    int fmt_rc = -1;
+    assert(test_compat_run(fmt_argv, &fmt_rc) == 0 && fmt_rc == 0);
     snprintf(ref_path, sizeof(ref_path), "%s/rich.lime.formatted", ref_dir);
     size_t ref_len;
     char *ref = slurp(ref_path, &ref_len);
-    unlink(ref_path);
-    snprintf(ref_path, sizeof(ref_path), "%s/rich.lime", ref_dir);
-    unlink(ref_path);
-    rmdir(ref_dir);
+    test_compat_rmdir_recursive(ref_dir);
 
     /* JSON-escape the reference the way lsp_json does and look for it. */
     char *esc = malloc(ref_len * 6 + 1), *o = esc;

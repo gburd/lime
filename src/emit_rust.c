@@ -44,6 +44,9 @@
 #if defined(_WIN32)
 #  include <direct.h>
 #  define LIME_MKDIR(p) _mkdir(p)
+#  ifndef S_ISDIR
+#    define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)  /* MSVC has no S_ISDIR */
+#  endif
 #else
 #  define LIME_MKDIR(p) mkdir((p), 0777)
 #endif
