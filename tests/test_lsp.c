@@ -1142,14 +1142,19 @@ static void test_formatting(const char *bin, const char *lime_bin,
 
     /* Reference: lime -F on the same file, in a scratch copy. */
     char ref_dir[512], ref_path[700];
-    assert(test_compat_tmpdir("lsp-fmt-ref", ref_dir, sizeof(ref_dir)) == 0);
+    /* No side effects inside assert(): packagers build with -DNDEBUG. */
+    int ok = test_compat_tmpdir("lsp-fmt-ref", ref_dir, sizeof(ref_dir)) == 0;
+    assert(ok);
     snprintf(ref_path, sizeof(ref_path), "%s/rich.lime", ref_dir);
     FILE *rf = fopen(ref_path, "wb");
-    assert(rf && fwrite(text, 1, tlen, rf) == tlen);
+    ok = rf && fwrite(text, 1, tlen, rf) == tlen;
+    assert(ok);
     fclose(rf);
     char *fmt_argv[] = { (char *)g_real_lime, (char *)"-F", ref_path, NULL };
     int fmt_rc = -1;
-    assert(test_compat_run(fmt_argv, &fmt_rc) == 0 && fmt_rc == 0);
+    ok = test_compat_run(fmt_argv, &fmt_rc) == 0 && fmt_rc == 0;
+    assert(ok);
+    (void)ok;
     snprintf(ref_path, sizeof(ref_path), "%s/rich.lime.formatted", ref_dir);
     size_t ref_len;
     char *ref = slurp(ref_path, &ref_len);

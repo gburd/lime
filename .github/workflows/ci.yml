@@ -376,6 +376,29 @@ jobs:
         run: scripts/check_coverage.sh
 
   # =====================================================================
+  # The configuration distro packages build with: buildtype=plain
+  # (dh_auto_configure and Fedora's %meson pass it), where this
+  # project's b_ndebug=if-release defines NDEBUG, and every package
+  # recipe runs the suite.  The other jobs build debugoptimized, with
+  # asserts live, so a test doing its work inside assert() only fails here.
+  # =====================================================================
+  ndebug:
+    name: ndebug (ubuntu-24.04, packager build)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config
+      - name: Setup meson
+        run: meson setup builddir --buildtype=plain
+      - name: Build
+        run: ninja -C builddir
+      - name: Test
+        run: meson test -C builddir --print-errorlogs
+
+  # =====================================================================
   # Keep the three sources of the version string aligned:
   # LIME_VERSION_STRING in lime.c, project(version: ...) in meson.build,
   # and the mirror in src/version.c.  Fails loudly if a bump forgets
