@@ -2604,6 +2604,17 @@ test('installed_headers', find_program('check_installed_headers.sh'),
          + lime_public_headers,
 )
 
+# `pkg-config --libs lime-compiler` (no --static) links a program that
+# composes.  POSIX shell + pkg-config; meson's -uninstalled.pc files.
+if host_machine.system() != 'windows'
+  test('pkgconfig_link', find_program('check_pkgconfig_link.sh'),
+    # An instrumented build's archives need the same -fsanitize= to link.
+    args : [meson.get_compiler('c').cmd_array()[0], meson.project_build_root(),
+            get_option('b_sanitize') == 'none' ? '' : '-fsanitize=' + get_option('b_sanitize')],
+    depends : [lime_parser_lib, lime_compiler_lib],
+  )
+endif
+
 # C6: no library a consumer links can spawn a process or load a shared
 # object (fork/exec*/dlopen/dlsym/LoadLibrary/posix_spawn/system/popen),
 # and liblime_parser has no reference to the in-process compiler (weak or

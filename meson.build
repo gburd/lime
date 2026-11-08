@@ -331,11 +331,12 @@ pkgconfig_mod.generate(
                       + 'extension composition and conflict policy. Needed to compose.',
   version           : meson.project_version(),
   url               : 'https://codeberg.org/gregburd/lime',
-  # The compiler archive depends on the runtime parser at link time
-  # (snapshot_release, parse_engine_step, etc.); express that via
-  # Requires.private so consumers automatically pull in -llime when
-  # they ask for -llime-compiler.
-  requires_private  : 'lime',
+  # The compiler archive needs the runtime parser at link time
+  # (snapshot_release, parse_engine_step, ...).  Both are static
+  # archives, so this is Requires, not Requires.private: .private is
+  # only read with --static, and the documented
+  # `pkg-config --libs lime-compiler` then left -llime_parser out.
+  requires          : 'lime',
   extra_cflags      : ['-pthread'],
 )
 
