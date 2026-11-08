@@ -72,7 +72,17 @@ static int n_fail = 0;
         }                                                                       \
     } while (0)
 
-static double now_ms(void) { return (double)lime_now_ns() / 1e6; }
+/* CPU time, not wall: the check is about the work the compile does, and
+** wall time on a busy package builder ran 100x the 0.08 ms norm. */
+static double now_ms(void) {
+#if defined(CLOCK_PROCESS_CPUTIME_ID) && !defined(_WIN32)
+    struct timespec t;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t);
+    return (double)t.tv_sec * 1e3 + (double)t.tv_nsec / 1e6;
+#else
+    return (double)lime_now_ns() / 1e6;
+#endif
+}
 
 /* ------------------------------------------------------------------ */
 /*  Test grammars                                                       */
