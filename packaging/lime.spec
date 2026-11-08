@@ -42,11 +42,12 @@ extension-registry interfaces.
 %license README.md
 %doc README.md docs/CONCEPTS.md docs/PERFORMANCE.md docs/RUST_OUTPUT.md
 %{_bindir}/lime
+%{_bindir}/lime-yacc
+%{_bindir}/lime-lex
 %{_bindir}/lime-lsp
-%{_bindir}/parse-manager
+%{_datadir}/lime/limpar.c
 %{_mandir}/man1/lime.1*
 %{_mandir}/man1/lime-lsp.1*
-%{_mandir}/man1/parse-manager.1*
 %{_mandir}/man5/lime_grammar.5*
 %{_mandir}/man5/lime_lex.5*
 
@@ -58,6 +59,11 @@ extension-registry interfaces.
 %{_libdir}/pkgconfig/lime-compiler.pc
 
 %changelog
+* Sun Nov 08 2026 Greg Burd <greg@burd.me> - 2.0.0-1
+- LLVM JIT and the subprocess/dlopen compose path removed.
+- yacc/bison (lime-yacc) and lex/flex (lime-lex) front ends.
+- Runtime lexer extension, host compose policy, --explain-compose.
+
 * Sat May 23 2026 Greg Burd <greg@burd.me> - 0.2.4-1
 - Compact JIT codegen for large grammars; PG SQL grammar JITs in 19 ms.
 - Bayesian disambiguation strategy.

@@ -17,10 +17,13 @@ git show v0.10.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [2.0.0] -- 2026-11-08
+
 This release breaks the C API, the snapshot ABI and the build options
-(see **Removed** and **Changed**), so it should ship as a major version,
-not 1.11.4.  Per-commit detail and measurements are in
-`git log v1.11.3..`.
+(see **Removed** and **Changed**), hence the major version.  Per-commit
+detail and measurements are in `git log v1.11.3..v2.0.0`.
 
 ### Removed
 
