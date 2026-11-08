@@ -1,5 +1,5 @@
 #!/bin/sh
-# check_pkgconfig_link.sh CC BUILDDIR [EXTRA_CFLAGS]   (EXTRA: -fsanitize=... of the build)
+# check_pkgconfig_link.sh CC BUILDDIR
 #
 # A consumer links what `pkg-config --libs lime-compiler` prints, without
 # --static (docs/API.md, README).  Both libraries are static archives, so
@@ -9,7 +9,7 @@
 # snapshot_build_from_tables.  Installs into a scratch DESTDIR and builds
 # the program the way a consumer of the package would.
 # Exit 0 pass, 1 fail, 77 skip (no pkg-config, meson or compiler).
-cc=$1; b=$2; extra=${3:-}
+cc=$1; b=$2
 command -v pkg-config >/dev/null 2>&1 || { echo "SKIP: no pkg-config"; exit 77; }
 command -v meson >/dev/null 2>&1 || { echo "SKIP: no meson on PATH"; exit 77; }
 command -v "$cc" >/dev/null 2>&1 || { echo "SKIP: no C compiler"; exit 77; }
@@ -39,7 +39,7 @@ C
 libs=$(pkg-config --libs lime-compiler); cflags=$(pkg-config --cflags lime-compiler)
 echo "pkg-config --libs lime-compiler: $libs"
 # shellcheck disable=SC2086
-if ! "$cc" $extra $cflags -o "$W/c" "$W/c.c" $libs > "$W/err" 2>&1; then
+if ! "$cc" $cflags -o "$W/c" "$W/c.c" $libs > "$W/err" 2>&1; then
     echo "FAIL link with pkg-config --libs lime-compiler:"; head -c 2000 "$W/err"; exit 1
 fi
 "$W/c" || { echo "FAIL: the linked program did not compile a grammar"; exit 1; }

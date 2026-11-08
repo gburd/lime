@@ -2605,12 +2605,13 @@ test('installed_headers', find_program('check_installed_headers.sh'),
 )
 
 # `pkg-config --libs lime-compiler` (no --static) links a program that
-# composes.  POSIX shell + pkg-config; meson's -uninstalled.pc files.
-if host_machine.system() != 'windows'
+# composes.  POSIX shell + pkg-config; a scratch DESTDIR install.  Only in
+# uninstrumented builds: a sanitizer/coverage/LTO archive needs that
+# build's flags and toolchain to link, and packages ship uninstrumented.
+if (host_machine.system() != 'windows' and get_option('b_sanitize') == 'none'
+    and not get_option('b_coverage') and not get_option('b_lto'))
   test('pkgconfig_link', find_program('check_pkgconfig_link.sh'),
-    # An instrumented build's archives need the same -fsanitize= to link.
-    args : [meson.get_compiler('c').cmd_array()[0], meson.project_build_root(),
-            get_option('b_sanitize') == 'none' ? '' : '-fsanitize=' + get_option('b_sanitize')],
+    args : [meson.get_compiler('c').cmd_array()[0], meson.project_build_root()],
     depends : [lime_parser_lib, lime_compiler_lib],
   )
 endif
