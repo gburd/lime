@@ -57,7 +57,13 @@
 #include <string.h>
 #include <time.h>
 #include <sys/resource.h>
-#ifdef __linux__
+/* Instruction counts need the kernel headers (Alpine: linux-headers, not in build-base). */
+#if defined(__linux__) && defined(__has_include)
+#  if __has_include(<linux/perf_event.h>)
+#    define LIME_BENCH_PERF 1
+#  endif
+#endif
+#ifdef LIME_BENCH_PERF
 #include <linux/perf_event.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
@@ -100,10 +106,10 @@ static char *slurp(const char *path, size_t *len) {
 }
 
 /* User-space instructions retired, or -1 where perf counters are not
-** available (non-Linux, or kernel.perf_event_paranoid too high). */
+** available (non-Linux, no kernel headers, or kernel.perf_event_paranoid too high). */
 static int perf_fd = -1;
 static void instr_open(void) {
-#ifdef __linux__
+#ifdef LIME_BENCH_PERF
     struct perf_event_attr a;
     memset(&a, 0, sizeof a);
     a.type = PERF_TYPE_HARDWARE;
@@ -115,7 +121,7 @@ static void instr_open(void) {
 #endif
 }
 static long long instr_now(void) {
-#ifdef __linux__
+#ifdef LIME_BENCH_PERF
     long long v;
     if (perf_fd >= 0 && read(perf_fd, &v, sizeof v) == (ssize_t)sizeof v) return v;
 #endif
