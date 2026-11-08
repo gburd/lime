@@ -255,7 +255,8 @@ jobs:
           chown -R builder /home/builder/build
           su builder -c '
             cd /home/builder/build/lime-parser
-            updpkgsums
+            # sha256sums=SKIP + --skipchecksums: no updpkgsums (pacman-contrib,
+            # no longer in the archlinux image), which used to end the && chain.
             makepkg -s --noconfirm --skipchecksums
           ' || true
           mkdir -p artefacts
