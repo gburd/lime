@@ -33,7 +33,7 @@ jobs:
         os: [ubuntu-22.04, ubuntu-24.04]
         compiler: [gcc, clang]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         run: |
@@ -70,7 +70,7 @@ jobs:
   contrib:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         run: |
@@ -103,7 +103,7 @@ jobs:
         os: [ubuntu-24.04-arm]
         compiler: [gcc, clang]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         run: |
@@ -146,7 +146,7 @@ jobs:
         # Apple Silicon.  Intel: macos-15-intel.
         os: [macos-15]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         run: brew install meson ninja pkg-config
@@ -200,7 +200,7 @@ jobs:
             toolchain: clang-cl
             arch: arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup VS dev env (${{ matrix.arch }})
         uses: ilammy/msvc-dev-cmd@v1
@@ -249,7 +249,7 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -288,7 +288,7 @@ jobs:
       matrix:
         sanitizer: [address, thread, undefined]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         run: |
@@ -319,7 +319,7 @@ jobs:
     name: sanitizers-macos (address)
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         run: brew install meson ninja pkg-config
@@ -339,7 +339,7 @@ jobs:
   valgrind:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         run: |
@@ -370,7 +370,7 @@ jobs:
           sudo apt-get install -y gcc meson ninja-build pkg-config gcovr
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Run coverage gate
         run: scripts/check_coverage.sh
@@ -386,7 +386,7 @@ jobs:
     name: ndebug (ubuntu-24.04, packager build)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -407,7 +407,7 @@ jobs:
   version-consistency:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check all three version sources agree
         run: scripts/check_version_consistency.sh
 
@@ -424,7 +424,7 @@ jobs:
   contrib-grammars:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build standalone lime
         run: cc -O2 -o lime lime.c
       - name: Smoke-test contrib grammars
@@ -454,7 +454,7 @@ jobs:
       matrix:
         compiler: [gcc, clang]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies (gcc)
         if: matrix.compiler == 'gcc'
